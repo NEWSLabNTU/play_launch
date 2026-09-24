@@ -17,6 +17,16 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0046** -- a subscriber's `max_age` cannot count toward the FDTI of a hazard
+declared `on: omission` (only the liveliness lease can), and `hazards.<h>.on`
+takes exactly one `FaultKind`, so a guard watched by both a lease and an age
+limit must drop one -- while omitting `on:` altogether counts both and buys
+slack. Measured on the WG's L4 design, whose section 8.1 gives every inbound
+signal an age limit. Filed as a design question: the partition may well be
+right. What is not in question is the `hazard-unguarded` message, which
+recommends `max_age` and `min_rate_hz` as detectors that cannot satisfy it.
+See `0046-*`.
+
 **#0045** -- `--enforce-rules` is on `CommonOptions`, so every verb accepts it,
 but `run` builds no `RuleEngine` and never checks the precondition: a strict
 `run` passes with nothing measured, which is the shape phase 79 removed from
