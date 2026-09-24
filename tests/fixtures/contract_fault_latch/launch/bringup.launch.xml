@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!-- The contract_fault_service chain, with the brake controller LATCHING the
+     stop request and acting on its own 30 Hz timer, which is what Autoware's
+     mrm_emergency_stop_operator does. Same three nodes; the route the checker
+     derives must be contract_fault_service's plus one timer period. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="lidar_driver"      namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="obstacle_detector" namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="brake_controller"  namespace="/safety"/>
+</launch>

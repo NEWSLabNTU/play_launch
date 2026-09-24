@@ -1080,6 +1080,38 @@ fn a_reaction_crossing_a_service_is_walked_like_one_crossing_a_topic() {
     assert!(!out.contains("reaction-unreachable"), "{out}");
 }
 
+/// Phase 82 W4: a server that LATCHES the request and acts on its own timer
+/// is a sampling hop, not the end of the reaction.
+///
+/// `contract_fault_latch` is `contract_fault_service` with the brake
+/// controller's request handler triggering nothing and its 30 Hz timer
+/// publishing the command, which is the shape of Autoware's
+/// `mrm_emergency_stop_operator`. The route must reach the timer path, name the
+/// clock it waited for, and cost exactly one period more than the service
+/// fixture's: 7ms + 33.33ms = 40.33ms, total 340.33ms. Before this the walk
+/// stopped at the server, reported `reaction-unreachable`, and derived nothing
+/// for the node that stops the vehicle.
+#[test]
+fn a_server_that_latches_the_request_is_a_sampling_hop() {
+    let out = check_fixture("contract_fault_latch");
+    for needle in [
+        "/safety/obstacle_detector/declare_lost",
+        "/safety/brake_controller/apply_brake (+33.33ms sampling) = 40.33ms",
+        "settle 200.00ms",
+        "= 340.33ms",
+        "node /safety/brake_controller declares criticality 'high'",
+        "ASIL_D reacts hazard 'drive_blind'",
+    ] {
+        assert!(
+            out.contains(needle),
+            "expected `{needle}` on contract_fault_latch:\n{out}"
+        );
+    }
+    assert!(!out.contains("reaction-unreachable"), "{out}");
+    // The trigger-driven service fixture is untouched: no clock in its route.
+    assert!(!check_fixture("contract_fault_service").contains("sampling)"));
+}
+
 /// Phase 74: the contract's liveliness lease reaches the model as a
 /// `qos_overrides` parameter on the subscribing node, and the lease itself
 /// is lowered for the live observer.

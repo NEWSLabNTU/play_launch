@@ -1,0 +1,99 @@
+# The fault reaction of `contract_fault_service`, with a server that LATCHES.
+#
+# In `contract_fault_service` the brake controller's `emergency_stop` path is
+# triggered by the `stop` request. Here the request only latches a flag, and
+# the braking command is published by the controller's 30 Hz timer, which is
+# the shape of Autoware's `mrm_emergency_stop_operator`: its `OperateMrm`
+# callback sets `status_.state = OPERATING` and publishes nothing, and
+# `onTimer` publishes the command
+# (autoware_mrm_emergency_stop_operator/.../mrm_emergency_stop_operator_core.cpp).
+#
+# The reaction reaches the brake command one tick later at worst, so the route
+# is `contract_fault_service`'s plus one period, and the route names the hop
+# as a sampling hop:
+#   detection 100ms (the lease)
+#   + route 2ms declare_lost + (33.33ms sampling + 5ms apply_brake) = 40.33ms
+#   + settle 200ms
+#   = 340.33ms inside a 500ms ftti.
+# ASIL_D is derived for the brake controller as `reacts`, through the same hop.
+#
+# One diagnostic here is not the fixture's fault, and is inherited from
+# `contract_fault_service`: the checker's `wiring` rule (upstream,
+# ros-launch-manifest) looks for a path's `output:` endpoint in a topic's
+# `pub:` list only, so `stop_request` -- a `cli:` endpoint, wired by
+# `services:` -- is reported as unwired.
+version: 1
+
+hazards:
+  drive_blind:
+    severity: ASIL_D
+    description: vehicle continues with no obstacle data
+    guards: [/safety/scan]
+    on: omission
+    ftti: 500ms
+    reaction: safety.stop
+
+nodes:
+  lidar_driver:
+    pub:
+      scan: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 50 } }
+        output: [scan]
+        max_latency: 2ms
+
+  obstacle_detector:
+    sub:
+      scan:
+        min_rate_hz: 50
+        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
+        on_violation:
+          on: [omission]
+          reaction: declare_lost
+          within: 10ms
+    cli:
+      stop_request: {}
+    paths:
+      declare_lost:
+        trigger: { input: [scan] }
+        output: [stop_request]
+        max_latency: 2ms
+
+  brake_controller:
+    criticality: high          # what ASIL_D on drive_blind already derives -> derivable-criticality
+    srv:
+      # The request handler latches and returns; no path is triggered by it.
+      stop: {}
+    pub:
+      brake_cmd: {}
+    paths:
+      # The tick that acts on the latch. Nothing names `stop` as a trigger, so
+      # the reaction waits up to one period (33.33ms at 30 Hz) for this path.
+      apply_brake:
+        trigger: { timer: { rate_hz: 30 } }
+        output: [brake_cmd]
+        max_latency: 5ms
+        safe_state: { emits: brake_cmd, settle: 200ms }
+
+paths:
+  safety.stop:
+    trigger: { input: [/safety/scan] }
+    output: [/safety/brake_cmd]
+    max_latency: 100ms
+
+topics:
+  /safety/scan:
+    type: std_msgs/msg/String
+    pub: [lidar_driver/scan]
+    sub: [obstacle_detector/scan]
+  /safety/brake_cmd:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [brake_controller/brake_cmd]
+
+services:
+  /safety/stop:
+    type: std_srvs/srv/Trigger
+    server: [brake_controller/stop]
+    client: [obstacle_detector/stop_request]

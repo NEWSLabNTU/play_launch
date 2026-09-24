@@ -1155,8 +1155,33 @@ struct ReactionWalk {
     route_ms: f64,
     /// `safe_state.settle` at the sink, if declared there.
     settle_ms: Option<f64>,
-    /// `node/path` hops on the longest branch, for the message.
-    hops: Vec<String>,
+    /// The hops on the longest branch, for the message and for the
+    /// criticality derivation.
+    hops: Vec<ReactionHop>,
+}
+
+/// One `node/path` hop of a reaction route.
+#[derive(Clone)]
+struct ReactionHop {
+    node: String,
+    path: String,
+    /// One timer period, charged when the reaction reached this node as
+    /// something a timer path READS rather than as that path's trigger (a
+    /// request the server latches, a `state: true` subscriber): the quantity
+    /// `ros-launch-manifest`'s `NodeView::sampling_cost_ms` defines. Already
+    /// included in the walk's `route_ms`; carried here so the route names the
+    /// clock it waited for.
+    sampling_ms: Option<f64>,
+}
+
+impl std::fmt::Display for ReactionHop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.node, self.path)?;
+        if let Some(ms) = self.sampling_ms {
+            write!(f, " (+{ms:.2}ms sampling)")?;
+        }
+        Ok(())
+    }
 }
 
 /// Walk the reaction from the guard topics to a sink topic.
@@ -1184,6 +1209,20 @@ struct ReactionWalk {
 /// and outside the criticality derivation with it, which is backwards for
 /// every MRM chain shaped like Autoware's: the handler that NOTICES got the
 /// hazard's ASIL and the operator that STOPS the vehicle got nothing.
+///
+/// A reaction that waits for a CLOCK is walked too, as a SAMPLING HOP. A
+/// server with no path its request triggers, or a `state: true` subscriber
+/// no path is triggered by, hands the reaction to whatever the node's timer
+/// does next: the request is latched, the message is cached, and the next
+/// tick acts on it. Autoware's `mrm_emergency_stop_operator` is exactly this
+/// (the `OperateMrm` callback sets `OPERATING` and publishes nothing; the
+/// 30 Hz `onTimer` publishes the braking command). Stopping the walk there
+/// charged up to one period to nothing and left the operator outside the
+/// criticality derivation, so the walk instead continues through the node's
+/// timer paths that lead on toward the sink and charges each its period on
+/// top of its `max_latency`, which is the `period + exec` the nominal
+/// traversal of a timer path already costs. The guard itself is still never
+/// sampled: there the publisher is dead and the reaction has to be declared.
 fn walk_reaction(
     guards: &[String],
     sinks: &HashSet<&str>,
@@ -1197,10 +1236,15 @@ fn walk_reaction(
     /// halves of the walk, because what a hop costs and where it goes next
     /// does not depend on whether the reaction arrived as a message or as a
     /// request.
+    ///
+    /// `sampled` says the reaction reached the node as something these
+    /// (timer) paths read on their tick rather than as their trigger, so each
+    /// hop also costs one period of its timer.
     #[allow(clippy::too_many_arguments)]
     fn advance(
         node_fqn: &str,
         hop_paths: Vec<&ResolvedNodePath>,
+        sampled: bool,
         depth: usize,
         sinks: &HashSet<&str>,
         topics: &BTreeMap<String, ResolvedTopic>,
@@ -1210,8 +1254,21 @@ fn walk_reaction(
     ) -> Option<ReactionWalk> {
         let mut best: Option<ReactionWalk> = None;
         for path in hop_paths {
-            let hop_ms = path.path.max_latency.map_or(0.0, |d| d.as_millis_f64());
-            let hop = format!("{node_fqn}/{}", path.path_name);
+            let sampling_ms = match path.path.effective_trigger() {
+                ros_launch_manifest_types::EffectiveTrigger::Timer { rate_hz }
+                    if sampled && rate_hz > 0.0 =>
+                {
+                    Some(1000.0 / rate_hz)
+                }
+                _ => None,
+            };
+            let hop_ms = path.path.max_latency.map_or(0.0, |d| d.as_millis_f64())
+                + sampling_ms.unwrap_or(0.0);
+            let hop = ReactionHop {
+                node: node_fqn.to_string(),
+                path: path.path_name.clone(),
+                sampling_ms,
+            };
             let publishes_sink = |ep_name: &str| {
                 let r = format!("{node_fqn}/{ep_name}");
                 sinks
@@ -1287,6 +1344,24 @@ fn walk_reaction(
         best
     }
 
+    /// The paths of `node_fqn` that run on its own clock: where a reaction
+    /// that reached the node as a READ, not as a trigger, goes next.
+    fn timer_paths<'a>(
+        node_fqn: &str,
+        node_paths: &'a [ResolvedNodePath],
+    ) -> Vec<&'a ResolvedNodePath> {
+        node_paths
+            .iter()
+            .filter(|p| {
+                p.node_fqn == node_fqn
+                    && matches!(
+                        p.path.effective_trigger(),
+                        ros_launch_manifest_types::EffectiveTrigger::Timer { .. }
+                    )
+            })
+            .collect()
+    }
+
     fn from_topic(
         topic_fqn: &str,
         depth: usize,
@@ -1329,8 +1404,19 @@ fn walk_reaction(
                         .collect(),
                     None => Vec::new(),
                 };
+            // A `state: true` subscriber past the guard triggers nothing: the
+            // node caches the message and its timer reads it. That is a
+            // sampling hop, the same one a latched request makes.
+            let (hop_paths, sampled) = if hop_paths.is_empty()
+                && depth > 0
+                && props.is_some_and(|p| p.on_violation.is_none() && p.state == Some(true))
+            {
+                (timer_paths(&node_fqn, node_paths), true)
+            } else {
+                (hop_paths, false)
+            };
             if let Some(candidate) = advance(
-                &node_fqn, hop_paths, depth, sinks, topics, services, node_paths, graph,
+                &node_fqn, hop_paths, sampled, depth, sinks, topics, services, node_paths, graph,
             ) && best
                 .as_ref()
                 .is_none_or(|b| candidate.route_ms > b.route_ms)
@@ -1346,10 +1432,11 @@ fn walk_reaction(
     ///
     /// A server declares no `on_violation` (`srv:` takes `max_response` and
     /// nothing else), so the rule is the one the topic side applies past the
-    /// guard: a path whose trigger names this endpoint. A server that only
-    /// latches the request and acts on its own timer is not walked, exactly
-    /// as a `state:` subscriber read on a timer is not: in both cases the
-    /// reaction stops being a message and starts waiting for a clock.
+    /// guard: a path whose trigger names this endpoint. A server with no such
+    /// path latches the request and acts on its own timer, so the walk goes
+    /// on through that timer as a sampling hop, exactly as it does past a
+    /// `state: true` subscriber: in both cases the reaction stops being a
+    /// message and starts waiting for a clock, and the wait is one period.
     fn from_service(
         service_fqn: &str,
         depth: usize,
@@ -1379,8 +1466,13 @@ fn walk_reaction(
                         )
                 })
                 .collect();
+            let (hop_paths, sampled) = if hop_paths.is_empty() {
+                (timer_paths(&node_fqn, node_paths), true)
+            } else {
+                (hop_paths, false)
+            };
             if let Some(candidate) = advance(
-                &node_fqn, hop_paths, depth, sinks, topics, services, node_paths, graph,
+                &node_fqn, hop_paths, sampled, depth, sinks, topics, services, node_paths, graph,
             ) && best
                 .as_ref()
                 .is_none_or(|b| candidate.route_ms > b.route_ms)
@@ -1828,7 +1920,11 @@ fn check_fault_reaction(
                 w.settle_ms,
                 format!(
                     "reaction route {} = {:.2}ms",
-                    w.hops.join(" → "),
+                    w.hops
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" → "),
                     w.route_ms
                 ),
             ),
@@ -2505,9 +2601,7 @@ fn derive_criticality_from_hazards(
             if let Some(w) = walk_reaction(&guards, &sinks, &topics, &services, &node_paths, graph)
             {
                 for hop in &w.hops {
-                    if let Some((node, _)) = hop.rsplit_once('/') {
-                        assign(node, mk("reacts"));
-                    }
+                    assign(&hop.node, mk("reacts"));
                 }
             }
         }
