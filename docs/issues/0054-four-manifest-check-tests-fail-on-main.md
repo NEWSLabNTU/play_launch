@@ -1,6 +1,6 @@
 ---
 id: 54
-title: "four `manifest_check` tests fail against a current binary — three phase-70 W2 model facts and one missing rate-contradiction warning"
+title: "four `manifest_check` tests fail against a current binary — three encode pre-phase-78 scheduling semantics, one is a missing rate-contradiction warning"
 status: open
 type: correctness
 severity: medium
@@ -88,3 +88,58 @@ understood — three of these assert facts that shipped phases claim to carry.
 
 Observed 2026-09-25 after fixing #0051 and rebuilding; the `w2_*` three were
 also seen at v0.1.41 and v0.1.42 by an earlier agent, with identical output.
+
+## Correction 2026-09-25 — the `w2_*` diagnosis above is wrong
+
+I wrote that "a `miss:` declaration does not reach the model". It does.
+Resolving the fixture and reading the model shows `miss:` present on the path
+contract, with its `tolerate_n`, `tolerate_w` and `action`:
+
+```
+miss:
+  tolerate_n: 1
+  tolerate_w: 50
+  action: abort
+```
+
+What is absent is `deadline_policy`, which is a TIER-level field, not a path
+one — and it is absent because no reservation is derived. The resolve says so:
+
+```
+WARN scheduling: `/w/guard` priority 0 outside band [10, 40], clamping to 10
+WARN scheduling: `/w/rt`    priority 0 outside band [10, 40], clamping to 10
+sched_class: SCHED_OTHER
+```
+
+Priority 0 means the mapper had no timing fact to rank by. And it had none
+because **`contract_w2` declares no timer anywhere** — every path is
+`trigger: { input: [...] }`, and the only rate facts in the file are
+`min_rate_hz: 50` promises on endpoints.
+
+That is phase 78's ruling working exactly as documented:
+
+> `MapperNode.rate_hz` becomes the fastest timer trigger among the node's
+> paths and nothing else. […] The one visible change: `rate_monotonic` no
+> longer ranks a node whose only rate fact is a promise. […] the alternative
+> — a promise as a fallback rate — is the reading this phase exists to remove.
+
+`SCHED_DEADLINE` needs a period, the period comes from `1/rate_hz` propagated
+from a chain's source, and a promise is no longer a rate. So no period, no
+reservation, no `deadline_policy`, and the three assertions fail.
+
+**These tests are correct about the old model and wrong about the new one.**
+The fixture predates phase 78 and encodes the semantics it removed. The fix is
+to the FIXTURE — give it a timer trigger, or an `external: pub` source with a
+declared rate — not to the product, and certainly not by relaxing the
+assertions, which would delete the `miss`-to-`deadline_policy` coverage
+entirely.
+
+Worth stating because the earlier reports (and this issue's own first draft)
+called them "pre-existing" and then "pre-existing AND real": they are real
+failures of a real assertion, and the product is behaving as designed. The
+honest label is *the fixture was not migrated with the phase that changed the
+rule*.
+
+The fourth failure — the missing rate-contradiction warning on the legacy
+`system.toml` path — is untouched by this correction and still needs
+diagnosis.
