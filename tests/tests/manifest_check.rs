@@ -1046,6 +1046,40 @@ fn fault_reaction_rules_fire_on_a_broken_chain() {
     }
 }
 
+/// The same chain with the reaction handed over a SERVICE instead of a topic:
+/// the detector CALLS the brake controller rather than publishing to it, which
+/// is the shape of every MRM chain (Autoware's `mrm_handler` calls
+/// `/system/mrm/emergency_stop/operate` on `mrm_emergency_stop_operator`).
+///
+/// `contract_fault_service` carries `contract_fault`'s numbers exactly, so the
+/// derived verdict must be `contract_fault`'s: route 7ms, settle 200ms, total
+/// 307ms. While the reaction walk enumerated `topics:` alone this fixture
+/// reported `reaction-unreachable`, fell back to the scope path's declared
+/// 100ms, lost the settle with it, and derived NO criticality at all for
+/// brake_controller -- the hazard's ASIL_D landed on the node that notices the
+/// fault and never on the node that stops the vehicle.
+#[test]
+fn a_reaction_crossing_a_service_is_walked_like_one_crossing_a_topic() {
+    let out = check_fixture("contract_fault_service");
+    for needle in [
+        // Both hops of the route: the client's and the server's.
+        "/safety/obstacle_detector/declare_lost",
+        "/safety/brake_controller/emergency_stop = 7.00ms",
+        "settle 200.00ms",
+        "= 307.00ms",
+        // The severity reaches the node that ACTS.
+        "node /safety/brake_controller declares criticality 'high'",
+        "ASIL_D reacts hazard 'drive_blind'",
+    ] {
+        assert!(
+            out.contains(needle),
+            "expected `{needle}` on contract_fault_service:\n{out}"
+        );
+    }
+    // The route exists, so nothing falls back to the declared budget.
+    assert!(!out.contains("reaction-unreachable"), "{out}");
+}
+
 /// Phase 74: the contract's liveliness lease reaches the model as a
 /// `qos_overrides` parameter on the subscribing node, and the lease itself
 /// is lowered for the live observer.

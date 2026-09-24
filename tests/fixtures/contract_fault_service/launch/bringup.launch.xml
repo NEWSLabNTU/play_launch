@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!-- The contract_fault chain, with the reaction crossing a SERVICE instead of
+     a topic: the detector CALLS the brake controller rather than publishing to
+     it. Same three nodes, same numbers, so the route the checker derives here
+     must equal the one it derives for contract_fault. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="lidar_driver"      namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="obstacle_detector" namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="brake_controller"  namespace="/safety"/>
+</launch>

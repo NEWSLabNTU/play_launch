@@ -239,6 +239,42 @@ RankedPlan {
         },
     ],
 }
+== contract_fault_service/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/safety/obstacle_detector",
+            path: "declare_lost",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=2)",
+        },
+        RankItem {
+            node: "/safety/brake_controller",
+            path: "emergency_stop",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=5)",
+        },
+        RankItem {
+            node: "/safety/lidar_driver",
+            path: "sample",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=20)",
+        },
+    ],
+    warnings: [],
+}
 == contract_merge/launch/bringup.launch.xml
 RankedPlan {
     items: [],

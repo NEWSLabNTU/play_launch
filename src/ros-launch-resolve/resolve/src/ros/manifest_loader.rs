@@ -1173,18 +1173,126 @@ struct ReactionWalk {
 /// ends it with no settle. Fork-join takes the longest branch. Depth-bounded
 /// rather than cycle-detected: a reaction that re-triggers itself is a
 /// declaration error worth a wrong number, not a hang.
+///
+/// A reaction crosses a SERVICE the same way. A path whose `output` names a
+/// `cli:` endpoint hands the reaction to that service's servers, and a
+/// server's path triggered by its `srv:` endpoint carries it onward: a
+/// request is a message, and the walk's reason for leaving the nominal
+/// dataflow graph (the guard's publisher is dead, so its clock boundary will
+/// never tick again) says nothing about services. Enumerating only `topics:`
+/// put the node that ACTS on a service-mediated reaction outside the route
+/// and outside the criticality derivation with it, which is backwards for
+/// every MRM chain shaped like Autoware's: the handler that NOTICES got the
+/// hazard's ASIL and the operator that STOPS the vehicle got nothing.
 fn walk_reaction(
     guards: &[String],
     sinks: &HashSet<&str>,
     topics: &BTreeMap<String, ResolvedTopic>,
+    services: &BTreeMap<String, ResolvedService>,
     node_paths: &[ResolvedNodePath],
     graph: &super::manifest_graph::GlobalDataflowGraph,
 ) -> Option<ReactionWalk> {
+    /// Carry the reaction onward through `hop_paths`, the paths of
+    /// `node_fqn` that the endpoint just reached triggers. Shared by both
+    /// halves of the walk, because what a hop costs and where it goes next
+    /// does not depend on whether the reaction arrived as a message or as a
+    /// request.
+    #[allow(clippy::too_many_arguments)]
+    fn advance(
+        node_fqn: &str,
+        hop_paths: Vec<&ResolvedNodePath>,
+        depth: usize,
+        sinks: &HashSet<&str>,
+        topics: &BTreeMap<String, ResolvedTopic>,
+        services: &BTreeMap<String, ResolvedService>,
+        node_paths: &[ResolvedNodePath],
+        graph: &super::manifest_graph::GlobalDataflowGraph,
+    ) -> Option<ReactionWalk> {
+        let mut best: Option<ReactionWalk> = None;
+        for path in hop_paths {
+            let hop_ms = path.path.max_latency.map_or(0.0, |d| d.as_millis_f64());
+            let hop = format!("{node_fqn}/{}", path.path_name);
+            let publishes_sink = |ep_name: &str| {
+                let r = format!("{node_fqn}/{ep_name}");
+                sinks
+                    .iter()
+                    .any(|t| topics.get(*t).is_some_and(|tp| tp.publishers.contains(&r)))
+            };
+            // Does this path command the safe state on a sink — or, failing a
+            // declared safe_state, simply publish onto one?
+            let emits_sink = match path.path.safe_state.as_ref() {
+                Some(ss) if publishes_sink(&ss.emits) => Some(ss.settle.map(|d| d.as_millis_f64())),
+                _ if path.path.output.iter().any(|o| publishes_sink(o)) => Some(None),
+                _ => None,
+            };
+            let candidate = if let Some(settle) = emits_sink {
+                ReactionWalk {
+                    route_ms: hop_ms,
+                    settle_ms: settle,
+                    hops: vec![hop],
+                }
+            } else {
+                // Continue from every topic this reaction publishes onto and
+                // every service it calls.
+                let mut longest: Option<ReactionWalk> = None;
+                for out_ep in &path.path.output {
+                    let out_ref = format!("{node_fqn}/{out_ep}");
+                    for (t_fqn, t) in topics {
+                        if !t.publishers.contains(&out_ref) {
+                            continue;
+                        }
+                        if let Some(mut w) =
+                            from_topic(t_fqn, depth + 1, sinks, topics, services, node_paths, graph)
+                            && longest.as_ref().is_none_or(|l| w.route_ms > l.route_ms)
+                        {
+                            w.route_ms += hop_ms;
+                            w.hops.insert(0, hop.clone());
+                            longest = Some(w);
+                        }
+                    }
+                    // A request is a message too: the client endpoint on this
+                    // path's output hands the reaction to the server.
+                    for (s_fqn, s) in services {
+                        if !s.clients.contains(&out_ref) {
+                            continue;
+                        }
+                        if let Some(mut w) = from_service(
+                            s_fqn,
+                            depth + 1,
+                            sinks,
+                            topics,
+                            services,
+                            node_paths,
+                            graph,
+                        ) && longest.as_ref().is_none_or(|l| w.route_ms > l.route_ms)
+                        {
+                            w.route_ms += hop_ms;
+                            w.hops.insert(0, hop.clone());
+                            longest = Some(w);
+                        }
+                    }
+                }
+                let Some(w) = longest else {
+                    continue;
+                };
+                w
+            };
+            if best
+                .as_ref()
+                .is_none_or(|b| candidate.route_ms > b.route_ms)
+            {
+                best = Some(candidate);
+            }
+        }
+        best
+    }
+
     fn from_topic(
         topic_fqn: &str,
         depth: usize,
         sinks: &HashSet<&str>,
         topics: &BTreeMap<String, ResolvedTopic>,
+        services: &BTreeMap<String, ResolvedService>,
         node_paths: &[ResolvedNodePath],
         graph: &super::manifest_graph::GlobalDataflowGraph,
     ) -> Option<ReactionWalk> {
@@ -1221,67 +1329,71 @@ fn walk_reaction(
                         .collect(),
                     None => Vec::new(),
                 };
-            for path in hop_paths {
-                let hop_ms = path.path.max_latency.map_or(0.0, |d| d.as_millis_f64());
-                let hop = format!("{node_fqn}/{}", path.path_name);
-                let publishes_sink = |ep_name: &str| {
-                    let r = format!("{node_fqn}/{ep_name}");
-                    sinks
-                        .iter()
-                        .any(|t| topics.get(*t).is_some_and(|tp| tp.publishers.contains(&r)))
-                };
-                // Does this path command the safe state on a sink — or, failing a
-                // declared safe_state, simply publish onto one?
-                let emits_sink = match path.path.safe_state.as_ref() {
-                    Some(ss) if publishes_sink(&ss.emits) => {
-                        Some(ss.settle.map(|d| d.as_millis_f64()))
-                    }
-                    _ if path.path.output.iter().any(|o| publishes_sink(o)) => Some(None),
-                    _ => None,
-                };
-                let candidate = if let Some(settle) = emits_sink {
-                    ReactionWalk {
-                        route_ms: hop_ms,
-                        settle_ms: settle,
-                        hops: vec![hop],
-                    }
-                } else {
-                    // Continue from every topic this reaction publishes onto.
-                    let mut longest: Option<ReactionWalk> = None;
-                    for out_ep in &path.path.output {
-                        let out_ref = format!("{node_fqn}/{out_ep}");
-                        for (t_fqn, t) in topics {
-                            if !t.publishers.contains(&out_ref) {
-                                continue;
-                            }
-                            if let Some(mut w) =
-                                from_topic(t_fqn, depth + 1, sinks, topics, node_paths, graph)
-                                && longest.as_ref().is_none_or(|l| w.route_ms > l.route_ms)
-                            {
-                                w.route_ms += hop_ms;
-                                w.hops.insert(0, hop.clone());
-                                longest = Some(w);
-                            }
-                        }
-                    }
-                    let Some(w) = longest else {
-                        continue;
-                    };
-                    w
-                };
-                if best
-                    .as_ref()
-                    .is_none_or(|b| candidate.route_ms > b.route_ms)
-                {
-                    best = Some(candidate);
-                }
+            if let Some(candidate) = advance(
+                &node_fqn, hop_paths, depth, sinks, topics, services, node_paths, graph,
+            ) && best
+                .as_ref()
+                .is_none_or(|b| candidate.route_ms > b.route_ms)
+            {
+                best = Some(candidate);
             }
         }
         best
     }
+
+    /// The service half of the walk: the servers of a called service take the
+    /// reaction on through whichever of their paths the request triggers.
+    ///
+    /// A server declares no `on_violation` (`srv:` takes `max_response` and
+    /// nothing else), so the rule is the one the topic side applies past the
+    /// guard: a path whose trigger names this endpoint. A server that only
+    /// latches the request and acts on its own timer is not walked, exactly
+    /// as a `state:` subscriber read on a timer is not: in both cases the
+    /// reaction stops being a message and starts waiting for a clock.
+    fn from_service(
+        service_fqn: &str,
+        depth: usize,
+        sinks: &HashSet<&str>,
+        topics: &BTreeMap<String, ResolvedTopic>,
+        services: &BTreeMap<String, ResolvedService>,
+        node_paths: &[ResolvedNodePath],
+        graph: &super::manifest_graph::GlobalDataflowGraph,
+    ) -> Option<ReactionWalk> {
+        if depth > 16 {
+            return None;
+        }
+        let service = services.get(service_fqn)?;
+        let mut best: Option<ReactionWalk> = None;
+        for server_ref in &service.servers {
+            let Some((node_fqn, ep)) = split_endpoint_ref_for_check(server_ref) else {
+                continue;
+            };
+            let hop_paths: Vec<&ResolvedNodePath> = node_paths
+                .iter()
+                .filter(|p| {
+                    p.node_fqn == node_fqn
+                        && matches!(
+                            p.path.effective_trigger(),
+                            ros_launch_manifest_types::EffectiveTrigger::Input(ref eps)
+                                if eps.contains(&ep)
+                        )
+                })
+                .collect();
+            if let Some(candidate) = advance(
+                &node_fqn, hop_paths, depth, sinks, topics, services, node_paths, graph,
+            ) && best
+                .as_ref()
+                .is_none_or(|b| candidate.route_ms > b.route_ms)
+            {
+                best = Some(candidate);
+            }
+        }
+        best
+    }
+
     let mut best: Option<ReactionWalk> = None;
     for g in guards {
-        if let Some(w) = from_topic(g, 0, sinks, topics, node_paths, graph)
+        if let Some(w) = from_topic(g, 0, sinks, topics, services, node_paths, graph)
             && best.as_ref().is_none_or(|b| w.route_ms > b.route_ms)
         {
             best = Some(w);
@@ -1412,6 +1524,7 @@ fn check_fault_reaction(
     let mut diags: Vec<Diagnostic> = Vec::new();
     let hazards = index.hazards.clone();
     let topics = index.topics.clone();
+    let services = index.services.clone();
     let node_paths = index.node_paths.clone();
     let scope_paths = index.scope_paths.clone();
     let modes = index.modes.clone();
@@ -1641,7 +1754,7 @@ fn check_fault_reaction(
             };
             let sinks: HashSet<&str> = rp.output_topics.iter().map(String::as_str).collect();
             let guards: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
-            let route = walk_reaction(&guards, &sinks, &topics, &node_paths, graph)
+            let route = walk_reaction(&guards, &sinks, &topics, &services, &node_paths, graph)
                 .map(|w| (w.route_ms, w.settle_ms))
                 .or_else(|| rp.path.max_latency.map(|d| (d.as_millis_f64(), None)));
             let (Some((route_ms, settle)), Some(ftti), Some((fdti, _))) = (
@@ -1704,6 +1817,7 @@ fn check_fault_reaction(
                 .collect::<Vec<_>>(),
             &sinks,
             &topics,
+            &services,
             &node_paths,
             graph,
         );
@@ -2291,6 +2405,7 @@ fn derive_criticality_from_hazards(
 ) {
     let hazards = index.hazards.clone();
     let topics = index.topics.clone();
+    let services = index.services.clone();
     let node_paths = index.node_paths.clone();
     let scope_paths = index.scope_paths.clone();
     let mut diags: Vec<Diagnostic> = Vec::new();
@@ -2387,7 +2502,8 @@ fn derive_criticality_from_hazards(
         {
             let sinks: HashSet<&str> = reaction.output_topics.iter().map(String::as_str).collect();
             let guards: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
-            if let Some(w) = walk_reaction(&guards, &sinks, &topics, &node_paths, graph) {
+            if let Some(w) = walk_reaction(&guards, &sinks, &topics, &services, &node_paths, graph)
+            {
                 for hop in &w.hops {
                     if let Some((node, _)) = hop.rsplit_once('/') {
                         assign(node, mk("reacts"));
