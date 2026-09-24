@@ -617,6 +617,14 @@ pub fn load_manifests(
         index.total_errors += errors;
         index.total_warnings += warnings;
 
+        // Issue #0048 — does the launch file have the nodes this contract
+        // describes? Runs BEFORE the resolutions below, because those are
+        // what silently qualify an unknown key against the scope namespace;
+        // the finding belongs next to the contract, not to the phantom FQN
+        // it produced.
+        let identity_diags = check_contract_node_identity(&manifest, scope, &index);
+        index.merge_diagnostics.extend(identity_diags);
+
         // Resolve names with namespace prefix and merge across scopes
         resolve_topics(&manifest, scope, &mut index);
         resolve_services(&manifest, scope, &mut index);
@@ -4719,6 +4727,207 @@ pub(crate) fn resolve_endpoint_ref(
     }
 }
 
+/// The keys a scope's contract declares that the launch dump does not have —
+/// issue #0048.
+///
+/// [`resolve_node_fqn`]'s last branch qualifies a bare key against the
+/// SCOPE's namespace, which is not necessarily the node's: a node whose
+/// namespace comes from its own `namespace=` attribute lands somewhere the
+/// scope namespace does not predict. Measured on
+/// `tests/fixtures/simple_test/launch/unnamed_node.launch.xml`: a contract
+/// keyed `talker-1` resolved to `/talker-1` where the node is
+/// `/identity_test/talker-1`, and every requirement written on it — rates,
+/// budgets, QoS, the hazards it guards — was then checked against a vertex
+/// nothing runs. `check` reported `1 clean, 0 errors, 0 warnings`.
+///
+/// The fallback is not the defect and is not removed: it is what lets a
+/// contract be checked with no launch dump at all. What was missing is the
+/// diagnostic for the case where the dump WAS available and the name was not
+/// in it.
+///
+/// # Telling "a dump was available" from "there is no dump"
+///
+/// [`ManifestIndex::node_identity`] is keyed by `(scope_id, bare_name)`, so
+/// "this scope has at least one entry" is exactly the statement that the
+/// dump describes this scope's nodes and a lookup was possible. It is a real
+/// distinction, not a proxy: a contract checked without a launch tree goes
+/// through a dump whose `node`/`container`/`load_node` lists are empty (every
+/// synthetic-dump test in this crate, and the `causal_graph` export tests,
+/// are that shape), so the scope has no entries and this function is silent.
+/// A scope that owns nodes and does not own THIS one is the only case that
+/// reports.
+///
+/// # Severity
+///
+/// `Error`. The gate above already restricts it to the case where the answer
+/// is knowable and the contract got it wrong, so there is no legitimate
+/// contract it can break — and a warning is precisely the wrong instrument
+/// here, because the failure it reports is that every OTHER verdict about
+/// that node is vacuous. A warning that must be believed in order to distrust
+/// a clean report is a warning that will be read as noise.
+fn check_contract_node_identity(
+    manifest: &Manifest,
+    scope: &ScopeEntry,
+    index: &ManifestIndex,
+) -> Vec<Diagnostic> {
+    // The gate: did a lookup even have a chance in this scope?
+    let mut known: Vec<&str> = index
+        .node_identity
+        .keys()
+        .filter(|(sid, _)| *sid == scope.id)
+        .map(|(_, bare)| bare.as_str())
+        .collect();
+    if known.is_empty() {
+        return Vec::new();
+    }
+    known.sort_unstable();
+    known.dedup();
+
+    // Every contract site whose node part goes through `resolve_node_fqn` /
+    // `resolve_endpoint_ref`: the node declarations themselves, and the
+    // endpoint refs on topics and services. (`resolve_actions` qualifies its
+    // refs directly and never consults the identity map at all — a separate
+    // gap, not this one.)
+    let mut sites: Vec<(&str, String)> = Vec::new();
+    for name in manifest.nodes.keys() {
+        sites.push((name.as_str(), format!("nodes.{name}")));
+    }
+    for (topic_name, decl) in &manifest.topics {
+        for (side, refs) in [("pub", &decl.publishers), ("sub", &decl.subscribers)] {
+            for ep_ref in refs {
+                if let Some(node_part) = endpoint_ref_node_part(ep_ref) {
+                    sites.push((node_part, format!("topics.{topic_name}.{side}")));
+                }
+            }
+        }
+    }
+    for (service_name, decl) in &manifest.services {
+        for (side, refs) in [("server", &decl.server), ("client", &decl.client)] {
+            for ep_ref in refs {
+                if let Some(node_part) = endpoint_ref_node_part(ep_ref) {
+                    sites.push((node_part, format!("services.{service_name}.{side}")));
+                }
+            }
+        }
+    }
+
+    let mut reported: HashSet<&str> = HashSet::new();
+    let mut out = Vec::new();
+    for (key, path) in sites {
+        // Absolute keys pass through `resolve_node_fqn` verbatim and cannot
+        // be mis-qualified — which is why `scripts/capture_manifest.py`
+        // emits them.
+        if key.starts_with('/') {
+            continue;
+        }
+        if index
+            .node_identity
+            .contains_key(&(scope.id, key.to_string()))
+        {
+            continue;
+        }
+        if !reported.insert(key) {
+            continue;
+        }
+        out.push(Diagnostic {
+            rule_id: "node-identity-unknown".to_string(),
+            severity: Severity::Error,
+            message: format!(
+                "contract names node '{key}', which the launch file does not declare in this \
+                 scope ({}). It was qualified against the scope namespace to '{}' — a \
+                 syntactically fine FQN that names no running node, so every requirement \
+                 written on '{key}' is checked against nothing. {} An absolute key \
+                 (`/ns/name`) passes through verbatim and cannot be mis-qualified",
+                match scope.pkg() {
+                    Some(pkg) => format!("{pkg}/{}", scope.file().unwrap_or("?")),
+                    None => scope.file().unwrap_or("?").to_string(),
+                },
+                qualify_name(&scope.ns, key),
+                candidate_phrase(key, &known),
+            ),
+            path,
+            span: None,
+        });
+    }
+    out
+}
+
+/// The node part of a `node/endpoint` reference — everything before the last
+/// `/`. `None` for an absolute ref (it passes through verbatim) or a
+/// malformed one with no separator (which `resolve_endpoint_ref` does not
+/// route through the identity map either).
+fn endpoint_ref_node_part(ep_ref: &str) -> Option<&str> {
+    if ep_ref.starts_with('/') {
+        return None;
+    }
+    ep_ref.rfind('/').map(|pos| &ep_ref[..pos])
+}
+
+/// The "did you mean" half of the diagnostic.
+///
+/// Budgeted by key length exactly as the manifest parser's
+/// `field_table::nearest` budgets its own suggestions, and for the same
+/// reason: a corpus with genuine near-miss names (`talker` / `talker_1`, a
+/// node and its `_node` twin) makes an unbudgeted nearest-wins confidently
+/// wrong. When nothing is close enough, the names this scope DOES declare
+/// are listed instead — an unrelated key deserves the real set, not a
+/// misleading single guess.
+fn candidate_phrase(key: &str, known: &[&str]) -> String {
+    let budget = match key.len() {
+        0..=4 => 1,
+        5..=8 => 2,
+        _ => 3,
+    };
+    let mut near: Vec<(usize, &str)> = known
+        .iter()
+        .map(|k| (edit_distance(k, key), *k))
+        .filter(|(d, _)| *d <= budget)
+        .collect();
+    near.sort_unstable();
+    near.truncate(3);
+    if !near.is_empty() {
+        let list: Vec<&str> = near.into_iter().map(|(_, k)| k).collect();
+        return format!("Did you mean {}?", quoted_list(&list));
+    }
+    let shown: Vec<&str> = known.iter().take(5).copied().collect();
+    let more = known.len().saturating_sub(shown.len());
+    if more > 0 {
+        format!(
+            "This scope declares {} (and {more} more), none of them close to '{key}'.",
+            quoted_list(&shown)
+        )
+    } else {
+        format!(
+            "This scope declares {}, none of them close to '{key}'.",
+            quoted_list(&shown)
+        )
+    }
+}
+
+fn quoted_list(items: &[&str]) -> String {
+    items
+        .iter()
+        .map(|s| format!("'{s}'"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Levenshtein distance, two rows.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7069,5 +7278,230 @@ paths:
              silently rather than failing"
         );
         assert_eq!(v2_paths[0].output_topics, legacy_paths[0].output_topics);
+    }
+
+    // ── Issue #0048: a contract that names a node the launch tree lacks ──
+
+    /// Write `yaml` as the contract for every file scope in `dump` and load.
+    ///
+    /// The same shape as [`overlay_index`], except the contract text is the
+    /// test's own rather than a fixture from the manifest repository — these
+    /// cases turn on the exact node KEYS a contract uses, which no shared
+    /// fixture can be repurposed for without making the shared fixture
+    /// about this.
+    fn overlay_index_with(dump: &LaunchDump, yaml: &str) -> ManifestIndex {
+        let tmp = tempfile::TempDir::new().unwrap();
+        for scope in &dump.scopes {
+            let Some(origin) = &scope.origin else {
+                continue;
+            };
+            let pkg_dir = origin.pkg.as_deref().unwrap_or("_");
+            let stem = contract_stem(&origin.file);
+            let dest_dir = tmp.path().join(pkg_dir).join("launch");
+            std::fs::create_dir_all(&dest_dir).unwrap();
+            std::fs::write(dest_dir.join(format!("{stem}.contract.yaml")), yaml).unwrap();
+        }
+        let sources = ContractSources {
+            overlay: Some(tmp.path().to_path_buf()),
+            provider: false,
+        };
+        load_manifests(dump, &sources).unwrap()
+    }
+
+    /// The launch tree of `tests/fixtures/simple_test/launch/unnamed_node.
+    /// launch.xml`, which is where #0048 was measured: an un-named node whose
+    /// namespace comes from its OWN attribute, so the scope namespace ("")
+    /// does not predict where it lands.
+    fn unnamed_node_dump(with_records: bool) -> LaunchDump {
+        use super::super::launch_dump::NodeRecord;
+        let mut dump = make_dump(vec![scope(
+            0,
+            "identity_test",
+            "unnamed_node.launch.xml",
+            "",
+            None,
+        )]);
+        if with_records {
+            dump.node.push(NodeRecord {
+                start_delay_secs: None,
+                on_exit_shutdown: None,
+                executable: "talker".to_string(),
+                package: Some("demo_nodes_cpp".to_string()),
+                // No `name=` — the #0017 case. The bare identity is the
+                // EXECUTABLE, so the key an author would naturally write
+                // (the model's `talker-1`) is exactly the one that misses.
+                name: None,
+                namespace: Some("/identity_test".to_string()),
+                exec_name: Some("talker".to_string()),
+                params: vec![],
+                params_files: vec![],
+                param_sources: Vec::new(),
+                remaps: vec![],
+                ros_args: None,
+                args: None,
+                cmd: vec![],
+                env: None,
+                respawn: None,
+                respawn_delay: None,
+                global_params: None,
+                scope: Some(0),
+            });
+        }
+        dump
+    }
+
+    fn identity_diags(index: &ManifestIndex) -> Vec<&Diagnostic> {
+        index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "node-identity-unknown")
+            .collect()
+    }
+
+    #[test]
+    fn a_contract_key_the_launch_tree_does_not_have_is_reported_with_candidates() {
+        // Measured symptom of #0048: this contract resolved `talker-1` to
+        // `/talker-1` where the node is `/identity_test/talker`, and `check`
+        // reported `1 clean, 0 errors, 0 warnings`.
+        let yaml = r#"
+version: 1
+nodes:
+  talker-1:
+    pub: [chatter]
+topics:
+  chatter:
+    type: std_msgs/msg/String
+    pub: [talker-1/chatter]
+    sub: []
+    external: sub
+"#;
+        let index = overlay_index_with(&unnamed_node_dump(true), yaml);
+        let diags = identity_diags(&index);
+        assert_eq!(
+            diags.len(),
+            1,
+            "one finding per unknown key, deduped across the sites naming it; got {:?}",
+            index.merge_diagnostics
+        );
+        let d = diags[0];
+        assert_eq!(d.severity, Severity::Error);
+        assert_eq!(d.path, "nodes.talker-1");
+        assert!(d.message.contains("'talker-1'"), "{}", d.message);
+        // The phantom FQN, named so the reader can match it against
+        // `--export-graph`, which was the only way to see this before.
+        assert!(d.message.contains("'/talker-1'"), "{}", d.message);
+        // The candidate: the bare name the dump really has.
+        assert!(
+            d.message.contains("Did you mean 'talker'?"),
+            "{}",
+            d.message
+        );
+        assert!(
+            index.total_errors >= 1,
+            "an Error must reach the tally, or `check` still exits 0"
+        );
+    }
+
+    #[test]
+    fn an_absolute_contract_key_passes_through_and_stays_clean() {
+        // The control, and the reason `scripts/capture_manifest.py` emits
+        // absolute keys: an absolute name never goes near the namespace
+        // fallback, so it cannot be mis-qualified and must not be reported.
+        let yaml = r#"
+version: 1
+nodes:
+  /identity_test/talker:
+    pub: [chatter]
+topics:
+  chatter:
+    type: std_msgs/msg/String
+    pub: [/identity_test/talker/chatter]
+    sub: []
+    external: sub
+"#;
+        let index = overlay_index_with(&unnamed_node_dump(true), yaml);
+        assert!(
+            identity_diags(&index).is_empty(),
+            "absolute keys pass through verbatim: {:?}",
+            identity_diags(&index)
+        );
+    }
+
+    #[test]
+    fn with_no_launch_records_for_the_scope_the_fallback_stays_silent() {
+        // The other control, and the gate: a contract checked against a
+        // scope the dump says nothing about is a legitimate mode (it is what
+        // lets a contract be checked with no launch tree at all), and no
+        // lookup was possible, so there is nothing to report. Same contract
+        // as the failing case above, same scope — only the records differ.
+        let yaml = r#"
+version: 1
+nodes:
+  talker-1:
+    pub: [chatter]
+topics:
+  chatter:
+    type: std_msgs/msg/String
+    pub: [talker-1/chatter]
+    sub: []
+    external: sub
+"#;
+        let index = overlay_index_with(&unnamed_node_dump(false), yaml);
+        assert!(
+            identity_diags(&index).is_empty(),
+            "no records for the scope means no lookup was possible: {:?}",
+            identity_diags(&index)
+        );
+        assert_eq!(index.manifests.len(), 1, "the contract still loads");
+    }
+
+    #[test]
+    fn an_endpoint_ref_naming_an_unknown_node_is_reported_at_its_own_path() {
+        // `resolve_endpoint_ref` has the same shape as `resolve_node_fqn`
+        // and the same hole: a `node/endpoint` ref whose node part misses is
+        // qualified against the scope namespace too. Here the node part is
+        // named ONLY by the endpoint ref, so `nodes:` cannot catch it.
+        let yaml = r#"
+version: 1
+nodes:
+  talker:
+    pub: [chatter]
+topics:
+  chatter:
+    type: std_msgs/msg/String
+    pub: [talker/chatter]
+    sub: [ghost_listener/chatter]
+"#;
+        let index = overlay_index_with(&unnamed_node_dump(true), yaml);
+        let diags = identity_diags(&index);
+        assert_eq!(diags.len(), 1, "{:?}", index.merge_diagnostics);
+        assert_eq!(diags[0].path, "topics.chatter.sub");
+        assert!(
+            diags[0].message.contains("'ghost_listener'"),
+            "{}",
+            diags[0].message
+        );
+        // Nothing in this scope is within the edit-distance budget for a
+        // 14-character key, so the real set is listed instead of a guess.
+        assert!(
+            diags[0].message.contains("This scope declares 'talker'"),
+            "{}",
+            diags[0].message
+        );
+    }
+
+    #[test]
+    fn the_suggestion_is_budgeted_by_key_length() {
+        // Mirrors `field_table::nearest`: an unrelated key gets no guess.
+        // Unbudgeted nearest-wins would confidently answer "did you mean
+        // 'talker'?" for every key in the file.
+        let known = ["talker", "listener"];
+        assert!(candidate_phrase("talker-1", &known).contains("Did you mean 'talker'?"));
+        assert!(candidate_phrase("talkre", &known).contains("Did you mean 'talker'?"));
+        // Distance 6 from 'talker', 8 from 'listener'; budget for a
+        // 9-character key is 3.
+        let far = candidate_phrase("gyroscope", &known);
+        assert!(!far.contains("Did you mean"), "{far}");
+        assert!(far.contains("'talker', 'listener'"), "{far}");
     }
 }
