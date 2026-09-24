@@ -188,6 +188,17 @@ pub enum ActionKind {
 pub struct LaunchProgram {
     pub source: PathBuf,
     pub body: Vec<Action>,
+    /// Actions this builder recognised as actions but does not implement,
+    /// and therefore dropped together with everything nested inside them.
+    ///
+    /// The IR produces no `RecordJson`, so without this field a drop on the
+    /// IR path had nowhere to go and left only a `debug!` — the exact shape
+    /// [`crate::record::DroppedAction`] was introduced to stop on the
+    /// evaluating path (`<timer>` took whole subtrees with it while `check`
+    /// exited 0). The top-level program carries every drop from the file and
+    /// its includes; an included program nested under
+    /// [`ActionKind::Include`] carries its own.
+    pub dropped_actions: Vec<crate::record::DroppedAction>,
 }
 
 impl LaunchProgram {

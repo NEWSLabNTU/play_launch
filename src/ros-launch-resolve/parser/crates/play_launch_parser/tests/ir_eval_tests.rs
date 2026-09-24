@@ -498,3 +498,30 @@ fn test_evaluate_yaml_cli_arg_override() {
     assert_eq!(record.node.len(), 1);
     assert_eq!(record.node[0].name, Some("real_node".to_string()));
 }
+
+#[test]
+fn test_evaluate_reports_an_action_the_ir_builder_dropped() {
+    // Issue #0049. The IR builder drops an action it does not implement, and
+    // the evaluator never sees it — so without carrying the entries across,
+    // `evaluate_launch_file` produces a record that calls a truncated launch
+    // tree clean and `check` exits 0 on it. `<xml_nonsense>` is unknown to
+    // both paths; the evaluating path records it, and so must this one.
+    let file = write_xml(
+        r#"<launch>
+            <node pkg="demo_nodes_cpp" exec="talker" />
+            <xml_nonsense />
+        </launch>"#,
+    );
+
+    let baseline = parse_launch_file(file.path(), HashMap::new()).unwrap();
+    assert_eq!(baseline.dropped_actions.len(), 1, "evaluating path");
+
+    let record = evaluate_launch_file(file.path(), HashMap::new()).unwrap();
+    assert_eq!(
+        record.dropped_actions.len(),
+        1,
+        "{:?}",
+        record.dropped_actions
+    );
+    assert_eq!(record.dropped_actions[0].action, "xml_nonsense");
+}

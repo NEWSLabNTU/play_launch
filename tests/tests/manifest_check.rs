@@ -12,8 +12,39 @@
 //! `tests/tests/migrated_verbs.rs`).
 
 use play_launch_tests::fixtures;
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
+
+/// The environment every process this file spawns runs in (issue #0051).
+///
+/// Sourced once: `install_env()` shells out to `bash` to source ROS and the
+/// colcon tree, and this file spawns thirty-odd times.
+fn test_env() -> &'static HashMap<String, String> {
+    static ENV: OnceLock<HashMap<String, String>> = OnceLock::new();
+    ENV.get_or_init(fixtures::install_env)
+}
+
+/// Build a `Command` for the standalone `ros-launch-resolve` binary in the
+/// SAME environment `fixtures::play_launch_cmd` gives every other suite.
+///
+/// The path comes from `ros_launch_resolve_bin()` below rather than from
+/// `fixtures` (which has no helper for layer 2's own `target/`), so only the
+/// environment is shared — and the environment is the half that must not
+/// differ between suites. Spawning bare here is what issue #0051 was.
+fn resolve_cmd(bin: &Path) -> Command {
+    let mut cmd = Command::new(bin);
+    fixtures::apply_test_env(&mut cmd, test_env());
+    cmd
+}
+
+/// Build a `Command` for `play_launch` — the environment-carrying helper, not
+/// a bare `Command::new` (issue #0051: without the colcon library path this
+/// binary dies at `libplay_launch_msgs__rosidl_typesupport_c.so`).
+fn play_launch_cmd() -> Command {
+    fixtures::play_launch_cmd(test_env())
+}
 
 /// Locate the `ros-launch-resolve` CLI, which owns `check` (mirrors
 /// `contract_eject.rs`'s `resolve_cli_bin`). The binary is not installed or
@@ -50,7 +81,7 @@ fn simple_launch_dir() -> PathBuf {
 fn run_check(args: &[&str]) -> Option<std::process::Output> {
     let bin = ros_launch_resolve_bin()?;
     Some(
-        Command::new(bin)
+        resolve_cmd(&bin)
             .args(["check"])
             .args(args)
             .output()
@@ -104,7 +135,7 @@ fn check_no_args_shows_help() {
     let Some(bin) = ros_launch_resolve_bin() else {
         return;
     };
-    let output = Command::new(bin)
+    let output = resolve_cmd(&bin)
         .args(["check"])
         .output()
         .expect("failed to run ros-launch-resolve");
@@ -127,7 +158,7 @@ fn check_with_no_flags_is_valid_provider_channel_default() {
     let Some(bin) = ros_launch_resolve_bin() else {
         return;
     };
-    let output = Command::new(bin)
+    let output = resolve_cmd(&bin)
         .args(["check", launch.to_str().unwrap()])
         .output()
         .expect("failed to run ros-launch-resolve");
@@ -164,7 +195,7 @@ fn check_provider_channel_sidecar_next_to_launch_file() {
     let Some(bin) = ros_launch_resolve_bin() else {
         return;
     };
-    let output = Command::new(bin)
+    let output = resolve_cmd(&bin)
         .args(["check", launch_copy.to_str().unwrap()])
         .output()
         .expect("failed to run ros-launch-resolve");
@@ -259,7 +290,7 @@ fn check_overlay_channel_contract_dir() {
     let Some(bin) = ros_launch_resolve_bin() else {
         return;
     };
-    let output = Command::new(bin)
+    let output = resolve_cmd(&bin)
         .args(["check", "--contracts"])
         .arg(overlay_root.path())
         .arg(&launch_copy)
@@ -338,7 +369,7 @@ topics:
     let Some(bin) = ros_launch_resolve_bin() else {
         return;
     };
-    let output = Command::new(bin)
+    let output = resolve_cmd(&bin)
         .args(["check", "--contracts"])
         .arg(overlay_root.path())
         .arg(&launch_copy)
@@ -410,7 +441,7 @@ fn check_sched_overlay_platform_file_beats_provider_sidecar() {
     let Some(bin) = ros_launch_resolve_bin() else {
         return;
     };
-    let output = Command::new(bin)
+    let output = resolve_cmd(&bin)
         .args(["check", "--contracts"])
         .arg(overlay_root.path())
         .arg(&launch_copy)
@@ -463,7 +494,7 @@ fn check_sched_provider_sidecar_only_platform_file() {
     let Some(bin) = ros_launch_resolve_bin() else {
         return;
     };
-    let output = Command::new(bin)
+    let output = resolve_cmd(&bin)
         .args(["check"])
         .arg(&launch_copy)
         .output()
@@ -510,7 +541,7 @@ fn check_sched_wrong_target_platform_file_is_ignored() {
     let Some(bin) = ros_launch_resolve_bin() else {
         return;
     };
-    let output = Command::new(bin)
+    let output = resolve_cmd(&bin)
         .args(["check", "--target", "zephyr"])
         .arg(&launch_copy)
         .output()
@@ -547,7 +578,7 @@ fn check_sched_no_platform_file_leaves_scheduling_disabled() {
     let Some(bin) = ros_launch_resolve_bin() else {
         return;
     };
-    let output = Command::new(bin)
+    let output = resolve_cmd(&bin)
         .args(["check"])
         .arg(&launch_copy)
         .output()
@@ -647,7 +678,7 @@ nodes = [\"listener\"]
     let Some(bin) = ros_launch_resolve_bin() else {
         return;
     };
-    let output = Command::new(bin)
+    let output = resolve_cmd(&bin)
         .args(["check", "--contracts"])
         .arg(overlay_root.path())
         .arg("--sched")
@@ -744,7 +775,7 @@ resources:
     let Some(bin) = ros_launch_resolve_bin() else {
         return;
     };
-    let output = Command::new(bin)
+    let output = resolve_cmd(&bin)
         .args([
             "check",
             "--sched",
@@ -785,7 +816,7 @@ fn check_fixture(dir: &str) -> String {
         .join("tests/fixtures")
         .join(dir)
         .join("launch/bringup.launch.xml");
-    let out = Command::new(fixtures::play_launch_bin())
+    let out = play_launch_cmd()
         .arg("check")
         .arg(&launch)
         .output()
@@ -841,7 +872,7 @@ fn phase67_vocabulary_checks_out_end_to_end() {
 
 fn check_with_sched(dir: &str) -> String {
     let base = fixtures::repo_root().join("tests/fixtures").join(dir).join("launch");
-    let out = Command::new(fixtures::play_launch_bin())
+    let out = play_launch_cmd()
         .arg("check")
         .arg(base.join("bringup.launch.xml"))
         .arg("--sched")
@@ -896,7 +927,7 @@ fn w2_a_jitter_bound_on_a_best_effort_node_is_reported() {
 fn w2_derived_overrun_reaches_the_model() {
     let base = fixtures::repo_root().join("tests/fixtures/contract_w2/launch");
     let out_path = std::env::temp_dir().join("play_launch_w2_model.yaml");
-    let status = Command::new(fixtures::play_launch_bin())
+    let status = play_launch_cmd()
         .arg("resolve")
         .arg(base.join("bringup.launch.xml"))
         .arg("--sched")
@@ -932,7 +963,7 @@ fn w2_derived_overrun_reaches_the_model() {
 #[test]
 fn w4_the_mapper_reads_the_derived_route_not_just_authored_segments() {
     let base = fixtures::repo_root().join("tests/fixtures/contract_derived_chain/launch");
-    let out = Command::new(fixtures::play_launch_bin())
+    let out = play_launch_cmd()
         .arg("check")
         .arg(base.join("bringup.launch.xml"))
         .arg("--sched")
@@ -1110,6 +1141,8 @@ fn a_server_that_latches_the_request_is_a_sampling_hop() {
     assert!(!out.contains("reaction-unreachable"), "{out}");
     // The trigger-driven service fixture is untouched: no clock in its route.
     assert!(!check_fixture("contract_fault_service").contains("sampling)"));
+}
+
 /// Phase 82: a detector counts only for the fault classes it can see, and a
 /// hazard is timed by the SLOWEST class it claims. `contract_fault_kinds` is
 /// `contract_fault`'s chain with three guard topics into one detector; every
@@ -1177,7 +1210,7 @@ fn a_hazard_is_timed_by_the_slowest_fault_class_it_claims() {
 fn contract_qos_becomes_qos_override_parameters_on_the_model() {
     let base = fixtures::repo_root().join("tests/fixtures/contract_fault/launch");
     let out_path = std::env::temp_dir().join("play_launch_p74_model.yaml");
-    let status = Command::new(fixtures::play_launch_bin())
+    let status = play_launch_cmd()
         .arg("resolve")
         .arg(base.join("bringup.launch.xml"))
         .arg("-o")

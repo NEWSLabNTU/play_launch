@@ -324,7 +324,13 @@ mod tests {
     use super::*;
 
     /// Drive the real export, the way a loader would.
+    ///
+    /// Takes the interpreter guard for the whole call: these tests share one
+    /// embedded interpreter and one thread-local context bridge, and the
+    /// harness runs them as threads (issue #0050). One place to take it,
+    /// rather than one line per test that can forget.
     fn call(json: &str) -> serde_json::Value {
+        let _guard = crate::python_test_guard();
         let req = CString::new(json).unwrap();
         let raw = unsafe { play_launch_py_call(req.as_ptr()) };
         assert!(!raw.is_null(), "the export must never return null");

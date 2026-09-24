@@ -652,3 +652,73 @@ fn test_ir_rejects_machine_on_node() {
         "{msg}"
     );
 }
+
+#[test]
+fn test_ir_records_an_unimplemented_action() {
+    // Issue #0049. `<timer>` is an action the IR builder does not implement,
+    // so it is dropped together with everything nested inside it — which is
+    // the loss `DroppedAction` exists to make visible. Assert BOTH halves:
+    // the subtree really is gone (so the test is not vacuous), and the loss
+    // is on the program rather than only in a `debug!` line.
+    let program = analyze_xml(
+        r#"<launch>
+            <node pkg="demo_nodes_cpp" exec="talker" name="before"/>
+            <timer period="2.0">
+                <node pkg="demo_nodes_cpp" exec="listener" name="delayed"/>
+            </timer>
+        </launch>"#,
+    );
+
+    let names: Vec<_> = program
+        .all_nodes()
+        .iter()
+        .filter_map(|a| match &a.kind {
+            ActionKind::SpawnNode { name, .. } => name.as_ref().and_then(|n| n.as_literal()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(names, vec!["before"], "the timer's subtree must be gone");
+
+    assert_eq!(
+        program.dropped_actions.len(),
+        1,
+        "{:?}",
+        program.dropped_actions
+    );
+    assert_eq!(program.dropped_actions[0].action, "timer");
+    assert!(program.dropped_actions[0].file.is_some());
+}
+
+#[test]
+fn test_ir_records_an_unimplemented_action_from_an_included_file() {
+    // A drop inside an include is a drop from THIS launch too — the parent
+    // program is what a consumer inspects, so the child traverser's entries
+    // have to be merged up (the evaluating path does this in
+    // `traverser::include`).
+    let dir = tempfile::tempdir().unwrap();
+    let child = dir.path().join("child.launch.xml");
+    std::fs::write(
+        &child,
+        r#"<launch>
+            <timer period="1.0">
+                <node pkg="demo_nodes_cpp" exec="listener" name="delayed"/>
+            </timer>
+        </launch>"#,
+    )
+    .unwrap();
+    let parent = dir.path().join("parent.launch.xml");
+    std::fs::write(
+        &parent,
+        format!(r#"<launch><include file="{}"/></launch>"#, child.display()),
+    )
+    .unwrap();
+
+    let program = analyze_launch_file(&parent).expect("analyze_launch_file should succeed");
+    assert_eq!(
+        program.dropped_actions.len(),
+        1,
+        "{:?}",
+        program.dropped_actions
+    );
+    assert_eq!(program.dropped_actions[0].action, "timer");
+}

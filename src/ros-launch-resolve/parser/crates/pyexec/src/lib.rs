@@ -81,3 +81,33 @@ pub fn register_default_backend() {
 pub fn register() {
     play_launch_parser::python_backend::set_backend(Box::new(Pyo3Backend));
 }
+
+/// Serialise a test that drives the embedded interpreter, and make sure a
+/// backend is registered before it runs.
+///
+/// The interpreter and the parser's `LaunchContext` bridge are PROCESS state,
+/// and the default test harness runs a binary's tests as threads of one
+/// process — so two tests executing a `.launch.py` at once interleave inside
+/// one interpreter. What that looks like is not a crash: `c_abi`'s ABI-4 test
+/// came back `KeyError: 'rear_overhang'` about one run in three, which is
+/// issue #0028's exact symptom, so the flake read as a regression of a
+/// shipped fix (issue #0050).
+///
+/// Defined HERE, in the crate that owns the interpreter, rather than copied
+/// into each test module: `play_launch_parser`'s Python suites already depend
+/// on this crate (they call [`register`]), so one definition covers every
+/// test binary that can start an interpreter. Two independently-written locks
+/// over one interpreter is not a fix.
+///
+/// Recovers from a poisoned mutex — a test that panicked while holding it has
+/// already failed, and poisoning every test after it only hides which one.
+#[doc(hidden)]
+pub fn python_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static PYTHON_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let guard = PYTHON_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // Under the lock: `set_backend` writes a global, and registration is the
+    // caller's job since 0897 W2b. Doing it in the guard every Python test
+    // already takes means there is one place to say it.
+    register();
+    guard
+}

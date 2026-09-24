@@ -302,6 +302,26 @@ pub fn python_path_with_source(env: &HashMap<String, String>) -> String {
 /// nextest processes don't interfere over DDS discovery/services/topics.
 pub fn play_launch_cmd(env: &HashMap<String, String>) -> Command {
     let mut cmd = Command::new(play_launch_bin());
+    apply_test_env(&mut cmd, env);
+    cmd
+}
+
+/// Put a spawned test process in the environment every suite must share.
+///
+/// Split out of [`play_launch_cmd`] for issue #0051: a suite that builds its
+/// own `Command` — because it drives a binary this module has no path helper
+/// for, such as the standalone `ros-launch-resolve` in layer 2's own
+/// `target/` — still has to get the environment from HERE. `manifest_check`
+/// did not, and inherited whatever the invoking shell happened to hold: 16 of
+/// its 30 tests failed on a missing
+/// `libplay_launch_msgs__rosidl_typesupport_c.so` unless the shell had
+/// sourced `install/setup.bash` first. Those failures read as product
+/// breakage, and — being the suite's DEFAULT state — they masked every real
+/// one.
+///
+/// The environment is the part that must not differ between suites; the
+/// binary and the arguments are the part that legitimately does.
+pub fn apply_test_env(cmd: &mut Command, env: &HashMap<String, String>) {
     cmd.env_clear();
     cmd.envs(env);
     cmd.env("PYTHONPATH", python_path_with_source(env));
@@ -316,7 +336,6 @@ pub fn play_launch_cmd(env: &HashMap<String, String>) -> Command {
     if fastdds_profile.is_file() {
         cmd.env("FASTRTPS_DEFAULT_PROFILES_FILE", &fastdds_profile);
     }
-    cmd
 }
 
 /// Path to the `ros-launch-resolve` binary (layer 2's CLI — `resolve` was

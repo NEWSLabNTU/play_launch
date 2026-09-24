@@ -232,6 +232,14 @@ pub fn analyze_launch_file_with_args(
 pub fn evaluate_launch_file(path: &Path, args: HashMap<String, String>) -> Result<RecordJson> {
     let program = analyze_launch_file_with_args(path, args.clone())?;
     let mut traverser = LaunchTraverser::new(args);
+    // The build discarded any action it does not implement, along with its
+    // subtree, and that loss is not representable in the IR it handed back —
+    // so carry the entries across into the traverser that produces the
+    // record, or this path reports a truncated launch tree as clean and
+    // `check` exits 0 on it (the `<timer>` failure, again).
+    for dropped in program.dropped_actions.iter().cloned() {
+        traverser.note_dropped(dropped);
+    }
     traverser.evaluate_ir(&program)?;
     traverser.into_record_json()
 }

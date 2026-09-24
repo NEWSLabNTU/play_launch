@@ -38,6 +38,7 @@ impl LaunchTraverser {
                     return Ok(LaunchProgram {
                         source,
                         body: vec![action],
+                        dropped_actions: self.dropped_actions.clone(),
                     });
                 }
                 "yaml" | "yml" => {
@@ -54,7 +55,14 @@ impl LaunchTraverser {
         let root = crate::xml::XmlEntity::new(doc.root_element());
         let body = self.build_ir_entity(&root, &source)?;
 
-        Ok(LaunchProgram { source, body })
+        Ok(LaunchProgram {
+            source,
+            body,
+            // Everything dropped while building this file and its includes:
+            // `build_ir_include` merges a child traverser's entries into
+            // this one before returning, so by here the list is complete.
+            dropped_actions: self.dropped_actions.clone(),
+        })
     }
 
     /// Build IR from a YAML launch file.
@@ -124,7 +132,14 @@ impl LaunchTraverser {
             }
         }
 
-        Ok(LaunchProgram { source, body })
+        Ok(LaunchProgram {
+            source,
+            body,
+            // Everything dropped while building this file and its includes:
+            // `build_ir_include` merges a child traverser's entries into
+            // this one before returning, so by here the list is complete.
+            dropped_actions: self.dropped_actions.clone(),
+        })
     }
 
     /// Build IR actions from a single XML entity and its children.
@@ -436,7 +451,14 @@ impl LaunchTraverser {
             }
 
             other => {
-                log::debug!("Skipping unsupported action type in IR builder: {}", other);
+                // Record the loss, do not just log it. The IR path drops an
+                // unimplemented action together with its whole subtree, the
+                // same as the evaluating path (`traverser::entity`), and a
+                // warning nobody reads is how `<timer>` dropped whole
+                // subtrees while `check` exited 0. `note_dropped_action`
+                // keeps the log line and adds the entry beside it; it lands
+                // on `LaunchProgram::dropped_actions`, the IR's own output.
+                self.note_dropped_action(other);
             }
         }
 
@@ -532,7 +554,15 @@ impl LaunchTraverser {
         };
 
         match child_traverser.build_ir_file(&resolved_path) {
-            Ok(program) => Some(Box::new(program)),
+            Ok(program) => {
+                // An action dropped inside an included file is dropped from
+                // THIS launch too — same merge as the evaluating path's
+                // `traverser::include`.
+                for dropped in std::mem::take(&mut child_traverser.dropped_actions) {
+                    self.note_dropped(dropped);
+                }
+                Some(Box::new(program))
+            }
             Err(e) => {
                 log::debug!(
                     "IR: failed to build IR for included file {}: {}",

@@ -1,7 +1,7 @@
 ---
 id: 50
 title: "`pyexec`'s `c_abi` tests take no interpreter lock, so they fail intermittently under parallel execution"
-status: open
+status: resolved
 type: test-defect
 severity: medium
 ---
@@ -53,3 +53,30 @@ Confirm by running the binary's tests in a loop (10 runs) before and after.
 
 Observed 2026-09-24 while fixing #0041; 1 in ~3 runs parallel, 3/3 serial. Not
 caused by that work.
+
+## Resolution 2026-09-25
+
+Reproduced first, at the rate the report gives: the `pyexec` unit-test binary
+run 10 times in a row, **5 of 10 failed**, every one of them
+`c_abi::tests::exec_file_sees_the_global_parameters_it_was_sent` with
+`KeyError: 'rear_overhang'`. After the fix, **0 of 10**, and 0 of a further
+20 runs.
+
+The guard `python_tests.rs` holds is a `static Mutex` in an integration-test
+file — process-local, and not reachable from another crate. Rather than write
+a third copy, the definition now lives in the crate that owns the interpreter:
+`play_launch_parser_pyexec::python_test_guard()` (`#[doc(hidden)]`), which
+takes the lock and then calls `register()` under it. `play_launch_parser`'s
+Python suites already depend on this crate for `register()`, so one definition
+covers every test binary that can start an interpreter.
+
+`c_abi.rs` takes it in `call()` — the one helper every test that drives Python
+goes through — rather than one line per test that a new test can forget. The
+three tests that never touch the interpreter (`free_accepts_null`,
+`null_request_is_answered`, `panic_message_reads_both_payload_shapes`) do not
+take it and do not need to.
+
+Not done, and worth a follow-up: `python_tests.rs` and
+`this_launch_file_tests.rs` still define their own `python_test_guard()` with
+the same body. They are separate binaries, so this is duplication rather than
+a correctness problem, but they should collapse onto the shared one.
