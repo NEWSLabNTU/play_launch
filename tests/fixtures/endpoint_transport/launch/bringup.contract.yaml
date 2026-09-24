@@ -1,0 +1,122 @@
+# Issue #0042 — a subscriber's `max_transport` must reach the model, so the
+# resolver (`manifest_graph.rs`) and the shared derivation
+# (`ros-launch-manifest`'s `derive`) charge the SAME hop cost.
+#
+# Mirrors rlm's `tests/fixtures/manifest_endpoint_transport` and adds the one
+# thing that fixture cannot have: a FORK, so the per-edge weight decides which
+# branch is the critical path. A route total alone can be right by accident;
+# a route total AND a route are not.
+#
+# Topology — one topic fans out to two branches that rejoin at the sink:
+#
+#                        /et/objects  (topic default 10ms)
+#                       ╱  [0ms override on fast/objects]  ╲
+#   /et/raw → producer (10ms)                               ├→ fast (20ms) ─┐
+#                       ╲  [10ms default on slow/objects]  ╱                ├→ sink (5ms) → /et/cmd
+#                        ╰────────────────────────────────→ slow (15ms) ───┘
+#
+# Arrival at the sink, per hypothesis about the precedence:
+#
+#   CORRECT (endpoint wins where declared, topic elsewhere):
+#       fast branch  10 +  0 + 20 = 30
+#       slow branch  10 + 10 + 15 = 35   <- critical
+#       total        35 + 5 = 40ms, route producer → slow → sink
+#
+#   override IGNORED (topic value on every edge — the pre-#0042 `derive`):
+#       fast 10 + 10 + 20 = 40           <- critical
+#       slow 10 + 10 + 15 = 35
+#       total 45ms, route producer → fast → sink
+#
+#   override applied to EVERY subscriber:
+#       fast 10 + 0 + 20 = 30            <- critical
+#       slow 10 + 0 + 15 = 25
+#       total 35ms, route producer → fast → sink
+#
+# All three differ in the total AND in which branch is named, and the two
+# wrong ones both name `fast`. That is what makes this a test rather than a
+# coincidence.
+#
+# The scope path's budget is 1ms on purpose: `scope-budget` then always
+# fires and PRINTS the resolver's route and total, so the assertion reads a
+# number the tool computed instead of inferring one from silence.
+version: 1
+
+nodes:
+  producer:
+    sub:
+      raw: { min_rate_hz: 10 }
+    pub:
+      objects: {}
+    paths:
+      main:
+        trigger: { input: [raw] }
+        output: [objects]
+        max_latency: 10ms
+
+  # Loaded into the producer's own container: a pointer handoff, and a bound
+  # the toolchain can be held to because it places both processes.
+  fast:
+    sub:
+      objects: { max_transport: 0ms }
+    pub:
+      out: {}
+    paths:
+      main:
+        trigger: { input: [objects] }
+        output: [out]
+        max_latency: 20ms
+
+  # On another machine, so it inherits the topic's 10ms.
+  slow:
+    sub:
+      objects: {}
+    pub:
+      out: {}
+    paths:
+      main:
+        trigger: { input: [objects] }
+        output: [out]
+        max_latency: 15ms
+
+  sink:
+    sub:
+      fast_in: {}
+      slow_in: {}
+    pub:
+      cmd: {}
+    paths:
+      main:
+        trigger: { input: [fast_in, slow_in] }
+        output: [cmd]
+        max_latency: 5ms
+
+topics:
+  /et/raw:
+    type: std_msgs/msg/String
+    sub: [producer/raw]
+
+  /et/objects:
+    type: std_msgs/msg/String
+    pub: [producer/objects]
+    sub: [fast/objects, slow/objects]
+    max_transport: 10ms
+
+  /et/fast_out:
+    type: std_msgs/msg/String
+    pub: [fast/out]
+    sub: [sink/fast_in]
+
+  /et/slow_out:
+    type: std_msgs/msg/String
+    pub: [slow/out]
+    sub: [sink/slow_in]
+
+  /et/cmd:
+    type: std_msgs/msg/String
+    pub: [sink/cmd]
+
+paths:
+  fan:
+    input: /et/raw
+    output: [/et/cmd]
+    max_latency: 1ms

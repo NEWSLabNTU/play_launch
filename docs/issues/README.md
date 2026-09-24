@@ -48,13 +48,6 @@ but `run` builds no `RuleEngine` and never checks the precondition: a strict
 that no binary accepts, which is the answer it gives to "how do I get a first
 contract for a system that has none". See `0044-*`.
 
-**#0042** -- a subscriber's `max_transport` is legal grammar and the checker
-honours it (preferring it over the topic's, for the intra-process vs
-cross-network case Issue #44 added it for), but `model::SubContract` has no
-transport field, so the shared `derive` crate reads the topic's value alone.
-The two copies of one derivation therefore compute different route totals
-wherever a contract uses the override, silently. See `0042-*`.
-
 **#0041** -- `ThisLaunchFile()` in a `.launch.py` reaches the record, the model
 and the command line as the literal `$(this-launch-file)`, a token the host's
 substitution grammar does not know (it has only `dirname` and `filename`). Same
@@ -84,6 +77,14 @@ HEAD. See `0038-*`.
 by name where `chain_aware` collapses the tie; design question. See `0039-*`.
 
 ## Resolved
+
+**#0042** -- a subscriber's `max_transport` was legal grammar the checker
+honoured and the model could not carry, so the shared `derive` crate read the
+topic's value alone and the two derivations took different routes. Carried in
+rlm v0.1.42 and lowered here, with a forked fixture where the override decides
+WHICH branch is the critical path -- both wrong precedences name the other
+branch. The resolver's copy of the precedence survives, for reasons recorded
+on the issue. See `0042-*`.
 
 **#0043** -- rlm: an `include:` could not carry a condition in either spelling,
 though the spec said carrying per-child conditions was what the entry was for.

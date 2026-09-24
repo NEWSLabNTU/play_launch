@@ -273,6 +273,7 @@ fn sub_contract(
         && !state
         && !required
         && p.buffer.is_none()
+        && p.max_transport.is_none()
     {
         return None;
     }
@@ -293,6 +294,14 @@ fn sub_contract(
             ros_launch_manifest_types::Buffer::Latest => model::BufferContract::Latest,
             ros_launch_manifest_types::Buffer::Queue => model::BufferContract::Queue,
         }),
+        // Issue #0042: one ROS topic does not have one transport cost —
+        // a collocated subscriber pays a pointer handoff where a remote one
+        // pays the network. The resolver honoured that (`manifest_graph.rs`)
+        // and the model did not, so `derive` charged the topic default on
+        // every edge and the two computed different route totals. Carrying
+        // it here is what lets `TopicView::transport_ms` apply the same
+        // precedence the resolver applies.
+        max_transport_ms: p.max_transport.map(|d| d.as_millis_f64()),
     })
 }
 

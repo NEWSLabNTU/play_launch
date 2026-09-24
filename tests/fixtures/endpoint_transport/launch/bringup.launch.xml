@@ -1,0 +1,9 @@
+<launch>
+  <!-- Issue #0042 gate: one topic, two subscribers, one transport each.
+       The launch file only has to exist so the contract has nodes to
+       attach to; every number is in `bringup.contract.yaml`. -->
+  <node pkg="demo" exec="producer" name="producer" namespace="/et"/>
+  <node pkg="demo" exec="fast" name="fast" namespace="/et"/>
+  <node pkg="demo" exec="slow" name="slow" namespace="/et"/>
+  <node pkg="demo" exec="sink" name="sink" namespace="/et"/>
+</launch>

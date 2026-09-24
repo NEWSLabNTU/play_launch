@@ -334,6 +334,16 @@ pub fn build_global_graph(index: &ManifestIndex) -> GlobalDataflowGraph {
                 // subscribers (intra-process ~0ms vs cross-network ~10ms).
                 // Prefer the sub endpoint's value; fall back to the topic
                 // default; otherwise the edge contributes 0.
+                //
+                // SECOND COPY, deliberately (play_launch issue #0042): the
+                // same precedence lives in the manifest crate as
+                // `derive::view::TopicView::transport_ms`, and that is the
+                // one `derive` runs. It cannot be called from here — it is
+                // `pub(crate)` in `derive`, and it is built from a
+                // `SystemModel` while this graph is built from a
+                // `ManifestIndex`, before any model exists. So the two must
+                // be edited together; `tests/tests/endpoint_transport.rs`
+                // is the gate that fails when they disagree.
                 let max_transport_ms = sub_props
                     .and_then(|p| p.max_transport.map(|d| d.as_millis_f64()))
                     .or(topic.max_transport_ms);

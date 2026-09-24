@@ -1,7 +1,7 @@
 ---
 id: 42
 title: "a subscriber's `max_transport` never reaches the model, so the shared derivation and the checker compute different route totals"
-status: open
+status: resolved
 type: correctness
 severity: medium
 ---
@@ -133,3 +133,70 @@ the staging is now:
 
 Recorded as design issue #55 in the manifest repository's
 `docs/design-issues.md`, which is where the reasoning lives.
+
+## Resolved 2026-09-24 — carried, gated, and still two copies
+
+**Wave A** (rlm v0.1.42): `model::SubContract` gained `max_transport_ms`,
+`TopicView` gained a per-subscriber map plus `transport_ms(sub_ep)` (override
+else topic), and `derive`'s graph reads it per edge.
+
+**Wave B** (here): `model_builder.rs` lowers it, and the all-absent early
+return in `sub_contract` needed the new field added to it — not hypothetically:
+the gate's `/et/fast/objects` declares `max_transport` and nothing else, and
+without that line the whole endpoint is dropped from
+`contracts.sub_endpoints`.
+
+### The second copy is still there, and this is the evidence
+
+`manifest_graph.rs:337` cannot call `TopicView::transport_ms`, for two
+independent reasons:
+
+1. **Visibility** — `TopicView` is `pub(crate)` in `derive`, and the crate
+   re-exports only `parse_criticality_label`. It is neither namable nor
+   constructible from outside.
+2. **Input shape** — `build_global_graph(index: &ManifestIndex)` runs at LOAD
+   time from types-level declarations, while `TopicView::from_model` is built
+   from a `SystemModel`. The resolver's graph exists before any model does, so
+   a public `TopicView` would still have nothing to be built from there.
+
+Deleting the resolver's copy therefore means deleting the resolver's graph,
+which is a larger change. Both sites now name the other and the test that
+fails when they disagree, so the cross-reference is bidirectional. Closing it
+properly means either making `TopicView` public and having the resolver build
+one, or extracting a two-argument `transport_ms(sub, topic)` helper in rlm
+that both sides call — both rlm changes.
+
+### The gate reproduces the bug rather than asserting around it
+
+`tests/fixtures/endpoint_transport/` adds what rlm's fixture structurally
+cannot: a FORK. On a single linear route the transport only moves a total, and
+a total can be right by accident; here it decides WHICH BRANCH is the critical
+path, so the route and the total are both asserted.
+
+One topic (`max_transport: 10ms`), two subscribers — one overriding to `0ms`,
+one inheriting — rejoining at a sink:
+
+| hypothesis | fast | slow | route | total |
+|---|---|---|---|---|
+| correct | 10+0+20 = 30 | 10+10+15 = **35** | producer → **slow** → sink | **40ms** |
+| override ignored | 10+10+20 = **40** | 35 | producer → fast → sink | 45ms |
+| override applied to all | 10+0+20 = **30** | 25 | producer → fast → sink | 35ms |
+
+Both wrong precedences name the OTHER branch, and all three totals differ. The
+scope budget is 1ms on purpose so `scope-budget` always fires and PRINTS the
+resolver's route, rather than the test inferring it from silence.
+
+Non-vacuity, with the reported defect live: reverting the lowering gives
+
+```
+left:  ["/et/producer", "/et/fast", "/et/sink"]
+right: ["/et/producer", "/et/slow", "/et/sink"]
+```
+
+— the resolver printing `producer → slow → sink = 40.00ms` while `derive`
+walked `producer → fast → sink`. That is this issue, observed rather than
+argued.
+
+play_launch lib 350, resolver 215, `endpoint_transport` 2 — all passing at
+the v0.1.42 pin, with every lockfile naming exactly one revision and the
+conflict-marker grep clean.
