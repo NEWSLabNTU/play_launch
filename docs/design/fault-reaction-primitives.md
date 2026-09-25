@@ -209,10 +209,10 @@ terminal `safe_state.settle`. No new key.
 
 | derived | from | rule |
 |---|---|---|
-| **FDTI** of a guarded topic | `max(lease_duration, 1/min_rate_hz + deadline, lifespan)` over the guard's subscribers — the *slowest* detector, because the fault is detected when the last mechanism notices | — |
+| **FDTI** of a guarded topic | per fault class, the **fastest** reacting subscriber that declares a detector counting for that class (any one of them noticing is detection); then the **slowest** class the hazard claims, because the interval must cover whichever fault occurs; then the slowest guard member, since `all_of` means the fault is the loss of every one | — |
 | **FRTI** of a reaction | derived route latency (`scope-budget`'s machinery) + `safe_state.settle` | — |
 | `fault-reaction-budget` | `FDTI + FRTI > ftti` | **error** — the hazard is not covered in time; names both terms |
-| `hazard-unguarded` | a hazard whose `guards` topic has no subscriber carrying a detector (`lease_duration`, `deadline`, `max_age` or `min_rate_hz`) | **error** — nothing would ever notice |
+| `hazard-unguarded` | a hazard whose `guards` topic has no reacting subscriber declaring a detector that counts **for a claimed class** — `omission`: the effective QoS `lease_duration`, and `max_age` only under `on_violation.mechanism: diagnostics \| application`; `late`: the effective QoS `deadline`, or `max_age`; `loss`: `drop.max_consecutive` on the guard topic, whose rate is known; `reported`: a publisher of the guard topic, whose rate is known. **`min_rate_hz` counts for no class** | **error** — nothing would ever notice |
 | `reaction-unreachable` | `on_violation.reaction` path whose trigger does not include the subscription, or whose output does not reach the hazard's reaction sink | **error** |
 | `reaction-unbudgeted` | a reaction path with no `max_latency` | **warning** — FRTI is then a lower bound, and the budget rule says so ("on INCOMPLETE EVIDENCE", phase 60's phrase) |
 | `detector-tolerance` | `miss.tolerate` on the guard × period ≥ `ftti` | **error** — the tolerated misses alone exhaust the interval |
@@ -220,6 +220,26 @@ terminal `safe_state.settle`. No new key.
 
 Every rule reads a field; every field is read by a rule. The census stays at
 four.
+
+**Correction, phase 82 (2026-09-25).** The two rows above originally read
+detection as *the slowest mechanism on the subscriber*, and counted
+`min_rate_hz` as one of them. Both were wrong, in opposite directions.
+Detection is now **class-aware**: a mechanism counts only for the fault
+classes it can actually observe, the fastest such mechanism detects, and the
+maximum is taken across the classes a hazard claims — so omitting `on:` buys
+no slack, since the omitted form claims `omission`, `late` and `loss` and is
+timed by the slowest of those a detector covers. `min_rate_hz` counts for
+nothing anywhere: it is a requirement, not a detector — nothing fires when a
+period passes unless a QoS deadline or an application watchdog is declared,
+and counting the period made a 50 Hz floor "detect" a dead lidar in 20 ms
+when the real lease was 100 ms (#0046). `lifespan`, named in the original
+FDTI formula, is still in the grammar but is not a detector either: DDS
+discarding a stale sample is not an event anything notices, and its one
+consumer is the `lifespan-age` rule. Source of truth:
+`detector_interval_ms`, `max_age_evaluated`, `interval_over_kinds` and
+`detectors_that_count` in
+`src/ros-launch-resolve/resolve/src/ros/manifest_loader.rs`; roadmap:
+`docs/roadmap/phase-82-what-a-detector-may-see.md`.
 
 **Runtime.** `runtime_enforcement` already emits `runtime_violations.jsonl`
 for rate and age. It gains the ROS 2 event callbacks (§1.5) and stamps each
@@ -285,7 +305,7 @@ paths:
 What `check` derives:
 
 ```
-FDTI(/safety/scan)         = lease 100ms                       (slowest detector on the guard)
+FDTI(/safety/scan)         = lease 100ms                       (the one detector that counts here)
 FRTI(safety.stop)          = route 2 + 5 ms + settle 200ms = 207ms
 fault-reaction-budget      : 100 + 207 = 307ms ≤ ftti 500ms    OK, 193ms slack
 ```
