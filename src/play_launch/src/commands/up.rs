@@ -694,19 +694,7 @@ pub(crate) async fn play(
         match crate::interception::find_interception_so() {
             Some(so_path) => {
                 info!("Interception enabled (so: {})", so_path.display());
-                // Issue #0017 — where children report the node names they
-                // actually register. One file per run, appended concurrently
-                // under O_APPEND.
-                let identity_path = {
-                    let dir = log_dir.join("interception");
-                    match fs::create_dir_all(&dir) {
-                        Ok(()) => Some(dir.join("node_identity.tsv")),
-                        Err(e) => {
-                            warn!("Could not create interception dir for node identity: {e}");
-                            None
-                        }
-                    }
-                };
+                let identity_path = interception_identity_path(&log_dir);
                 // Inject LD_PRELOAD + fd env vars into each pure node
                 for ctx in &mut pure_node_contexts {
                     let node_name = interception_node_name(
@@ -1921,7 +1909,8 @@ pub(crate) async fn play(
 /// way the launch file does; falls back to the record's name, then the
 /// executable, then a placeholder — a trace row labelled `<unnamed>` is worth
 /// more than one silently attributed to the wrong node.
-fn interception_node_name(
+/// `pub(super)` because `run` names its one child the same way (issue #0053).
+pub(super) fn interception_node_name(
     model_fqn: Option<&str>,
     name: Option<&str>,
     exec_name: Option<&str>,
@@ -1931,6 +1920,27 @@ fn interception_node_name(
         .or(exec_name)
         .unwrap_or("<unnamed>")
         .to_string()
+}
+
+/// Create the run's `interception/` directory and name the identity sink in it.
+///
+/// Issue #0017 — where children report the node names they actually register.
+/// One file per run, appended concurrently under O_APPEND.
+/// `setup_child_interception` derives the endpoint sink (`endpoints.tsv`) from
+/// this path, so `Some` here is what turns both on, and the directory existing
+/// is the proof it may.
+///
+/// Shared with `run` (issue #0053): both verbs write the same bundle, and a
+/// second copy of this would be the first place the two drifted.
+pub(super) fn interception_identity_path(log_dir: &std::path::Path) -> Option<PathBuf> {
+    let dir = log_dir.join("interception");
+    match fs::create_dir_all(&dir) {
+        Ok(()) => Some(dir.join("node_identity.tsv")),
+        Err(e) => {
+            warn!("Could not create interception dir for node identity: {e}");
+            None
+        }
+    }
 }
 
 /// Map each member's canonical id to its launch scope, joining on FQN.

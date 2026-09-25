@@ -277,13 +277,33 @@ while writing a first contract for an existing system.
 
 ## Limits
 
-**`--enforce-rules` is inert on `run`.** `play_launch run <pkg> <exec>`
-accepts the flag and does nothing with it: that path never sets up
-interception and never builds a rule engine, so the precondition check does
-not run either. `play_launch run --enforce-rules strict --interception off`
-starts the node without a word — no `Interception:` line, no refusal, and a
-bundle with no `interception/` directory and no violations file. Use `launch`
-or `up`.
+**`--enforce-rules` is REFUSED on `run`, and interception is not.** The two
+were both inert until 2026-09-25 and were then settled differently, because
+they fail for different reasons (issues #0045 and #0053).
+
+`play_launch run --enforce-rules strict` now exits non-zero before anything is
+spawned, naming the verb and the mode. It is refused rather than wired because
+a contract cannot be looked up for it: both `ContractChannel` variants are
+keyed by launch file — `<overlay>/<pkg>/launch/<stem>.contract.yaml` and
+`<launch-file-dir>/<stem>.contract.yaml` — and `run` names a package and an
+executable, so there is no key. Wiring an engine with an empty contract view
+would report every topic as a graph deviation and nothing else: a gate with no
+contract behind it. Use `launch` or `up` with a one-node launch file.
+
+Interception has no such obstacle — it hooks rcl in whatever process is
+spawned, and what it writes is keyed by node and topic rather than by scope —
+so `play_launch run --interception on <pkg> <exec>` records a full bundle:
+`events.jsonl`, `endpoints.tsv`, `node_identity.tsv` and the summaries. That
+bundle is readable by `play_launch measure` and by
+`scripts/capture_manifest.py`, which is the point: `run` is the verb for
+iterating on one node, and it was the one that could not be measured.
+
+Note the default differs from `launch`/`up` on purpose. There, an unset
+`interception.enabled` means ON, because a non-`off` enforce mode implies an
+event source. On `run` no engine is ever built, so nothing can imply anything,
+and unset still means off — otherwise every plain `play_launch run` would pay
+for a ring buffer in the name of an engine that does not exist. Ask for it
+explicitly.
 
 **The engine sees only what crosses rcl in a process play_launch spawned.**
 A node you started by hand in another terminal, a node inside a container

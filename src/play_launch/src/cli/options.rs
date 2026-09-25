@@ -774,6 +774,11 @@ pub struct ContractOptions {
     /// Force LD_PRELOAD interception on or off for this run without a
     /// --config file. Overrides `interception.enabled` in --config; unset
     /// leaves the decision to --enforce-rules (issue #0031).
+    ///
+    /// ON `run` IT MUST BE ASKED FOR (issue #0053): `run` builds no rule
+    /// engine — every enforcing mode is refused there — so nothing implies
+    /// interception and unset means off. `--interception on` is honoured, and
+    /// the bundle it writes is one `play_launch measure` can read.
     #[arg(long, value_enum, value_name = "on|off")]
     pub interception: Option<Switch>,
 

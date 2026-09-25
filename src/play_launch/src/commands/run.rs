@@ -216,13 +216,50 @@ async fn run_direct(
 
     // Load runtime configuration
     info!("Loading runtime configuration...");
-    let runtime_config = load_runtime_config(
+    let mut runtime_config = load_runtime_config(
         common.config.as_deref(),
         common.is_monitoring_enabled(),
         common.features.monitor_interval_ms,
         common.is_diagnostics_enabled(),
     )?;
     info!("Runtime configuration loaded successfully");
+
+    // Issue #0053 — `--interception on` used to be accepted here and do
+    // nothing: `run` read only the scheduling half of `runtime_config`, so no
+    // ring was created, no `LD_PRELOAD` was injected and the bundle carried no
+    // `interception/` directory at all. Unlike `--enforce-rules` (issue #0045,
+    // refused above) there is no obstacle: the hooks live in whatever process
+    // is spawned, and everything they write is keyed by node and topic rather
+    // than by launch scope, so a single-node run can be measured.
+    if let Some(switch) = common.contract_opts.interception {
+        runtime_config.interception.enabled = Some(switch.is_on());
+    }
+    // `decide` takes the enforcement mode because on `launch`/`up` a non-`off`
+    // mode IMPLIES interception — the hooks are the rule engine's only event
+    // source (issue #0031). `run` builds no rule engine and refuses every
+    // explicit non-`off` mode, so nothing here can imply anything: the mode it
+    // decides against is structurally `Off`, leaving `--interception on|off`
+    // and `interception.enabled` as the only inputs. Passing the real mode
+    // instead would turn interception on for every plain `play_launch run`, in
+    // the name of an engine that is not built.
+    let interception_decision = runtime_config
+        .interception
+        .decide(cli::options::EnforceMode::Off);
+    match interception_decision {
+        crate::cli::config::InterceptionDecision::Configured => info!(
+            "Interception: enabled ({})",
+            if common.contract_opts.interception.is_some() {
+                "--interception on"
+            } else {
+                "interception.enabled: true in --config"
+            }
+        ),
+        _ => debug!(
+            "Interception: off (`run` enforces no contract, so only --interception on or \
+             `interception.enabled: true` turns it on)"
+        ),
+    }
+    runtime_config.interception.enabled = Some(interception_decision.enabled());
 
     // Create temporary log directory
     info!("Creating log directories...");
@@ -297,7 +334,7 @@ async fn run_direct(
     };
 
     // Prepare node execution contexts
-    let pure_node_contexts = prepare_node_contexts(launch_dump, &node_log_dir)?;
+    let mut pure_node_contexts = prepare_node_contexts(launch_dump, &node_log_dir)?;
 
     // Phase 38: resolve the scheduling spec (if any) once, before spawning any
     // member. Phase 38.10: prefer delegating to the RT helper (works
@@ -362,6 +399,70 @@ async fn run_direct(
                 );
                 return Ok(());
             }
+        }
+    }
+
+    // Issue #0053 — the observation half of `runtime_config`, wired here
+    // rather than anywhere earlier so that `--check` (which returns above)
+    // creates no ring and injects nothing.
+    //
+    // The per-child plumbing itself is not copied from `up`: the shared memory
+    // ring, the fds and every env var belong to one function
+    // (`interception::setup_child_interception`), and the two names a bundle is
+    // keyed by come from `up::interception_identity_path` and
+    // `up::interception_node_name`, lifted out rather than duplicated. What is
+    // `run`-shaped is only the loop (one collection, never a container) and the
+    // NAME: `run` builds its record by hand, so `model_fqn` is `None` and the
+    // helper would fall back to the bare executable — while every consumer of
+    // the bundle (`measure`, `capture_manifest.py`) joins on a node FQN. The
+    // FQN comes from the same `fqn_for` the scheduling lookup below uses.
+    let mut interception_consumers: Vec<crate::interception::ChildConsumer> = Vec::new();
+    if interception_decision.enabled() {
+        match crate::interception::find_interception_so() {
+            Some(so_path) => {
+                info!("Interception enabled (so: {})", so_path.display());
+                let identity_path = super::up::interception_identity_path(&log_dir);
+                for ctx in &mut pure_node_contexts {
+                    let fqn = ros_launch_resolve::ros::sched_loader::fqn_for(
+                        launch_dump,
+                        ctx.record.namespace.as_deref(),
+                        ctx.record
+                            .name
+                            .as_deref()
+                            .or(ctx.record.exec_name.as_deref())
+                            .unwrap_or("unknown"),
+                        ctx.record.scope,
+                    );
+                    let node_name = super::up::interception_node_name(
+                        Some(fqn.as_str()),
+                        ctx.record.name.as_deref(),
+                        ctx.record.exec_name.as_deref(),
+                    );
+                    match crate::interception::setup_child_interception(
+                        &node_name,
+                        &mut ctx.cmdline.env,
+                        &so_path,
+                        &runtime_config.interception,
+                        // No contract resolves on `run` (issue #0045), so there
+                        // is no allowlist to block endpoints against.
+                        None,
+                        identity_path.as_deref(),
+                    ) {
+                        Ok(consumer) => interception_consumers.push(consumer),
+                        Err(e) => warn!("Interception setup failed for node: {:#}", e),
+                    }
+                }
+                debug!(
+                    "Interception: {} consumer(s) created",
+                    interception_consumers.len()
+                );
+            }
+            None => warn!(
+                "Interception was asked for but libplay_launch_interception.so was not found \
+                 (searched $PLAY_LAUNCH_INTERCEPTION_SO, the directory of the running binary, \
+                 and ../lib beside it) -- this run records no per-message data; build it with \
+                 `just build-interception`"
+            ),
         }
     }
 
@@ -574,6 +675,26 @@ async fn run_direct(
     // Add optional web UI task
     if let Some(task) = web_ui_task {
         background_tasks.push(task);
+    }
+
+    // Issue #0053 — drain the children's rings and write the summaries.
+    //
+    // NO RULE ENGINE, and the two `None`s are how that is guaranteed rather
+    // than merely intended: #0045 settled that `run` resolves no contract, so
+    // there is nothing to enforce and no lifecycle subscription to feed it.
+    // The task ends on the shutdown signal, so it is never the background task
+    // whose completion breaks the loop below; the drain after that loop is what
+    // gives it time to write `frontier_summary.json`, `stats_summary.json` and
+    // `events.jsonl`.
+    if !interception_consumers.is_empty() {
+        background_tasks.push(tokio::spawn(crate::interception::run_interception_task(
+            interception_consumers,
+            log_dir.clone(),
+            runtime_config.interception.clone(),
+            shutdown_rx.clone(),
+            None,
+            None,
+        )));
     }
 
     debug!(

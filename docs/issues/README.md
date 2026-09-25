@@ -17,10 +17,10 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0053** -- `--interception on` is inert on `run`: the verb for iterating on a
-single node is the one that cannot produce a bundle `measure` or the capture
-script can read. Unlike contracts, interception needs no launch file, so
-#0045's reason for refusing does not apply here. See `0053-*`.
+*None.* Every filed issue is resolved as of 2026-09-25. `just check-issue-index`
+fails if this section and the per-file `status:` frontmatter ever disagree
+again — they drifted in both directions twice in one day, which is what the
+check is for.
 
 ## Resolved
 
