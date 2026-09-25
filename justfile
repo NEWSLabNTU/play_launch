@@ -1096,6 +1096,23 @@ check:
     echo "=== RT scheduling doc drift (issue #0036) ==="
     just check-rt-docs
 
+    echo ""
+    echo "=== issue index vs statuses ==="
+    just check-issue-index
+
+# Fail when `docs/issues/README.md`'s Open list disagrees with the per-file
+# `status:` frontmatter. The list is prose and the statuses are data, so they
+# drift — and they drifted twice in one day: once four shipped issues stayed
+# advertised as open, and once an issue fixed fifteen commits earlier was still
+# listed, which cost an agent dispatch against solved work. Neither is visible
+# by reading either file alone.
+#
+# Check the issue index against the per-file statuses
+check-issue-index:
+    #!/usr/bin/env bash
+    set -e
+    python3 scripts/check_issue_index.py
+
 # Issue #0036: fail when the user-facing docs or help text drift back to the
 # phase-38 world. Same shape as the #0015 gate in `commands/cap_status.rs`
 # (which greps its own runtime messages for a recommendation they must never

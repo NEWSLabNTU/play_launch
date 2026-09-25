@@ -704,6 +704,271 @@ nodes = [\"listener\"]
     );
 }
 
+// ── Issue #0056: the contradiction scan reads the DECLARED facts, and phase
+//    78's ranking ruling stays intact. Three tests, because the two claims
+//    fail in opposite directions: a scan that reads nothing is silent (the
+//    defect), and a mapper that reads a promise ranks by it (what phase 78
+//    removed). ──
+
+/// The same promise-only shape the positive test above declares: rates stated
+/// as `pub.<ep>.min_rate_hz` plus a topic-level `rate_hz`, and **no `paths:`
+/// at all**, so no node carries a timer trigger. This is how the format
+/// reference teaches an author to state a rate, and since phase 78 it is also
+/// the shape that leaves `MapperNode.rate_hz` unset on every node.
+fn promise_only_rate_contract() -> &'static str {
+    "\
+version: 1
+nodes:
+  talker:
+    pub:
+      chatter:
+        min_rate_hz: 100
+  listener:
+    pub:
+      status:
+        min_rate_hz: 10
+topics:
+  chatter:
+    type: std_msgs/msg/String
+    pub: [talker/chatter]
+    rate_hz: 100
+  status:
+    type: std_msgs/msg/String
+    pub: [listener/status]
+    rate_hz: 10
+"
+}
+
+/// Write `contract` as the overlay contract for `pure_nodes.launch.xml`,
+/// returning the overlay root to pass to `--contracts`.
+fn overlay_with_contract(contract: &str) -> tempfile::TempDir {
+    let overlay_root = tempfile::TempDir::new().expect("failed to create overlay root");
+    let overlay_launch_dir = overlay_root.path().join("_/launch");
+    std::fs::create_dir_all(&overlay_launch_dir).expect("failed to create overlay launch dir");
+    std::fs::write(
+        overlay_launch_dir.join("pure_nodes.contract.yaml"),
+        contract,
+    )
+    .expect("failed to write overlay contract");
+    overlay_root
+}
+
+/// A legacy manual-mapper platform file assigning `high_node` priority 40 and
+/// `low_node` priority 10.
+fn legacy_toml_pinning(high_node: &str, low_node: &str) -> String {
+    format!(
+        "\
+[tiers.low]
+class = \"real_time\"
+[tiers.low.posix]
+priority = 10
+sched_class = \"SCHED_FIFO\"
+
+[tiers.high]
+class = \"real_time\"
+[tiers.high.posix]
+priority = 40
+sched_class = \"SCHED_FIFO\"
+
+[[assign]]
+tier = \"high\"
+nodes = [\"{high_node}\"]
+
+[[assign]]
+tier = \"low\"
+nodes = [\"{low_node}\"]
+"
+    )
+}
+
+/// The negative half of the contradiction scan: the same promise-only contract,
+/// with a hand-written table that AGREES with it (the 100 Hz node high, the
+/// 10 Hz node low) — the scan runs over two differing rates and must report
+/// nothing. Without this, a scan that read the declared facts and one that read
+/// nothing at all would be indistinguishable in the positive test alone.
+#[test]
+fn check_promise_rates_agreeing_with_the_priority_table_stay_silent() {
+    let launch = simple_launch_dir().join("pure_nodes.launch.xml");
+    if !launch.exists() {
+        eprintln!("Skipping: simple_test fixture not available");
+        return;
+    }
+
+    let launch_tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_copy = launch_tmp.path().join("pure_nodes.launch.xml");
+    std::fs::copy(&launch, &launch_copy).expect("failed to copy launch file");
+
+    let overlay_root = overlay_with_contract(promise_only_rate_contract());
+    let system_toml = launch_tmp.path().join("system.toml");
+    // talker promises 100 Hz, listener 10 Hz — so talker high is the order the
+    // contract implies.
+    std::fs::write(&system_toml, legacy_toml_pinning("talker", "listener"))
+        .expect("failed to write legacy system.toml");
+
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let output = resolve_cmd(&bin)
+        .args(["check", "--contracts"])
+        .arg(overlay_root.path())
+        .arg("--sched")
+        .arg(&system_toml)
+        .arg(&launch_copy)
+        .output()
+        .expect("failed to run ros-launch-resolve");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "check must succeed: {stderr}");
+    assert!(
+        !stderr.contains("contradicts"),
+        "a priority table that agrees with the declared rates must report no \
+         contradiction, got: {stderr}"
+    );
+}
+
+/// Phase 78's actual ruling, asserted end to end: a promise is not a period, so
+/// `rate_monotonic` must not rank by one. The same promise-only contract that
+/// DOES produce a contradiction warning above must leave both nodes in the
+/// synthesized default tier at priority 0 — if a promise ever reaches
+/// `MapperNode.rate_hz` (the tempting one-line "fix" for issue #0056), talker
+/// lands in the RT band above listener and this fails.
+#[test]
+fn check_promise_rates_are_not_ranked_by_rate_monotonic() {
+    let launch = simple_launch_dir().join("pure_nodes.launch.xml");
+    if !launch.exists() {
+        eprintln!("Skipping: simple_test fixture not available");
+        return;
+    }
+
+    let launch_tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_copy = launch_tmp.path().join("pure_nodes.launch.xml");
+    std::fs::copy(&launch, &launch_copy).expect("failed to copy launch file");
+
+    let overlay_root = overlay_with_contract(promise_only_rate_contract());
+    let platform = launch_tmp.path().join("pure_nodes.system.posix.yaml");
+    std::fs::write(&platform, minimal_platform_file("posix"))
+        .expect("failed to write platform file");
+
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let output = resolve_cmd(&bin)
+        .args(["check", "--explain", "--contracts"])
+        .arg(overlay_root.path())
+        .arg("--sched")
+        .arg(&platform)
+        .arg(&launch_copy)
+        .output()
+        .expect("failed to run ros-launch-resolve");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    assert!(
+        output.status.success(),
+        "check --explain must succeed: {combined}"
+    );
+    // One tier, holding both nodes: nothing was ranked.
+    assert!(
+        combined.contains("mapper=rate_monotonic): 1 tier(s)"),
+        "expected rate_monotonic to derive a single (default) tier from \
+         promise-only rates, got: {combined}"
+    );
+    for node in ["/pure_test/talker", "/pure_test/listener"] {
+        let line = combined
+            .lines()
+            .find(|l| l.starts_with(node) && l.contains("SCHED_OTHER"))
+            .unwrap_or_else(|| {
+                panic!("no --explain row for {node} in: {combined}");
+            });
+        assert!(
+            line.contains("default (no timing facts)"),
+            "a promise must not be a timing fact the mapper ranks by, got: {line}"
+        );
+    }
+}
+
+/// `deadline_priority_contradictions` had no integration coverage at all
+/// (issue #0056, third gap): the same shape as the rate test, with declared
+/// `max_latency` instead of rates. talker's 5 ms budget is tighter than
+/// listener's 50 ms, and the hand-written table inverts them.
+#[test]
+fn check_legacy_toml_with_contradicting_deadline_facts_warns_but_succeeds() {
+    let launch = simple_launch_dir().join("pure_nodes.launch.xml");
+    if !launch.exists() {
+        eprintln!("Skipping: simple_test fixture not available");
+        return;
+    }
+
+    let launch_tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_copy = launch_tmp.path().join("pure_nodes.launch.xml");
+    std::fs::copy(&launch, &launch_copy).expect("failed to copy launch file");
+
+    // Equal rates on both nodes, so the only order the contract implies is the
+    // deadline one — a rate contradiction cannot account for the warning.
+    let overlay_root = overlay_with_contract(
+        "\
+version: 1
+nodes:
+  talker:
+    paths:
+      tight:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [chatter]
+        max_latency: 5ms
+  listener:
+    paths:
+      loose:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [status]
+        max_latency: 50ms
+topics:
+  chatter:
+    type: std_msgs/msg/String
+    pub: [talker/chatter]
+  status:
+    type: std_msgs/msg/String
+    pub: [listener/status]
+",
+    );
+    let system_toml = launch_tmp.path().join("system.toml");
+    // listener (the LOOSER deadline) high, talker (5 ms) low — inverted.
+    std::fs::write(&system_toml, legacy_toml_pinning("listener", "talker"))
+        .expect("failed to write legacy system.toml");
+
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let output = resolve_cmd(&bin)
+        .args(["check", "--contracts"])
+        .arg(overlay_root.path())
+        .arg("--sched")
+        .arg(&system_toml)
+        .arg(&launch_copy)
+        .output()
+        .expect("failed to run ros-launch-resolve");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "contradicting facts must be a warning, not a failure: {stderr}"
+    );
+    assert!(
+        stderr.contains("contradicts") && stderr.contains("deadline_us"),
+        "expected a deadline contradiction warning citing both nodes, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("rate_hz` order"),
+        "the rates are equal here — no rate contradiction should be reported: {stderr}"
+    );
+    assert!(
+        stderr.contains("contract:") && stderr.contains("platform file:"),
+        "expected the warning to cite both source files, got: {stderr}"
+    );
+}
+
 // ── chain_aware end-to-end: chain fixture + platform file + --explain (44.4) ──
 
 /// A provider-sidecar contract declaring a two-segment chain across a timer

@@ -6777,6 +6777,70 @@ mod tests {
         assert!(declared_detectors_not_counting("/n/s", &evaluated, None, F::Omission).is_empty());
     }
 
+    /// #0046 item 1, mechanically: every detector the `hazard-unguarded`
+    /// message RECOMMENDS must be one `detector_interval_ms` counts for the
+    /// class being reported. The original defect was one message naming four
+    /// mechanisms of which, for `on: omission`, exactly one worked and
+    /// `min_rate_hz` worked for no class at all -- so the check is that each
+    /// backticked key in a recommendation, declared ALONE, makes that class
+    /// detected. Unlike the assertions above, this does not name the keys: a
+    /// reworded or extended recommendation is re-checked against the
+    /// arithmetic, so the two cannot drift apart again.
+    #[test]
+    fn every_recommended_detector_counts_for_the_class_it_is_recommended_for() {
+        use ros_launch_manifest_types::{DropSpec, FaultKind as F};
+        let keys = |s: &str| -> Vec<String> {
+            s.split('`')
+                .skip(1)
+                .step_by(2)
+                .map(str::to_string)
+                .collect()
+        };
+        for kind in [F::Omission, F::Late, F::Loss, F::Reported] {
+            let text = detectors_that_count(kind);
+            assert!(
+                !text.contains("min_rate_hz"),
+                "a rate floor is not a detector for any class, but {kind:?} recommends it: {text}"
+            );
+            for key in keys(text) {
+                let (props, drop, period) = match key.as_str() {
+                    "lease_duration" => (
+                        fdti_sub("        qos: { lease_duration: 30ms }\n"),
+                        None,
+                        None,
+                    ),
+                    "deadline" => (fdti_sub("        qos: { deadline: 25ms }\n"), None, None),
+                    // Bare: counts for `late` on its own, and for `omission`
+                    // only under a mechanism that evaluates it -- so the
+                    // omission recommendation may not name it unqualified.
+                    "max_age" => (fdti_sub("        max_age: 20ms\n"), None, None),
+                    "drop.max_consecutive" => (
+                        fdti_sub("        min_rate_hz: 50\n"),
+                        Some(DropSpec {
+                            max_count: None,
+                            max_consecutive: Some(3),
+                        }),
+                        Some(20.0),
+                    ),
+                    other => panic!(
+                        "{kind:?} recommends `{other}`, which this test cannot check -- teach it \
+                         the declaration that satisfies the key, or stop recommending the key"
+                    ),
+                };
+                assert!(
+                    detector_interval_ms(&props, None, drop.as_ref(), period, kind).is_some(),
+                    "{kind:?} recommends `{key}`, but declaring it alone detects nothing for \
+                     {kind:?} -- the message would send an author to a key this arithmetic \
+                     ignores"
+                );
+            }
+        }
+        // `reported` is accounted on the detector's OUTPUT topic by the
+        // caller, so `detector_interval_ms` is always `None` for it and its
+        // recommendation names no subscriber key to check.
+        assert!(keys(detectors_that_count(F::Reported)).is_empty());
+    }
+
     // ── Phase 35.5: cross-scope rate hierarchy ──
 
     #[test]

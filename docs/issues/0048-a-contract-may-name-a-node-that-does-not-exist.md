@@ -1,7 +1,7 @@
 ---
 id: 48
 title: "a contract node key that matches no node resolves by namespace fallback, and nothing says the contract describes something that is not there"
-status: open
+status: resolved
 type: correctness
 severity: medium
 ---
@@ -84,3 +84,27 @@ at `ccd4adc5`.
 Filed as #0047 and renumbered to #0048: another session pushed its own
 #0046 first, so two issues briefly shared the id. Commit messages written
 before the collision (`d5ae3f9b`) refer to the old numbers.
+
+## Resolved 2026-09-25
+
+`node-identity-unknown` at Error severity, gated on the scope having at least
+one entry in `node_identity` — which is exactly the statement that the dump
+describes this scope's nodes and a lookup was possible. A contract checked with
+no launch tree stays silent, so the diagnostic cannot break a legitimate
+contract shape.
+
+Error rather than Warning was justified against the corpus rather than by
+preference: 14 contract fixtures and Autoware 1.5.0's planning_simulator give
+ZERO hits, and misspelling `mrm_handler` in a copy of the Autoware contract
+fires it with the right suggestion — so the zero is a result, not a disabled
+rule. A warning was rejected because cross-scope warnings do not affect the
+exit code, which would have left the defect standing: a clean report is the
+symptom.
+
+Also corrected a detail of this report: the running node is `talker`, not
+`/identity_test/talker-1`. The `-1` is the model key's ordinal (#0017/#0018),
+so the key missed for two compounding reasons and the diagnostic names the
+real bare name.
+
+Extended to action refs by #0055, which found `resolve_actions` never consulted
+the identity map at all.

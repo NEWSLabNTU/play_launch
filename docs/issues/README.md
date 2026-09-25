@@ -17,79 +17,10 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0056** -- phase 78 narrowed `MapperNode.rate_hz` to timer triggers, and
-`rate_priority_contradictions` filters on it -- so a contract stating its
-rates the way authors write them (`min_rate_hz` + topic `rate_hz`) now yields
-an empty scan, and the legacy `system.toml` bridge has reported no
-contradiction since 2026-09-22. Carries a design question: a contradiction
-check compares an author's stated intent against a hand-written table, which
-is not the ranking question phase 78 settled. See `0056-*`.
-
-**#0055** -- an action's `server:`/`client:` refs go through
-`qualify_endpoint_ref` and never consult the launch dump's identity map, so
-they are scope-qualified with no reconciliation at all. Worse than #0048,
-which at least looked the name up first: here the right answer is available
-and nothing reads it, and #0048's new diagnostic cannot fire because the site
-never calls the function that emits it. See `0055-*`.
-
-**#0054** -- four `manifest_check` tests fail against a current binary: three
-assert that a `miss:` declaration reaches the model as `deadline_policy` (it
-does not -- which re-opens the nano-ros seam phase 68 W5 closed, since they
-build `MapperPath` from the model), and one expects a rate-contradiction
-warning between a legacy `system.toml` and a contract that is never emitted.
-Only visible now: the suite has not compiled since `1c27ba5c`. See `0054-*`.
-
 **#0053** -- `--interception on` is inert on `run`: the verb for iterating on a
 single node is the one that cannot produce a bundle `measure` or the capture
 script can read. Unlike contracts, interception needs no launch file, so
 #0045's reason for refusing does not apply here. See `0053-*`.
-
-**#0052** -- the resolver still computes the subscriber-first transport
-precedence itself, because `TopicView` is `pub(crate)` in `derive` and the
-resolver's graph is built from a `ManifestIndex` before any `SystemModel`
-exists. One derivation, two copies, held together by a test rather than by
-construction. See `0052-*`.
-
-**#0051** -- `manifest_check.rs` spawns the binary with a bare `Command::new`
-instead of `play_launch_cmd()`, so 13 of 27 tests fail on the library path
-unless the shell happened to source `install/setup.bash` -- failures that look
-like product breakage and that mask real ones. See `0051-*`.
-
-**#0050** -- `pyexec`'s `c_abi` tests take no interpreter lock and fail ~1 run
-in 3 in parallel with `KeyError: 'rear_overhang'` -- which is issue #0028's
-exact symptom, so the flake reads as a regression of a shipped fix. See
-`0050-*`.
-
-**#0049** -- the IR builder discards an unsupported action with a `debug!` and
-no `DroppedAction`, which is the shape `<timer>` had before `72a547e9`. Inert
-while the IR has no consumer; a trap if it ever gets one. See `0049-*`.
-
-**#0048** -- a contract node key that matches nothing in the launch dump falls
-back to qualifying the bare name against the SCOPE's namespace, so it resolves
-to a plausible FQN that names no running node -- and `check` reports clean.
-Every requirement on that node is then verified against a vertex nothing runs.
-See `0048-*`.
-
-**#0047** -- `endpoints.tsv` records no message type, though the type is in
-scope at the init hook that writes the record. Types reach disk only through
-the traffic-keyed summaries, so a capture can only describe topics a run
-exercised -- 982 endpoints created versus 63 carrying a message, on one
-Autoware run. See `0047-*`.
-
-**#0046** -- a subscriber's `max_age` cannot count toward the FDTI of a hazard
-declared `on: omission` (only the liveliness lease can), and `hazards.<h>.on`
-takes exactly one `FaultKind`, so a guard watched by both a lease and an age
-limit must drop one -- while omitting `on:` altogether counts both and buys
-slack. Filed as a design question: the partition may well be right. What is
-not in question is the `hazard-unguarded` message, which recommends `max_age`
-and `min_rate_hz` as detectors that cannot satisfy it. See `0046-*`.
-
-**#0036** -- PARTLY done. `docs/guide/runtime-enforcement.md` now exists and
-both CLIs' `--enforce-rules` help text is corrected. Still stale:
-`docs/guide/rt-scheduling.md` says `sched_setscheduler` where the apply layer
-is `sched_setattr(2)`, and says `SCHED_DEADLINE` "is not applied on Linux
-yet" where phase 60 shipped it; `setcap --help` says RT needs root; and two
-superseded specs carry no pointer forward. See `0036-*`.
 
 ## Resolved
 

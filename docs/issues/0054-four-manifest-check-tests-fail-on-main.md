@@ -1,7 +1,7 @@
 ---
 id: 54
 title: "four `manifest_check` tests fail against a current binary — all four encode pre-phase-78 scheduling semantics (three fixed, one diagnosed)"
-status: open
+status: resolved
 type: correctness
 severity: medium
 ---
@@ -343,3 +343,29 @@ Note the two unit tests that kept passing through this
 `Trigger::Timer` directly (`index_with_rates`, :2445), so they never exercised
 the promise path and could not have caught the change. The integration test
 was the only thing that read a rate the way a contract author writes one.
+
+## Resolved 2026-09-25
+
+The three `w2_*` tests were correct about the pre-phase-78 model and wrong
+about the current one; `contract_w2` was migrated (a real timer source, a scope
+path so a chain forms and carries a period, and `deadline_monotonic` — which is
+load-bearing, since post-78 only the source has a `rate_hz` and
+`rate_monotonic` would rank it alone). No assertion was relaxed.
+
+Re-taking the committed `RankedPlan` afterwards showed the migration was worth
+more than the three tests:
+
+    - provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=8)"
+    + provenance: "derived(chain_aware: tick_to_out segment drain 1/2)"
+
+`non-chain` is phase 68 W4's false-pass shape — the mapper had fallen back to
+budget ranking, so the chain-aware path the fixture exists to exercise was
+never reached.
+
+The fourth failure was a live product regression and became **#0056**: phase 78
+narrowed `MapperNode.rate_hz` to timer triggers, `rate_priority_contradictions`
+filters on it, and the legacy `system.toml` bridge had reported no
+contradiction since 2026-09-22.
+
+`manifest_check`: 26 of 30 passing before, 33 of 33 after (#0056's fix and
+phase 82's tests included).

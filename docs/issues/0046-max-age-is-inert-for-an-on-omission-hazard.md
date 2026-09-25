@@ -317,3 +317,91 @@ Pinned by `tests/fixtures/contract_fault_kinds` (one hazard per rule) and
 `a_hazard_is_timed_by_the_slowest_fault_class_it_claims` in
 `tests/tests/manifest_check.rs`, and by four unit tests beside
 `detector_interval_ms`.
+
+## Re-verified 2026-09-25 against the v0.1.44 pin
+
+The ruling above was made at rlm `v0.1.43`; the tree now pins `v0.1.44`. All
+of it still holds, and one gate was added. What was MEASURED is separated
+from what was reasoned.
+
+**Measured.**
+
+1. `detector_interval_ms` reads, per class: omission -- the effective
+   `qos.lease_duration`, and `max_age` only when `max_age_evaluated(props)`
+   (`on_violation.mechanism` is `diagnostics` or `application`); late -- the
+   effective `qos.deadline` and `max_age` unconditionally; loss --
+   `drop.max_consecutive x` the topic period; reported -- nothing (the caller
+   accounts it on the detector's OUTPUT topic). `min_rate_hz` is read for no
+   class. 228 resolver unit tests pass.
+2. The grammar at the pinned rev `0541161`: `HazardDecl.on` is
+   `Vec<FaultKind>` (`types/src/types.rs:140`), `on: omission` and
+   `on: [omission, late]` both parse, `on: []` is a parse error naming the
+   remedy (`types/src/parse.rs:295`). The issue's `Option<FaultKind>` is
+   v0.1.40 history. The incentive inversion is closed by `hazard_fault_kinds`
+   + `interval_over_kinds`, not by the grammar: an omitted `on:` claims
+   omission, late and loss and takes the MAX over the classes some detector
+   covers.
+3. **Corpus impact of counting `max_age` for omission unconditionally: one
+   row, and it is the fixture that pins the negative.** Over every
+   `*.contract.yaml` in the tree carrying `hazards:` (11 hazard/guard/
+   subscriber rows across `contract_fault`, `contract_fault_kinds`,
+   `contract_fault_latch`, `contract_fault_late`, `contract_fault_service`,
+   `contract_modes`, `contract_modes_bad` and `rt_av_demo`), exactly one
+   changes verdict: `contract_fault_kinds`'s `imu_age_under_qos`, which phase
+   82 W3 added to assert it must NOT. Every other omission guard either
+   carries a lease and no `max_age` (nine rows) or already declares
+   `mechanism: application` (`odom_age_evaluated`). Autoware's two omission
+   hazards are outside that row set -- their guard names its subscriber by
+   absolute node path, which the sweep did not join -- and cannot change
+   either way: `max_age` occurs **0** times in all four Autoware contract
+   files, whose only detector is a 500 ms `lease_duration`. So the rule costs nothing on today's corpus; the
+   only contract it changes is the WG's L4 heartbeat, whose lease and age
+   limit sit on the SAME subscriber -- the case the issue was filed from.
+4. Doc drift the re-verification found, both outside this issue's scope and
+   both still printing the pre-phase-82 rule:
+   - `docs/design/fault-reaction-primitives.md:215` still describes
+     `hazard-unguarded` as satisfied by "`lease_duration`, `deadline`,
+     `max_age` or `min_rate_hz`" -- the exact list item 1 removed from the
+     message. The defective recommendation now survives only here.
+   - rlm `docs/contract-theory.md:822-828` (at the pinned tag) gives the
+     omission row as `qos.lease_duration` alone, omitting the
+     mechanism-gated `max_age`, and says a hazard's interval is "the min over
+     them" where phase 82 made it the min within a class and the MAX across
+     classes.
+
+**Reasoned, from what the design docs already cite (evidence 4).** The
+vocabulary phase 71 borrowed settles the question in the direction W3 took,
+and does so twice. `fault-reaction-primitives.md:44` maps ISO 26262 Part 6's
+three supervision kinds onto our keys: **alive** supervision is
+`lease_duration`/`min_rate_hz`, **deadline** supervision is
+`qos.deadline`/`max_age`. Alive supervision is the kind that detects absence
+-- it counts indications against its own reference cycle -- and deadline
+supervision is evaluated at the second checkpoint, which an omission never
+reaches. EMV2's closed set (§1.3) says the same: `ServiceOmission` is
+detected by the lease expiring, `LateDelivery` by "QoS deadline / `max_age`
+violated". So `max_age` is a deadline-supervision bound, and a deadline
+bound does not detect an omission -- *unless something checks it on a clock,
+at which point it IS alive supervision*. AUTOSAR WdgM makes that the whole
+distinction, and `on_violation.mechanism` is exactly the declaration of
+which one the node runs. Neither citation licenses counting `max_age` for
+omission by default, and both license counting it when the node declares it
+evaluates it. The ruling stands.
+
+**Recommendation: keep.** No new key is needed --
+`on_violation.mechanism: diagnostics | application` already IS the "declares
+it checks age on a timer" key the issue's third option asked for, and it was
+in the grammar before this issue was filed. The residual work is the two doc
+drifts in evidence 4, which belong to whoever owns those files.
+
+**Added here (item 1, the regression gate).**
+`every_recommended_detector_counts_for_the_class_it_is_recommended_for`
+beside `detector_interval_ms` extracts every backticked key from
+`detectors_that_count(kind)`, declares it ALONE, and asserts
+`detector_interval_ms` returns `Some` for that class -- so the message and
+the arithmetic are re-compared on every run rather than by two hand-written
+assertions that name the keys. It is the assertion that would have caught
+the original defect from either side, confirmed by mutation: restoring the
+old omission text fails with "a rate floor is not a detector for any class,
+but Omission recommends it", and a text naming a bare `max_age` for omission
+fails with "Omission recommends `max_age`, but declaring it alone detects
+nothing for Omission".

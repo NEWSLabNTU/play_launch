@@ -1,7 +1,7 @@
 ---
 id: 47
 title: "`endpoints.tsv` records no message type, so a capture can only describe topics the run exercised"
-status: open
+status: resolved
 type: enhancement
 severity: medium
 ---
@@ -81,3 +81,18 @@ format and the hook signatures were read at `ccd4adc5`.
 Filed as #0046 and renumbered to #0047: another session pushed its own
 #0046 first, so two issues briefly shared the id. Commit messages written
 before the collision (`d5ae3f9b`) refer to the old numbers.
+
+## Resolved 2026-09-25
+
+`endpoints.tsv` carries a sixth column, `pkg/msg/Name`, from the type support
+that was already in scope at both init hooks. Empty where introspection cannot
+answer, never omitted — which is what keeps the column count a valid
+discriminator for pre-change bundles, and both consumers use it.
+`capture_manifest.py` prefers the endpoint type and falls back to the
+summaries, so a silent endpoint is describable.
+
+Verified on a real bundle whose node creates a publisher and a subscription
+and sends nothing: types resolved for both, while `stats_summary.json` lists
+only the exercised topic. Sharpest evidence that the consumer edits are
+load-bearing: the PRE-change `verify_graph.py` reads the new file as 0 observed
+endpoints, silently.

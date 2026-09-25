@@ -11,9 +11,10 @@ use std::{
 
 use eyre::Result;
 use ros_launch_manifest_sched::{
-    ChainAwareDetail, ChainElement, Contradiction, MapError, MapWarning, MapperRegistry,
-    PlatformResources, ResolvedChain, ResolvedTier, ResolvedTierTable, SchedNode, band_violations,
-    deadline_priority_contradictions, parse_platform_file, rate_priority_contradictions,
+    ChainAwareDetail, ChainElement, Contradiction, MapError, MapWarning, MapperInput,
+    MapperRegistry, PlatformResources, ResolvedChain, ResolvedTier, ResolvedTierTable, SchedNode,
+    band_violations, deadline_priority_contradictions, parse_platform_file,
+    rate_priority_contradictions,
 };
 use tracing::{debug, info};
 
@@ -974,7 +975,13 @@ pub fn derive_sched_plan(
     // a contradiction whose winner is independently overridden.
     let overridden_nodes: BTreeSet<String> = overridden.keys().cloned().collect();
     let mut suppressed_contradictions = 0usize;
-    for c in rate_priority_contradictions(&input, &plan)
+    // The RATE scan reads the DECLARED facts, not the mapper's `rate_hz` —
+    // see `input_with_declared_rates` (issue #0056). The DEADLINE scan keeps
+    // reading `input`: `deadline_us` is already the tightest declared
+    // `max_latency`/`max_response`, which is a requirement the author wrote,
+    // so there is no narrower mapper-side view to correct for.
+    let rate_fact_input = input_with_declared_rates(&input, index);
+    for c in rate_priority_contradictions(&rate_fact_input, &plan)
         .into_iter()
         .chain(deadline_priority_contradictions(&input, &plan))
     {
@@ -1024,6 +1031,119 @@ pub fn derive_sched_plan(
         chain_member_nodes,
         suppressed_contradictions,
     })
+}
+
+/// `<node_fqn>/<ep_name>` -> `Some(node_fqn)`, mirroring
+/// `manifest_loader::split_endpoint_ref_for_check` (private to that module;
+/// this is a one-line split, not worth widening its visibility for).
+fn endpoint_ref_node_fqn(ep_ref: &str) -> Option<&str> {
+    let pos = ep_ref.rfind('/')?;
+    if pos == 0 {
+        return None;
+    }
+    Some(&ep_ref[..pos])
+}
+
+/// The rate facts the contract AUTHOR declared, keyed by node FQN: every
+/// `topics.<t>.rate_hz` on a topic this node publishes, plus every one of the
+/// node's own `pub.<ep>.min_rate_hz`. Max wins — the fastest thing the author
+/// said this node does.
+///
+/// # Why this is not `MapperNode.rate_hz`
+///
+/// Phase 78 narrowed `MapperNode.rate_hz` to the fastest TIMER trigger and
+/// nothing else, and that ruling is about **ranking**: a promise is not a
+/// period, so `rate_monotonic` must not derive a priority from one.
+///
+/// A contradiction scan asks a different question — does this hand-written
+/// priority table disagree with what the author said they wanted? An author
+/// who writes `min_rate_hz: 100` on one node and `10` on another, and then a
+/// `system.toml` that inverts them, has written a contradiction whether or not
+/// either number is a period the mapper may rank by. Reporting it costs
+/// nothing (contradictions are warnings, never fatal) and staying silent loses
+/// the only check that compares those two sources at all.
+///
+/// So the scan gets its own accessor and `MapperNode.rate_hz` is left alone.
+/// Widening that field would undo phase 78 by the back door — the mapper would
+/// start ranking by promises again, which is exactly what that phase removed.
+/// Issue #0056: between `07be64dd` and this, every contract that stated its
+/// rates the way the documentation teaches (`pub.<ep>.min_rate_hz` plus a
+/// topic-level `rate_hz`, no `paths:` at all) arrived with `rate_hz: None` on
+/// every node, so the scan iterated over nothing and reported nothing.
+///
+/// A topic's `derived_rate_hz` is deliberately NOT read: it is the graph's
+/// consequence of a timer rather than something an author declared, and the
+/// timer it was propagated from is already in `MapperNode.rate_hz` at its
+/// source.
+fn declared_rate_facts(index: Option<&ManifestIndex>) -> BTreeMap<String, f64> {
+    use crate::ros::manifest_loader::resolve_node_fqn;
+
+    let mut out: BTreeMap<String, f64> = BTreeMap::new();
+    let Some(index) = index else {
+        return out;
+    };
+    let mut consider = |fqn: &str, v: f64| {
+        // A zero or negative rate is not a claim about speed (`0.0` would
+        // order every node behind it); ignore it, as the old derivation did.
+        if v > 0.0 {
+            out.entry(fqn.to_string())
+                .and_modify(|best| *best = best.max(v))
+                .or_insert(v);
+        }
+    };
+
+    // `topics.<t>.rate_hz`, attributed to every publisher of that topic.
+    // `ResolvedTopic::publishers` already carries launch-reconciled endpoint
+    // FQNs, so no re-qualification is needed here.
+    for topic in index.topics.values() {
+        let Some(rate) = topic.rate_hz else {
+            continue;
+        };
+        for ep in &topic.publishers {
+            if let Some(node_fqn) = endpoint_ref_node_fqn(ep) {
+                consider(node_fqn, rate);
+            }
+        }
+    }
+
+    // `nodes.<n>.pub.<ep>.min_rate_hz`, straight off each manifest's own
+    // declarations. A contract names a node by its bare name, so identity goes
+    // through `resolve_node_fqn` — the one reconciliation point every consumer
+    // uses (a node's own `namespace=` attribute wins over its scope's).
+    for (scope_id, rm) in &index.manifests {
+        for (bare_name, decl) in &rm.manifest.nodes {
+            for props in decl.publishers.values() {
+                if let Some(v) = props.min_rate_hz {
+                    let fqn = resolve_node_fqn(index, *scope_id, &rm.ns, bare_name);
+                    consider(&fqn, v);
+                }
+            }
+        }
+    }
+
+    out
+}
+
+/// `input`, with each node's `rate_hz` widened to the max of the mapper's own
+/// value (the fastest timer trigger) and the declared rate facts from
+/// [`declared_rate_facts`].
+///
+/// A separate view rather than a mutation of `input`: the mapper has already
+/// run on `input`, and everything else downstream (provenance, reservations,
+/// the deadline scan) must keep seeing phase 78's narrow value. Only
+/// `rate_priority_contradictions` reads this copy.
+fn input_with_declared_rates(input: &MapperInput, index: Option<&ManifestIndex>) -> MapperInput {
+    let declared = declared_rate_facts(index);
+    let mut view = input.clone();
+    if declared.is_empty() {
+        return view;
+    }
+    for node in &mut view.nodes {
+        if let Some(&d) = declared.get(&node.name) {
+            node.rate_hz = Some(node.rate_hz.map_or(d, |r| r.max(d)));
+        }
+    }
+    view
 }
 
 /// Turn fixed-priority tiers into `SCHED_DEADLINE` reservations, under
