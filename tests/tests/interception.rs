@@ -508,7 +508,7 @@ interception:
 /// type reached disk was `stats_summary.json` / `frontier_summary.json`, which
 /// are keyed by TRAFFIC. So a publisher that was created and never used had no
 /// type anywhere, and `type:` is mandatory in the manifest grammar — which
-/// bounded `scripts/capture_manifest.py` to whatever the run happened to
+/// bounded `contract capture` to whatever the run happened to
 /// exercise. Phase 77 measured the gap: 982 endpoints created, 63 carrying a
 /// message, on one Autoware run.
 ///

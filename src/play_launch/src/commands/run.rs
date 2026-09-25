@@ -414,7 +414,7 @@ async fn run_direct(
     // `run`-shaped is only the loop (one collection, never a container) and the
     // NAME: `run` builds its record by hand, so `model_fqn` is `None` and the
     // helper would fall back to the bare executable — while every consumer of
-    // the bundle (`measure`, `capture_manifest.py`) joins on a node FQN. The
+    // the bundle (`measure`, `contract capture`) joins on a node FQN. The
     // FQN comes from the same `fqn_for` the scheduling lookup below uses.
     let mut interception_consumers: Vec<crate::interception::ChildConsumer> = Vec::new();
     if interception_decision.enabled() {

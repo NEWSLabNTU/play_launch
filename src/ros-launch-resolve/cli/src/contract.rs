@@ -1,11 +1,12 @@
-//! `ros-launch-resolve contract eject` — argument mapping only.
+//! `ros-launch-resolve contract` — argument mapping only.
 //!
-//! The verb itself is `ros_launch_resolve::verbs::contract::eject`.
+//! The verbs themselves are `ros_launch_resolve::verbs::contract::eject` and
+//! `ros_launch_resolve::verbs::capture::capture`.
 
 use eyre::Result;
 
-use crate::options::ContractEjectArgs;
-use ros_launch_resolve::verbs::{self, ContractEjectInputs};
+use crate::options::{ContractCaptureArgs, ContractEjectArgs};
+use ros_launch_resolve::verbs::{self, CaptureInputs, ContractEjectInputs};
 
 pub fn handle_contract_eject(args: &ContractEjectArgs) -> Result<()> {
     verbs::contract::eject(ContractEjectInputs {
@@ -15,4 +16,15 @@ pub fn handle_contract_eject(args: &ContractEjectArgs) -> Result<()> {
         into: args.into.clone(),
         force: args.force,
     })
+}
+
+/// Prints to stdout and writes nothing — see `verbs::capture`.
+pub fn handle_contract_capture(args: &ContractCaptureArgs) -> Result<()> {
+    let text = verbs::capture::capture(CaptureInputs {
+        run_dir: args.run_dir.clone(),
+        model: args.model.clone(),
+        include_infra: args.include_infra,
+    })?;
+    print!("{text}");
+    Ok(())
 }

@@ -226,3 +226,46 @@ same maturity, and they are a pair.
 
 - `scripts/capture_manifest.py` — new
 - `docs/guide/first-contract.md` — new
+
+## Promoted 2026-09-25 — `play_launch contract capture`
+
+The resolution above said "not yet a verb: the type gap means the output is
+complete only for traffic the run exercised, and a verb implies completeness".
+That gap closed the same week (#0047 put the message type on `endpoints.tsv`,
+where it had been in scope at the hook and discarded), so the condition was
+met and the script is now `play_launch contract capture <run-dir> --model
+<m.yaml>`, implemented in layer 2 so both CLIs get one body.
+
+**Under `contract`, not as a thirteenth verb, and not the `check --emit` this
+issue proposed.** `check` takes a launch file and contracts and has no run
+bundle, so `--emit` would have needed a `--run-dir` the verb does not
+otherwise take — and `check`'s exit code is a CI gate that a bundle-shaped
+mode muddies. `measure --emit` fits the INPUTS exactly and was still rejected:
+`measure` bails when the model declares no `paths:`, which is precisely the
+state of a system with no contract, so the flag would have to bypass its
+host's own precondition; its artifact is a platform-file fragment with a
+different destination; and a structure capture MEASURES NOTHING, so emitting a
+contract under that name implies the one thing this tool exists to refuse.
+`contract` is the verb whose output is a contract file to edit — `eject` gets
+a package's own, `capture` writes a first one. Group by the artifact produced,
+not by the input read.
+
+`scripts/capture_manifest.py` is deleted rather than kept as a wrapper: a
+second implementation of the same output reading the same files drifts
+silently, which is this repository's most frequently relearned lesson.
+`scripts/verify_graph.py` stays and the guide now says why rather than leaving
+the pair silently split — it grades a derivation during development, where the
+capture answers a question a user asks on day one. It is the remaining
+promotion candidate, not an oversight.
+
+Gate: five real bundles captured and fed back through `check`, all exit 0 —
+including the one that proves #0047's capability rather than asserting it, a
+node whose endpoints are created and never published on, whose topics appear
+in `endpoints.tsv` with types and in no summary at all. The cycle-cut refusal
+has a negative control: re-adding the cut subscriber by hand turns `check`
+into `1 with errors`, `causal-dag-global`, the cycle named hop by hop.
+
+One thing the port ADDED, forced by a real bundle: an `<executable>`'s model
+key is its whole command line, so endpoint refs are quoted inside `pub:`/`sub:`
+flow lists. The script emitted them bare, and a key containing a comma would
+have split one ref into two rather than failing.

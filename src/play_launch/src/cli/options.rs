@@ -184,10 +184,12 @@ pub enum Command {
         play_launch measure play_log/latest --model m.yaml >> pkg/launch/bringup.system.posix.yaml")]
     Measure(crate::commands::measure::MeasureArgs),
 
-    /// Manage contract/platform-file overlays (Phase 41.4, design §3.3)
+    /// Get a contract file to edit: eject a package's own, or capture the
+    /// structure of a run that has none (Phase 41.4, design §3.3; issue #0044)
     #[command(after_help = "Examples:\n  \
         play_launch contract eject rt_demo bringup.launch.xml\n  \
-        play_launch contract eject rt_demo bringup.launch.xml --into ~/.config/play_launch/contracts")]
+        play_launch contract eject rt_demo bringup.launch.xml --into ~/.config/play_launch/contracts\n  \
+        play_launch contract capture play_log/latest --model system_model.yaml")]
     Contract(ContractArgs),
 }
 
@@ -204,6 +206,19 @@ pub enum ContractSubcommand {
     /// any) into the overlay tree, ready to edit — editing never touches
     /// `/opt` (design §3.3).
     Eject(ContractEjectArgs),
+
+    /// Write a contract's STRUCTURE from a recorded run, for a system that
+    /// has none (issue #0044). Prints to stdout; never writes a contract
+    /// file, for the same reason `measure` never writes a platform file.
+    ///
+    /// It emits `nodes:` with their endpoints and `topics:` with types and
+    /// wiring, and NO requirement of any kind — a run can say a topic
+    /// published at 9.97 Hz, not whether 10 Hz was required, and a contract
+    /// states requirements. Observed numbers go in as comments.
+    #[command(after_help = "Examples:\n  \
+        play_launch contract capture play_log/latest --model system_model.yaml\n  \
+        play_launch contract capture play_log/latest --model m.yaml > contracts/pkg/launch/bringup.contract.yaml")]
+    Capture(ContractCaptureArgs),
 }
 
 /// Arguments for `play_launch contract eject`
@@ -231,6 +246,26 @@ pub struct ContractEjectArgs {
     /// to touch a destination that already exists.
     #[arg(long)]
     pub force: bool,
+}
+
+/// Arguments for `play_launch contract capture`
+#[derive(Args)]
+pub struct ContractCaptureArgs {
+    /// Run directory (`play_log/<timestamp>`), or the `interception/` dir
+    /// inside one. The wiring comes from `interception/endpoints.tsv`, so
+    /// the run must have had interception enabled.
+    pub run_dir: PathBuf,
+
+    /// SystemModel the run was launched from — supplies the node keys a
+    /// contract has to be written in (issue #0017: a model key is not always
+    /// a ROS name, and only the model knows which).
+    #[arg(long, value_name = "PATH")]
+    pub model: PathBuf,
+
+    /// Keep `/rosout`, `/parameter_events`, `/tf` and friends, which every
+    /// node touches and no launch file describes.
+    #[arg(long)]
+    pub include_infra: bool,
 }
 
 /// Arguments for the context extraction command
@@ -1181,8 +1216,32 @@ mod flag_ordering_tests {
         else {
             panic!("expected Contract");
         };
-        let ContractSubcommand::Eject(e) = ct.subcommand;
+        let ContractSubcommand::Eject(e) = ct.subcommand else {
+            panic!("expected Eject");
+        };
         assert_eq!(e.target, "posix");
+
+        // The second way to get a contract file to edit (issue #0044). Its
+        // inputs are a RUN and a model — the same pair `measure` takes, and
+        // nothing `check` takes, which is why it is not an `--emit` on that.
+        let Command::Contract(ct) = parse(&[
+            "contract",
+            "capture",
+            "play_log/latest",
+            "--model",
+            "m.yaml",
+        ])
+        .expect("must parse")
+        .command
+        else {
+            panic!("expected Contract");
+        };
+        let ContractSubcommand::Capture(c) = ct.subcommand else {
+            panic!("expected Capture");
+        };
+        assert_eq!(c.run_dir, PathBuf::from("play_log/latest"));
+        assert_eq!(c.model, PathBuf::from("m.yaml"));
+        assert!(!c.include_infra);
 
         // `dump --output` has NO clap default on purpose: the library
         // applies `system_model.yaml` for `None`. Substituting a default

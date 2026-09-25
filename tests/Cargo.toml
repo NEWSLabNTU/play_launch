@@ -90,6 +90,10 @@ name = "contract_eject"
 path = "tests/contract_eject.rs"
 
 [[test]]
+name = "contract_capture"
+path = "tests/contract_capture.rs"
+
+[[test]]
 name = "start_delay"
 path = "tests/start_delay.rs"
 

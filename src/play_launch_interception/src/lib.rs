@@ -271,7 +271,7 @@ fn record_node_identity(originals: &Originals, node: *const rcl_node_t) {
 }
 
 /// Record the endpoint this init call created, for `verify_graph.py` and
-/// `capture_manifest.py`.
+/// `play_launch contract capture`.
 ///
 /// Ungated on plugins, for the same reason [`record_node_identity`] is: the
 /// endpoint sink is its own opt-in, and a run with no plugins still wants the

@@ -295,7 +295,7 @@ spawned, and what it writes is keyed by node and topic rather than by scope —
 so `play_launch run --interception on <pkg> <exec>` records a full bundle:
 `events.jsonl`, `endpoints.tsv`, `node_identity.tsv` and the summaries. That
 bundle is readable by `play_launch measure` and by
-`scripts/capture_manifest.py`, which is the point: `run` is the verb for
+`play_launch contract capture`, which is the point: `run` is the verb for
 iterating on one node, and it was the one that could not be measured.
 
 Note the default differs from `launch`/`up` on purpose. There, an unset

@@ -127,7 +127,7 @@ fn the_same_contract_written_with_absolute_keys_stays_clean() {
     let overlay = tempfile::TempDir::new().expect("overlay root");
     // `/identity_test/talker` is where the node really lands. An absolute key
     // never reaches the namespace fallback, which is why
-    // `scripts/capture_manifest.py` emits them.
+    // `contract capture` emits them.
     overlay_with(
         overlay.path(),
         r#"

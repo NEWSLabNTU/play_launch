@@ -5,7 +5,7 @@ The fixture for issue #0047. The message type used to reach disk only through
 `stats_summary.json` / `frontier_summary.json`, which are keyed by traffic: a
 topic appears there once a message crossed it. So an endpoint like this one --
 created, advertised, discoverable by `ros2 topic info`, and silent -- had no
-type anywhere, and `scripts/capture_manifest.py` could not emit it at all.
+type anywhere, and `play_launch contract capture` could not emit it at all.
 Phase 77 measured how common the shape is: 982 endpoints created, 63 carrying
 a message, on one Autoware run.
 

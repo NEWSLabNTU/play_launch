@@ -1,6 +1,7 @@
 //! The launch-tree verbs, as library functions.
 //!
-//! `resolve`, `dump`, `check`, `contract eject` and `plot` are each offered by
+//! `resolve`, `dump`, `check`, `contract eject`, `contract capture` and
+//! `plot` are each offered by
 //! TWO command-line interfaces: `play_launch` (the product a user installs,
 //! which links a ROS runtime) and `ros-launch-resolve` (the developer /
 //! integration binary that builds with no ROS at all). There is exactly ONE
@@ -26,12 +27,14 @@
 use eyre::Context as _;
 use tracing::debug;
 
+pub mod capture;
 pub mod check;
 pub mod contract;
 pub mod dump;
 pub mod plot;
 pub mod resolve;
 
+pub use capture::CaptureInputs;
 pub use check::CheckInputs;
 pub use contract::ContractEjectInputs;
 pub use dump::DumpInputs;

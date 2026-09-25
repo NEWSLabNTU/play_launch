@@ -7,7 +7,7 @@ written down at all. On a 144-node stack that transcription is the part that
 stops people, and it is also the part a machine can do, because a run already
 knows every one of those facts.
 
-`scripts/capture_manifest.py` does it. Point it at a recorded run and a
+`play_launch contract capture` does it. Point it at a recorded run and a
 SystemModel and it prints a contract file to stdout.
 
 ```sh
@@ -23,7 +23,7 @@ play_launch launch --config interception.yaml my_pkg bringup.launch.xml
 play_launch resolve my_pkg bringup.launch.xml -o system_model.yaml
 
 # 3. capture
-scripts/capture_manifest.py play_log/latest --model system_model.yaml \
+play_launch contract capture play_log/latest --model system_model.yaml \
     > contracts/my_pkg/launch/bringup.contract.yaml
 
 # 4. check it — this should be clean before you edit a line of it
@@ -33,7 +33,17 @@ play_launch check my_pkg bringup.launch.xml --contracts contracts
 Step 4 is not a formality. A capture that produced a contract its own run
 violates would be lying about one of the two, so the emitted file is meant to
 pass `check` with no errors as it stands. If it does not, that is a defect in
-the script.
+the verb.
+
+It prints to stdout and writes nothing, for the same reason
+[`play_launch measure`](rt-scheduling.md) never writes the platform file:
+where a contract lives, and whether it replaces the one already there, is the
+author's decision.
+
+The model is required for the same reason `measure` requires one. A contract's
+node keys are reconciled against the launch dump, so they have to be keys the
+dump knows — and for a node the launch file did not name, that key is *not* the
+node's ROS name (issue #0017). Only the model can tell the two apart.
 
 ## What it emits, and what it refuses to
 
@@ -47,8 +57,8 @@ can tell you a topic published at 9.97 Hz; it cannot tell you whether 10 Hz was
 *required*, and that difference is the whole of what a contract is for. The
 observed numbers are there — as comments, on the topic they belong to, so you
 can turn one into a requirement by deleting a `#` and deciding. This is the
-same discipline [`play_launch measure`](rt-scheduling.md) follows when it
-prints measured costs under a header saying where they belong.
+same discipline `play_launch measure` follows when it prints measured costs
+under a header saying where they belong.
 
 **It emits no conditions.** A run is *one branch* of the launch file, with
 every `if:` and `unless:` already resolved and nothing on disk recording which
@@ -63,7 +73,7 @@ listed in a comment block at the end of the file, with the reason:
 
 | refusal | why |
 |---|---|
-| a topic whose message **type** is not on disk | the type is read by introspection off a message that *flowed*. An endpoint created but never exercised has none, and the grammar requires `type:` on every topic |
+| a topic whose message **type** is not on disk | the grammar requires `type:` on every topic. Since issue #0047 this is rare — see below |
 | endpoints on a node the model does not carry | a process play_launch spawned can host nodes the launch file never named — a container's own node, an rclcpp-internal one. A contract may not claim one |
 | a subscriber cut to break a causal cycle | `causal-dag` refuses a cyclic dataflow graph. See below |
 
@@ -73,17 +83,27 @@ be published by an external system". That is the correct verdict: the run
 cannot tell an external publisher from a node that failed to start. You decide,
 and record the decision with `external: pub`.
 
-## The type gap, and how much of a system it costs you
+`--include-infra` keeps `/rosout`, `/parameter_events`, `/tf` and friends,
+which are excluded by default: every node touches them, no launch file
+describes them, and declaring them would put two extra endpoints on all 144
+nodes of a real system.
 
-`interception/endpoints.tsv` records every publisher and subscription created,
-with remap-resolved topic names — that is where the wiring comes from, and it
-is complete. It has **no type column**. The message type reaches disk only in
-`stats_summary.json` / `frontier_summary.json`, which are keyed by *traffic*.
+## Where the message type comes from
 
-So a topic that carried no message during the run has no type, and cannot be
-emitted at all. The gap is not small on a real system: phase 77 measured **982
-endpoints created and 63 carrying a message** on one Autoware run. Exercise the
-system, or fill the refused types in by hand from `ros2 topic info -v`.
+`interception/endpoints.tsv` records every publisher and subscription
+*created*, with remap-resolved topic names and — since issue #0047 — the
+message type, read by introspection off the type support the init hook already
+holds. That is where both the wiring and the type come from, and it is the only
+source that knows about an endpoint no message ever crossed.
+
+The distinction is not academic: phase 77 measured **982 endpoints created and
+63 carrying a message** on one Autoware run. The traffic-keyed summaries
+(`stats_summary.json`, `frontier_summary.json`) are still read — the observed
+counts and rates have no other source, and their `msg_type` remains the
+fallback for a bundle recorded before the column existed (a five-column
+`endpoints.tsv`). A topic whose type is in neither place cannot be emitted at
+all and is listed with its reason; fill those in by hand from
+`ros2 topic info -v`, or re-record with a current build.
 
 ## Node keys are absolute, and that is deliberate
 
@@ -91,8 +111,8 @@ The emitted `nodes:` keys are absolute FQNs (`/perception/foo/bar`), which the
 checker passes through verbatim. The shorter bare-name spelling is reconciled
 through the launch dump, and for a node the launch file did not name that
 lookup **misses**: measured, a bare `talker-1` resolved to `/talker-1` — a node
-that does not exist — while `check` reported the file clean. A missing check is
-better than a silent misattachment.
+that does not exist — while `check` reported the file clean (issue #0048). A
+missing check is better than a silent misattachment.
 
 It costs one thing, and it is worth knowing which. When deciding whether
 `state: true` is set on an endpoint, the checker splits the reference on its
@@ -134,14 +154,17 @@ requirements, and the tool has something to say at each step:
   some.
 - `scripts/verify_graph.py <run-dir> --model <m.yaml>` — the inverse walk:
   grades the model's topic graph against a run, and reports any edge the run
-  contradicts.
+  contradicts. Still a script rather than a verb, and deliberately: it grades a
+  derivation during development, where the capture answers a question a user of
+  the shipped tool asks on day one.
 
 ## Related
 
-- `docs/design/contract-primitives.md` — the rule this script follows: a
+- `docs/design/contract-primitives.md` — the rule this verb follows: a
   contract states what the code does and what it must achieve, and anything
   computable from those two is derived, never written.
 - `docs/roadmap/phase-77-graph-verified.md` — `endpoints.tsv`, and what it
   took to make the recorded topic names correct under remapping.
-- `docs/issues/0044-capture-mode-documented-but-not-implemented.md` — why this
-  is a script and not yet a verb.
+- `docs/issues/0044-capture-mode-documented-but-not-implemented.md`
+  and `docs/issues/0047-endpoints-tsv-carries-no-message-type.md` — why this
+  was a script first, and what had to land before it could be a verb.

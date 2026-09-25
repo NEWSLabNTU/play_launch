@@ -65,9 +65,13 @@ fn main() -> eyre::Result<()> {
         Command::Resolve(args) => resolve::handle_resolve(args),
         Command::Dump(args) => dump::handle_dump(args),
         Command::Check(args) => check::handle_check(args),
-        // `contract` is a subcommand group; today `eject` is its only verb.
+        // `contract` is a subcommand group: the two ways to get a contract
+        // file to edit — copy the package's own, or write one from a run.
         Command::Contract(args) => match &args.subcommand {
             options::ContractSubcommand::Eject(eject) => contract::handle_contract_eject(eject),
+            options::ContractSubcommand::Capture(capture) => {
+                contract::handle_contract_capture(capture)
+            }
         },
         Command::Plot(args) => plot::handle_plot(args),
     }

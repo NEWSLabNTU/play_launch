@@ -4834,7 +4834,7 @@ fn check_contract_node_identity(
     let mut out = Vec::new();
     for (key, path) in sites {
         // Absolute keys pass through `resolve_node_fqn` verbatim and cannot
-        // be mis-qualified — which is why `scripts/capture_manifest.py`
+        // be mis-qualified — which is why `contract capture`
         // emits them.
         if key.starts_with('/') {
             continue;
@@ -7487,7 +7487,7 @@ topics:
 
     #[test]
     fn an_absolute_contract_key_passes_through_and_stays_clean() {
-        // The control, and the reason `scripts/capture_manifest.py` emits
+        // The control, and the reason `contract capture` emits
         // absolute keys: an absolute name never goes near the namespace
         // fallback, so it cannot be mis-qualified and must not be reported.
         let yaml = r#"

@@ -10,7 +10,7 @@
 //! The gate is not "the directory exists" — that proves the plumbing ran, not
 //! that what it wrote is usable. It is that `play_launch measure` reads the
 //! bundle and reports the events it found, and that
-//! `scripts/capture_manifest.py` joins the recorded endpoints onto a model.
+//! `play_launch contract capture` joins the recorded endpoints onto a model.
 
 use play_launch_tests::{fixtures, process::ManagedProcess};
 use std::{
@@ -40,7 +40,7 @@ fn interception_so_path() -> PathBuf {
 /// A SystemModel naming the one node `run` spawned, with one declared path.
 ///
 /// `run` has no launch file and therefore no model of its own; every consumer
-/// of a bundle (`measure`, `capture_manifest.py`) needs one for the node KEYS.
+/// of a bundle (`measure`, `contract capture`) needs one for the node KEYS.
 /// That the keys line up at all is the point: the member name the interceptor
 /// stamps on every record is the node's FQN, not the bare executable.
 const MODEL: &str = r#"
@@ -198,12 +198,12 @@ fn test_run_bundle_is_readable_by_measure() {
     );
 }
 
-/// The cheaper second reader: `scripts/capture_manifest.py` walks
+/// The cheaper second reader: `play_launch contract capture` walks
 /// `endpoints.tsv` + `node_identity.tsv` + `stats_summary.json` and emits a
 /// contract. It refuses outright when no observed endpoint joins to a model
 /// node, so exit 0 here is a statement about all three files at once.
 #[test]
-fn test_run_bundle_is_readable_by_capture_manifest() {
+fn test_run_bundle_is_readable_by_contract_capture() {
     let bundle = run_talker(Some("on"), 8);
 
     for name in ["endpoints.tsv", "node_identity.tsv", "stats_summary.json"] {
@@ -215,18 +215,17 @@ fn test_run_bundle_is_readable_by_capture_manifest() {
         );
     }
 
-    let script = fixtures::repo_root().join("scripts/capture_manifest.py");
-    let out = std::process::Command::new("python3")
-        .arg(&script)
+    let env = fixtures::install_env();
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.args(["contract", "capture"])
         .arg(&bundle.dir)
-        .args(["--model", bundle.model.to_str().unwrap()])
-        .output()
-        .expect("run capture_manifest.py");
+        .args(["--model", bundle.model.to_str().unwrap()]);
+    let out = cmd.output().expect("run play_launch contract capture");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         out.status.success(),
-        "capture_manifest.py refused the run bundle:\n{stderr}\n{stdout}"
+        "contract capture refused the run bundle:\n{stderr}\n{stdout}"
     );
     assert!(
         stdout.contains("/talker"),

@@ -182,10 +182,14 @@ fn main() -> eyre::Result<()> {
         play_launch::cli::options::Command::Measure(args) => {
             play_launch::commands::handle_measure(args)?;
         }
-        // `contract` is a subcommand group; today `eject` is its only verb.
+        // `contract` is a subcommand group: the two ways to get a contract
+        // file to edit — copy the package's own, or write one from a run.
         play_launch::cli::options::Command::Contract(args) => match &args.subcommand {
             play_launch::cli::options::ContractSubcommand::Eject(eject) => {
                 play_launch::commands::handle_contract_eject(eject)?;
+            }
+            play_launch::cli::options::ContractSubcommand::Capture(capture) => {
+                play_launch::commands::handle_contract_capture(capture)?;
             }
         },
     }

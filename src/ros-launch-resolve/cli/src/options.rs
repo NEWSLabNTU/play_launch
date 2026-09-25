@@ -104,7 +104,8 @@ pub enum Command {
         ros-launch-resolve check --contracts ~/contracts launch/system.launch.xml mode:=lidar")]
     Check(CheckArgs),
 
-    /// Eject a contract sidecar for a package.
+    /// Get a contract file to edit: eject a package's sidecar, or capture
+    /// the structure of a run that has none.
     Contract(ContractArgs),
 
     /// Plot resource usage from execution logs.
@@ -124,6 +125,27 @@ pub enum ContractSubcommand {
     /// any) into the overlay tree, ready to edit — editing never touches
     /// `/opt` (design §3.3).
     Eject(ContractEjectArgs),
+
+    /// Write a contract's STRUCTURE from a recorded run, for a system that
+    /// has none (issue #0044). Prints to stdout and writes nothing.
+    Capture(ContractCaptureArgs),
+}
+
+/// Arguments for `ros-launch-resolve contract capture`
+#[derive(Args)]
+pub struct ContractCaptureArgs {
+    /// Run directory (`play_log/<timestamp>`), or the `interception/` dir
+    /// inside one.
+    pub run_dir: PathBuf,
+
+    /// SystemModel the run was launched from — supplies the node keys a
+    /// contract has to be written in.
+    #[arg(long, value_name = "PATH")]
+    pub model: PathBuf,
+
+    /// Keep `/rosout`, `/parameter_events`, `/tf` and friends.
+    #[arg(long)]
+    pub include_infra: bool,
 }
 
 /// Arguments for `ros-launch-resolve contract eject`

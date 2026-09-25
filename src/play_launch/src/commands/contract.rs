@@ -1,11 +1,12 @@
-//! `play_launch contract eject` — argument mapping only.
+//! `play_launch contract` — argument mapping only.
 //!
-//! The verb itself is `ros_launch_resolve::verbs::contract::eject`.
+//! The verbs themselves are `ros_launch_resolve::verbs::contract::eject` and
+//! `ros_launch_resolve::verbs::capture::capture`.
 
 use eyre::Result;
 
-use crate::cli::options::ContractEjectArgs;
-use ros_launch_resolve::verbs::{self, ContractEjectInputs};
+use crate::cli::options::{ContractCaptureArgs, ContractEjectArgs};
+use ros_launch_resolve::verbs::{self, CaptureInputs, ContractEjectInputs};
 
 pub fn handle_contract_eject(args: &ContractEjectArgs) -> Result<()> {
     verbs::contract::eject(ContractEjectInputs {
@@ -15,4 +16,17 @@ pub fn handle_contract_eject(args: &ContractEjectArgs) -> Result<()> {
         into: args.into.clone(),
         force: args.force,
     })
+}
+
+/// `contract capture` prints to stdout and writes nothing — the same ruling
+/// `measure` follows. Where a captured contract belongs in the overlay tree is
+/// the author's decision, and a tool that placed it would be making it.
+pub fn handle_contract_capture(args: &ContractCaptureArgs) -> Result<()> {
+    let text = verbs::capture::capture(CaptureInputs {
+        run_dir: args.run_dir.clone(),
+        model: args.model.clone(),
+        include_infra: args.include_infra,
+    })?;
+    print!("{text}");
+    Ok(())
 }

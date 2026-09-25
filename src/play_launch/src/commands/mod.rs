@@ -21,7 +21,7 @@ pub mod up;
 pub use capabilities::{handle_setcap, handle_verify};
 pub use check::handle_check;
 pub use context::handle_context;
-pub use contract::handle_contract_eject;
+pub use contract::{handle_contract_capture, handle_contract_eject};
 pub use dump::handle_dump;
 pub use launch::handle_launch;
 pub use measure::handle_measure;
