@@ -622,6 +622,199 @@ RankedPlan {
     ],
     warnings: [],
 }
+== contract_takeover/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "driver_exit",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "call_mrm",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
+        },
+        RankItem {
+            node: "/estop_op",
+            path: "on_timer",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/planner",
+            path: "follow",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=300)",
+        },
+    ],
+    warnings: [],
+}
+== contract_takeover_bad/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "driver_exit",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "call_mrm",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
+        },
+        RankItem {
+            node: "/estop_op",
+            path: "on_timer",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/holder",
+            path: "hold",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=50)",
+        },
+        RankItem {
+            node: "/planner",
+            path: "follow",
+            fine_group: 4,
+            coarse_group: None,
+            tie_group: Some(
+                4,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=300)",
+        },
+    ],
+    warnings: [],
+}
+== contract_takeover_budget/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "driver_exit",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "call_mrm",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
+        },
+        RankItem {
+            node: "/estop_op",
+            path: "on_timer",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/estop_op",
+            path: "on_timer_ok",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/planner",
+            path: "follow",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=300)",
+        },
+    ],
+    warnings: [],
+}
+== contract_takeover_exit/launch/bringup.launch.xml
+RankedPlan {
+    items: [],
+    warnings: [],
+}
 == contract_w1d/launch/bringup.launch.xml
 RankedPlan {
     items: [

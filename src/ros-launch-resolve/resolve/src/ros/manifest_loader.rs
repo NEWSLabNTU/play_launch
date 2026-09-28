@@ -262,6 +262,9 @@ pub struct ResolvedFunction {
     pub scope_id: usize,
     pub name: String,
     pub group: ros_launch_manifest_types::GuardGroup,
+    /// The predicate that loses the function by value (`of:` + `when:`,
+    /// rlm v0.1.46). `None` for a function lost only by silence.
+    pub when: Option<ros_launch_manifest_types::ValuePredicate>,
 }
 
 /// A hazard with its guard topics resolved to FQNs (phase 71).
@@ -307,9 +310,51 @@ impl DerivedCriticality {
     }
 }
 
+/// Where a rung stands in a hazard's reaction (phase 83).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RungRole {
+    /// A graded rung, checked in its own right (`ladder-rung-budget`).
+    #[default]
+    Rung,
+    /// A windowed, transitional rung: charged to every rung below it.
+    Window,
+    /// A rung this hazard's fault removes (F1): neither checked nor charged.
+    Skipped,
+    /// The floor, measured by `fault-reaction-budget`.
+    Floor,
+}
+
+/// One (hazard, rung) row of the fault-reaction arithmetic, kept so
+/// `check --explain` can print the terms the verdicts were computed from
+/// (phase 83). Every number is the checker's own.
+#[derive(Debug, Clone, Default)]
+pub struct RungBudget {
+    pub hazard: String,
+    pub rung: String,
+    pub role: RungRole,
+    pub fdti_ms: Option<f64>,
+    /// The windowed rungs passed on the way, route + window each, summed.
+    pub windows_ms: f64,
+    pub route_ms: Option<f64>,
+    /// A windowed rung's own window.
+    pub window_ms: Option<f64>,
+    pub settle_ms: Option<f64>,
+    /// `derived` | `literal` | `none`.
+    pub settle_how: &'static str,
+    pub total_ms: Option<f64>,
+    pub ftti_ms: Option<f64>,
+    pub note: String,
+}
+
 /// The complete resolved manifest index for the launch tree.
 #[derive(Debug, Default, Clone)]
 pub struct ManifestIndex {
+    /// Every node's resolved launch parameter values, keyed by node FQN
+    /// (phase 83): what `window-param` and a braking-profile settle read.
+    pub launch_params: HashMap<String, BTreeMap<String, super::value_rules::LaunchParam>>,
+    /// The fault-reaction arithmetic per (hazard, rung), for `--explain`
+    /// (phase 83).
+    pub budgets: Vec<RungBudget>,
     /// Hazards, one entry per declaration (phase 71).
     pub hazards: Vec<ResolvedHazard>,
     /// Named guard groups (phase 75).
@@ -447,6 +492,8 @@ pub fn load_manifests(
     let mut overlay_loaded = 0usize;
     let mut provider_loaded = 0usize;
 
+    index.launch_params = super::value_rules::launch_param_values(launch_dump);
+
     // Snapshot scope tree (parent links) for cross-scope checks.
     // Includes all scopes (file and group), not just those with manifests.
     for scope in &launch_dump.scopes {
@@ -525,13 +572,35 @@ pub fn load_manifests(
         let parsed = match parse_manifest_with_spans(&path) {
             Ok(p) => p,
             Err(e) => {
+                // Phase 83: name the line too, when the error names a key the
+                // span index can find -- a closed grammar refuses a file for
+                // one key, and the key is what the author has to look for.
+                let line = match &e {
+                    ros_launch_manifest_types::parse::ParseError::Field { path: key, .. } => {
+                        std::fs::read_to_string(&path).ok().and_then(|src| {
+                            let spans = ros_launch_manifest_types::SpanIndex::build(&src);
+                            let mut k = key.clone();
+                            loop {
+                                if let Some(r) = spans.get(&k) {
+                                    break Some(
+                                        src.chars().take(r.start).filter(|c| *c == '\n').count()
+                                            + 1,
+                                    );
+                                }
+                                k = k.rsplit_once('.')?.0.to_string();
+                            }
+                        })
+                    }
+                    _ => None,
+                };
                 index.load_diagnostics.push(Diagnostic {
                     rule_id: "manifest-parse".to_string(),
                     severity: Severity::Error,
                     message: format!(
-                        "could not parse contract {}: {e}. Every contract in this \
+                        "could not parse contract {}{}: {e}. Every contract in this \
                          file is now UNCHECKED — the file is dropped, not partially read",
-                        path.display()
+                        path.display(),
+                        line.map_or(String::new(), |l| format!(":{l}"))
                     ),
                     path: path.display().to_string(),
                     span: None,
@@ -1411,11 +1480,25 @@ fn hazard_unguarded(
 struct ReactionWalk {
     /// Longest-branch sum of the reaction paths' `max_latency`.
     route_ms: f64,
-    /// `safe_state.settle` at the sink, if declared there.
-    settle_ms: Option<f64>,
+    /// The `safe_state` whose settle the route is charged: the one declared
+    /// at the sink, or else (phase 83) the nearest one upstream on the same
+    /// branch -- a node that commands the safe state through a downstream
+    /// hop (the comfortable-stop operator's velocity limit, carried to the
+    /// actuator by the planner) still owns the plant's share of it.
+    settle: Option<SettleAt>,
     /// The hops on the longest branch, for the message and for the
     /// criticality derivation.
     hops: Vec<ReactionHop>,
+}
+
+/// Where a reaction's settle is declared: the node, its path, and the
+/// `safe_state` there. The number is derived by the caller, per hazard,
+/// because a braking profile needs the hazard's entry speed.
+#[derive(Clone)]
+struct SettleAt {
+    node: String,
+    path: String,
+    ss: ros_launch_manifest_types::SafeState,
 }
 
 /// One `node/path` hop of a reaction route.
@@ -1535,15 +1618,20 @@ fn walk_reaction(
             };
             // Does this path command the safe state on a sink — or, failing a
             // declared safe_state, simply publish onto one?
+            let here = |ss: &ros_launch_manifest_types::SafeState| SettleAt {
+                node: node_fqn.to_string(),
+                path: path.path_name.clone(),
+                ss: ss.clone(),
+            };
             let emits_sink = match path.path.safe_state.as_ref() {
-                Some(ss) if publishes_sink(&ss.emits) => Some(ss.settle.map(|d| d.as_millis_f64())),
+                Some(ss) if publishes_sink(&ss.emits) => Some(Some(here(ss))),
                 _ if path.path.output.iter().any(|o| publishes_sink(o)) => Some(None),
                 _ => None,
             };
             let candidate = if let Some(settle) = emits_sink {
                 ReactionWalk {
                     route_ms: hop_ms,
-                    settle_ms: settle,
+                    settle,
                     hops: vec![hop],
                 }
             } else {
@@ -1586,6 +1674,15 @@ fn walk_reaction(
                             longest = Some(w);
                         }
                     }
+                }
+                // A safe state commanded HERE and carried to the sink by the
+                // hops below: the settle is this path's unless a hop nearer
+                // the sink declares its own.
+                if let Some(w) = longest.as_mut()
+                    && w.settle.is_none()
+                    && let Some(ss) = path.path.safe_state.as_ref()
+                {
+                    w.settle = Some(here(ss));
                 }
                 let Some(w) = longest else {
                     continue;
@@ -1764,6 +1861,7 @@ fn resolve_ladder(
     h: &ResolvedHazard,
     reaction_name: &str,
     modes: &[ResolvedMode],
+    removed: &std::collections::BTreeSet<String>,
     diags: &mut Vec<Diagnostic>,
     at: &str,
 ) -> Option<(Vec<(String, String)>, String)> {
@@ -1841,10 +1939,13 @@ fn resolve_ladder(
         .iter()
         .flat_map(|g| g.members.iter().map(String::as_str))
         .collect();
+    // Phase 83: or a function the fault removes by its class -- a value
+    // function on the guard topic is gone under `reported` as well as under
+    // silence, and a plain one under silence.
     let doomed: Vec<&str> = last_requires
         .iter()
         .map(String::as_str)
-        .filter(|r| guarded.contains(r) || named.contains(r))
+        .filter(|r| guarded.contains(r) || named.contains(r) || removed.contains(*r))
         .collect();
     if !doomed.is_empty() {
         diags.push(Diagnostic {
@@ -1872,6 +1973,7 @@ fn check_fault_reaction(
     use ros_launch_manifest_types::FaultKind;
 
     let mut diags: Vec<Diagnostic> = Vec::new();
+    let mut budgets: Vec<RungBudget> = Vec::new();
     let hazards = index.hazards.clone();
     let topics = index.topics.clone();
     let services = index.services.clone();
@@ -2132,11 +2234,81 @@ fn check_fault_reaction(
         // `fault-reaction-budget` measures, because it is the floor the
         // system is guaranteed to reach. Phase 71's single-path form is the
         // one-rung case, unchanged.
-        let Some((rungs, terminal)) = resolve_ladder(h, reaction_name, &modes, &mut diags, &at)
+        // Phase 83 F1: the rungs THIS fault leaves standing. A rung that
+        // requires a function the fault removes is not a place the hazard
+        // can land, so it is neither checked nor charged -- the same test
+        // `ladder-unterminated` applies to the floor.
+        let removed = super::value_rules::removed_by(h, index);
+        let Some((rungs, terminal)) =
+            resolve_ladder(h, reaction_name, &modes, &removed, &mut diags, &at)
         else {
             continue;
         };
+        let mode_of = |name: &str| {
+            modes
+                .iter()
+                .find(|m| m.scope_id == h.scope_id && m.name == name)
+        };
+        let ftti_ms = h.decl.ftti.map(|d| d.as_millis_f64());
+        let fdti_ms = fdti_worst.as_ref().map(|(v, _)| *v);
+        let guard_topics: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
+        // Phase 83: windowed rungs the hazard passes through on the way to a
+        // later rung, (rung, route, window). Each is charged to every rung
+        // below it: the system waits the window out before it moves on.
+        let mut windows: Vec<(String, f64, f64)> = Vec::new();
+        let windows_ms =
+            |w: &[(String, f64, f64)]| w.iter().fold(0.0_f64, |acc, (_, r, d)| acc + r + d);
+        let windows_note = |w: &[(String, f64, f64)]| {
+            w.iter()
+                .map(|(n, r, d)| format!(" + '{n}' reaction {r:.2}ms + window {d:.2}ms"))
+                .collect::<String>()
+        };
+        let rung_site = |rung: &str| {
+            if mode_of(rung).is_some() {
+                super::value_rules::site(index, h.scope_id, &format!("modes.{rung}"))
+            } else {
+                super::value_rules::site(index, h.scope_id, &format!("{at}.reaction"))
+            }
+        };
+        let settle_of = |w: &ReactionWalk, rung: &str, diags: &mut Vec<Diagnostic>| match &w.settle
+        {
+            Some(at_) => super::value_rules::settle_for(
+                index,
+                &index.launch_params,
+                h,
+                rung,
+                &at_.node,
+                &at_.path,
+                &at_.ss,
+                diags,
+            ),
+            None => super::value_rules::Settle {
+                ms: None,
+                how: "none",
+            },
+        };
         for (rung_name, rung_path) in rungs.iter().take(rungs.len().saturating_sub(1)) {
+            let mode = mode_of(rung_name);
+            if let Some(m) = mode {
+                let lost: Vec<&str> = m
+                    .decl
+                    .requires
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|r| removed.contains(*r))
+                    .collect();
+                if !lost.is_empty() {
+                    budgets.push(RungBudget {
+                        hazard: h.name.clone(),
+                        rung: rung_name.clone(),
+                        role: RungRole::Skipped,
+                        ftti_ms,
+                        note: format!("requires {}, which this fault removes", lost.join(", ")),
+                        ..Default::default()
+                    });
+                    continue;
+                }
+            }
             let Some(rp) = scope_paths
                 .iter()
                 .find(|p| p.scope_id == h.scope_id && &p.path_name == rung_path)
@@ -2144,30 +2316,92 @@ fn check_fault_reaction(
                 continue;
             };
             let sinks: HashSet<&str> = rp.output_topics.iter().map(String::as_str).collect();
-            let guards: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
-            let route = walk_reaction(&guards, &sinks, &topics, &services, &node_paths, graph)
-                .map(|w| (w.route_ms, w.settle_ms))
-                .or_else(|| rp.path.max_latency.map(|d| (d.as_millis_f64(), None)));
-            let (Some((route_ms, settle)), Some(ftti), Some((fdti, _))) = (
-                route,
-                h.decl.ftti.map(|d| d.as_millis_f64()),
-                fdti_worst.clone(),
-            ) else {
+            let walk = walk_reaction(
+                &guard_topics,
+                &sinks,
+                &topics,
+                &services,
+                &node_paths,
+                graph,
+            );
+            let route_ms = walk
+                .as_ref()
+                .map(|w| w.route_ms)
+                .or_else(|| rp.path.max_latency.map(|d| d.as_millis_f64()));
+            // A windowed rung is transitional: its sink is a notification,
+            // not a safe state, so it has no settle and is not a promise of
+            // its own -- which is also why it is exempt from
+            // `reaction-unbudgeted`. What it costs is charged below it.
+            if let Some(win) = mode.and_then(|m| m.decl.window.as_ref()) {
+                let d = win.duration.as_millis_f64();
+                let r = route_ms.unwrap_or(0.0);
+                budgets.push(RungBudget {
+                    hazard: h.name.clone(),
+                    rung: rung_name.clone(),
+                    role: RungRole::Window,
+                    fdti_ms,
+                    windows_ms: windows_ms(&windows),
+                    route_ms,
+                    window_ms: Some(d),
+                    ftti_ms,
+                    note: "transitional: charged to every rung below it".to_string(),
+                    ..Default::default()
+                });
+                windows.push((rung_name.clone(), r, d));
+                continue;
+            }
+            let settle = match &walk {
+                Some(w) => settle_of(w, rung_name, &mut diags),
+                None => super::value_rules::Settle::default(),
+            };
+            if walk.is_some() && settle.ms.is_none() {
+                diags.push(Diagnostic {
+                    rule_id: "reaction-unbudgeted".to_string(),
+                    severity: Severity::Warning,
+                    message: format!(
+                        "{}: hazard '{}': fallback rung '{rung_name}' reaches {} but no path \
+                         there declares a `safe_state` with a settle time -- the plant's share \
+                         of the rung is unknown, so its budget runs on INCOMPLETE EVIDENCE",
+                        rung_site(rung_name),
+                        h.name,
+                        rp.output_topics.join(", ")
+                    ),
+                    path: format!("{at}.reaction"),
+                    span: None,
+                });
+            }
+            let (Some(route_ms), Some(ftti), Some(fdti)) = (route_ms, ftti_ms, fdti_ms) else {
                 continue;
             };
-            let total = fdti + route_ms + settle.unwrap_or(0.0);
+            let settle_ms = settle.ms.unwrap_or(0.0);
+            let waited = windows_ms(&windows);
+            let total = fdti + waited + route_ms + settle_ms;
+            budgets.push(RungBudget {
+                hazard: h.name.clone(),
+                rung: rung_name.clone(),
+                role: RungRole::Rung,
+                fdti_ms: Some(fdti),
+                windows_ms: waited,
+                route_ms: Some(route_ms),
+                settle_ms: settle.ms,
+                settle_how: settle.how,
+                total_ms: Some(total),
+                ftti_ms: Some(ftti),
+                ..Default::default()
+            });
             if total > ftti {
                 diags.push(Diagnostic {
                     rule_id: "ladder-rung-budget".to_string(),
                     severity: Severity::Error,
                     message: format!(
-                        "hazard '{}': fallback rung '{rung_name}' cannot make the \
-                         fault-tolerant time interval — detection {fdti:.2}ms + reaction \
-                         {route_ms:.2}ms + settle {:.2}ms = {total:.2}ms against {ftti:.2}ms. A \
-                         graded reaction is a promise in its own right, not only a step on the \
-                         way to the floor",
+                        "{}: hazard '{}': fallback rung '{rung_name}' cannot make the \
+                         fault-tolerant time interval — detection {fdti:.2}ms{} + reaction \
+                         {route_ms:.2}ms + settle {settle_ms:.2}ms = {total:.2}ms against \
+                         {ftti:.2}ms. A graded reaction is a promise in its own right, not only \
+                         a step on the way to the floor",
+                        rung_site(rung_name),
                         h.name,
-                        settle.unwrap_or(0.0)
+                        windows_note(&windows),
                     ),
                     path: format!("{at}.reaction"),
                     span: None,
@@ -2202,21 +2436,23 @@ fn check_fault_reaction(
         // the hazard's reaction sink. Fork-join takes the longest branch.
         let sinks: HashSet<&str> = reaction.output_topics.iter().map(String::as_str).collect();
         let walk = walk_reaction(
-            &h.guards
-                .iter()
-                .flat_map(|g| g.members.iter().cloned())
-                .collect::<Vec<_>>(),
+            &guard_topics,
             &sinks,
             &topics,
             &services,
             &node_paths,
             graph,
         );
+        let floor_name = rungs.last().map(|(n, _)| n.clone()).unwrap_or_default();
+        let settle = match &walk {
+            Some(w) => settle_of(w, &floor_name, &mut diags),
+            None => super::value_rules::Settle::default(),
+        };
+        let settle_ms = settle.ms;
         let declared_ms = reaction.path.max_latency.map(|d| d.as_millis_f64());
-        let (frti_route, settle_ms, route_note) = match (&walk, declared_ms) {
+        let (frti_route, route_note) = match (&walk, declared_ms) {
             (Some(w), _) => (
                 w.route_ms,
-                w.settle_ms,
                 format!(
                     "reaction route {} = {:.2}ms",
                     w.hops
@@ -2243,7 +2479,6 @@ fn check_fault_reaction(
                 });
                 (
                     d,
-                    None,
                     format!("declared max_latency {d:.2}ms (no reaction route)"),
                 )
             }
@@ -2260,12 +2495,10 @@ fn check_fault_reaction(
                     path: format!("{at}.reaction"),
                     span: None,
                 });
-                (0.0, None, "unknown route".to_string())
+                (0.0, "unknown route".to_string())
             }
         };
-        if let Some(w) = &walk
-            && w.settle_ms.is_none()
-        {
+        if walk.is_some() && settle_ms.is_none() {
             diags.push(Diagnostic {
                 rule_id: "reaction-unbudgeted".to_string(),
                 severity: Severity::Warning,
@@ -2313,24 +2546,40 @@ fn check_fault_reaction(
             });
         }
 
-        let Some(ftti) = h.decl.ftti.map(|d| d.as_millis_f64()) else {
+        let waited = windows_ms(&windows);
+        budgets.push(RungBudget {
+            hazard: h.name.clone(),
+            rung: floor_name.clone(),
+            role: RungRole::Floor,
+            fdti_ms,
+            windows_ms: waited,
+            route_ms: Some(frti_route),
+            settle_ms,
+            settle_how: settle.how,
+            total_ms: fdti_ms.map(|f| f + waited + frti),
+            ftti_ms,
+            ..Default::default()
+        });
+        let Some(ftti) = ftti_ms else {
             continue;
         };
         let Some((fdti, fdti_why)) = fdti_worst else {
             continue;
         };
         let settle_note = settle_ms.map_or(String::new(), |s| format!(" + settle {s:.2}ms"));
-        if fdti + frti > ftti {
+        let total = fdti + waited + frti;
+        let where_ = super::value_rules::site(index, h.scope_id, &format!("{at}.ftti"));
+        let waits = windows_note(&windows);
+        if total > ftti {
             diags.push(Diagnostic {
                 rule_id: "fault-reaction-budget".to_string(),
                 severity: Severity::Error,
                 message: format!(
-                    "hazard '{}': detection {fdti:.2}ms ({fdti_why}) + reaction {frti:.2}ms \
-                     ({route_note}{settle_note}) = {:.2}ms exceeds the fault-tolerant time \
-                     interval {ftti:.2}ms. Tighten the slowest detector, shorten the reaction \
-                     route, or the hazard is not covered in time",
+                    "{where_}: hazard '{}': detection {fdti:.2}ms ({fdti_why}){waits} + reaction \
+                     {frti:.2}ms ({route_note}{settle_note}) = {total:.2}ms exceeds the \
+                     fault-tolerant time interval {ftti:.2}ms. Tighten the slowest detector, \
+                     shorten the reaction route, or the hazard is not covered in time",
                     h.name,
-                    fdti + frti
                 ),
                 path: format!("{at}.ftti"),
                 span: None,
@@ -2340,12 +2589,11 @@ fn check_fault_reaction(
                 rule_id: "fault-reaction-budget".to_string(),
                 severity: Severity::Info,
                 message: format!(
-                    "hazard '{}': detection {fdti:.2}ms ({fdti_why}) + reaction {frti:.2}ms \
-                     ({route_note}{settle_note}) = {:.2}ms fits the fault-tolerant time \
-                     interval {ftti:.2}ms with {:.2}ms of slack",
+                    "{where_}: hazard '{}': detection {fdti:.2}ms ({fdti_why}){waits} + reaction \
+                     {frti:.2}ms ({route_note}{settle_note}) = {total:.2}ms fits the \
+                     fault-tolerant time interval {ftti:.2}ms with {:.2}ms of slack",
                     h.name,
-                    fdti + frti,
-                    ftti - fdti - frti
+                    ftti - total
                 ),
                 path: format!("{at}.ftti"),
                 span: None,
@@ -2353,10 +2601,19 @@ fn check_fault_reaction(
         }
     }
 
+    // Phase 83: the rules the four takeover keys stand on by themselves.
+    super::value_rules::check_predicates(index, &mut diags);
+    super::value_rules::check_windows_and_exits(index, graph, &index.launch_params, &mut diags);
+
     check_modes(index, graph, &mut diags);
 
     diags.sort_by(|a, b| a.path.cmp(&b.path).then(a.rule_id.cmp(&b.rule_id)));
+    // A finding about a declaration, reached once per hazard that walks
+    // through it (an unreadable braking profile, say), is one finding.
+    let mut seen: HashSet<(String, String, String)> = HashSet::new();
+    diags.retain(|d| seen.insert((d.rule_id.clone(), d.path.clone(), d.message.clone())));
     index.merge_diagnostics.extend(diags);
+    index.budgets = budgets;
 }
 
 /// Re-run the requirement checks once per mode whose `overrides:` pin
@@ -4587,18 +4844,20 @@ fn resolve_scope_paths(manifest: &Manifest, scope: &ScopeEntry, index: &mut Mani
 fn resolve_hazards(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestIndex) {
     use ros_launch_manifest_types::GuardGroup;
 
-    for (name, group) in &manifest.functions {
+    for (name, f) in &manifest.functions {
         index.functions.push(ResolvedFunction {
             scope_id: scope.id,
             name: name.clone(),
             group: GuardGroup {
-                members: group
+                members: f
+                    .group
                     .members
                     .iter()
                     .map(|t| qualify_name(&scope.ns, t))
                     .collect(),
-                all_of: group.all_of,
+                all_of: f.group.all_of,
             },
+            when: f.when.clone(),
         });
     }
     for (name, decl) in &manifest.modes {
@@ -4623,11 +4882,12 @@ fn resolve_hazards(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifest
                 {
                     return GuardGroup {
                         members: f
+                            .group
                             .members
                             .iter()
                             .map(|t| qualify_name(&scope.ns, t))
                             .collect(),
-                        all_of: f.all_of,
+                        all_of: f.group.all_of,
                     };
                 }
                 GuardGroup {

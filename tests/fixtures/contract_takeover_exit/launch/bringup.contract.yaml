@@ -1,0 +1,174 @@
+# Phase 83 -- `exit:` is only for a windowed rung. Here the takeover rung
+# has lost its window, which makes the exit a general mode transition: a
+# parse error (rlm v0.1.46), so the whole file is refused, not partly read.
+version: 1
+
+severity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
+
+functions:
+  hpc_alive: [/availability]
+  hpc_in_odd:
+    of: [/availability]
+    when: { field: autonomous, equals: false }
+  driver_took_over:
+    of: [/control_mode]
+    when: { field: mode, not_equals: MANUAL }
+
+hazards:
+  odd_exit:
+    severity: ASIL_B
+    guards: [/availability]
+    on: reported
+    when: { field: autonomous, equals: false }
+    entry_speed: 8.33
+    ftti: 30s
+    reaction: engaged
+  hpc_loss:
+    severity: ASIL_D
+    guards: [/availability]
+    on: omission
+    entry_speed: 3.0
+    ftti: 3s
+    reaction: engaged
+
+modes:
+  engaged:
+    requires: [hpc_alive, hpc_in_odd]
+    fallback: [takeover, comfortable, estop]
+  takeover:
+    requires: [hpc_alive]
+    reaction: sys.tor
+    exit: { on: driver_took_over, to: manual }
+  comfortable:
+    requires: [hpc_alive]
+    reaction: sys.comfortable
+  estop:
+    requires: []
+    reaction: sys.estop
+  manual:
+    requires: []
+
+paths:
+  sys.tor:
+    trigger: { input: [/availability] }
+    output: [/tor_state]
+  sys.comfortable:
+    trigger: { input: [/availability] }
+    output: [/planner_cmd]
+  sys.estop:
+    trigger: { input: [/availability] }
+    output: [/estop_cmd]
+
+nodes:
+  gate:
+    pub:
+      availability: {}
+    paths:
+      report:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [availability]
+        max_latency: 20ms
+
+  handler:
+    params:
+      takeover_timeout: { type: double }
+    sub:
+      availability:
+        qos: { lease_duration: 500ms }
+        on_violation: { on: [omission, reported], reaction: call_mrm }
+      control_mode: {}
+    pub:
+      tor_state: {}
+    cli:
+      comfort_operate: {}
+      estop_operate: {}
+    paths:
+      call_mrm:
+        trigger: { input: [availability] }
+        output: [tor_state, comfort_operate, estop_operate]
+        max_latency: 110ms
+      driver_exit:
+        trigger: { input: [control_mode] }
+        output: [tor_state]
+        max_latency: 100ms
+
+  comfort_op:
+    params:
+      min_acceleration: { type: double }
+      min_jerk: { type: double }
+    srv:
+      operate: {}
+    pub:
+      velocity_limit: {}
+    paths:
+      # A service callback that publishes (brief D F3): the walk continues
+      # through it, and its safe state is carried to the planner's command.
+      operate:
+        trigger: { input: [operate] }
+        output: [velocity_limit]
+        safe_state:
+          emits: velocity_limit
+          settle: { decel: min_acceleration, jerk: min_jerk }
+
+  planner:
+    sub:
+      velocity_limit: {}
+    pub:
+      cmd: {}
+    paths:
+      follow:
+        trigger: { input: [velocity_limit] }
+        output: [cmd]
+        max_latency: 300ms
+
+  estop_op:
+    params:
+      target_acceleration: { type: double }
+      target_jerk: { type: double }
+    srv:
+      operate: {}
+    pub:
+      cmd: {}
+    paths:
+      on_timer:
+        trigger: { timer: { rate_hz: 30 } }
+        output: [cmd]
+        safe_state:
+          emits: cmd
+          settle: { decel: target_acceleration, jerk: target_jerk }
+
+topics:
+  /availability:
+    type: demo_msgs/msg/Availability
+    pub: [gate/availability]
+    sub: [handler/availability]
+  /control_mode:
+    type: demo_msgs/msg/ControlMode
+    external: pub
+    sub: [handler/control_mode]
+  /tor_state:
+    type: std_msgs/msg/Bool
+    external: sub
+    pub: [handler/tor_state]
+  /velocity_limit:
+    type: std_msgs/msg/Float64
+    pub: [comfort_op/velocity_limit]
+    sub: [planner/velocity_limit]
+  /planner_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [planner/cmd]
+  /estop_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [estop_op/cmd]
+
+services:
+  /comfort/operate:
+    type: std_srvs/srv/Trigger
+    server: [comfort_op/operate]
+    client: [handler/comfort_operate]
+  /estop/operate:
+    type: std_srvs/srv/Trigger
+    server: [estop_op/operate]
+    client: [handler/estop_operate]

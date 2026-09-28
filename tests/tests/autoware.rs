@@ -303,13 +303,16 @@ fn test_autoware_mrm_chain_fault_reaction_budget() {
         plain.contains("hazard 'mode_unavailable_tight'") && plain.contains("1944.00ms exceeds"),
         "{plain}"
     );
-    // Phase 75 — `mode_unavailable`'s reaction is the `autonomous` MODE, so
-    // the ladder is the reaction: `comfortable_stop` is checked in its own
-    // right (it decelerates over ~4 s and cannot make the 2 s interval),
-    // while `emergency_stop`, the floor, is what the budget above measures.
+    // Phase 75 made `comfortable_stop` a rung checked in its own right, and
+    // on this fixture it failed the 2 s interval. Phase 83 (#0057) corrects
+    // that: the rung requires `operation_mode_availability`, which the
+    // `mode_unavailable` omission itself removes, so the hazard can never
+    // land there -- and Autoware agrees, since an availability timeout forces
+    // EMERGENCY_STOP in `mrm_handler`. The rung is skipped, not failed;
+    // `emergency_stop`, the floor, is what the budget above measures.
     assert!(
-        plain.contains("error[ladder-rung-budget]") && plain.contains("rung 'comfortable_stop'"),
-        "a graded rung must be checked in its own right:\n{plain}"
+        !plain.contains("rung 'comfortable_stop' cannot make"),
+        "a rung the fault removes must not be checked:\n{plain}"
     );
 }
 

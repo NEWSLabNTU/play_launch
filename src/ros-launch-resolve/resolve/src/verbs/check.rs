@@ -183,7 +183,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
         if inputs.explain {
             crate::ros::sched_loader::print_explain(&derived, resolved, Some(&index));
         }
-    } else if inputs.explain {
+    } else if inputs.explain && index.budgets.is_empty() {
         eprintln!(
             "note: --explain has no effect without a resolved scheduling platform file \
              (pass --sched <path>, or ship one via the overlay/provider channels)"
@@ -228,6 +228,12 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // Render cross-scope diagnostics (consistency, dangling-entity, budget-overflow)
     render_cross_scope_diagnostics(&index, &inputs.format, rule_filter.as_ref())?;
 
+    // Phase 83: the fault-reaction arithmetic the verdicts above were
+    // computed from, one row per (hazard, rung).
+    if inputs.explain && inputs.format != "json" && !index.budgets.is_empty() {
+        eprint!("{}", render_budgets(&index.budgets));
+    }
+
     // Summary
     print_summary(&index, rule_filter.as_ref());
 
@@ -236,6 +242,88 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     }
 
     Ok(0)
+}
+
+/// `check --explain`'s fault-reaction table (phase 83): per hazard, every
+/// rung of its ladder with the terms the checker charged -- detection, the
+/// windowed rungs waited out on the way, the rung's own route, the settle and
+/// how it was reached -- against the interval. A rung the fault removes is
+/// listed with the reason it was skipped, so the selection is visible too.
+pub fn render_budgets(rows: &[manifest_loader::RungBudget]) -> String {
+    use manifest_loader::RungRole;
+    let ms = |v: Option<f64>| v.map_or("-".to_string(), |v| format!("{v:.2}"));
+    let mut out = String::from("\n-- Fault-reaction budgets (--explain, ms) --\n");
+    let head = [
+        "HAZARD", "RUNG", "ROLE", "DETECT", "WINDOWS", "ROUTE", "SETTLE", "TOTAL", "FTTI", "SLACK",
+    ];
+    let mut table: Vec<[String; 10]> = vec![head.map(str::to_string)];
+    let mut notes: Vec<String> = Vec::new();
+    for r in rows {
+        let role = match r.role {
+            RungRole::Rung => "rung",
+            RungRole::Window => "window",
+            RungRole::Skipped => "skipped",
+            RungRole::Floor => "floor",
+        };
+        let settle = match (r.role, r.settle_ms) {
+            (RungRole::Window, _) => format!("window {}", ms(r.window_ms)),
+            (_, Some(v)) => format!("{v:.2} {}", r.settle_how),
+            (RungRole::Skipped, None) => "-".to_string(),
+            (_, None) => "unknown".to_string(),
+        };
+        let slack = match (r.total_ms, r.ftti_ms) {
+            (Some(t), Some(f)) => format!("{:.2}", f - t),
+            _ => "-".to_string(),
+        };
+        let windows = if r.role == RungRole::Skipped {
+            "-".to_string()
+        } else {
+            format!("{:.2}", r.windows_ms)
+        };
+        table.push([
+            r.hazard.clone(),
+            r.rung.clone(),
+            role.to_string(),
+            ms(r.fdti_ms),
+            windows,
+            ms(r.route_ms),
+            settle,
+            ms(r.total_ms),
+            ms(r.ftti_ms),
+            slack,
+        ]);
+        if !r.note.is_empty() {
+            notes.push(format!("  {}/{}: {}", r.hazard, r.rung, r.note));
+        }
+    }
+    let widths: Vec<usize> = (0..10)
+        .map(|c| table.iter().map(|row| row[c].len()).max().unwrap_or(0))
+        .collect();
+    for row in &table {
+        let line: Vec<String> = row
+            .iter()
+            .zip(&widths)
+            .enumerate()
+            .map(|(c, (cell, w))| {
+                if c < 3 {
+                    format!("{cell:<w$}")
+                } else {
+                    format!("{cell:>w$}")
+                }
+            })
+            .collect();
+        out.push_str(line.join("  ").trim_end());
+        out.push('\n');
+    }
+    out.push_str(
+        "  TOTAL = DETECT + WINDOWS + ROUTE + SETTLE; WINDOWS is the route and window of every \
+         windowed rung passed on the way.\n",
+    );
+    for n in notes {
+        out.push_str(&n);
+        out.push('\n');
+    }
+    out
 }
 
 /// Print the actions the parser dropped, and say whether that is fatal.

@@ -1,0 +1,226 @@
+# Phase 83 -- the takeover arithmetic, one term broken per rule, on the
+# ladder of `contract_takeover`.
+#
+#   window-param             the window says 10 s, the launch file runs 12.0
+#   ladder-rung-budget       odd_exit at 20 s: comfortable is 120 + (110 +
+#                            10000) + 410 + 9996.67 = 20636.67 ms, the window
+#                            charged cumulatively
+#   settle-conflict          comfort_op also states a measured 5000ms, the
+#                            profile derives 9996.67 ms at 8.33 m/s
+#   settle-entry-missing     odd_exit_unbounded states no entry_speed
+#   settle-param-unresolved  estop_op's profile names `target_decel`, which
+#                            it does not declare
+#   reaction-unbudgeted      the floor, whose settle could not be derived
+#   fault-reaction-budget    hpc_observed brakes from 4.23 m/s, phase 7's
+#                            measured speed: with a derived settle, the same
+#                            floor misses 3 s -- 500 + 143.33 + 2525.33 =
+#                            3168.67 ms. (hpc_loss at 3.0 m/s is the island
+#                            contract's assumption, which fits.)
+version: 1
+
+severity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
+
+functions:
+  hpc_alive: [/availability]
+  hpc_in_odd:
+    of: [/availability]
+    when: { field: autonomous, equals: false }
+  driver_took_over:
+    of: [/control_mode]
+    when: { field: mode, not_equals: MANUAL }
+
+hazards:
+  odd_exit:
+    severity: ASIL_B
+    guards: [/availability]
+    on: reported
+    when: { field: autonomous, equals: false }
+    entry_speed: 8.33
+    ftti: 20s
+    reaction: engaged
+  odd_exit_unbounded:
+    severity: ASIL_B
+    guards: [/availability]
+    on: reported
+    when: { field: autonomous, equals: false }
+    ftti: 30s
+    reaction: engaged
+  hpc_loss:
+    severity: ASIL_D
+    guards: [/availability]
+    on: omission
+    entry_speed: 3.0
+    ftti: 3s
+    reaction: engaged
+  hpc_observed:
+    severity: ASIL_D
+    guards: [/availability]
+    on: omission
+    entry_speed: 4.23
+    ftti: 3s
+    reaction: fallback_only
+
+modes:
+  engaged:
+    requires: [hpc_alive, hpc_in_odd]
+    fallback: [takeover, comfortable, estop]
+  takeover:
+    requires: [hpc_alive]
+    reaction: sys.tor
+    window: { duration: 10s, param: handler.takeover_timeout }
+    exit: { on: driver_took_over, to: manual }
+  comfortable:
+    requires: [hpc_alive]
+    reaction: sys.comfortable
+  estop:
+    requires: []
+    reaction: sys.estop
+  manual:
+    requires: []
+  # A second ladder with a floor whose settle IS derivable, so hpc_observed
+  # measures the entry speed rather than the unresolved parameter.
+  fallback_only:
+    requires: [hpc_alive]
+    fallback: [estop_ok]
+  estop_ok:
+    requires: []
+    reaction: sys.estop_ok
+
+paths:
+  sys.tor:
+    trigger: { input: [/availability] }
+    output: [/tor_state]
+  sys.comfortable:
+    trigger: { input: [/availability] }
+    output: [/planner_cmd]
+  sys.estop:
+    trigger: { input: [/availability] }
+    output: [/estop_cmd]
+  sys.estop_ok:
+    trigger: { input: [/availability] }
+    output: [/estop_ok_cmd]
+
+nodes:
+  gate:
+    pub:
+      availability: {}
+    paths:
+      report:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [availability]
+        max_latency: 20ms
+
+  handler:
+    params:
+      takeover_timeout: { type: double }
+    sub:
+      availability:
+        qos: { lease_duration: 500ms }
+        on_violation: { on: [omission, reported], reaction: call_mrm }
+      control_mode: {}
+    pub:
+      tor_state: {}
+    cli:
+      comfort_operate: {}
+      estop_operate: {}
+    paths:
+      call_mrm:
+        trigger: { input: [availability] }
+        output: [tor_state, comfort_operate, estop_operate]
+        max_latency: 110ms
+      driver_exit:
+        trigger: { input: [control_mode] }
+        output: [tor_state]
+        max_latency: 100ms
+
+  comfort_op:
+    params:
+      min_acceleration: { type: double }
+      min_jerk: { type: double }
+    srv:
+      operate: {}
+    pub:
+      velocity_limit: {}
+    paths:
+      # A service callback that publishes (brief D F3): the walk continues
+      # through it, and its safe state is carried to the planner's command.
+      operate:
+        trigger: { input: [operate] }
+        output: [velocity_limit]
+        safe_state:
+          emits: velocity_limit
+          settle: { decel: min_acceleration, jerk: min_jerk, duration: 5000ms }
+
+  planner:
+    sub:
+      velocity_limit: {}
+    pub:
+      cmd: {}
+    paths:
+      follow:
+        trigger: { input: [velocity_limit] }
+        output: [cmd]
+        max_latency: 300ms
+
+  estop_op:
+    params:
+      target_acceleration: { type: double }
+      target_jerk: { type: double }
+    srv:
+      operate: {}
+    pub:
+      cmd: {}
+      ok_cmd: {}
+    paths:
+      on_timer:
+        trigger: { timer: { rate_hz: 30 } }
+        output: [cmd]
+        safe_state:
+          emits: cmd
+          settle: { decel: target_decel, jerk: target_jerk }
+      on_timer_ok:
+        trigger: { timer: { rate_hz: 30 } }
+        output: [ok_cmd]
+        safe_state:
+          emits: ok_cmd
+          settle: { decel: target_acceleration, jerk: target_jerk }
+
+topics:
+  /availability:
+    type: demo_msgs/msg/Availability
+    pub: [gate/availability]
+    sub: [handler/availability]
+  /control_mode:
+    type: demo_msgs/msg/ControlMode
+    external: pub
+    sub: [handler/control_mode]
+  /tor_state:
+    type: std_msgs/msg/Bool
+    external: sub
+    pub: [handler/tor_state]
+  /velocity_limit:
+    type: std_msgs/msg/Float64
+    pub: [comfort_op/velocity_limit]
+    sub: [planner/velocity_limit]
+  /planner_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [planner/cmd]
+  /estop_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [estop_op/cmd]
+  /estop_ok_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [estop_op/ok_cmd]
+
+services:
+  /comfort/operate:
+    type: std_srvs/srv/Trigger
+    server: [comfort_op/operate]
+    client: [handler/comfort_operate]
+  /estop/operate:
+    type: std_srvs/srv/Trigger
+    server: [estop_op/operate]
+    client: [handler/estop_operate]

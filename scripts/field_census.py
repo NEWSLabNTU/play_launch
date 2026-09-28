@@ -119,6 +119,7 @@ TRANSPORT_PATTERNS = [
 CONSUMING_PATTERNS = [
     (r"check/src/rules/", "check rule"),
     (r"resolve/src/ros/manifest_loader\.rs$", "cross-scope check"),
+    (r"resolve/src/ros/value_rules\.rs$", "takeover rules (phase 83)"),
     (r"resolve/src/ros/manifest_graph\.rs$", "dataflow arithmetic"),
     (r"resolve/src/ros/sched_derive\.rs$", "mapper input"),
     (r"resolve/src/ros/sched_loader\.rs$", "scheduling derivation"),

@@ -215,6 +215,32 @@ fn effective_qos(
     Some(qos_contract(&QosDecl::effective(topic_qos, endpoint_qos)))
 }
 
+/// A `when:` predicate, lowered (rlm v0.1.46). A message constant name is
+/// carried as `{ constant: NAME }`, never as a string literal.
+fn predicate(p: &ros_launch_manifest_types::ValuePredicate) -> model::PredicateContract {
+    use ros_launch_manifest_types::{CompareOp as C, PredicateValue as V};
+    model::PredicateContract {
+        field: p.field.clone(),
+        op: match p.op {
+            C::Equals => model::CompareOp::Equals,
+            C::NotEquals => model::CompareOp::NotEquals,
+            C::Lt => model::CompareOp::Lt,
+            C::Le => model::CompareOp::Le,
+            C::Gt => model::CompareOp::Gt,
+            C::Ge => model::CompareOp::Ge,
+        },
+        value: match &p.value {
+            V::Bool(b) => model::PredicateValueContract::Bool(*b),
+            V::Int(i) => model::PredicateValueContract::Int(*i),
+            V::Float(f) => model::PredicateValueContract::Float(*f),
+            V::Constant(c) => model::PredicateValueContract::Constant {
+                constant: c.clone(),
+            },
+            V::Str(s) => model::PredicateValueContract::Str(s.clone()),
+        },
+    }
+}
+
 fn fault_kind(k: ros_launch_manifest_types::FaultKind) -> model::FaultKind {
     use ros_launch_manifest_types::FaultKind as F;
     match k {
@@ -340,6 +366,13 @@ fn path_contract(
         safe_state: decl.safe_state.as_ref().map(|s| model::SafeStateContract {
             emits: emits_key(&s.emits),
             settle_ms: s.settle.map(|d| d.as_millis_f64()),
+            settle_profile: s
+                .settle_profile
+                .as_ref()
+                .map(|p| model::SettleProfileContract {
+                    decel: p.decel.clone(),
+                    jerk: p.jerk.clone(),
+                }),
         }),
         input,
         output,
@@ -1158,9 +1191,10 @@ pub fn build_system_model(
     for f in &index.functions {
         contracts.functions.insert(
             scope_scoped_key(&scope_key(Some(f.scope_id)), &f.name),
-            model::GuardContract {
+            model::FunctionContract {
                 members: f.group.members.clone(),
                 all_of: f.group.all_of,
+                when: f.when.as_ref().map(predicate),
             },
         );
     }
@@ -1182,6 +1216,27 @@ pub fn build_system_model(
                         value: o.value.clone(),
                     })
                     .collect(),
+                // rlm v0.1.46. The window's parameter is keyed by the node's
+                // launch FQN, the same identity `node_params` uses, so a
+                // consumer can look the value up without re-resolving.
+                window: m.decl.window.as_ref().map(|w| model::WindowContract {
+                    duration_ms: w.duration.as_millis_f64(),
+                    param: w.param.as_ref().map(|p| {
+                        let ns = index
+                            .manifests
+                            .get(&m.scope_id)
+                            .map(|r| r.ns.as_str())
+                            .unwrap_or("");
+                        let fqn = super::manifest_loader::resolve_node_fqn(
+                            index, m.scope_id, ns, &p.node,
+                        );
+                        format!("{fqn}.{}", p.name)
+                    }),
+                }),
+                exit: m.decl.exit.as_ref().map(|e| model::ExitContract {
+                    on: key(&e.on),
+                    to: key(&e.to),
+                }),
             },
         );
     }
@@ -1208,6 +1263,8 @@ pub fn build_system_model(
                     .reaction
                     .as_ref()
                     .map(|r| scope_scoped_key(&scope_key(Some(h.scope_id)), r)),
+                when: h.decl.when.as_ref().map(predicate),
+                entry_speed_mps: h.decl.entry_speed,
             },
         );
     }

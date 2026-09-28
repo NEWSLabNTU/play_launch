@@ -42,3 +42,9 @@ max_response_ms    # SrvContract (model). The DECLARATION is read —
 
 tolerance_ms       # PathContract (model). Same shape: the declaration feeds
                    # `sync-feasibility`; the lowered copy is read by nothing.
+
+duration_ms        # WindowContract (model, phase 83). The DECLARATION is read
+                   # -- `window-param` and the cumulative rung budget in
+                   # `value_rules`/`check_fault_reaction`. The model copy is
+                   # carried for the island's contract probe and timeline
+                   # (phase 8 unit W7), which do not exist yet.

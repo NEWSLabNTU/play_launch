@@ -1536,3 +1536,152 @@ fn mode_rules_fire_on_a_broken_ladder() {
         "a rejected override must not be applied:\n{out}"
     );
 }
+
+/// Phase 83: `check` on a takeover fixture, with the fixture's own `.msg`
+/// stand-ins on `AMENT_PREFIX_PATH` so `when-field-unknown` resolves fields
+/// without an Autoware install. Returns (exit code, stdout + stderr).
+fn check_takeover(dir: &str, extra: &[&str]) -> (i32, String) {
+    let root = fixtures::repo_root().join("tests/fixtures");
+    let launch = root.join(dir).join("launch/bringup.launch.xml");
+    let ament = root.join("contract_takeover/ament");
+    let prefix = match std::env::var("AMENT_PREFIX_PATH") {
+        Ok(p) if !p.is_empty() => format!("{}:{p}", ament.display()),
+        _ => ament.display().to_string(),
+    };
+    let out = play_launch_cmd()
+        .arg("check")
+        .arg(&launch)
+        .args(extra)
+        .env("AMENT_PREFIX_PATH", prefix)
+        .output()
+        .expect("play_launch check runs");
+    (
+        out.status.code().unwrap_or(-1),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+/// Phase 83: the four takeover keys on a ladder that fits. The value fault
+/// waits the 10 s window out and lands on the comfortable stop; the silence
+/// fault skips both rungs that need the HPC (F1) and is not charged the
+/// window; the walk crosses the comfortable operator's service callback,
+/// which publishes (F3); every settle is derived and printed.
+#[test]
+fn takeover_ladder_fits_and_explains_itself() {
+    let (code, out) = check_takeover("contract_takeover", &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    for needle in [
+        // The emergency profile at the island's assumed 3.0 m/s: the island
+        // contract's own hand arithmetic, now the checker's.
+        "v0 = 3 > v_r, so t = a/j + (v0 - v_r)/a = 2.5/1.5 + (3 - 2.0833)/2.5 = 1666.67 + 366.67 = 2033.33ms",
+        // F1: charged, the comfortable rung would have failed a 3 s interval.
+        "hazard 'hpc_loss': detection 500.00ms",
+        "= 2676.67ms fits the fault-tolerant time interval 3000.00ms",
+        "requires hpc_alive, which this fault removes",
+        // The window, charged to the rung below it; F3's route is 110 + 300.
+        "+ 'takeover' reaction 110.00ms + window 10000.00ms",
+        "odd_exit  comfortable  rung     120.00  10110.00  410.00  9996.67 derived  20636.67  30000.00   9363.33",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    for rule in [
+        "when-requires-reported",
+        "when-field-unknown",
+        "ladder-window-floor",
+        "window-param",
+        "window-unbound",
+        "mode-exit-target",
+        "mode-exit-unwired",
+        "ladder-rung-budget",
+        "settle-entry-missing",
+        "settle-param-unresolved",
+        "settle-conflict",
+        "reaction-unbudgeted",
+    ] {
+        assert!(
+            !out.contains(rule),
+            "`{rule}` must not fire on a correct contract:\n{out}"
+        );
+    }
+}
+
+/// Phase 83: every structural takeover rule, once, with the file and line.
+#[test]
+fn takeover_structure_rules_fire_on_their_fixture() {
+    let (code, out) = check_takeover("contract_takeover_bad", &[]);
+    assert_eq!(code, 1, "{out}");
+    for needle in [
+        "error[when-requires-reported]: bringup.contract.yaml:",
+        "names a value fault (stop == true) with `on: [omission]`",
+        "error[when-field-unknown]: bringup.contract.yaml:",
+        "has no such field (it has stamp, stop, autonomous, comfortable_stop)",
+        "with 'MANUALL', which demo_msgs/msg/ControlMode does not declare as a constant (it declares NO_COMMAND=0, AUTONOMOUS=1, MANUAL=4)",
+        "which is `builtin_interfaces/Time` -- not a scalar",
+        "warning[when-field-unknown]",
+        "other_msgs/msg/Opaque, but its definition is not on the ament index",
+        "error[ladder-window-floor]",
+        "mode 'stopping' falls to 'parked' last, and 'parked' has a 30000ms window",
+        "error[mode-exit-target]",
+        "exits to 'estop', which is a rung of the `fallback:` ladder of 'engaged'",
+        "error[mode-exit-unwired]",
+        "mode 'hold' exits on 'driver_took_over' (/control_mode), but no node that implements the rung (/holder) takes it on a path trigger",
+        "warning[window-unbound]",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+}
+
+/// Phase 83: the arithmetic, one term broken per rule. The window-param
+/// mismatch, the cumulative rung budget, a derived settle that contradicts a
+/// measured one, one that cannot be derived, one with no entry speed, and
+/// phase 7's miss: the same floor from 4.23 m/s instead of 3.0.
+#[test]
+fn takeover_budget_rules_fire_on_their_fixture() {
+    let (code, out) = check_takeover("contract_takeover_budget", &["--explain"]);
+    assert_eq!(code, 1, "{out}");
+    for needle in [
+        "error[window-param]",
+        "bound to `handler.takeover_timeout`, which resolves to 12.0 s = 12000.00ms, not the 10000.00ms the window declares",
+        "error[ladder-rung-budget]",
+        "fallback rung 'comfortable' cannot make the fault-tolerant time interval",
+        "detection 120.00ms + 'takeover' reaction 110.00ms + window 10000.00ms + reaction 410.00ms + settle 9996.67ms = 20636.67ms against 20000.00ms",
+        "warning[settle-conflict]",
+        "the literal settle 5000.00ms and the profile's 9996.67ms differ by 50.0%",
+        "warning[settle-entry-missing]",
+        "hazard 'odd_exit_unbounded' reaches rung 'comfortable'",
+        "falling back to the literal settle 5000.00ms",
+        "error[settle-param-unresolved]",
+        "'target_decel' is not declared under `nodes.estop_op.params`",
+        "warning[reaction-unbudgeted]",
+        // 4.23 m/s: 2525.33 ms, and the 3 s interval is missed.
+        "(4.23 - 2.0833)/2.5 = 1666.67 + 858.67 = 2525.33ms",
+        "hazard 'hpc_observed': detection 500.00ms",
+        "= 3168.67ms exceeds the fault-tolerant time interval 3000.00ms",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    // One finding per declaration, however many hazards walk through it.
+    assert_eq!(
+        out.matches("error[settle-param-unresolved]").count(),
+        1,
+        "{out}"
+    );
+}
+
+/// Phase 83: an exit on a rung with no window is a parse error, and the
+/// file is refused whole, at the line of the key.
+#[test]
+fn an_exit_without_a_window_refuses_the_contract() {
+    let (code, out) = check_takeover("contract_takeover_exit", &[]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("error[manifest-parse]"), "{out}");
+    assert!(out.contains("bringup.contract.yaml:"), "{out}");
+    assert!(
+        out.contains("at 'modes.takeover.exit': an exit is only for a windowed rung"),
+        "{out}"
+    );
+}

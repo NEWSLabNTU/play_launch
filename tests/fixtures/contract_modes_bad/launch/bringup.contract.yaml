@@ -26,6 +26,9 @@ version: 1
 #     floor `stopped` ends at /safety/brake_cmd in 7ms. Two rungs, two
 #     routes — which is the only shape where a per-rung check says anything
 #     the terminal check does not.                 -> ladder-rung-budget
+#     It requires nothing the fault removes: since phase 83 (#0057) a rung
+#     that requires `perception` is one this hazard can never land on, and
+#     is neither checked nor charged.
 functions:
   perception: [/safety/scan]
 
@@ -34,7 +37,7 @@ modes:
     requires: [perception]
     fallback: [degraded, stopped]
   degraded:
-    requires: [perception]
+    requires: []
     reaction: safety.slow
   stopped:
     requires: [perception]        # the fault takes this away too

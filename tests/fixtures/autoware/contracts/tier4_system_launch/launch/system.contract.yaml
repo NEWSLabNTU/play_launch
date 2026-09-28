@@ -29,7 +29,9 @@ modes:
     fallback: [comfortable_stop, emergency_stop]
   comfortable_stop:
     # A graded reaction: slower, and checked against the same interval as
-    # the floor — which is the whole point of `ladder-rung-budget`.
+    # the floor — which is the whole point of `ladder-rung-budget`. Not for
+    # the two hazards below, though: they are the loss of the very function
+    # this rung requires, so since phase 83 (#0057) they skip it.
     requires: [operation_mode_availability]
     reaction: system.comfortable_stop
   emergency_stop:
