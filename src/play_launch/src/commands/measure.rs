@@ -184,6 +184,12 @@ fn render_hazards(specs: &[HazardSpec], observed: &[HazardObservation]) -> Strin
                 o.guard,
                 o.alive_ms / 1000.0
             ));
+            if o.observed_at_take {
+                out.push_str(
+                    " (observed_at: take -- the sink is published off-host, so this is its \
+                     first host take and includes the link hop)",
+                );
+            }
             if let Some(d) = o.detection_ms() {
                 out.push_str(&format!(" (reported on /diagnostics at {d:.2}ms)"));
             }

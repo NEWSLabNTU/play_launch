@@ -469,8 +469,13 @@ pub struct HazardObservation {
     pub fault_ns: u64,
     /// First `/diagnostics` publish after the fault, when `via_diagnostics`.
     pub detected_ns: Option<u64>,
-    /// First publish on a sink after the fault.
+    /// First publish on a sink after the fault -- or, for a sink no
+    /// instrumented process publishes, its first host TAKE (phase 83 F2).
     pub reacted_ns: Option<u64>,
+    /// The reaction was observed where a host process TOOK the sink, not
+    /// where it was published: the publisher is off-host (a safety island
+    /// on an MCU), so the number includes the link hop to the host.
+    pub observed_at_take: bool,
     /// How long the guard had been publishing before it stopped — so a
     /// topic that never started is not reported as one that died.
     pub alive_ms: f64,
@@ -526,12 +531,28 @@ pub fn observe_hazards(run: &Run, hazards: &[HazardSpec]) -> Vec<HazardObservati
         } else {
             Vec::new()
         };
+        // Phase 83 F2: a sink that no instrumented process ever publishes is
+        // published off-host (the island commands the brakes from an MCU), so
+        // the first place the host can see the reaction is where it TAKES the
+        // sink. Counted there, and labelled, rather than never counted.
+        let host_published: std::collections::HashSet<&str> = run
+            .events
+            .iter()
+            .filter(|e| e.d == Dir::Publish)
+            .filter_map(|e| fqn_of(e.h))
+            .filter(|f| spec.sinks.iter().any(|s| s == f))
+            .collect();
         let mut sink_events: Vec<&RunEvent> = run
             .events
             .iter()
             .filter(|e| {
-                e.d == Dir::Publish
-                    && fqn_of(e.h).is_some_and(|f| spec.sinks.iter().any(|s| s == f))
+                fqn_of(e.h).is_some_and(|f| {
+                    spec.sinks.iter().any(|s| s == f)
+                        && match e.d {
+                            Dir::Publish => true,
+                            Dir::Take => !host_published.contains(f),
+                        }
+                })
             })
             .collect();
         sink_events.sort_by_key(|e| e.t);
@@ -554,22 +575,23 @@ pub fn observe_hazards(run: &Run, hazards: &[HazardSpec]) -> Vec<HazardObservati
             if run_end.saturating_sub(last) < silence_threshold {
                 continue; // still publishing when the run ended
             }
-            let reacted_ns = sink_events
-                .iter()
-                .filter(|e| e.t > last)
-                .find(|e| match e.stamp_key() {
-                    // Stamped: a reaction carries no guard provenance.
-                    Some(k) => !guard_stamps.contains(&k),
-                    // Unstamped: past one nominal period, the tail is over.
-                    None => e.t > last + median_gap,
-                })
-                .map(|e| e.t);
+            let reaction =
+                sink_events
+                    .iter()
+                    .filter(|e| e.t > last)
+                    .find(|e| match e.stamp_key() {
+                        // Stamped: a reaction carries no guard provenance.
+                        Some(k) => !guard_stamps.contains(&k),
+                        // Unstamped: past one nominal period, the tail is over.
+                        None => e.t > last + median_gap,
+                    });
             out.push(HazardObservation {
                 key: spec.key.clone(),
                 guard: guard.clone(),
                 fault_ns: last,
                 detected_ns: diag.iter().copied().find(|t| *t > last),
-                reacted_ns,
+                reacted_ns: reaction.map(|e| e.t),
+                observed_at_take: reaction.is_some_and(|e| e.d == Dir::Take),
                 alive_ms: (last - pubs[0]) as f64 / 1e6,
             });
         }
@@ -955,9 +977,72 @@ mod tests {
         // says so — and that is not the reaction. 130ms is.
         assert_eq!(obs[0].reaction_ms(), Some(130.0));
 
+        assert!(!obs[0].observed_at_take);
+
         // A guard still publishing at the end is not a fault.
         let mut alive = run.clone();
         alive.events.push(ev(scan, last_scan + 3_000_000_000, 7));
         assert!(observe_hazards(&alive, &[spec]).is_empty());
+    }
+
+    /// Phase 83 F2: a sink published OFF-HOST (the island's braking command,
+    /// from an MCU) never shows a host publish. Its first host take after the
+    /// fault is the reaction, labelled as observed at the take -- where it
+    /// used to be "NOTHING reacted".
+    #[test]
+    fn an_off_host_sink_is_observed_at_its_first_host_take() {
+        let avail = 11u64;
+        let cmd = 22u64;
+        let mut run = Run::default();
+        run.topics
+            .insert(avail, "/system/operation_mode/availability".into());
+        run.topics
+            .insert(cmd, "/system/emergency/control_cmd".into());
+        let ev = |d: Dir, h: u64, t: u64, stamp: u32| RunEvent {
+            n: "/n".into(),
+            d,
+            h,
+            s: 1,
+            ns: stamp,
+            t,
+            c: 0,
+            tid: 1,
+        };
+        // Availability at 10 Hz from the host, then silence. The island's
+        // command reaches the host only as vehicle_cmd_gate's take.
+        for i in 0..20u64 {
+            run.events.push(ev(
+                Dir::Publish,
+                avail,
+                1_000_000_000 + i * 100_000_000,
+                1000 + i as u32,
+            ));
+        }
+        let last = 1_000_000_000 + 19 * 100_000_000;
+        run.events.push(ev(Dir::Take, cmd, last + 589_000_000, 777));
+        run.events
+            .push(ev(Dir::Take, cmd, last + 5_000_000_000, 778));
+        let spec = HazardSpec {
+            key: "hpc_loss".into(),
+            guards: vec!["/system/operation_mode/availability".into()],
+            sinks: vec!["/system/emergency/control_cmd".into()],
+            ftti_ms: Some(10_000.0),
+            settle_ms: None,
+            within: vec![],
+            via_diagnostics: false,
+        };
+        let obs = observe_hazards(&run, std::slice::from_ref(&spec));
+        assert_eq!(obs.len(), 1, "{obs:?}");
+        assert_eq!(obs[0].reaction_ms(), Some(589.0));
+        assert!(obs[0].observed_at_take);
+
+        // A sink a host process DOES publish is never judged by its takes.
+        let mut hosted = run.clone();
+        hosted
+            .events
+            .push(ev(Dir::Publish, cmd, last + 900_000_000, 779));
+        let obs = observe_hazards(&hosted, &[spec]);
+        assert_eq!(obs[0].reaction_ms(), Some(900.0));
+        assert!(!obs[0].observed_at_take);
     }
 }

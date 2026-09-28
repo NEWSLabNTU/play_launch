@@ -83,6 +83,11 @@ pub struct HazardWatch {
     pub silence_ms: Option<f64>,
     /// A reacting subscriber reports through `/diagnostics`.
     pub via_diagnostics: bool,
+    /// Sinks whose publisher the contract declares external (phase 83 F2):
+    /// no host process publishes them, so the reaction is observed at the
+    /// first host take. A sink the observer never sees published is treated
+    /// the same way at runtime, declared or not.
+    pub off_host_sinks: Vec<String>,
 }
 
 /// The scope path a hazard's `reaction:` finally reaches (phase 75).
@@ -236,6 +241,30 @@ impl ContractView {
                         ov.mechanism == ros_launch_manifest_types::DetectMechanism::Diagnostics;
                 }
             }
+            // Phase 83: a derived settle is the checker's own number, per
+            // hazard; the literal scan above is the fallback.
+            let settle_ms = index
+                .budgets
+                .iter()
+                .find(|b| {
+                    b.hazard == h.name
+                        && b.role == ros_launch_resolve::ros::manifest_loader::RungRole::Floor
+                })
+                .and_then(|b| b.settle_ms)
+                .or(settle_ms);
+            let off_host_sinks = sinks
+                .iter()
+                .filter(|t| {
+                    matches!(
+                        index.externals.get(*t),
+                        Some(
+                            ros_launch_manifest_types::ExternalSide::Pub
+                                | ros_launch_manifest_types::ExternalSide::Both
+                        )
+                    )
+                })
+                .cloned()
+                .collect();
             view.hazards.push(HazardWatch {
                 key: h.name.clone(),
                 guards,
@@ -244,6 +273,7 @@ impl ContractView {
                 settle_ms,
                 silence_ms,
                 via_diagnostics,
+                off_host_sinks,
             });
         }
         for m in &index.modes {
@@ -328,19 +358,39 @@ impl ContractView {
             let settle_ms = m
                 .contracts
                 .node_paths
-                .values()
-                .filter_map(|p| {
+                .iter()
+                .filter_map(|(path_key, p)| {
                     let ss = p.safe_state.as_ref()?;
-                    sinks
-                        .iter()
-                        .any(|t| {
-                            m.structure
-                                .topics
-                                .get(t)
-                                .is_some_and(|w| w.publishers.contains(&ss.emits))
-                        })
-                        .then_some(ss.settle_ms)
-                        .flatten()
+                    let on_sink = sinks.iter().any(|t| {
+                        m.structure
+                            .topics
+                            .get(t)
+                            .is_some_and(|w| w.publishers.contains(&ss.emits))
+                    });
+                    if !on_sink {
+                        return None;
+                    }
+                    // Phase 83: a braking profile derives the settle from the
+                    // node's resolved parameters and this hazard's entry
+                    // speed -- the checker's arithmetic, `SettleProfile`'s.
+                    let derived = (|| {
+                        let prof = ss.settle_profile.as_ref()?;
+                        let v0 = h.entry_speed_mps?;
+                        let node = path_key.rsplit_once('/')?.0;
+                        let params = m.structure.nodes.get(node)?.resolved_params(node);
+                        let num = |name: &str| match params.get(name)? {
+                            model::ParamValue::Float(f) => Some(*f),
+                            model::ParamValue::Int(i) => Some(*i as f64),
+                            _ => None,
+                        };
+                        ros_launch_manifest_types::SettleProfile::settle_s(
+                            v0,
+                            num(&prof.decel)?,
+                            num(&prof.jerk)?,
+                        )
+                        .map(|t| t * 1000.0)
+                    })();
+                    derived.or(ss.settle_ms)
                 })
                 .fold(None, |a: Option<f64>, v| Some(a.map_or(v, |x| x.max(v))));
             let (mut silence_ms, mut via_diagnostics) = (None::<f64>, false);
@@ -367,6 +417,16 @@ impl ContractView {
                     via_diagnostics |= ov.mechanism == model::DetectMechanism::Diagnostics;
                 }
             }
+            let off_host_sinks = sinks
+                .iter()
+                .filter(|t| {
+                    matches!(
+                        m.contracts.externals.get(*t),
+                        Some(model::ExternalSide::Pub | model::ExternalSide::Both)
+                    )
+                })
+                .cloned()
+                .collect();
             view.hazards.push(HazardWatch {
                 key: key.clone(),
                 guards,
@@ -375,6 +435,7 @@ impl ContractView {
                 settle_ms,
                 silence_ms,
                 via_diagnostics,
+                off_host_sinks,
             });
         }
         for (key, m) in &m_modes {

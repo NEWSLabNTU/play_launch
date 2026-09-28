@@ -49,6 +49,12 @@ pub struct RuntimeViolation {
     /// `clock_gettime(CLOCK_MONOTONIC)` ns when the violation was
     /// observed (sourced from the interception event when available).
     pub timestamp_ns: u64,
+    /// Where a `hazard-reaction` was seen, when it was not the sink's
+    /// publish: `take` for a sink published off-host (phase 83 F2), whose
+    /// first host take is the earliest the host can see the reaction. Absent
+    /// otherwise, so every other line is unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -95,6 +101,14 @@ struct HazardRuntime {
     /// watchdog is faster than ten periods — so detection has to look back
     /// for it rather than only forward.
     sink_pubs: std::collections::VecDeque<(u64, Option<u64>, String)>,
+    /// Recent host TAKES of a sink (phase 83 F2), same shape as `sink_pubs`.
+    /// Read only for a sink no instrumented process publishes: the island's
+    /// braking command leaves an MCU and the host first sees it where
+    /// `vehicle_cmd_gate` takes it.
+    sink_takes: std::collections::VecDeque<(u64, Option<u64>, String)>,
+    /// Sinks a host process has been seen publishing: their takes are never
+    /// the reaction.
+    sink_host_pub: std::collections::HashSet<String>,
 }
 
 /// Per-topic aggregated state used by the runtime rules.
@@ -934,6 +948,7 @@ impl RuleEngine {
             fqn,
             message,
             timestamp_ns,
+            observed_at: None,
         };
         warn!("[runtime] {} ({})", v.message, v.rule_id);
 
@@ -967,6 +982,20 @@ impl RuleEngine {
         message: String,
         timestamp_ns: u64,
     ) {
+        self.emit_repeatable_at(rule_id, severity, fqn, message, timestamp_ns, None);
+    }
+
+    /// [`Self::emit_repeatable`] with the place the event was observed, for a
+    /// reaction seen at a take rather than a publish (phase 83 F2).
+    fn emit_repeatable_at(
+        &mut self,
+        rule_id: String,
+        severity: Severity,
+        fqn: String,
+        message: String,
+        timestamp_ns: u64,
+        observed_at: Option<&'static str>,
+    ) {
         self.violation_count += 1;
         self.trip_strict(&rule_id, &fqn, severity);
         let v = RuntimeViolation {
@@ -975,6 +1004,7 @@ impl RuleEngine {
             fqn,
             message,
             timestamp_ns,
+            observed_at,
         };
         warn!("[runtime] {} ({})", v.message, v.rule_id);
         if matches!(self.mode, EnforceMode::Warn | EnforceMode::Strict) {
@@ -1015,7 +1045,7 @@ impl RuleEngine {
         };
         let stamp = (event.stamp_sec != 0 || event.stamp_nanosec != 0)
             .then(|| pack_stamp(event.stamp_sec, event.stamp_nanosec));
-        let mut pending: Vec<(String, Severity, String, String)> = Vec::new();
+        let mut pending: Vec<Pending> = Vec::new();
         for (i, watch) in self.view.hazards.iter().enumerate() {
             let rt = &mut self.hazards[i];
             let is_guard = watch.guards.contains(&fqn);
@@ -1049,6 +1079,7 @@ impl RuleEngine {
                                 watch.key,
                                 event.monotonic_ns.saturating_sub(*fault_ns) as f64 / 1e6
                             ),
+                            None,
                         ));
                         rt.fault = None;
                         rt.detected_ns = None;
@@ -1056,10 +1087,26 @@ impl RuleEngine {
                     }
                 }
                 EventKind::Publish if is_sink => {
+                    rt.sink_host_pub.insert(fqn.clone());
                     rt.sink_pubs
                         .push_back((event.monotonic_ns, stamp, fqn.clone()));
                     if rt.sink_pubs.len() > 256 {
                         rt.sink_pubs.pop_front();
+                    }
+                    if rt.fault.is_some()
+                        && !rt.reacted
+                        && let Some(p) = reaction_of(rt, watch)
+                    {
+                        pending.push(p);
+                    }
+                }
+                // Phase 83 F2: a sink published off-host is seen first where a
+                // host process takes it.
+                EventKind::Take if is_sink => {
+                    rt.sink_takes
+                        .push_back((event.monotonic_ns, stamp, fqn.clone()));
+                    if rt.sink_takes.len() > 256 {
+                        rt.sink_takes.pop_front();
                     }
                     if rt.fault.is_some()
                         && !rt.reacted
@@ -1094,6 +1141,7 @@ impl RuleEngine {
                             event.kind,
                             event.monotonic_ns.saturating_sub(fault_ns) as f64 / 1e6
                         ),
+                        None,
                     ));
                     if let Some(p) = reaction_of(rt, watch) {
                         pending.push(p);
@@ -1110,8 +1158,8 @@ impl RuleEngine {
                 _ => {}
             }
         }
-        for (rule, sev, key, msg) in pending {
-            self.emit_repeatable(rule, sev, key, msg, event.monotonic_ns);
+        for (rule, sev, key, msg, at) in pending {
+            self.emit_repeatable_at(rule, sev, key, msg, event.monotonic_ns, at);
         }
         self.recheck_modes(event.monotonic_ns);
     }
@@ -1214,7 +1262,7 @@ impl RuleEngine {
         if matches!(self.mode, EnforceMode::Off) || self.view.hazards.is_empty() {
             return;
         }
-        let mut pending: Vec<(String, Severity, String, String)> = Vec::new();
+        let mut pending: Vec<Pending> = Vec::new();
         for (i, watch) in self.view.hazards.iter().enumerate() {
             let rt = &mut self.hazards[i];
             if rt.fault.is_some() {
@@ -1251,6 +1299,7 @@ impl RuleEngine {
                                 "10x the topic's median period"
                             }
                         ),
+                        None,
                     ));
                     // The node's own watchdog is usually faster than this
                     // threshold, so the reaction may already have happened.
@@ -1261,8 +1310,8 @@ impl RuleEngine {
                 }
             }
         }
-        for (rule, sev, key, msg) in pending {
-            self.emit_repeatable(rule, sev, key, msg, now_ns);
+        for (rule, sev, key, msg, at) in pending {
+            self.emit_repeatable_at(rule, sev, key, msg, now_ns, at);
         }
         self.recheck_modes(now_ns);
     }
@@ -1455,25 +1504,51 @@ impl RuleEngine {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// A diagnostic waiting to be emitted: rule, severity, hazard key, message,
+/// and where the event was observed when it was not a publish.
+type Pending = (String, Severity, String, String, Option<&'static str>);
+
 /// The reaction to the fault in progress, if a provenance-free sink publish
 /// after the fault has been seen — looking BACK through the sink buffer,
 /// since the node's watchdog usually reacts before the observer's threshold
 /// trips. Marks the hazard reacted and returns the diagnostic to emit.
+///
+/// A sink no instrumented process publishes (phase 83 F2: declared
+/// `external: pub`, or simply never seen published by a host process) is
+/// judged by its host TAKES instead, and the diagnostic says so: the number
+/// then includes the hop from the off-host publisher, which is the island's
+/// link, and hiding that would credit the link's latency to the island.
 fn reaction_of(
     rt: &mut HazardRuntime,
     watch: &crate::runtime_enforcement::view::HazardWatch,
-) -> Option<(String, Severity, String, String)> {
+) -> Option<Pending> {
     let (guard, fault_ns) = rt.fault.clone()?;
     let gap = median_gap(rt.gaps.get(&guard));
-    let hit = rt
+    let provenance_free = |(t, stamp, _): &&(u64, Option<u64>, String)| match stamp {
+        Some(k) => !rt.stamps.get(&guard).is_some_and(|s| s.contains(k)),
+        None => *t > fault_ns + gap,
+    };
+    let published = rt
         .sink_pubs
         .iter()
         .filter(|(t, _, _)| *t > fault_ns)
-        .find(|(t, stamp, _)| match stamp {
-            Some(k) => !rt.stamps.get(&guard).is_some_and(|s| s.contains(k)),
-            None => *t > fault_ns + gap,
-        })
-        .cloned()?;
+        .find(provenance_free)
+        .cloned();
+    let (hit, observed_at) = match published {
+        Some(h) => (h, None),
+        None => {
+            let off_host = |sink: &String| {
+                watch.off_host_sinks.contains(sink) || !rt.sink_host_pub.contains(sink)
+            };
+            let taken = rt
+                .sink_takes
+                .iter()
+                .filter(|(t, _, sink)| *t > fault_ns && off_host(sink))
+                .find(provenance_free)
+                .cloned()?;
+            (taken, Some("take"))
+        }
+    };
     rt.reacted = true;
     let (t, _, sink) = hit;
     let react_ms = (t - fault_ns) as f64 / 1e6;
@@ -1499,15 +1574,22 @@ fn reaction_of(
             )
         })
         .unwrap_or_default();
+    let at = if observed_at.is_some() {
+        " (observed_at: take -- the sink is published off-host, so this is its first host \
+         take, and the link hop is inside the number)"
+    } else {
+        ""
+    };
     Some((
         "hazard-reaction".to_string(),
         sev,
         watch.key.clone(),
         format!(
             "hazard '{}': reaction on '{sink}' {react_ms:.2}ms after '{guard}' went \
-             silent{detected}; + settle {settle:.2}ms = {total:.2}ms — {verdict}",
+             silent{detected}{at}; + settle {settle:.2}ms = {total:.2}ms — {verdict}",
             watch.key
         ),
+        observed_at,
     ))
 }
 
@@ -2263,6 +2345,7 @@ mod tests {
             settle_ms: Some(200.0),
             silence_ms: Some(100.0),
             via_diagnostics: false,
+            off_host_sinks: vec![],
         });
         let tmp =
             std::env::temp_dir().join(format!("play_launch_hazard_rt_{}", std::process::id()));
@@ -2320,6 +2403,152 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    /// Phase 83 F2: the island publishes its braking command on an MCU, so
+    /// the host never sees the sink PUBLISHED -- only vehicle_cmd_gate's
+    /// TAKE of it. That take is the reaction, labelled `observed_at: take`,
+    /// where it used to be no reaction at all.
+    #[test]
+    fn an_off_host_sink_is_observed_at_its_first_host_take() {
+        use crate::{
+            interception::{EventKind, InterceptionEvent},
+            runtime_enforcement::view::{HazardWatch, TopicView},
+        };
+        let mut view = ContractView::default();
+        for t in [
+            "/system/operation_mode/availability",
+            "/system/emergency/control_cmd",
+        ] {
+            view.topics.insert(
+                t.to_string(),
+                TopicView {
+                    msg_type: "x".into(),
+                    ..Default::default()
+                },
+            );
+        }
+        view.hazards.push(HazardWatch {
+            key: "hpc_loss".into(),
+            guards: vec!["/system/operation_mode/availability".into()],
+            sinks: vec!["/system/emergency/control_cmd".into()],
+            ftti_ms: Some(10_000.0),
+            settle_ms: Some(4165.33),
+            silence_ms: Some(500.0),
+            via_diagnostics: false,
+            off_host_sinks: vec![],
+        });
+        let tmp =
+            std::env::temp_dir().join(format!("play_launch_hazard_take_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut re = RuleEngine::new(Arc::new(view), EnforceMode::Warn, &tmp);
+        let avail = fnv1a(b"/system/operation_mode/availability");
+        let cmd = fnv1a(b"/system/emergency/control_cmd");
+        let ev = |kind: EventKind, h: u64, t: u64, stamp: u32| InterceptionEvent {
+            kind,
+            _pad: [0; 3],
+            topic_hash: h,
+            stamp_sec: 1,
+            stamp_nanosec: stamp,
+            handle: 1,
+            monotonic_ns: t,
+            cpu_ns: 0,
+            tid: 1,
+            _pad2: [0; 4],
+        };
+        for i in 0..20u64 {
+            re.observe(&ev(
+                EventKind::Publish,
+                avail,
+                1_000_000_000 + i * 100_000_000,
+                100 + i as u32,
+            ));
+        }
+        let last = 1_000_000_000 + 19 * 100_000_000;
+        re.tick(last + 520_000_000);
+        assert_eq!(re.violation_count, 1, "hazard-detected on the tick");
+        // The gate takes the island's first braking command 589ms after the
+        // last availability sample -- phase 8's board measurement.
+        re.observe(&ev(EventKind::Take, cmd, last + 589_000_000, 7_777));
+        assert_eq!(re.violation_count, 2, "the take is the reaction");
+        re.flush();
+        let log = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
+        let reaction = log
+            .lines()
+            .find(|l| l.contains("hazard-reaction"))
+            .expect("a reaction line");
+        assert!(reaction.contains("589.00ms after"), "{reaction}");
+        assert!(reaction.contains(r#""observed_at":"take""#), "{reaction}");
+        assert!(reaction.contains("link hop"), "{reaction}");
+        // Every other line is unchanged: no observed_at key.
+        let detected = log.lines().find(|l| l.contains("hazard-detected")).unwrap();
+        assert!(!detected.contains("observed_at"), "{detected}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// And a sink a host process publishes is never judged by its takes.
+    #[test]
+    fn a_host_published_sink_is_not_judged_by_its_takes() {
+        use crate::{
+            interception::{EventKind, InterceptionEvent},
+            runtime_enforcement::view::{HazardWatch, TopicView},
+        };
+        let mut view = ContractView::default();
+        for t in ["/scan", "/brake"] {
+            view.topics.insert(
+                t.to_string(),
+                TopicView {
+                    msg_type: "x".into(),
+                    ..Default::default()
+                },
+            );
+        }
+        view.hazards.push(HazardWatch {
+            key: "blind".into(),
+            guards: vec!["/scan".into()],
+            sinks: vec!["/brake".into()],
+            ftti_ms: Some(500.0),
+            settle_ms: None,
+            silence_ms: Some(100.0),
+            via_diagnostics: false,
+            off_host_sinks: vec![],
+        });
+        let tmp =
+            std::env::temp_dir().join(format!("play_launch_hazard_host_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut re = RuleEngine::new(Arc::new(view), EnforceMode::Warn, &tmp);
+        let (scan, brake) = (fnv1a(b"/scan"), fnv1a(b"/brake"));
+        let ev = |kind: EventKind, h: u64, t: u64, stamp: u32| InterceptionEvent {
+            kind,
+            _pad: [0; 3],
+            topic_hash: h,
+            stamp_sec: 1,
+            stamp_nanosec: stamp,
+            handle: 1,
+            monotonic_ns: t,
+            cpu_ns: 0,
+            tid: 1,
+            _pad2: [0; 4],
+        };
+        for i in 0..20u64 {
+            let t = 1_000_000_000 + i * 20_000_000;
+            re.observe(&ev(EventKind::Publish, scan, t, 100 + i as u32));
+            re.observe(&ev(
+                EventKind::Publish,
+                brake,
+                t + 5_000_000,
+                100 + i as u32,
+            ));
+        }
+        let last = 1_000_000_000 + 19 * 20_000_000;
+        re.tick(last + 120_000_000);
+        assert_eq!(re.violation_count, 1);
+        re.observe(&ev(EventKind::Take, brake, last + 130_000_000, 5_555));
+        assert_eq!(
+            re.violation_count, 1,
+            "a take of a host-published sink is not the reaction"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     /// Phase 74: a DDS liveliness event on a guard is the detection —
     /// exact, from the middleware, before the observer's own threshold.
     #[test]
@@ -2344,6 +2573,7 @@ mod tests {
             settle_ms: None,
             silence_ms: Some(100.0),
             via_diagnostics: false,
+            off_host_sinks: vec![],
         });
         let tmp =
             std::env::temp_dir().join(format!("play_launch_hazard_dds_{}", std::process::id()));
@@ -2417,6 +2647,7 @@ mod tests {
             settle_ms: None,
             silence_ms: Some(100.0),
             via_diagnostics: false,
+            off_host_sinks: vec![],
         });
         view.modes.push(ModeWatch {
             key: "driving".into(),
