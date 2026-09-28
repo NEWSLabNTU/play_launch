@@ -24,6 +24,19 @@ check is for.
 
 ## Resolved
 
+**#0058** -- the hazard observers (live and `measure`) took a reaction only
+from a host PUBLISH of a sink, so the Autoware Safety Island's braking
+command, published on an MCU, read as "NOTHING reacted". Phase 83: a sink no
+host process publishes is judged by its first host take, labelled
+`observed_at: take` so the link hop is not credited to the island. See
+`0058-*`.
+
+**#0057** -- `ladder-rung-budget` checked and charged rungs the hazard's own
+fault removes, so one ladder for a value fault and a silence fault failed on
+the comfortable stop the silence fault can never reach. Phase 83: ladder
+selection per hazard by fault class (a `reported` fault removes value
+functions, a silence fault both kinds). See `0057-*`.
+
 **#0046** -- a subscriber's `max_age` could not count toward the FDTI of an
 `on: omission` hazard, `hazards.<h>.on` took exactly one class, and omitting
 `on:` bought slack because the FDTI took the MIN over every mechanism of every

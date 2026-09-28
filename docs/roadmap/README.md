@@ -295,6 +295,22 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     application`. Issue #0046 ruled. W4 (a sampling hop in the reaction walk)
     is separate.
     [phase-82-what-a-detector-may-see.md](./phase-82-what-a-detector-may-see.md).
+  - **Phase 83** - complete: a takeover the contract can state, and the
+    checker can refuse (2026-09-28, rlm **v0.1.46**). Four keys for the
+    Autoware Safety Island's RTSS@Work demo: `when:` (a fault, or the loss of
+    a function, by value), `window:` (a timed rung bound to the parameter the
+    image runs), `exit:` (the driver's answer, only on a windowed rung) and
+    `entry_speed` + `settle: { decel, jerk }` (the settle derived per hazard
+    from the braking profile: 2033.33 ms from 3.0 m/s, 2525.33 ms from the
+    4.23 m/s phase 7 actually braked from). Twelve rules, a cumulative
+    `ladder-rung-budget`, and `check --explain` prints the fault-reaction
+    arithmetic per (hazard, rung). Fixes: ladder selection per hazard by
+    fault class (#0057), and an off-host sink observed at its first host take
+    (#0058). F1 reverses phase 75's Autoware headline: `comfortable_stop`
+    requires the function the availability timeout removes, so it is skipped,
+    not failed. The brief's failing variants do not fail at the decided
+    30 km/h; the phase doc says by how much.
+    [phase-83-a-takeover-the-contract-can-state.md](./phase-83-a-takeover-the-contract-can-state.md).
   - **Phase 78** - complete (0.12.0): one derivation of the mapper input, two
     consumers (2026-09-21). The resolver lowers every non-input trigger to
     `input: []` and drops the rate, so nano-ros rebuilds a timer's rate from

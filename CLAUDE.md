@@ -615,6 +615,26 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-28**: Phase 83 -- **a takeover the contract can state** (manifest
+  **`v0.1.46`**, workspace 0.1.7: `Manifest.functions` holds `FunctionDecl`).
+  Four keys: `when:` on a hazard or a function (`{ of, when }`; on a function
+  it is the predicate that LOSES it), `window:` on a mode (bound by `param:` to
+  the parameter the image runs), `exit:` (only on a windowed rung, else a parse
+  error) and `entry_speed` + `settle: { decel, jerk }`. The rules live in
+  `resolve/src/ros/value_rules.rs` and `check_fault_reaction`; every new
+  message starts with `<contract>:<line>`. Three things a later change must
+  keep: **launch parameter values reach the checker** (`ManifestIndex.
+  launch_params`, ROS precedence, `param_file_values` matching) -- `window-param`
+  and the settle rules read them; **ladder selection is per hazard**
+  (`removed_by`: `reported` removes value functions, silence removes both;
+  a removed rung is neither checked nor charged, #0057 -- which is why the
+  Autoware fixture's `comfortable_stop` is skipped, not failed, since phase
+  83); and **an off-host
+  sink is observed at its first host take**, labelled `observed_at: take`
+  (#0058). `check --explain` without a platform file prints the per-rung
+  fault-reaction table instead of a note. `when-field-unknown` reads `.msg`
+  files from `AMENT_PREFIX_PATH` and only warns when it cannot, so layer 2
+  still needs no ROS.
 - **2026-09-23**: Phase 81 — **the documentation describes the code that
   exists** (manifest `v0.1.38` → **`v0.1.39`**). v0.1.38 fixed the hand-written
   docs' EXAMPLES and left the prose and the arithmetic unverified. A mechanical
