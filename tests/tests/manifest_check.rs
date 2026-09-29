@@ -1702,6 +1702,12 @@ fn takeover_structure_rules_fire_on_their_fixture() {
 fn takeover_budget_rules_fire_on_their_fixture() {
     let (code, out) = check_takeover("contract_takeover_budget", &["--explain"]);
     assert_eq!(code, 1, "{out}");
+    // Every error here is cross-scope, and the one manifest is not clean
+    // for that: it used to read "1 clean, 0 with errors (4 errors ...)".
+    assert!(
+        out.contains("1 manifest(s) checked: 0 clean, 1 with errors (4 errors"),
+        "{out}"
+    );
     for needle in [
         "error[window-param]",
         "bound to `handler.takeover_timeout`, which resolves to 12.0 s = 12000.00ms, not the 10000.00ms the window declares",

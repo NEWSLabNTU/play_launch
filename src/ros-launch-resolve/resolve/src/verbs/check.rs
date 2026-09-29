@@ -610,16 +610,11 @@ fn print_summary(index: &manifest_loader::ManifestIndex, rule_filter: Option<&Ha
 
     let total_errors = per_scope_errors + cross_errors + load_errors;
     let total_warnings = per_scope_warnings + cross_warnings + load_warnings;
-    let clean_count = index
-        .manifests
-        .values()
-        .filter(|m| {
-            filter_diagnostics(&m.diagnostics, rule_filter)
-                .iter()
-                .all(|d| d.severity != Severity::Error)
-        })
-        .count();
-    let error_count = index.manifests.len() - clean_count;
+    let (clean_count, error_count) = tally_manifests(
+        index.manifests.values().map(|m| m.diagnostics.as_slice()),
+        cross_errors,
+        rule_filter,
+    );
 
     let filter_note = match rule_filter {
         Some(set) => format!(
@@ -658,6 +653,36 @@ fn print_summary(index: &manifest_loader::ManifestIndex, rule_filter: Option<&Ha
         overlay_count,
         provider_count,
     );
+}
+
+/// Split the checked manifests into (clean, with errors).
+///
+/// A manifest is clean only if it carries no Error-severity diagnostic of
+/// its own AND the set it was checked in carries no cross-scope error. A
+/// cross-scope diagnostic (consistency, dangling entity, budget overflow) is
+/// a finding about how the scopes combine, and `Diagnostic` names no scope,
+/// so it cannot be pinned to one manifest: it implicates every manifest of
+/// the merge. Before this, a single manifest with a cross-scope error was
+/// reported as "1 clean, 0 with errors (1 errors ...)" while `check` exited
+/// 1. `cross_errors` is the post-filter count, as the exit code uses.
+fn tally_manifests<'a>(
+    per_manifest: impl Iterator<Item = &'a [Diagnostic]>,
+    cross_errors: usize,
+    rule_filter: Option<&HashSet<&str>>,
+) -> (usize, usize) {
+    let mut clean = 0usize;
+    let mut with_errors = 0usize;
+    for diags in per_manifest {
+        let own_error = filter_diagnostics(diags, rule_filter)
+            .iter()
+            .any(|d| d.severity == Severity::Error);
+        if own_error || cross_errors > 0 {
+            with_errors += 1;
+        } else {
+            clean += 1;
+        }
+    }
+    (clean, with_errors)
 }
 
 fn count_severities<'a>(
@@ -726,6 +751,58 @@ fn print_diagnostics_json(
         .collect();
     println!("{}", serde_json::to_string_pretty(&diags)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod summary_tally_tests {
+    use std::collections::HashSet;
+
+    use super::{Diagnostic, Severity, tally_manifests};
+
+    fn diag(rule: &str, severity: Severity) -> Diagnostic {
+        Diagnostic {
+            rule_id: rule.to_string(),
+            severity,
+            message: String::new(),
+            path: String::new(),
+            span: None,
+        }
+    }
+
+    /// The W20 regression: one manifest, no error of its own, one
+    /// cross-scope error. It was counted clean.
+    #[test]
+    fn a_cross_scope_error_makes_the_manifest_not_clean() {
+        let own: Vec<Diagnostic> = vec![diag("E001", Severity::Warning)];
+        let tally = tally_manifests([own.as_slice()].into_iter(), 1, None);
+        assert_eq!(tally, (0, 1));
+    }
+
+    #[test]
+    fn a_cross_scope_error_implicates_every_manifest_of_the_merge() {
+        let a: Vec<Diagnostic> = Vec::new();
+        let b: Vec<Diagnostic> = vec![diag("E001", Severity::Error)];
+        let tally = tally_manifests([a.as_slice(), b.as_slice()].into_iter(), 2, None);
+        assert_eq!(tally, (0, 2));
+    }
+
+    #[test]
+    fn without_cross_scope_errors_only_own_errors_count() {
+        let a: Vec<Diagnostic> = vec![diag("W001", Severity::Warning)];
+        let b: Vec<Diagnostic> = vec![diag("E001", Severity::Error)];
+        let tally = tally_manifests([a.as_slice(), b.as_slice()].into_iter(), 0, None);
+        assert_eq!(tally, (1, 1));
+    }
+
+    /// `--rule` narrows the tally as it narrows the exit code: an own error
+    /// the filter excludes does not count.
+    #[test]
+    fn the_rule_filter_applies_to_own_errors() {
+        let a: Vec<Diagnostic> = vec![diag("E001", Severity::Error)];
+        let filter: HashSet<&str> = ["E999"].into_iter().collect();
+        let tally = tally_manifests([a.as_slice()].into_iter(), 0, Some(&filter));
+        assert_eq!(tally, (1, 0));
+    }
 }
 
 #[cfg(test)]
