@@ -388,12 +388,19 @@ fn qos_match_runtime_fires_on_dds_incompatibility() {
     // Allow both bare and absolute forms of the topic — the python
     // scripts use the relative name `qos_test`, which rcl expands to
     // `/qos_test` once node namespaces are applied.
+    //
+    // The node keys are ABSOLUTE. Both nodes are `<executable>`s, whose
+    // model key is their command line, so a bare `qos_mismatch_pub` names
+    // nothing the launch file declares: `node-identity-unknown` (#0048)
+    // is an error and `launch` refuses to emit a model, which is how this
+    // test failed from 729d81dd on. An absolute key passes through as the
+    // FQN the rclpy node really has.
     let overlay_root = work_dir.path().join("contracts");
     let launch_dir = overlay_root.join("_/launch");
     std::fs::create_dir_all(&launch_dir).expect("create overlay launch dir");
     std::fs::write(
         launch_dir.join("qos_mismatch.contract.yaml"),
-        "version: 1\nnodes:\n  qos_mismatch_pub:\n    pub:\n      qos_test: {}\n  qos_mismatch_sub:\n    sub:\n      qos_test: {}\ntopics:\n  /qos_test:\n    type: std_msgs/msg/String\n    pub: [qos_mismatch_pub/qos_test]\n    sub: [qos_mismatch_sub/qos_test]\n",
+        "version: 1\nnodes:\n  /qos_mismatch_pub:\n    pub:\n      qos_test: {}\n  /qos_mismatch_sub:\n    sub:\n      qos_test: {}\ntopics:\n  /qos_test:\n    type: std_msgs/msg/String\n    pub: [/qos_mismatch_pub/qos_test]\n    sub: [/qos_mismatch_sub/qos_test]\n",
     )
     .expect("write contract");
 
