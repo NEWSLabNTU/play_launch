@@ -125,6 +125,7 @@ CONSUMING_PATTERNS = [
     (r"resolve/src/ros/sched_loader\.rs$", "scheduling derivation"),
     (r"resolve/src/ros/param_check\.rs$", "parameter check"),
     (r"sched/src/", "scheduling"),
+    (r"^rlm/derive/src/", "shared mapper derivation (rlm derive)"),
     (r"check/src/graph\.rs$", "dataflow graph"),
     # The executor. A field the runtime acts on — spawning, scheduling,
     # enforcing, monitoring — is consumed in the strongest sense available:
@@ -152,6 +153,7 @@ IGNORED_PATTERNS = [
     r"/third-party/play_launch/",
     r"/tests?/",
     r"_test\.rs$",
+    r"/tests\.rs$",
     r"/target/",
     r"/docs/",
 ]
@@ -492,6 +494,12 @@ def main() -> int:
         Root(manifest_repo, "check", "rlm/"),
         Root(manifest_repo, "sched", "rlm/"),
         Root(manifest_repo, "model", "rlm/"),
+        # The shared derivation (phase 78). play_launch's `sched_derive` and
+        # nano-ros's realizer both hand the model to
+        # `ros_launch_manifest_derive::mapper_input_from_model`, so a model
+        # field that crate reads is consumed by both while neither reads it
+        # directly: `node_criticality` turned this gate red for exactly that.
+        Root(manifest_repo, "derive", "rlm/"),
         Root(REPO, "src/ros-launch-resolve/resolve/src", ""),
         Root(REPO, "src/play_launch/src", ""),
     ]

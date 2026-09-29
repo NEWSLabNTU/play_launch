@@ -32,13 +32,12 @@
 # opened is closed on both sides — and the census is what noticed, because
 # it fails in BOTH directions for exactly this case.
 
-srv_endpoints      # Contracts. Lowered and counted in `resolve`'s summary
-                   # line; nothing reads the endpoints themselves.
-
-max_response_ms    # SrvContract (model). The DECLARATION is read —
-                   # `extract_path_facts` folds `max_response` into the node's
-                   # deadline, and `response-blocking` checks it. The model
-                   # copy has no reader.
+# `srv_endpoints` and `max_response_ms` were here until 2026-09-29. Phase 78
+# moved the mapper's input into rlm's `derive` crate, whose `ModelView` reads
+# `contracts.srv_endpoints[..].max_response_ms` and folds it into the owning
+# node's deadline; the census did not scan that crate until then, so it could
+# not see the read. Scanning it also showed `node_criticality` consumed there
+# (the effective criticality, phase 72), which nano-ros no longer reads itself.
 
 tolerance_ms       # PathContract (model). Same shape: the declaration feeds
                    # `sync-feasibility`; the lowered copy is read by nothing.
@@ -48,3 +47,15 @@ duration_ms        # WindowContract (model, phase 83). The DECLARATION is read
                    # `value_rules`/`check_fault_reaction`. The model copy is
                    # carried for the island's contract probe and timeline
                    # (phase 8 unit W7), which do not exist yet.
+
+min_latency_ms     # PathContract (model, phase 78 W1).
+                   # The DECLARATION is read -- `jitter-range` checks
+                   # `min_latency` against the path's bounds. Phase 78 W1
+                   # lowered it into the model for the shared derivation, and
+                   # rlm's `derive` crate does not read it yet, nor does
+                   # nano-ros.
+
+max_interval_ms    # SyncContract (model, phase 78 W1). Same shape: the
+                   # declaration feeds `sync-feasibility` and the resolver's
+                   # dataflow graph; the lowered copy is read by nothing,
+                   # in rlm's `derive` crate or in nano-ros.
