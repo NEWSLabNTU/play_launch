@@ -6,6 +6,159 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## 0.13.0 - 2026-09-29
+
+Forty-six commits over 0.12.0. The headline is phases 83 and 84, asked for
+by the Autoware Safety Island's takeover demo: a contract can now state a
+takeover (a fault by value, a rung the system waits in and leaves, the
+driver's answer, a settle that follows the speed), the checker refuses one
+that cannot hold, and the observer sees a reaction that happens off the
+host. Around them: phase 82 (a detector counts only for the fault classes
+it can see), a fault reaction walked across a service, `play_launch
+contract capture`, interception on `run`, and a sweep of the issue tracker
+(#0031, #0034 to #0058). ros-launch-manifest moves from v0.1.37 to v0.1.47.
+
+Upgrading from 0.12.0 needs no change to a launch file or a platform file.
+A contract 0.12.0 accepted can now fail `check`, on purpose, in the cases
+named under "Visible" below; read them before moving a CI pin. A contract
+using the phase-83 keys is refused by 0.12.0 ("unknown key"), so a project
+that writes them needs 0.13.0.
+
+### A takeover the contract can state (phase 83)
+
+rlm v0.1.46 adds five keys, each with the rule that reads it; every new
+message starts with the contract's file and line.
+
+| key | where | rules |
+|---|---|---|
+| `when` | hazard; function `{ of, when }` | `when-requires-reported`, `when-field-unknown` |
+| `window` | mode: `10s` or `{ duration, param: <node>.<parameter> }` | `ladder-window-floor`, `window-param`, `window-unbound` |
+| `exit` | windowed mode: `{ on: <function>, to: <mode> }` | `mode-exit-target`, `mode-exit-unwired` |
+| `entry_speed` | hazard, m/s | `settle-entry-missing` |
+| `settle` | safe_state: a duration, or `{ decel, jerk }` parameters | `settle-derived`, `settle-param-unresolved`, `settle-conflict` |
+
+- `when-field-unknown` resolves the topic's `.msg` through
+  `AMENT_PREFIX_PATH` and follows a dotted field; an unresolvable type is a
+  warning, so the checker still needs no ROS install.
+- `window-param` and the settle rules read the resolved LAUNCH parameter
+  values, in ROS's precedence (`ManifestIndex.launch_params`), which the
+  checker never had before.
+- A derived settle is `v_r = a^2/(2j)`, then `sqrt(2 v0 / j)` or
+  `a/j + (v0 - v_r)/a`: 2033.33 ms from 3.0 m/s, 2525.33 ms from 4.23 m/s at
+  a = 2.5, j = 1.5. `settle-derived` prints the arithmetic.
+- `ladder-rung-budget` is cumulative: each windowed rung passed on the way
+  is charged its route and its window.
+- An `exit` on a rung with no window is a parse error, not a rule.
+- `check --explain` without a scheduling platform file now prints the
+  fault-reaction arithmetic, one row per (hazard, rung): DETECT, WINDOWS,
+  ROUTE, SETTLE, TOTAL, FTTI, SLACK, and each skipped rung with its reason.
+
+Fixes that came with it:
+
+- Ladder selection is per hazard (F1, #0057). A reported fault removes the
+  value functions on its topic; an omission, late or loss fault removes both
+  kinds. A rung that needs a removed function is skipped and not charged.
+- A safe state commanded upstream (a velocity limit the planner carries)
+  keeps its settle at the planner hop.
+- An off-host sink is observed at its first host take (F2, #0058), in the
+  live observer and in `measure`. A sink no host process publishes is judged
+  by its host `Take`s and marked `"observed_at":"take"` in
+  `runtime_violations.jsonl`; a host-published sink never is. The observer's
+  settle for a braking profile is the checker's derived number.
+
+### A window is a least time (phase 84)
+
+rlm v0.1.47 changes the text only: a windowed rung lasts AT LEAST its
+`duration`, and the rung below starts no sooner than the deadline and no
+later than its own route after it. The late notice of the deadline (the
+owner's tick) is the first hop of the route below, never a second charge.
+No TOTAL moves.
+
+- New rule `window-expiry`. The window's owner is the node its `param:`
+  names, and its clock is its slowest timer path publishing the rung's
+  output. Error if a rung charged the window has a route that does not start
+  at the owner, or charges that first hop less than the owner's period;
+  warning, once per window, if the owner declares no such timer.
+- `check --explain` prints `window >=`, where the notice is charged, and per
+  window the interval the rung ends in ("lasts at least 10000.00ms once on,
+  and ends within 10110.00ms").
+
+### What a detector may see (phase 82, #0046)
+
+The FDTI covers every fault class a hazard claims: the slowest claimed class,
+each the fastest mechanism that counts for it. An omitted `on:` claims every
+class a detector can observe, so leaving the key out never reads faster than
+naming the slowest class. `max_age` counts toward `omission` only when
+`on_violation.mechanism` is `diagnostics` or `application`. `on:` takes a
+list (`on: [omission, late]`). `hazard-unguarded` names only mechanisms that
+count for the class it reports, and never recommends `min_rate_hz`.
+
+### The fault-reaction walk
+
+- A reaction crosses a service: a path whose output names a `cli:` endpoint
+  hands it to the servers, and a server path triggered by its `srv:` carries
+  it on. The hazard's criticality now reaches the node that acts, not only
+  the one that notices.
+- A server that latches the request and acts on its own timer, and a
+  `state: true` subscriber past the guard, are sampling hops charged one
+  period (`.../apply_brake (+33.33ms sampling)`).
+
+### New and wired
+
+- `play_launch contract capture` writes a first contract from a run bundle
+  (#0044): structure and types only, absolute FQN keys, no requirement it
+  cannot observe, and every refusal listed with its reason.
+  `scripts/capture_manifest.py` is gone.
+- `run --interception on` records a bundle `measure` can read (#0053).
+- `endpoints.tsv` has a sixth column, the message type (#0047). Readers
+  accept five or six columns.
+- `just check` gains `check-rt-docs` (#0036) and `check-issue-index`.
+
+### Visible: what now fails or refuses
+
+- `check` summary: a manifest with a cross-scope error is counted "with
+  errors". It used to print "1 clean, 0 with errors (4 errors, ...)" while
+  exiting 1. The exit code is unchanged.
+- `node-identity-unknown` (error, #0048): a contract key naming a node the
+  launch tree does not have. It used to resolve to a plausible FQN that named
+  nothing, and `check` reported clean. Action refs are reconciled the same
+  way now (#0055).
+- `run --enforce-rules <mode>` typed explicitly is refused (#0045): `run`
+  has no contract to enforce. The default still runs.
+- `--enforce-rules strict` with the interception library missing refuses to
+  start (#0031); `warn` warns.
+- A composable's scheduling tier under `--container-mode observable|stock`
+  is warned about before spawn and refused under `--sched-apply strict`
+  (#0035); `run_info.json` records the unapplied set.
+- Phase 82's detection interval can be longer than 0.12.0's for a hazard
+  with no `on:` or a `max_age` under `mechanism: qos`.
+- The Autoware fixture's `comfortable_stop` rung is skipped for
+  `mode_unavailable`, not failed (F1 reverses phase 75's headline).
+
+### Parser
+
+- `$(filename)` is the launch file's absolute path, as ROS 2 defines
+  `ThisLaunchFile` (#0041); it was the basename. `ThisLaunchFile()` in a
+  `.launch.py` no longer reaches the record as `$(this-launch-file)`.
+- `$(dirname)` and `$(filename)` resolve inside what a `.launch.py` captures
+  (#0034 residual): parameter values, arguments, remappings and
+  parameter-file paths, which were stored unresolved and so never loaded.
+- The IR builder records a dropped action, including inside an include
+  (#0049).
+
+### Fixed
+
+- The rate-contradiction scan against a legacy `system.toml` reads declared
+  rates again (#0056); phase 78 had silently emptied it.
+- One derivation of the transport precedence (#0052, #0042): a
+  subscriber's `max_transport` reaches the model, and the resolver calls
+  rlm's `TopicView` instead of keeping a second copy.
+- `just build` works on a clean checkout: the dead WASM crates are deleted,
+  `cargo-ament-build>=0.1.11` accepts edition 2024, and layer 2 carries
+  `COLCON_IGNORE`.
+- The pyexec parallel-test flake (#0050) and the integration suite's bare
+  spawns (#0051).
+
 ## 0.12.0 - 2026-09-22
 
 Eleven commits over 0.11.0, in two phases. Phase 78 moves the derivation of
