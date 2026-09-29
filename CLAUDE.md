@@ -615,6 +615,15 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-29**: Phase 84 -- **a window is a least time** (manifest
+  **`v0.1.47`**, text only). A `window:` rung lasts AT LEAST its duration; the
+  WINDOWS term ends at the deadline and the rung below's own route, walked
+  from the guard, is where the owner's late notice of the deadline is
+  charged. `window-expiry` (in `check_fault_reaction`, `check_window_expiry`)
+  keeps that honest: the route below must start at the node the window's
+  `param:` names and charge it at least the period of that node's timer
+  that publishes the rung's output. Never add the tick to WINDOWS: the
+  route below already holds it.
 - **2026-09-28**: Phase 83 -- **a takeover the contract can state** (manifest
   **`v0.1.46`**, workspace 0.1.7: `Manifest.functions` holds `FunctionDecl`).
   Four keys: `when:` on a hazard or a function (`{ of, when }`; on a function

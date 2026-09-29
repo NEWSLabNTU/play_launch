@@ -1584,7 +1584,14 @@ fn takeover_ladder_fits_and_explains_itself() {
         "requires hpc_alive, which this fault removes",
         // The window, charged to the rung below it; F3's route is 110 + 300.
         "+ 'takeover' reaction 110.00ms + window 10000.00ms",
-        "odd_exit  comfortable  rung     120.00  10110.00  410.00  9996.67 derived  20636.67  30000.00   9363.33",
+        "odd_exit  comfortable  rung     120.00  10110.00  410.00    9996.67 derived  20636.67  30000.00   9363.33",
+        // Phase 84: the window is a least time, charged to its deadline; the
+        // handler's late notice of it is the first hop of the route below.
+        "window >=10000.00",
+        "odd_exit/takeover: lasts at least 10000.00ms once on, and ends within 10110.00ms: \
+         /handler reads the deadline on its 100.00ms timer ('on_timer'), charged inside \
+         /handler/call_mrm 110.00ms, the first hop of the route below",
+        "up to its deadline.",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
@@ -1601,12 +1608,64 @@ fn takeover_ladder_fits_and_explains_itself() {
         "settle-param-unresolved",
         "settle-conflict",
         "reaction-unbudgeted",
+        // `[window-expiry]`, not the bare name: the table's footer names
+        // the rule when it explains where the notice is charged.
+        "[window-expiry]",
     ] {
         assert!(
             !out.contains(rule),
             "`{rule}` must not fire on a correct contract:\n{out}"
         );
     }
+}
+
+/// Phase 84: the window is charged up to its deadline, so the route below
+/// must hold the owner's late notice of it. A 5 Hz tick under a 110 ms hop
+/// leaves 90 ms charged nowhere, once per rung below; the arithmetic itself
+/// is unchanged (no slack is added to make it pass).
+#[test]
+fn window_expiry_names_a_notice_the_route_does_not_hold() {
+    let (code, out) = check_takeover("contract_takeover_expiry_tick", &["--explain"]);
+    assert_eq!(code, 1, "{out}");
+    for rung in ["comfortable", "estop"] {
+        let needle = format!(
+            "hazard 'odd_exit': rung '{rung}' is charged from the deadline of 'takeover' \
+             (10000.00ms), and /handler reads the deadline on its 200.00ms timer ('on_timer'), \
+             but the route charges /handler/call_mrm only 110.00ms, so up to 90.00ms of the late \
+             notice is charged nowhere"
+        );
+        assert!(out.contains(&needle), "expected `{needle}`:\n{out}");
+    }
+    assert_eq!(out.matches("error[window-expiry]").count(), 2, "{out}");
+    // Same numbers as contract_takeover: the rule does not move the budget.
+    assert!(
+        out.contains(
+            "odd_exit  comfortable  rung     120.00  10110.00  410.00    9996.67 derived  20636.67  30000.00   9363.33"
+        ),
+        "{out}"
+    );
+}
+
+/// Phase 84: a window bound to a node the route below does not start at --
+/// nothing charges that node noticing the deadline -- and a node with no
+/// timer publishing the rung's output, so when it notices is undeclared.
+#[test]
+fn window_expiry_names_an_owner_off_the_route() {
+    let (code, out) = check_takeover("contract_takeover_expiry_owner", &[]);
+    assert_eq!(code, 1, "{out}");
+    for needle in [
+        "error[window-expiry]",
+        "rung 'comfortable' is charged from the deadline of 'takeover' (10000.00ms), and its \
+         route starts at /handler/call_mrm, not at /planner, which enforces the window -- nothing \
+         charges /planner noticing the deadline",
+        "warning[window-expiry]",
+        "mode 'takeover' waits 10000.00ms, enforced by /planner, but no timer path of /planner \
+         publishes /tor_state, so when /planner notices the deadline is not declared",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    // The declaration warning is about the window, once.
+    assert_eq!(out.matches("warning[window-expiry]").count(), 1, "{out}");
 }
 
 /// Phase 83: every structural takeover rule, once, with the file and line.
@@ -1661,6 +1720,11 @@ fn takeover_budget_rules_fire_on_their_fixture() {
         "(4.23 - 2.0833)/2.5 = 1666.67 + 858.67 = 2525.33ms",
         "hazard 'hpc_observed': detection 500.00ms",
         "= 3168.67ms exceeds the fault-tolerant time interval 3000.00ms",
+        // Phase 84: this handler declares no tick, so when it reads the
+        // deadline is unstated.
+        "warning[window-expiry]",
+        "no timer path of /handler publishes /tor_state, so when /handler notices the deadline \
+         is not declared",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }

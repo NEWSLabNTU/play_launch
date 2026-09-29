@@ -266,7 +266,7 @@ pub fn render_budgets(rows: &[manifest_loader::RungBudget]) -> String {
             RungRole::Floor => "floor",
         };
         let settle = match (r.role, r.settle_ms) {
-            (RungRole::Window, _) => format!("window {}", ms(r.window_ms)),
+            (RungRole::Window, _) => format!("window >={}", ms(r.window_ms)),
             (_, Some(v)) => format!("{v:.2} {}", r.settle_how),
             (RungRole::Skipped, None) => "-".to_string(),
             (_, None) => "unknown".to_string(),
@@ -317,7 +317,9 @@ pub fn render_budgets(rows: &[manifest_loader::RungBudget]) -> String {
     }
     out.push_str(
         "  TOTAL = DETECT + WINDOWS + ROUTE + SETTLE; WINDOWS is the route and window of every \
-         windowed rung passed on the way.\n",
+         windowed rung passed on the way, up to its deadline.\n  A window is a least time \
+         (`window >=`); noticing its deadline is the first hop of the ROUTE below it \
+         (`window-expiry`), never a second charge.\n",
     );
     for n in notes {
         out.push_str(&n);

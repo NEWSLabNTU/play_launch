@@ -1513,6 +1513,10 @@ struct ReactionHop {
     /// included in the walk's `route_ms`; carried here so the route names the
     /// clock it waited for.
     sampling_ms: Option<f64>,
+    /// What this hop is charged in the route: its `max_latency` plus the
+    /// sampling period above. `window-expiry` reads the first hop's, because
+    /// after a window that hop is the node noticing the deadline (phase 84).
+    ms: f64,
 }
 
 impl std::fmt::Display for ReactionHop {
@@ -1609,6 +1613,7 @@ fn walk_reaction(
                 node: node_fqn.to_string(),
                 path: path.path_name.clone(),
                 sampling_ms,
+                ms: hop_ms,
             };
             let publishes_sink = |ep_name: &str| {
                 let r = format!("{node_fqn}/{ep_name}");
@@ -1966,6 +1971,134 @@ fn resolve_ladder(
 
 /// Phase 71 rules. Everything numeric here is DERIVED from facts the contract
 /// already carries; the only authored number is the hazard's `ftti`.
+/// A windowed rung a hazard waits out on its way down the ladder (phase 83),
+/// and who notices its deadline (phase 84).
+struct WaitedWindow {
+    rung: String,
+    /// The rung's own route to its output: the request goes on after it.
+    route_ms: f64,
+    window_ms: f64,
+    /// The node the window's `param:` names: the one that enforces it.
+    owner: Option<String>,
+    /// The owner's slowest timer path that publishes the rung's output,
+    /// `(path, period)`: the clock the owner reads the deadline on.
+    notice: Option<(String, f64)>,
+    /// The window's row in `budgets`, so its note can name where the notice
+    /// is charged once a rung below is walked.
+    row: usize,
+    noted: bool,
+}
+
+/// The owner's slowest timer path that publishes one of `outputs`, and its
+/// period (phase 84). A node that holds a rung on its tick publishes the
+/// rung's output there, and reads the deadline on the same tick.
+fn owner_notice(
+    owner: &str,
+    outputs: &[String],
+    topics: &BTreeMap<String, ResolvedTopic>,
+    node_paths: &[ResolvedNodePath],
+) -> Option<(String, f64)> {
+    node_paths
+        .iter()
+        .filter(|p| p.node_fqn == owner)
+        .filter_map(|p| match p.path.effective_trigger() {
+            ros_launch_manifest_types::EffectiveTrigger::Timer { rate_hz } if rate_hz > 0.0 => {
+                let publishes = p.path.output.iter().any(|ep| {
+                    let r = format!("{owner}/{ep}");
+                    outputs
+                        .iter()
+                        .any(|t| topics.get(t).is_some_and(|tp| tp.publishers.contains(&r)))
+                });
+                publishes.then(|| (p.path_name.clone(), 1000.0 / rate_hz))
+            }
+            _ => None,
+        })
+        .fold(None, |acc: Option<(String, f64)>, (n, ms)| match acc {
+            Some((an, am)) if am >= ms => Some((an, am)),
+            _ => Some((n, ms)),
+        })
+}
+
+/// `window-expiry` (phase 84): a window is charged up to its DEADLINE, and
+/// the rung below is charged its route from there. That is sound only if
+/// the route's first hop is the node that enforces the window, charged at
+/// least the period of the clock it reads the deadline on -- otherwise the
+/// late notice of the deadline is charged nowhere. The check is necessary,
+/// not sufficient: the checker sees the hop's latency, not how it divides
+/// between the wait for the tick and the call that follows.
+fn check_window_expiry(
+    windows: &mut [WaitedWindow],
+    walk: Option<&ReactionWalk>,
+    hazard: &str,
+    rung: &str,
+    site: &str,
+    budgets: &mut [RungBudget],
+    diags: &mut Vec<Diagnostic>,
+) {
+    let Some(first) = walk.and_then(|w| w.hops.first()) else {
+        return;
+    };
+    for w in windows.iter_mut() {
+        let Some(owner) = &w.owner else {
+            continue;
+        };
+        let problem = if &first.node != owner {
+            Some(format!(
+                "its route starts at {first}, not at {owner}, which enforces the window -- \
+                 nothing charges {owner} noticing the deadline"
+            ))
+        } else {
+            match &w.notice {
+                Some((path, p)) if first.ms + 1e-9 < *p => Some(format!(
+                    "{owner} reads the deadline on its {p:.2}ms timer ('{path}'), but the route \
+                     charges {first} only {:.2}ms, so up to {:.2}ms of the late notice is \
+                     charged nowhere. Hold the tick in that hop's latency, or arm a one-shot \
+                     timer at the deadline",
+                    first.ms,
+                    p - first.ms
+                )),
+                _ => None,
+            }
+        };
+        if let Some(problem) = problem {
+            diags.push(Diagnostic {
+                rule_id: "window-expiry".to_string(),
+                severity: Severity::Error,
+                message: format!(
+                    "{site}: hazard '{hazard}': rung '{rung}' is charged from the deadline of \
+                     '{}' ({:.2}ms), and {problem}",
+                    w.rung, w.window_ms
+                ),
+                path: format!("modes.{}.window", w.rung),
+                span: None,
+            });
+            continue;
+        }
+        if w.noted {
+            continue;
+        }
+        w.noted = true;
+        let d = w.window_ms;
+        let note = match &w.notice {
+            Some((path, p)) => format!(
+                "lasts at least {d:.2}ms once on, and ends within {:.2}ms: {owner} reads the \
+                 deadline on its {p:.2}ms timer ('{path}'), charged inside {first} {:.2}ms, the \
+                 first hop of the route below",
+                d + first.ms,
+                first.ms
+            ),
+            None => format!(
+                "lasts at least {d:.2}ms once on; when {owner} notices the deadline is not \
+                 declared, and the route below ({first} {:.2}ms) is charged from the deadline",
+                first.ms
+            ),
+        };
+        if let Some(row) = budgets.get_mut(w.row) {
+            row.note = note;
+        }
+    }
+}
+
 fn check_fault_reaction(
     index: &mut ManifestIndex,
     graph: &super::manifest_graph::GlobalDataflowGraph,
@@ -1974,6 +2107,9 @@ fn check_fault_reaction(
 
     let mut diags: Vec<Diagnostic> = Vec::new();
     let mut budgets: Vec<RungBudget> = Vec::new();
+    // `window-expiry`'s warning is about the declaration, once per window
+    // however many hazards wait it out (phase 84).
+    let mut expiry_warned: HashSet<(usize, String)> = HashSet::new();
     let hazards = index.hazards.clone();
     let topics = index.topics.clone();
     let services = index.services.clone();
@@ -2253,14 +2389,23 @@ fn check_fault_reaction(
         let fdti_ms = fdti_worst.as_ref().map(|(v, _)| *v);
         let guard_topics: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
         // Phase 83: windowed rungs the hazard passes through on the way to a
-        // later rung, (rung, route, window). Each is charged to every rung
-        // below it: the system waits the window out before it moves on.
-        let mut windows: Vec<(String, f64, f64)> = Vec::new();
-        let windows_ms =
-            |w: &[(String, f64, f64)]| w.iter().fold(0.0_f64, |acc, (_, r, d)| acc + r + d);
-        let windows_note = |w: &[(String, f64, f64)]| {
+        // later rung. Each is charged to every rung below it: the system
+        // waits the window out before it moves on. Phase 84: the charge ends
+        // at the window's DEADLINE, and noticing it belongs to the route
+        // below (`window-expiry`).
+        let mut windows: Vec<WaitedWindow> = Vec::new();
+        let windows_ms = |w: &[WaitedWindow]| {
             w.iter()
-                .map(|(n, r, d)| format!(" + '{n}' reaction {r:.2}ms + window {d:.2}ms"))
+                .fold(0.0_f64, |acc, x| acc + x.route_ms + x.window_ms)
+        };
+        let windows_note = |w: &[WaitedWindow]| {
+            w.iter()
+                .map(|x| {
+                    format!(
+                        " + '{}' reaction {:.2}ms + window {:.2}ms",
+                        x.rung, x.route_ms, x.window_ms
+                    )
+                })
                 .collect::<String>()
         };
         let rung_site = |rung: &str| {
@@ -2335,6 +2480,39 @@ fn check_fault_reaction(
             if let Some(win) = mode.and_then(|m| m.decl.window.as_ref()) {
                 let d = win.duration.as_millis_f64();
                 let r = route_ms.unwrap_or(0.0);
+                // Phase 84: who enforces the window, and on what clock it
+                // notices the deadline.
+                let owner = win.param.as_ref().map(|p| {
+                    let ns = index
+                        .manifests
+                        .get(&h.scope_id)
+                        .map(|r| r.ns.clone())
+                        .unwrap_or_default();
+                    resolve_node_fqn(index, h.scope_id, &ns, &p.node)
+                });
+                let notice = owner
+                    .as_deref()
+                    .and_then(|o| owner_notice(o, &rp.output_topics, &topics, &node_paths));
+                if let Some(o) = &owner
+                    && notice.is_none()
+                    && expiry_warned.insert((h.scope_id, rung_name.clone()))
+                {
+                    diags.push(Diagnostic {
+                        rule_id: "window-expiry".to_string(),
+                        severity: Severity::Warning,
+                        message: format!(
+                            "{}: mode '{rung_name}' waits {d:.2}ms, enforced by {o}, but no \
+                             timer path of {o} publishes {}, so when {o} notices the deadline \
+                             is not declared. The rung below is charged from the deadline as \
+                             if it were noticed at once",
+                            rung_site(rung_name),
+                            rp.output_topics.join(", ")
+                        ),
+                        path: format!("modes.{rung_name}.window"),
+                        span: None,
+                    });
+                }
+                let row = budgets.len();
                 budgets.push(RungBudget {
                     hazard: h.name.clone(),
                     rung: rung_name.clone(),
@@ -2344,12 +2522,32 @@ fn check_fault_reaction(
                     route_ms,
                     window_ms: Some(d),
                     ftti_ms,
-                    note: "transitional: charged to every rung below it".to_string(),
+                    note: format!(
+                        "lasts at least {d:.2}ms once on; transitional: charged to every rung \
+                         below it up to its deadline"
+                    ),
                     ..Default::default()
                 });
-                windows.push((rung_name.clone(), r, d));
+                windows.push(WaitedWindow {
+                    rung: rung_name.clone(),
+                    route_ms: r,
+                    window_ms: d,
+                    owner,
+                    notice,
+                    row,
+                    noted: false,
+                });
                 continue;
             }
+            check_window_expiry(
+                &mut windows,
+                walk.as_ref(),
+                &h.name,
+                rung_name,
+                &rung_site(rung_name),
+                &mut budgets,
+                &mut diags,
+            );
             let settle = match &walk {
                 Some(w) => settle_of(w, rung_name, &mut diags),
                 None => super::value_rules::Settle::default(),
@@ -2444,6 +2642,15 @@ fn check_fault_reaction(
             graph,
         );
         let floor_name = rungs.last().map(|(n, _)| n.clone()).unwrap_or_default();
+        check_window_expiry(
+            &mut windows,
+            walk.as_ref(),
+            &h.name,
+            &floor_name,
+            &rung_site(&floor_name),
+            &mut budgets,
+            &mut diags,
+        );
         let settle = match &walk {
             Some(w) => settle_of(w, &floor_name, &mut diags),
             None => super::value_rules::Settle::default(),

@@ -295,6 +295,16 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     application`. Issue #0046 ruled. W4 (a sampling hop in the reaction walk)
     is separate.
     [phase-82-what-a-detector-may-see.md](./phase-82-what-a-detector-may-see.md).
+  - **Phase 84** - complete: a window is a least time, and its notice is
+    charged once (2026-09-29, rlm **v0.1.47**, text only). rlm said a
+    `window:` rung lasts "at most" its duration; the number is the driver's
+    guaranteed time, so it is a MINIMUM, and the rung below starts within its
+    own route after the deadline. The arithmetic already charged the
+    owner's late notice there (the island's `call_mrm` 110 ms holds the
+    100 ms tick); new rule `window-expiry` checks that it does, and
+    `check --explain` prints `window >=` and the interval the rung ends in.
+    No TOTAL moves.
+    [phase-84-a-window-is-a-least-time.md](./phase-84-a-window-is-a-least-time.md).
   - **Phase 83** - complete: a takeover the contract can state, and the
     checker can refuse (2026-09-28, rlm **v0.1.46**). Four keys for the
     Autoware Safety Island's RTSS@Work demo: `when:` (a fault, or the loss of

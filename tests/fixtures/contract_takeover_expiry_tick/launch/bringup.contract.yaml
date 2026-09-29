@@ -1,26 +1,10 @@
-# Phase 83 -- the four takeover keys (rlm v0.1.46), on a ladder that FITS.
+# Phase 84 -- `window-expiry`, the late notice charged nowhere.
 #
-#   functions  hpc_alive (lost by silence), hpc_in_odd and driver_took_over
-#              (value functions: `of:` + `when:`, the predicate that LOSES
-#              them)
-#   hazards    odd_exit (a VALUE fault, `on: reported` + `when:`) and hpc_loss
-#              (a silence fault), both with an `entry_speed`
-#   modes      engaged -> takeover (10 s window, bound to handler's
-#              takeover_timeout; the driver's MANUAL exits to `manual`)
-#                      -> comfortable (the planner brakes) -> estop (floor)
-#
-# odd_exit removes only hpc_in_odd, so it waits the window out and lands on
-# `comfortable`: 120 + (110 + 10000) + 410 + 9996.67 = 20636.67 ms < 30 s.
-# The window is a LEAST time (phase 84): charged up to its deadline, and the
-# handler's late notice of it -- its 10 Hz tick -- is inside call_mrm's
-# 110 ms, the first hop of the route below, so the request ends within
-# 10000 + 110 = 10110 ms of going on.
-# hpc_loss removes both functions, so `takeover` and `comfortable` are skipped
-# and not charged (F1): 500 + 143.33 + 2033.33 = 2676.67 ms < 3 s. Charged,
-# the comfortable rung alone would be 500 + 410 + 4666.67 = 5576.67 ms.
-#
-# The settles are DERIVED: `settle-derived` prints 2033.33 ms for the
-# emergency profile at 3.0 m/s -- the island contract's own arithmetic.
+# contract_takeover with one change: the handler's tick that publishes the
+# request (and so reads the deadline) is 5 Hz, but call_mrm, the first hop
+# of the route below the window, still declares 110 ms. The handler may
+# notice the deadline up to 200 ms after it, and only 110 ms of that is
+# charged: the rule names the 90 ms charged nowhere.
 version: 1
 
 severity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
@@ -109,7 +93,7 @@ nodes:
       # the 100 ms tick + a 10 ms call) is where the late notice is charged
       # (`window-expiry`).
       on_timer:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate_hz: 5 } }
         output: [tor_state]
         max_latency: 100ms
       call_mrm:
