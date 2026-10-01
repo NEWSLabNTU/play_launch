@@ -295,6 +295,18 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     application`. Issue #0046 ruled. W4 (a sampling hop in the reaction walk)
     is separate.
     [phase-82-what-a-detector-may-see.md](./phase-82-what-a-detector-may-see.md).
+  - **Phase 85** - planned: what the island's board runs left open
+    (2026-10-01). The Autoware Safety Island's S32K344 runs (phase8-W30,
+    W31) sized `call_mrm` at 206 ms = link 57 + tick 118 + work 31, because
+    0.13.0 charges no `max_transport` in the fault arithmetic (I1: charge it
+    on the guard edge, not after a window's deadline; then `call_mrm` 149
+    and the window ends within 10,149 ms). Design items, mostly rlm's: a
+    timer jitter key (D1), a service-edge cost and budget separate from
+    deadline/monitor (D2, with nano-ros), an on-demand topic with no
+    minimum rate (D3; 2 start-up `rate-hierarchy-runtime` violations on the
+    board), and route versus callback at run time (D4). Plus 6 open
+    Dependabot alerts (T3).
+    [phase-85-what-the-island-left-open.md](./phase-85-what-the-island-left-open.md).
   - **Phase 84** - complete: a window is a least time, and its notice is
     charged once (2026-09-29, rlm **v0.1.47**, text only). rlm said a
     `window:` rung lasts "at most" its duration; the number is the driver's
