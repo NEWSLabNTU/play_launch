@@ -1,0 +1,159 @@
+# Phase 85 T2 (D1) -- contract_takeover_jitter with a call_mrm of 110 ms:
+# the handler reads the window's deadline on its 100 ms tick released up
+# to 18 ms late, so the first hop after the deadline must hold 118 ms, and
+# 8 ms of the late notice is charged nowhere: error[window-expiry], once
+# per rung below the window. Without the jitter key 110 >= 100 passes.
+version: 1
+rlm: v0.1.49
+
+severity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
+
+functions:
+  hpc_alive: [/availability]
+  hpc_in_odd:
+    of: [/availability]
+    when: { field: autonomous, equals: false }
+  driver_took_over:
+    of: [/control_mode]
+    when: { field: mode, not_equals: MANUAL }
+
+hazards:
+  hpc_loss:
+    severity: ASIL_D
+    guards: [/availability]
+    on: omission
+    entry_speed: 8.33
+    ftti: 10s
+    reaction: engaged
+  odd_exit:
+    severity: ASIL_B
+    guards: [/availability]
+    on: reported
+    when: { field: autonomous, equals: false }
+    entry_speed: 8.33
+    ftti: 30s
+    reaction: engaged
+
+modes:
+  engaged:
+    requires: [hpc_alive, hpc_in_odd]
+    fallback: [takeover, comfortable, estop]
+  takeover:
+    requires: [hpc_alive]
+    reaction: sys.tor
+    window: { duration: 10s, param: handler.takeover_timeout }
+    exit: { on: driver_took_over, to: manual }
+  comfortable:
+    requires: [hpc_alive]
+    reaction: sys.comfortable
+  estop:
+    requires: []
+    reaction: sys.estop
+  manual:
+    requires: []
+
+paths:
+  sys.tor:
+    trigger: { input: [/availability] }
+    output: [/tor_state]
+  sys.comfortable:
+    trigger: { input: [/availability] }
+    output: [/velocity_limit]
+  sys.estop:
+    trigger: { input: [/availability] }
+    output: [/estop_cmd]
+
+nodes:
+  handler:
+    params:
+      takeover_timeout: { type: double }
+    sub:
+      availability:
+        max_transport: 57ms
+        qos: { lease_duration: 500ms }
+        on_violation: { on: [omission, reported], reaction: call_mrm }
+      control_mode: { max_transport: 143ms }
+    pub:
+      tor_state: {}
+    cli:
+      comfort_operate: {}
+      estop_operate: {}
+    paths:
+      on_timer:
+        trigger: { timer: { rate_hz: 10, jitter: 18ms } }
+        output: [tor_state]
+        max_latency: 100ms
+      call_mrm:
+        trigger: { input: [availability] }
+        output: [tor_state, comfort_operate, estop_operate]
+        max_latency: 110ms
+      driver_exit:
+        trigger: { input: [control_mode] }
+        output: [tor_state]
+        max_latency: 149ms
+
+  comfort_op:
+    params:
+      min_acceleration: { type: double }
+      min_jerk: { type: double }
+    srv:
+      operate: {}
+    pub:
+      velocity_limit: {}
+    paths:
+      operate:
+        trigger: { input: [operate] }
+        output: [velocity_limit]
+        safe_state:
+          emits: velocity_limit
+          settle: { decel: min_acceleration, jerk: min_jerk }
+
+  estop_op:
+    params:
+      target_acceleration: { type: double }
+      target_jerk: { type: double }
+    srv:
+      operate: {}
+    pub:
+      cmd: {}
+    paths:
+      on_timer:
+        trigger: { timer: { rate_hz: 30, jitter: 5ms } }
+        output: [cmd]
+        safe_state:
+          emits: cmd
+          settle: { decel: target_acceleration, jerk: target_jerk }
+
+topics:
+  /availability:
+    type: demo_msgs/msg/Availability
+    external: pub
+    pub: [/gate/availability]
+    sub: [handler/availability]
+    rate_hz: 10
+  /control_mode:
+    type: demo_msgs/msg/ControlMode
+    external: pub
+    sub: [handler/control_mode]
+  /tor_state:
+    type: std_msgs/msg/Bool
+    external: sub
+    pub: [handler/tor_state]
+  /velocity_limit:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [comfort_op/velocity_limit]
+  /estop_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [estop_op/cmd]
+
+services:
+  /comfort/operate:
+    type: std_srvs/srv/Trigger
+    server: [comfort_op/operate]
+    client: [handler/comfort_operate]
+  /estop/operate:
+    type: std_srvs/srv/Trigger
+    server: [estop_op/operate]
+    client: [handler/estop_operate]

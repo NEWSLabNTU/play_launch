@@ -1698,6 +1698,66 @@ fn an_on_demand_publisher_promises_no_rate() {
     );
 }
 
+/// Phase 85 T2 (D1): a timer's release jitter (rlm v0.1.49). What waits for
+/// a tick is charged period + jitter: the emergency operator's sampling hop
+/// (33.33 + 5), and the window owner's notice of the deadline (100 + 18,
+/// held by call_mrm's 149). The model carries the jitter beside the trigger.
+#[test]
+fn a_timers_release_jitter_is_charged_where_a_tick_is_waited_for() {
+    let (code, out) = check_takeover("contract_takeover_jitter", &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    for needle in [
+        "hpc_loss  estop        floor    500.00      0.00  244.33    4165.33 derived   4909.67  10000.00   5090.33",
+        "odd_exit  estop        floor    100.00  10206.00  187.33    4165.33 derived  14658.67  30000.00  15341.33",
+        "/handler/call_mrm -> /estop_op/on_timer (+33.33ms sampling + 5.00ms jitter) = 187.33ms",
+        "odd_exit/takeover: lasts at least 10000.00ms once on, and ends within 10149.00ms: \
+         /handler reads the deadline on its 100.00ms timer ('on_timer') released up to 18.00ms \
+         late, charged inside /handler/call_mrm 149.00ms",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    assert!(!out.contains("[window-expiry]"), "{out}");
+
+    let launch = fixtures::repo_root()
+        .join("tests/fixtures/contract_takeover_jitter/launch/bringup.launch.xml");
+    let model_path = std::env::temp_dir().join("play_launch_p85_d1_model.yaml");
+    let status = play_launch_cmd()
+        .arg("resolve")
+        .arg(&launch)
+        .arg("-o")
+        .arg(&model_path)
+        .env(
+            "AMENT_PREFIX_PATH",
+            fixtures::repo_root().join("tests/fixtures/contract_takeover/ament"),
+        )
+        .status()
+        .expect("resolve runs");
+    assert!(status.success(), "resolve failed");
+    let model = std::fs::read_to_string(&model_path).expect("model written");
+    assert!(model.contains("timer_jitter_ms: 18.0"), "{model}");
+    assert!(model.contains("timer_jitter_ms: 5.0"), "{model}");
+    let _ = std::fs::remove_file(&model_path);
+}
+
+/// Phase 85 T2 (D1): the same ladder with a call_mrm of 110 ms. Against a
+/// bare 100 ms period it held the late notice; against the stated 18 ms of
+/// release jitter it leaves 8 ms charged nowhere, once per rung below.
+#[test]
+fn window_expiry_reads_the_owners_release_jitter() {
+    let (code, out) = check_takeover("contract_takeover_jitter_short", &[]);
+    assert_eq!(code, 1, "{out}");
+    for rung in ["comfortable", "estop"] {
+        let needle = format!(
+            "rung '{rung}' is charged from the deadline of 'takeover' (10000.00ms), and /handler \
+             reads the deadline on its 100.00ms timer ('on_timer') released up to 18.00ms late, \
+             but the route charges /handler/call_mrm only 110.00ms, so up to 8.00ms of the late \
+             notice is charged nowhere"
+        );
+        assert!(out.contains(&needle), "expected `{needle}`:\n{out}");
+    }
+    assert_eq!(out.matches("error[window-expiry]").count(), 2, "{out}");
+}
+
 /// Phase 84: the window is charged up to its deadline, so the route below
 /// must hold the owner's late notice of it. A 5 Hz tick under a 110 ms hop
 /// leaves 90 ms charged nowhere, once per rung below; the arithmetic itself
