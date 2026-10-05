@@ -23,9 +23,11 @@
 //! so a verb that never calls [`configure`] prints exactly what it did
 //! before.
 
-use std::borrow::Cow;
-use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::{
+    borrow::Cow,
+    io::Write,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 
 static ASCII: AtomicBool = AtomicBool::new(false);
 static WIDTH: AtomicUsize = AtomicUsize::new(0);
@@ -192,7 +194,11 @@ pub fn wrap(s: &str, width: usize) -> Cow<'_, str> {
 
 /// Apply the configured policy to `s`.
 pub fn render(s: &str) -> String {
-    let s = if ascii() { to_ascii(s) } else { Cow::Borrowed(s) };
+    let s = if ascii() {
+        to_ascii(s)
+    } else {
+        Cow::Borrowed(s)
+    };
     wrap(&s, WIDTH.load(Ordering::Relaxed)).into_owned()
 }
 

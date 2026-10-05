@@ -1064,7 +1064,8 @@ fn note_declared_not_charged(index: &mut ManifestIndex) {
                         continue;
                     };
                     let key = format!("nodes.{node}.{side}.{ep}.max_transport");
-                    let fqn = resolve_endpoint_ref(index, m.scope_id, &m.ns, &format!("{node}/{ep}"));
+                    let fqn =
+                        resolve_endpoint_ref(index, m.scope_id, &m.ns, &format!("{node}/{ep}"));
                     out.push(Diagnostic {
                         rule_id: "declared-not-charged".to_string(),
                         severity: Severity::Info,
