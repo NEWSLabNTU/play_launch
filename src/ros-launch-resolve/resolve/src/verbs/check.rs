@@ -433,6 +433,10 @@ pub fn render_budgets(rows: &[manifest_loader::RungBudget]) -> String {
         if !r.note.is_empty() {
             notes.push(format!("  {}/{}: {}", r.hazard, r.rung, r.note));
         }
+        // Phase 85 I1: where a link is part of ROUTE, and where it is not.
+        if !r.route_note.is_empty() {
+            notes.push(format!("  {}/{}: {}", r.hazard, r.rung, r.route_note));
+        }
     }
     let widths: Vec<usize> = (0..10)
         .map(|c| table.iter().map(|row| row[c].len()).max().unwrap_or(0))
@@ -457,7 +461,8 @@ pub fn render_budgets(rows: &[manifest_loader::RungBudget]) -> String {
         "  TOTAL = DETECT + WINDOWS + ROUTE + SETTLE; WINDOWS is the route and window of every \
          windowed rung passed on the way, up to its deadline.\n  A window is a least time \
          (`window >=`); noticing its deadline is the first hop of the ROUTE below it \
-         (`window-expiry`), never a second charge.\n",
+         (`window-expiry`), never a second charge.\n  ROUTE includes the guard edge's link \
+         (`max_transport` into the detecting subscriber), except after a window's deadline.\n",
     );
     for n in notes {
         out.push_str(&n);
