@@ -687,6 +687,19 @@ pub struct CheckArgs {
     /// too old to parse the contract.
     #[arg(long, value_name = "RULE_ID")]
     pub expect: Vec<String>,
+
+    /// ASCII-only output: `->` for the route arrow, `--` for an em dash,
+    /// `-`/`|`/`+` for the section rules and source frames. On by itself
+    /// when stderr is not a terminal (a pipe, a CI log). ANSI colour is
+    /// likewise only emitted on a terminal, and never with NO_COLOR set.
+    #[arg(long)]
+    pub ascii: bool,
+
+    /// Wrap every output line longer than N characters (at a space; the
+    /// continuation is indented). Off by default, so a script's grep sees
+    /// each diagnostic on one line.
+    #[arg(long, value_name = "N")]
+    pub width: Option<usize>,
 }
 
 // `CheckArgs::contract_sources` moved to `verbs::check::CheckInputs` with the

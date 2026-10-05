@@ -94,11 +94,16 @@ fn init_tracing(command: &Command) {
 
     // The two terminal writers are different types, so the branch is
     // duplicated rather than factored.
+    // Phase 85 I5: ANSI only on a terminal, and never with NO_COLOR set. The
+    // default wrote escape codes into every pipe and CI log.
+    use ros_launch_resolve::util::out::color_wanted;
+    use std::io::IsTerminal;
     if logs_to_stderr(command) {
         tracing_subscriber::registry()
             .with(
                 tracing_subscriber::fmt::layer()
-                    .with_writer(std::io::stderr)
+                    .with_writer(|| LogStderr)
+                    .with_ansi(color_wanted(std::io::stderr().is_terminal()))
                     .with_target(with_target)
                     .with_filter(terminal_filter),
             )
@@ -108,11 +113,34 @@ fn init_tracing(command: &Command) {
         tracing_subscriber::registry()
             .with(
                 tracing_subscriber::fmt::layer()
+                    .with_ansi(color_wanted(std::io::stdout().is_terminal()))
                     .with_target(with_target)
                     .with_filter(terminal_filter),
             )
             .with(file_layer(to_file))
             .init();
+    }
+}
+
+/// stderr for the log lines of the five resolve verbs, under `check`'s
+/// output policy (ASCII, `--width`) once it has set one (phase 85 I5). The fmt
+/// layer formats a whole event and writes it in one call, so a UTF-8
+/// sequence is never split across two writes here.
+struct LogStderr;
+
+impl std::io::Write for LogStderr {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if ros_launch_resolve::util::out::active() {
+            let s = String::from_utf8_lossy(buf);
+            std::io::stderr().write_all(ros_launch_resolve::util::out::render(&s).as_bytes())?;
+            Ok(buf.len())
+        } else {
+            std::io::stderr().write(buf)
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        std::io::stderr().flush()
     }
 }
 

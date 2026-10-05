@@ -21,6 +21,10 @@ default = ["smt"]
 smt = ["ros-launch-manifest-check/smt"]
 
 [dependencies]
+# Phase 85 I5: `check` renders codespan diagnostics into a buffer (colour
+# only on a terminal) and prints them through `util::out`. Same 1.x crate
+# codespan-reporting re-exports, so the writer types are one type.
+termcolor = "1.4"
 # issue 0382 — `structure.nodes` is an order-preserving map.
 indexmap = { version = "2", features = ["serde"] }
 ros-launch-manifest-types = { workspace = true }

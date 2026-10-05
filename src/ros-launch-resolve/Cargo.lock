@@ -1108,6 +1108,7 @@ dependencies = [
  "serde_yaml_ng",
  "sha2",
  "tempfile",
+ "termcolor",
  "tokio",
  "toml",
  "tracing",

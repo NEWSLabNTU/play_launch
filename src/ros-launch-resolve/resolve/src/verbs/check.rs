@@ -36,7 +36,7 @@ use std::{collections::HashSet, path::PathBuf};
 
 use eyre::Result;
 use ros_launch_manifest_check::{
-    Diagnostic, Severity, emit::diagnostic::emit_diagnostics, run_checks_with_spans,
+    Diagnostic, Severity, emit::diagnostic::emit_diagnostics_to, run_checks_with_spans,
 };
 use ros_launch_manifest_types::parse_manifest_str_with_spans;
 
@@ -79,6 +79,12 @@ pub struct CheckInputs {
     /// Error-severity diagnostic is one of these rules, each of them fired,
     /// and no contract was refused -- see [`expect_verdict`].
     pub expect: Vec<String>,
+    /// Phase 85 I5: ASCII-only output (`->`, `--`, `-`/`|`/`+`). Also on
+    /// whenever stderr is not a terminal.
+    pub ascii: bool,
+    /// Phase 85 I5: wrap every output line longer than this many characters.
+    /// `None` = no wrapping.
+    pub width: Option<usize>,
 }
 
 /// Exit status for a contract file the grammar refused (`manifest-parse`),
@@ -103,6 +109,15 @@ impl CheckInputs {
 /// Run the contract checker. Returns the INTENDED process exit code — see the
 /// module-level exit contract. Never calls [`std::process::exit`].
 pub fn run(inputs: CheckInputs) -> Result<i32> {
+    // Phase 85 I5: what reaches a log is ASCII, and as wide as asked.
+    crate::util::out::configure(
+        inputs.ascii || !std::io::IsTerminal::is_terminal(&std::io::stderr()),
+        inputs.width.unwrap_or(0),
+    );
+    // Every load and cross-scope diagnostic is rendered below; the loader's
+    // own WARN line for each would print a parse failure twice.
+    manifest_loader::set_diagnostics_rendered(true);
+
     // Positional quirk: with a direct launch-file PATH, the second
     // positional (`launch_file`) can swallow the first `KEY:=VALUE` arg.
     // Without this, `check` parsed a DIFFERENT node set than `resolve` did
@@ -114,7 +129,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // Resolve launch file path (same logic as `play_launch launch`)
     let launch_path = super::resolve_launch_file(&inputs.package_or_path, launch_file.as_deref())?;
 
-    eprintln!("Parsing launch file: {}", launch_path.display());
+    crate::say!("Parsing launch file: {}", launch_path.display());
 
     // Parse launch arguments (KEY:=VALUE)
     let cli_args = super::parse_launch_arguments(&launch_arguments);
@@ -127,7 +142,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     let json = serde_json::to_string(&record)?;
     let dump: crate::ros::launch_dump::LaunchDump = serde_json::from_str(&json)?;
 
-    eprintln!(
+    crate::say!(
         "Parsed: {} scopes, {} nodes, {} containers, {} composable nodes",
         dump.scopes.len(),
         dump.node.len(),
@@ -167,7 +182,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // and doesn't affect the exit code.
     if let Some(export_path) = &inputs.export_graph {
         crate::ros::causal_graph::export_to_file(&index, export_path)?;
-        eprintln!("Exported causal graph to {}", export_path.display());
+        crate::say!("Exported causal graph to {}", export_path.display());
     }
 
     // Optional: validate the shared scheduling spec (Linux = validate-now).
@@ -187,7 +202,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
         &inputs.target,
     );
     if let Some(resolved) = &resolved_platform {
-        eprintln!(
+        crate::say!(
             "Scheduling platform file [{}]: {}",
             resolved.channel,
             resolved.path.display()
@@ -202,7 +217,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
             crate::ros::sched_loader::print_explain(&derived, resolved, Some(&index));
         }
     } else if inputs.explain && index.budgets.is_empty() {
-        eprintln!(
+        crate::say!(
             "note: --explain has no effect without a resolved scheduling platform file \
              (pass --sched <path>, or ship one via the overlay/provider channels)"
         );
@@ -220,7 +235,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // over. Returning here dropped both, so a tree with no contracts got the
     // same silent exit 0 it got when the graph was empty.
     if index.manifests.is_empty() && index.load_diagnostics.is_empty() {
-        eprintln!(
+        crate::say!(
             "No manifests found (overlay={:?}, provider={})",
             sources.overlay, sources.provider
         );
@@ -249,7 +264,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // Phase 83: the fault-reaction arithmetic the verdicts above were
     // computed from, one row per (hazard, rung).
     if inputs.explain && inputs.format != "json" && !index.budgets.is_empty() {
-        eprint!("{}", render_budgets(&index.budgets));
+        crate::say_raw!("{}", render_budgets(&index.budgets));
     }
 
     // Summary
@@ -263,7 +278,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
 
     if !inputs.expect.is_empty() {
         let (code, line) = expect_verdict(&index, &inputs.expect, refused, dropped_is_error);
-        eprintln!("{line}");
+        crate::say!("{line}");
         return Ok(code);
     }
 
@@ -481,20 +496,20 @@ fn report_dropped_actions(dump: &crate::ros::launch_dump::LaunchDump, allow: boo
         let what = d.detail.clone().unwrap_or_else(|| {
             "it and everything nested inside it is MISSING from the model".to_string()
         });
-        eprintln!(
+        crate::say!(
             "{level}: unsupported launch action `{}`{where_} — {what}",
             d.action
         );
     }
     if allow {
-        eprintln!(
+        crate::say!(
             "note: --allow-unsupported-actions is set, so the {} dropped action(s) above \
              do not fail this check",
             dump.dropped_actions.len()
         );
         false
     } else {
-        eprintln!(
+        crate::say!(
             "note: pass --allow-unsupported-actions to downgrade the {} dropped action(s) \
              above to a warning",
             dump.dropped_actions.len()
@@ -588,10 +603,21 @@ fn render_scope_diagnostics(
                         .diagnostics
                         .retain(|d| set.contains(d.rule_id.as_str()));
                 }
-                emit_diagnostics(&check_result, &label, &resolved.source);
+                // Phase 85 I5: colour only on a terminal without NO_COLOR
+                // (codespan's own `Auto` coloured a pipe), and the text
+                // through `util::out` for `--ascii` / `--width`.
+                let mut buf = if crate::util::out::color_wanted(
+                    std::io::IsTerminal::is_terminal(&std::io::stderr()),
+                ) {
+                    termcolor::Buffer::ansi()
+                } else {
+                    termcolor::Buffer::no_color()
+                };
+                emit_diagnostics_to(&mut buf, &check_result, &label, &resolved.source);
+                crate::say_raw!("{}", String::from_utf8_lossy(buf.as_slice()));
             } else {
                 for diag in &filtered {
-                    eprintln!("{diag}");
+                    crate::say!("{diag}");
                 }
             }
         }
@@ -680,9 +706,9 @@ fn render_load_diagnostics(
     if format == "json" {
         print_diagnostics_json(&filtered, "<load>", None)?;
     } else {
-        eprintln!("\n── Contracts that failed to load ──");
+        crate::say!("\n── Contracts that failed to load ──");
         for diag in &filtered {
-            eprintln!("  error[{}]: {}", diag.rule_id, diag.message);
+            crate::say!("  error[{}]: {}", diag.rule_id, diag.message);
         }
     }
 
@@ -703,14 +729,14 @@ fn render_cross_scope_diagnostics(
     if format == "json" {
         print_diagnostics_json(&filtered, "<cross-scope>", None)?;
     } else {
-        eprintln!("\n── Cross-scope diagnostics ──");
+        crate::say!("\n── Cross-scope diagnostics ──");
         for diag in &filtered {
             let label = match diag.severity {
                 Severity::Error => "error",
                 Severity::Warning => "warning",
                 Severity::Info => "info",
             };
-            eprintln!("  {label}[{}]: {}", diag.rule_id, diag.message);
+            crate::say!("  {label}[{}]: {}", diag.rule_id, diag.message);
         }
     }
 
@@ -746,12 +772,12 @@ fn print_summary(index: &manifest_loader::ManifestIndex, rule_filter: Option<&Ha
         None => String::new(),
     };
     if !index.load_diagnostics.is_empty() {
-        eprintln!(
+        crate::say!(
             "{} contract file(s) FAILED TO LOAD and were not checked at all",
             index.load_diagnostics.len()
         );
     }
-    eprintln!(
+    crate::say!(
         "\n{} manifest(s) checked: {} clean, {} with errors ({} errors, {} warnings){}",
         index.manifests.len(),
         clean_count,
@@ -769,7 +795,7 @@ fn print_summary(index: &manifest_loader::ManifestIndex, rule_filter: Option<&Ha
             manifest_loader::ContractChannel::Provider => provider_count += 1,
         }
     }
-    eprintln!(
+    crate::say!(
         "{} contract(s): {} overlay, {} provider",
         index.manifests.len(),
         overlay_count,

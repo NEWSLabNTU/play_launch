@@ -33,7 +33,9 @@ const INHERITING_SUB: &str = "/et/slow/objects";
 /// Ignoring the override gives `producer → fast → sink` at 45ms; applying it
 /// to every subscriber gives `producer → fast → sink` at 35ms.
 const EXPECTED_ROUTE: [&str; 3] = ["/et/producer", "/et/slow", "/et/sink"];
-const EXPECTED_TOTAL: &str = "/et/producer → /et/slow → /et/sink = 40.00ms";
+// ASCII: `check` writes `->` for the route arrow when not on a terminal
+// (phase 85 I5), and this test reads it through a pipe.
+const EXPECTED_TOTAL: &str = "/et/producer -> /et/slow -> /et/sink = 40.00ms";
 
 fn fixture_launch() -> std::path::PathBuf {
     fixtures::repo_root().join("tests/fixtures/endpoint_transport/launch/bringup.launch.xml")

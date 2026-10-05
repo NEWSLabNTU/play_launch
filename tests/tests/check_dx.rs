@@ -167,3 +167,56 @@ fn expect_passes_only_on_exactly_the_expected_rules() {
     assert_eq!(out.status.code(), Some(3), "{}", text(&out));
     assert!(text(&out).contains("expect: FAILED -- 1 contract file(s) were refused"), "{}", text(&out));
 }
+
+/// T6 (I5): through a pipe, `check --explain` is plain ASCII with no colour,
+/// and `--width` bounds every line, the log lines included.
+#[test]
+fn piped_output_is_ascii_without_colour_and_width_bounds_it() {
+    let out = check_takeover("contract_takeover", &["--explain"]);
+    let all = [out.stdout.as_slice(), out.stderr.as_slice()].concat();
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("Fault-reaction budgets"),
+        "{}",
+        text(&out)
+    );
+    assert!(all.iter().all(|b| *b < 0x80), "a non-ASCII byte:\n{}", text(&out));
+    assert!(!all.contains(&0x1b), "an ESC byte:\n{}", text(&out));
+    // The route arrow survives as `->`.
+    assert!(text(&out).contains(" -> "), "{}", text(&out));
+
+    let out = check_takeover("contract_takeover", &["--explain", "--width", "100"]);
+    let s = text(&out);
+    assert!(s.lines().all(|l| l.chars().count() <= 100), "a line over 100:\n{s}");
+}
+
+/// T6 (I5): on a terminal, colour is on unless NO_COLOR is set. Uses
+/// util-linux `script` for the pty.
+#[test]
+fn no_color_turns_colour_off_on_a_terminal() {
+    if which::which("script").is_err() {
+        eprintln!("SKIP: no_color_turns_colour_off_on_a_terminal: `script` not installed");
+        return;
+    }
+    let launch = fixtures::repo_root().join("tests/fixtures/contract_error/launch/bringup.launch.xml");
+    let cmdline = format!(
+        "{} check {}",
+        fixtures::play_launch_bin().display(),
+        launch.display()
+    );
+    let run = |no_color: bool| -> Vec<u8> {
+        let mut cmd = Command::new("script");
+        fixtures::apply_test_env(&mut cmd, test_env());
+        cmd.env("TERM", "xterm");
+        if no_color {
+            cmd.env("NO_COLOR", "1");
+        }
+        cmd.args(["-qec", &cmdline, "/dev/null"])
+            .output()
+            .expect("script runs")
+            .stdout
+    };
+    assert!(run(false).contains(&0x1b), "a terminal without NO_COLOR is coloured");
+    let plain = run(true);
+    assert!(!plain.contains(&0x1b), "{}", String::from_utf8_lossy(&plain));
+    assert!(String::from_utf8_lossy(&plain).contains("error[rate-hierarchy]"));
+}
