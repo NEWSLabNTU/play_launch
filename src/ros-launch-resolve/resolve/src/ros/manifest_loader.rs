@@ -1784,6 +1784,9 @@ struct ReactionHop {
     /// included in the walk's `route_ms`; carried here so the route names the
     /// clock it waited for.
     sampling_ms: Option<f64>,
+    /// The timer's release jitter (phase 85 D1), already inside
+    /// `sampling_ms`: a sampling hop waits up to one period plus this.
+    jitter_ms: Option<f64>,
     /// What this hop is charged in the route: its `max_latency` plus the
     /// sampling period above. `window-expiry` reads the first hop's, because
     /// after a window that hop is the node noticing the deadline (phase 84).
@@ -1793,8 +1796,10 @@ struct ReactionHop {
 impl std::fmt::Display for ReactionHop {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}/{}", self.node, self.path)?;
-        if let Some(ms) = self.sampling_ms {
-            write!(f, " (+{ms:.2}ms sampling)")?;
+        match (self.sampling_ms, self.jitter_ms) {
+            (Some(ms), Some(j)) => write!(f, " (+{:.2}ms sampling + {j:.2}ms jitter)", ms - j)?,
+            (Some(ms), None) => write!(f, " (+{ms:.2}ms sampling)")?,
+            _ => {}
         }
         Ok(())
     }
@@ -1870,13 +1875,20 @@ fn walk_reaction(
     ) -> Option<ReactionWalk> {
         let mut best: Option<ReactionWalk> = None;
         for path in hop_paths {
-            let sampling_ms = match path.path.effective_trigger() {
+            // Phase 85 D1: a sampling hop waits one period plus the timer's
+            // release jitter, when the timer states one.
+            let (sampling_ms, jitter_ms) = match path.path.effective_trigger() {
                 ros_launch_manifest_types::EffectiveTrigger::Timer { rate_hz }
                     if sampled && rate_hz > 0.0 =>
                 {
-                    Some(1000.0 / rate_hz)
+                    let jitter = path
+                        .path
+                        .timer_jitter()
+                        .map(|d| d.as_millis_f64())
+                        .filter(|j| *j > 0.0);
+                    (Some(1000.0 / rate_hz + jitter.unwrap_or(0.0)), jitter)
                 }
-                _ => None,
+                _ => (None, None),
             };
             let hop_ms = path.path.max_latency.map_or(0.0, |d| d.as_millis_f64())
                 + sampling_ms.unwrap_or(0.0);
@@ -1884,6 +1896,7 @@ fn walk_reaction(
                 node: node_fqn.to_string(),
                 path: path.path_name.clone(),
                 sampling_ms,
+                jitter_ms,
                 ms: hop_ms,
             };
             let publishes_sink = |ep_name: &str| {
@@ -2278,22 +2291,51 @@ struct WaitedWindow {
     owner: Option<String>,
     /// The owner's slowest timer path that publishes the rung's output,
     /// `(path, period)`: the clock the owner reads the deadline on.
-    notice: Option<(String, f64)>,
+    notice: Option<Notice>,
     /// The window's row in `budgets`, so its note can name where the notice
     /// is charged once a rung below is walked.
     row: usize,
     noted: bool,
 }
 
-/// The owner's slowest timer path that publishes one of `outputs`, and its
-/// period (phase 84). A node that holds a rung on its tick publishes the
-/// rung's output there, and reads the deadline on the same tick.
+/// The clock a window's owner reads the deadline on (phase 84): its timer
+/// path, the period, and the timer's release jitter (phase 85 D1). The
+/// deadline is noticed up to `period + jitter` after it passes.
+#[derive(Clone)]
+struct Notice {
+    path: String,
+    period_ms: f64,
+    jitter_ms: f64,
+}
+
+impl Notice {
+    fn ms(&self) -> f64 {
+        self.period_ms + self.jitter_ms
+    }
+}
+
+impl std::fmt::Display for Notice {
+    /// `its 100.00ms timer ('on_timer')`, plus `released up to 18.00ms late`
+    /// when the timer states a jitter.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "its {:.2}ms timer ('{}')", self.period_ms, self.path)?;
+        if self.jitter_ms > 0.0 {
+            write!(f, " released up to {:.2}ms late", self.jitter_ms)?;
+        }
+        Ok(())
+    }
+}
+
+/// The owner's slowest timer path that publishes one of `outputs` (phase
+/// 84), slowest by period + release jitter (phase 85 D1). A node that holds
+/// a rung on its tick publishes the rung's output there, and reads the
+/// deadline on the same tick.
 fn owner_notice(
     owner: &str,
     outputs: &[String],
     topics: &BTreeMap<String, ResolvedTopic>,
     node_paths: &[ResolvedNodePath],
-) -> Option<(String, f64)> {
+) -> Option<Notice> {
     node_paths
         .iter()
         .filter(|p| p.node_fqn == owner)
@@ -2305,13 +2347,17 @@ fn owner_notice(
                         .iter()
                         .any(|t| topics.get(t).is_some_and(|tp| tp.publishers.contains(&r)))
                 });
-                publishes.then(|| (p.path_name.clone(), 1000.0 / rate_hz))
+                publishes.then(|| Notice {
+                    path: p.path_name.clone(),
+                    period_ms: 1000.0 / rate_hz,
+                    jitter_ms: p.path.timer_jitter().map_or(0.0, |d| d.as_millis_f64()),
+                })
             }
             _ => None,
         })
-        .fold(None, |acc: Option<(String, f64)>, (n, ms)| match acc {
-            Some((an, am)) if am >= ms => Some((an, am)),
-            _ => Some((n, ms)),
+        .fold(None, |acc: Option<Notice>, n| match acc {
+            Some(a) if a.ms() >= n.ms() => Some(a),
+            _ => Some(n),
         })
 }
 
@@ -2345,13 +2391,12 @@ fn check_window_expiry(
             ))
         } else {
             match &w.notice {
-                Some((path, p)) if first.ms + 1e-9 < *p => Some(format!(
-                    "{owner} reads the deadline on its {p:.2}ms timer ('{path}'), but the route \
-                     charges {first} only {:.2}ms, so up to {:.2}ms of the late notice is \
-                     charged nowhere. Hold the tick in that hop's latency, or arm a one-shot \
-                     timer at the deadline",
+                Some(n) if first.ms + 1e-9 < n.ms() => Some(format!(
+                    "{owner} reads the deadline on {n}, but the route charges {first} only \
+                     {:.2}ms, so up to {:.2}ms of the late notice is charged nowhere. Hold the \
+                     tick in that hop's latency, or arm a one-shot timer at the deadline",
                     first.ms,
-                    p - first.ms
+                    n.ms() - first.ms
                 )),
                 _ => None,
             }
@@ -2376,10 +2421,10 @@ fn check_window_expiry(
         w.noted = true;
         let d = w.window_ms;
         let note = match &w.notice {
-            Some((path, p)) => format!(
+            Some(n) => format!(
                 "lasts at least {d:.2}ms once on, and ends within {:.2}ms: {owner} reads the \
-                 deadline on its {p:.2}ms timer ('{path}'), charged inside {first} {:.2}ms, the \
-                 first hop of the route below",
+                 deadline on {n}, charged inside {first} {:.2}ms, the first hop of the route \
+                 below",
                 d + first.ms,
                 first.ms
             ),
