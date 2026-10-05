@@ -110,9 +110,11 @@ fn resolve_writes_a_system_model() {
         .output()
         .expect("failed to run play_launch --version");
     let reported = String::from_utf8_lossy(&version_out.stdout);
+    // `play_launch X.Y.Z (<describe>, rlm vA.B.C)` since phase 85 I2: the
+    // semver is the second word, the build detail follows it.
     let reported = reported
         .split_whitespace()
-        .next_back()
+        .nth(1)
         .expect("`--version` printed nothing");
     assert_eq!(
         resolver["version"].as_str(),
