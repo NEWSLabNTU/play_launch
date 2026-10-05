@@ -167,7 +167,11 @@ island's `src/safety_island_bringup/launch/safety_island.contract.yaml`
   (CON:82-88 quotes the four SS/SC lines). Proposed shape: `play_launch
   check --against <dump.json>`, rule `contract-vs-code`, one diagnostic
   per missing or extra endpoint. Decide the dump format with nano-ros.
-  The cheap half needs no input: an endpoint under `sub:`/`pub:` that no
+  Not untracked there: nano-ros phase 463 and its issue 1419 already
+  design the declared-vs-created endpoint cross-check on the image side,
+  so (a) is their dump and this item is the checker's consumer of it,
+  not a second design (found 2026-10-05 while writing nano-ros phase
+  478). The cheap half needs no input: an endpoint under `sub:`/`pub:` that no
   `topics:` entry wires is dropped today with no diagnostic (DX 1.6); I8
   makes that a warning.
 - **D7 (DX 1.1, rlm): what the island's head comment had to explain.**
