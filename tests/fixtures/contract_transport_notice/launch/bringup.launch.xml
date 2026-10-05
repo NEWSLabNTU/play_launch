@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Phase 85 T7 (I7): a contract that states `max_transport` twice, once
+       on a subscriber and once on a topic. The fault-reaction arithmetic
+       does not charge either yet, and `check` must say so per declaration
+       (info[declared-not-charged]). No package needs to be built. -->
+  <node pkg="contract_dx_demo" exec="sensor_node" name="sensor_node" namespace="/dx"/>
+  <node pkg="contract_dx_demo" exec="control_node" name="control_node" namespace="/dx"/>
+</launch>

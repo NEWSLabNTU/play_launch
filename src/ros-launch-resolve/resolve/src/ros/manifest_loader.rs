@@ -967,6 +967,81 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // A service server's promised response time, against the blocking its own
     // declarations imply.
     check_response_against_blocking(index);
+
+    // Phase 85 I7: a stated key the fault arithmetic does not read.
+    note_declared_not_charged(index);
+}
+
+/// `declared-not-charged` (phase 85 I7): an info per `max_transport`
+/// declaration, sub-level or topic-level, because the fault-reaction
+/// arithmetic does not charge it yet.
+///
+/// `walk_reaction` sums path latencies and sampling periods, and a fault's
+/// detection is the publisher's period plus its path latency: a transport
+/// bound changes no hazard's numbers, so the island contract's `--explain`
+/// output was byte-identical with and without `max_transport: 57ms`, and
+/// nothing said so. Path and chain latencies (`scope-budget`, the shared
+/// chain derivation) do charge it; the notice names the fault arithmetic
+/// only. Retire it when phase 85 I1 charges the key on the guard edge.
+fn note_declared_not_charged(index: &mut ManifestIndex) {
+    let mut out: Vec<Diagnostic> = Vec::new();
+    let mut manifests: Vec<&ResolvedManifest> = index.manifests.values().collect();
+    manifests.sort_by_key(|m| m.scope_id);
+    let tail = "is not charged by the fault-reaction arithmetic yet: hazard detection and \
+                reaction routes (the `--explain` budgets) do not include it; path and chain \
+                latencies do. Phase 85 I1 charges it on the guard edge";
+    for m in manifests {
+        for (node, decl) in &m.manifest.nodes {
+            for (side, eps) in [("sub", &decl.subscribers), ("pub", &decl.publishers)] {
+                for (ep, props) in eps {
+                    let Some(t) = props.max_transport else {
+                        continue;
+                    };
+                    let key = format!("nodes.{node}.{side}.{ep}.max_transport");
+                    let fqn = resolve_endpoint_ref(index, m.scope_id, &m.ns, &format!("{node}/{ep}"));
+                    out.push(Diagnostic {
+                        rule_id: "declared-not-charged".to_string(),
+                        severity: Severity::Info,
+                        message: format!(
+                            "{}: `{key}: {}ms` on '{fqn}' {tail}",
+                            super::value_rules::site(index, m.scope_id, &key),
+                            fmt_ms(t.as_millis_f64())
+                        ),
+                        path: key,
+                        span: None,
+                    });
+                }
+            }
+        }
+        for (topic, decl) in &m.manifest.topics {
+            let Some(t) = decl.max_transport else {
+                continue;
+            };
+            let key = format!("topics.{topic}.max_transport");
+            out.push(Diagnostic {
+                rule_id: "declared-not-charged".to_string(),
+                severity: Severity::Info,
+                message: format!(
+                    "{}: `{key}: {}ms` on topic '{}' {tail}",
+                    super::value_rules::site(index, m.scope_id, &key),
+                    fmt_ms(t.as_millis_f64()),
+                    qualify_name(&m.ns, topic)
+                ),
+                path: key,
+                span: None,
+            });
+        }
+    }
+    index.merge_diagnostics.extend(out);
+}
+
+/// A millisecond figure as an author writes it: `57`, not `57.00`.
+fn fmt_ms(v: f64) -> String {
+    if v.fract() == 0.0 {
+        format!("{v:.0}")
+    } else {
+        format!("{v}")
+    }
 }
 
 /// `response-blocking`: a service server promising a response faster than its
