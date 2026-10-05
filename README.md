@@ -87,6 +87,24 @@ play_launch up system_model.yaml
 `up` takes the model path positionally or as `--model <path>`; it is required
 either way, since the model is the only thing `up` spawns from.
 
+### Checking Contracts
+
+`check` parses a launch file and checks the contracts shipped beside it
+(`<stem>.contract.yaml`). It needs no ROS graph and is meant for CI:
+
+```bash
+play_launch check my_pkg bringup.launch.xml               # 0 clean, 1 errors, 3 a contract refused
+play_launch check bringup.launch.xml --expect ladder-rung-budget   # a negative test
+play_launch check bringup.launch.xml --explain --width 100         # the fault-reaction table, wrapped
+play_launch --version   # play_launch 0.13.0 (v0.13.0-9-gabc1234, rlm v0.1.47)
+```
+
+Exit status 3 means a contract file did not parse (`error[manifest-parse]`),
+so it was not checked at all; the refusal names the checker's version and the
+grammar (rlm tag) it reads. Through a pipe the output is ASCII without colour
+(`NO_COLOR` is honoured on a terminal too). Exit codes, `--expect`, the JSON
+report and the `--explain` table: [Checking contracts in CI](docs/guide/check-in-ci.md).
+
 ## Features
 
 All features enabled by default:
@@ -252,6 +270,12 @@ play_launch launch <pkg> <file> --config config.yaml
 # Logging
 play_launch launch <pkg> <file> --verbose              # Enable INFO level
 RUST_LOG=play_launch=debug play_launch launch <pkg> <file>  # DEBUG level
+
+# Contracts
+play_launch check <pkg> <file> [args...]           # exit 0 / 1 errors / 3 refused
+play_launch check <pkg> <file> --expect <rule-id>  # pass only on exactly these errors
+play_launch check <pkg> <file> --format json       # diagnostics as JSON on stdout
+play_launch check <pkg> <file> --explain --ascii --width 120
 
 # Visualization
 play_launch plot

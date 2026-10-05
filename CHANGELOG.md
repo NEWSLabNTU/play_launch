@@ -6,6 +6,32 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+Phase 85 "cheap first": what the Autoware Safety Island's CI needed from
+`check`. User guide: `docs/guide/check-in-ci.md`.
+
+- `--version` names the build: `play_launch 0.13.0 (v0.13.0-9-g<sha>, rlm
+  v0.1.47)`, the git describe of the tree it was built from and the
+  ros-launch-manifest tag it reads (I2).
+- A contract refusal (`error[manifest-parse]`) ends with a line naming
+  the checker and its rlm tag, saying the grammar may be newer than the
+  binary (I3).
+- **Visible:** a refused contract now exits **3**, not 1 (I4). A script
+  that treated any non-zero `check` as "the contract has errors" is
+  unaffected; one that compared with 1 for a refusal must accept 3.
+- `check --expect <rule-id>` (repeatable): exit 0 only on exactly the
+  expected errors, for negative tests (I4).
+- **Visible:** no ANSI colour unless the stream is a terminal, and never
+  with `NO_COLOR`; ASCII-only output (`->`, `--`, `-`/`|`/`+`) through a
+  pipe or with `--ascii`; `--width N` wraps long lines; a load error is
+  printed once (I5). A test or script that grepped `check`'s piped
+  output for U+2192 or an em dash now sees `->` / `--`.
+- `info[declared-not-charged]` for each `max_transport` the
+  fault-reaction arithmetic does not charge yet (I7).
+- `warning[endpoint-unwired]` for a `sub:`/`pub:` endpoint no topic wires
+  (I8).
+
 ## 0.13.0 - 2026-09-29
 
 Forty-six commits over 0.12.0. The headline is phases 83 and 84, asked for

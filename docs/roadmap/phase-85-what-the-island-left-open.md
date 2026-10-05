@@ -381,18 +381,46 @@ nano-ros's and are not taken here.
 
 ## Cheap first
 
-Each under a day, one repository:
+Each under a day, one repository. Ticked items are on branch
+`phase85-cheap` (play_launch) and `phase85-cheap` (rlm); user guide:
+`docs/guide/check-in-ci.md`.
 
-- I2 `--version` with git describe and the rlm tag (play_launch).
-- I3 refusals name the checker's version (play_launch).
-- I4 a distinct exit code for a parse refusal, and `--expect`
-  (play_launch).
-- I5 no colour / ASCII when not a TTY, `--width`, parse failure once,
-  `--explain` table documented (play_launch).
-- I7 the `declared-not-charged` notice for `max_transport` (play_launch).
-- I8 `endpoint-unwired` (play_launch).
-- I9 refuse `/` in an endpoint key (rlm).
-- I10 prefix / unit-suffix suggestion and all unknown keys at once (rlm).
-- T9 the two re-verifications.
+- [x] I2 `--version` with git describe and the rlm tag (play_launch).
+  `play_launch 0.13.0 (v0.13.0-9-g<sha>, rlm v0.1.47)` from build.rs
+  (describe omitted outside git, `-dirty` for a dirty tree). T4.
+- [x] I3 refusals name the checker's version (play_launch). A
+  `manifest-parse` Field refusal keeps its text and appends "this
+  checker: play_launch ... (..., rlm v0.1.47); the contract's grammar may
+  be newer than this binary". T4.
+- [x] I4 a distinct exit code for a parse refusal, and `--expect`
+  (play_launch). Refusal exits 3 (2 is clap's usage error) and wins over
+  every other outcome; `--expect <rule>` (repeatable) passes only on
+  exactly the expected Error rules, no refusal, no drop. The existing
+  `--format json` stream is documented, no new field. T5.
+- [x] I5 no colour / ASCII when not a TTY, `--width`, parse failure once,
+  `--explain` table documented (play_launch). Colour only on a terminal
+  without NO_COLOR; `--ascii` (automatic off a TTY) via `util::out`, log
+  lines included; `--width N` explicit only (a default wrap would split
+  grepped substrings); load/scope/cross-scope errors no longer also
+  logged as WARN under `check`; table columns in `check --help` and the
+  guide. T6.
+- [x] I7 the `declared-not-charged` notice for `max_transport`
+  (play_launch). One info per sub- or topic-level declaration, with the
+  contract line; the island contract gets two (57 ms on
+  `operation_mode_availability`, 143 ms on `control_mode`). T7.
+- [x] I8 `endpoint-unwired` (play_launch). A warning per `sub:`/`pub:`
+  endpoint no topic wires, over the merged tree; path endpoints are left
+  to `wiring`. Found one in `contract_merge` (`planner/map`), none in the
+  island. T7.
+- [x] I9 refuse `/` in an endpoint key (rlm). Parse error in pub/sub/srv/
+  cli, both spellings, "remap the topic in the launch file or wire it
+  under `topics:`". rlm branch `phase85-cheap` (08a7a1c); play_launch pins
+  rlm by tag, so it takes this at the next rlm release. T8 in rlm.
+- [x] I10 prefix / unit-suffix suggestion and all unknown keys at once
+  (rlm). `nearest_all`: word-prefix or same unit stem first (`max_rate` ->
+  `max_rate_hz`), else least edit distance within len/3, ties listed;
+  every unknown key of a file in one refusal. rlm `phase85-cheap`
+  (e1679d9), same pin note as I9. T8 in rlm.
+- [ ] T9 the two re-verifications.
 
 Structural: D5-D10, and I6 (a day or two, no design question) and I11.
