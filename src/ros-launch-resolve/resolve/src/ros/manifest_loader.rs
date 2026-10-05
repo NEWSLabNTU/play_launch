@@ -943,6 +943,7 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // Cross-scope rate hierarchy: publisher rate vs subscriber demand
     // even when pub and sub live in different manifests.
     check_cross_scope_rate_hierarchy(index, &graph);
+    check_cross_scope_on_demand(index, &graph);
 
     // Cross-scope QoS pub/sub compatibility: every (pub, sub) edge in
     // the merged graph runs through the DDS offered ≥ requested matrix
@@ -4210,6 +4211,86 @@ fn check_cross_scope_rate_hierarchy(
             }
         }
     }
+}
+
+/// `rate-hierarchy` across scopes for an on-demand publisher (phase 85 D3,
+/// `pub.<ep>.on_demand: true`): it promises no rate, so a topic `rate_hz`
+/// beside it is a claim nobody makes, and when every publisher of the topic
+/// is on demand a non-`state` subscriber's `min_rate_hz` is a requirement
+/// nothing meets. rlm's per-manifest rule already says so when the topic,
+/// the publisher and the subscriber are all declared in one manifest; this
+/// reports the pairs that span scopes, once.
+fn check_cross_scope_on_demand(
+    index: &mut ManifestIndex,
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) {
+    let mut out: Vec<Diagnostic> = Vec::new();
+    let endpoint = |ep_ref: &str, publisher: bool| {
+        let (node_fqn, ep) = split_endpoint_ref_for_check(ep_ref)?;
+        let node = graph.nodes.get(&node_fqn)?;
+        let eps = if publisher {
+            &node.publishers
+        } else {
+            &node.subscribers
+        };
+        eps.get(&ep).map(|p| (node.scope_id, p))
+    };
+    for (fqn, topic) in &index.topics {
+        // Declared in one scope, and the endpoint's node is too: rlm's
+        // per-manifest rule has it.
+        let local = |scope: usize| topic.scope_ids.len() == 1 && topic.scope_ids[0] == scope;
+        let on_demand: Vec<(&String, usize)> = topic
+            .publishers
+            .iter()
+            .filter_map(|r| {
+                endpoint(r, true)
+                    .filter(|(_, p)| p.on_demand == Some(true))
+                    .map(|(s, _)| (r, s))
+            })
+            .collect();
+        let Some(&(first, first_scope)) = on_demand.first() else {
+            continue;
+        };
+        if let Some(rate) = topic.rate_hz
+            && on_demand.iter().any(|(_, s)| !local(*s))
+        {
+            out.push(Diagnostic {
+                rule_id: "rate-hierarchy".to_string(),
+                severity: Severity::Error,
+                message: format!(
+                    "topic '{fqn}' rate_hz ({rate}) beside on-demand publisher '{first}', which \
+                     promises no rate (`on_demand: true`)"
+                ),
+                path: format!("topics.{fqn}.rate_hz"),
+                span: None,
+            });
+        }
+        if on_demand.len() != topic.publishers.len() {
+            continue;
+        }
+        for sub_ref in &topic.subscribers {
+            let Some((sub_scope, props)) = endpoint(sub_ref, false) else {
+                continue;
+            };
+            if props.state == Some(true) || (local(sub_scope) && local(first_scope)) {
+                continue;
+            }
+            if let Some(rate) = props.min_rate_hz {
+                out.push(Diagnostic {
+                    rule_id: "rate-hierarchy".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "subscriber '{sub_ref}' requires min_rate_hz ({rate}) of topic '{fqn}', \
+                         but every publisher of it is on demand (`on_demand: true` on \
+                         '{first}') and promises no rate"
+                    ),
+                    path: format!("topics.{fqn}"),
+                    span: None,
+                });
+            }
+        }
+    }
+    index.merge_diagnostics.extend(out);
 }
 
 /// Cross-check `external_topics:` entries against the merged

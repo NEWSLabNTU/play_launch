@@ -576,6 +576,38 @@ RankedPlan {
         },
     ],
 }
+== contract_on_demand/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/operator",
+            path: "operate",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=2)",
+        },
+    ],
+    warnings: [],
+}
+== contract_on_demand_bad/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/operator",
+            path: "operate",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=2)",
+        },
+    ],
+    warnings: [],
+}
 == contract_rates/launch/bringup.launch.xml
 RankedPlan {
     items: [
