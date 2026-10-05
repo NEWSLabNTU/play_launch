@@ -6,10 +6,14 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.13.1 - 2026-10-06
 
 Phase 85 "cheap first": what the Autoware Safety Island's CI needed from
-`check`. User guide: `docs/guide/check-in-ci.md`.
+`check`. User guide: `docs/guide/check-in-ci.md`. ros-launch-manifest
+moves from v0.1.47 to v0.1.48 (a `/` in an endpoint key is refused;
+suggestions read the key's shape; every unknown key reported at once).
+Upgrading from 0.13.0 needs no change to a contract; a script that
+compared `check`'s exit code with 1 for a refusal must accept 3.
 
 - `--version` names the build: `play_launch 0.13.0 (v0.13.0-9-g<sha>, rlm
   v0.1.47)`, the git describe of the tree it was built from and the
