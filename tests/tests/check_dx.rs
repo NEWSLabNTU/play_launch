@@ -345,3 +345,72 @@ fn a_contract_needing_a_newer_grammar_names_both_releases() {
     assert!(s.contains("this checker: play_launch"), "{s}");
     assert!(!s.contains("not_a_key_yet"), "{s}");
 }
+
+/// T7 (I6): `--export-graph` carries what the fault walk reads, so a figure
+/// can be drawn from the export alone (the deck's `contract_graph.py`
+/// re-read the contract YAML for services, externals, hazards, modes and
+/// path triggers): on the island-shaped fixture, the operate service edges,
+/// the external publisher, both hazards and the ladder, the detector, and a
+/// timer trigger with its rate.
+#[test]
+fn the_graph_export_carries_what_the_walk_reads() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let json = dir.path().join("graph.json");
+    let out = check(
+        "contract_takeover_link",
+        &["--export-graph", json.to_str().unwrap()],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let g: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json).expect("export written"))
+            .expect("export is JSON");
+    assert_eq!(g["version"], 2);
+    let find = |list: &str, key: &str, value: &str| -> serde_json::Value {
+        g[list]
+            .as_array()
+            .unwrap_or_else(|| panic!("no `{list}`: {g}"))
+            .iter()
+            .find(|e| e[key] == value)
+            .unwrap_or_else(|| panic!("no {list} with {key} = {value}: {g}"))
+            .clone()
+    };
+    let svc = find("services", "fqn", "/comfort/operate");
+    assert_eq!(svc["servers"][0]["node"], "/comfort_op");
+    assert_eq!(svc["clients"][0]["endpoint"], "comfort_operate");
+    assert_eq!(find("topics", "fqn", "/availability")["external"], "pub");
+    assert_eq!(find("topics", "fqn", "/estop_cmd")["external"], "sub");
+    let hpc = find("hazards", "name", "hpc_loss");
+    assert_eq!(hpc["guards"][0]["members"][0], "/availability");
+    assert_eq!(hpc["on"][0], "omission");
+    assert_eq!(hpc["reaction"], "engaged");
+    assert_eq!(find("hazards", "name", "odd_exit")["on"][0], "reported");
+    let engaged = find("modes", "name", "engaged");
+    assert_eq!(
+        engaged["fallback"],
+        serde_json::json!(["takeover", "comfortable", "estop"])
+    );
+    assert_eq!(find("modes", "name", "takeover")["window_ms"], 10000.0);
+    let detector = g["sub_edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["node"] == "/handler" && e["endpoint"] == "availability")
+        .expect("the detector's edge")
+        .clone();
+    assert_eq!(detector["on_violation"]["reaction"], "call_mrm");
+    assert_eq!(detector["max_transport_ms"], 57.0);
+    let paths = g["node_paths"].as_array().unwrap();
+    let path = |node: &str, name: &str| {
+        paths
+            .iter()
+            .find(|p| p["node"] == node && p["path_name"] == name)
+            .unwrap_or_else(|| panic!("no path {node}/{name}"))
+            .clone()
+    };
+    assert_eq!(path("/estop_op", "on_timer")["trigger"]["timer"]["rate_hz"], 30.0);
+    assert_eq!(path("/estop_op", "on_timer")["safe_state"]["emits"], "cmd");
+    let call_mrm = path("/handler", "call_mrm");
+    assert_eq!(call_mrm["trigger"]["input"][0], "availability");
+    assert_eq!(call_mrm["input"][0], "availability");
+    assert_eq!(find("nodes", "fqn", "/handler")["contracted"], true);
+}

@@ -1311,7 +1311,7 @@ fn check_export_graph_json_matches_contract() {
     let data = fs::read_to_string(&export_path).expect("failed to read export JSON");
     let graph: serde_json::Value = serde_json::from_str(&data).expect("export JSON should parse");
 
-    assert_eq!(graph["version"], 1);
+    assert_eq!(graph["version"], 2);
     assert_eq!(
         array_len(&graph, "nodes"),
         3,

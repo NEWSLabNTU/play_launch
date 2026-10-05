@@ -29,7 +29,13 @@ use std::{
 
 /// Schema version. Bump on breaking JSON shape changes; additive fields
 /// (new optional keys) don't require a bump.
-const SCHEMA_VERSION: u32 = 1;
+///
+/// 2 (phase 85 I6): a node path's `input` is its EFFECTIVE trigger's inputs
+/// (version 1 copied the legacy `input:` list, so every `trigger: { input:
+/// [...] }` path read `input: []`, the same as a timer), and the export
+/// carries everything the fault walk reads: `trigger`, `safe_state`,
+/// services, externals, `on_violation`, hazards, functions and modes.
+const SCHEMA_VERSION: u32 = 2;
 
 /// Top-level export payload.
 #[derive(Debug, Serialize)]
@@ -42,6 +48,132 @@ pub struct GraphExport {
     pub node_paths: Vec<NodePathOut>,
     pub scope_paths: Vec<ScopePathOut>,
     pub cycles: Vec<CycleOut>,
+    /// Services with their server and client endpoints (version 2).
+    pub services: Vec<ServiceOut>,
+    /// Hazards: guards, the fault classes claimed, the interval and the
+    /// reaction (a scope path or a mode) (version 2).
+    pub hazards: Vec<HazardOut>,
+    /// Named guard groups (version 2).
+    pub functions: Vec<FunctionOut>,
+    /// Operational modes: what each requires, its rung's reaction, and the
+    /// ladder below it (`fallback`) (version 2).
+    pub modes: Vec<ModeOut>,
+}
+
+/// One endpoint of a service: the node and its local endpoint name.
+#[derive(Debug, Serialize)]
+pub struct EndpointOut {
+    pub node: String,
+    pub endpoint: String,
+}
+
+/// A service vertex (version 2): client -> service -> server.
+#[derive(Debug, Serialize)]
+pub struct ServiceOut {
+    pub fqn: String,
+    #[serde(rename = "type")]
+    pub srv_type: String,
+    pub servers: Vec<EndpointOut>,
+    pub clients: Vec<EndpointOut>,
+    /// `server` | `client` | `both`: the side provided outside the tree.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external: Option<&'static str>,
+}
+
+/// A guard group: a bare list is any-of (losing any member is the fault),
+/// `all_of` a redundant set (lost only when every member is).
+#[derive(Debug, Serialize)]
+pub struct GuardOut {
+    pub members: Vec<String>,
+    pub all_of: bool,
+}
+
+/// A hazard (version 2).
+#[derive(Debug, Serialize)]
+pub struct HazardOut {
+    pub name: String,
+    pub scope_id: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub severity: Option<String>,
+    /// Resolved guard topic FQNs, one entry per group.
+    pub guards: Vec<GuardOut>,
+    /// The fault classes claimed (`omission`, `late`, `loss`, `reported`);
+    /// empty when the contract names none.
+    pub on: Vec<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ftti_ms: Option<f64>,
+    /// A scope path name, or a mode whose `fallback` is the ladder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reaction: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry_speed_mps: Option<f64>,
+}
+
+/// A named guard group (version 2).
+#[derive(Debug, Serialize)]
+pub struct FunctionOut {
+    pub name: String,
+    pub scope_id: usize,
+    pub members: Vec<String>,
+    pub all_of: bool,
+}
+
+/// An operational mode (version 2).
+#[derive(Debug, Serialize)]
+pub struct ModeOut {
+    pub name: String,
+    pub scope_id: usize,
+    pub requires: Vec<String>,
+    /// The ladder: the rungs to fall to, in order.
+    pub fallback: Vec<String>,
+    /// The scope path that reaches this rung's state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reaction: Option<String>,
+    /// A windowed rung's least duration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_ms: Option<f64>,
+    /// `{on: <function>, to: <mode>}`: how a windowed rung is left early.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit: Option<ExitOut>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExitOut {
+    pub on: String,
+    pub to: String,
+}
+
+/// What fires a node path (version 2): `{"timer": {"rate_hz", "jitter_ms"}}`,
+/// `{"input": [...]}`, or `"once"` / `"spontaneous"` / `"unclassified"`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TriggerOut {
+    Timer {
+        rate_hz: f64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        jitter_ms: Option<f64>,
+    },
+    Input(Vec<String>),
+    Once,
+    Spontaneous,
+    Unclassified,
+}
+
+/// A path's safe state (version 2): the endpoint it commands it on.
+#[derive(Debug, Serialize)]
+pub struct SafeStateOut {
+    pub emits: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settle_ms: Option<f64>,
+    /// `true` when the settle is derived from a braking profile.
+    pub derived: bool,
+}
+
+/// A subscriber's declared reaction (version 2): the detector edge.
+#[derive(Debug, Serialize)]
+pub struct OnViolationOut {
+    pub reaction: String,
+    pub on: Vec<&'static str>,
 }
 
 /// A ROS node vertex.
@@ -53,6 +185,21 @@ pub struct NodeOut {
     pub pkg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub criticality: Option<String>,
+    /// The criticality the hazards derive for this node (version 2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derived_criticality: Option<DerivedCriticalityOut>,
+    /// Declared in a contract (version 2); `false` for a node only a
+    /// topic's endpoint list names.
+    pub contracted: bool,
+}
+
+/// A node's hazard-derived criticality: the severity level, the hazard that
+/// set it, and how the node relates to that hazard.
+#[derive(Debug, Serialize)]
+pub struct DerivedCriticalityOut {
+    pub level: String,
+    pub hazard: String,
+    pub role: &'static str,
 }
 
 /// A topic vertex.
@@ -65,6 +212,12 @@ pub struct TopicOut {
     pub rate_hz: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_transport_ms: Option<f64>,
+    /// The rate derived from the timers that drive the topic.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derived_rate_hz: Option<f64>,
+    /// `pub` | `sub` | `both`: the side provided outside the tree (version 2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external: Option<&'static str>,
 }
 
 /// A publisher edge: node → topic.
@@ -80,6 +233,9 @@ pub struct PubEdgeOut {
     pub min_rate_hz: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_rate_hz: Option<f64>,
+    /// `on_demand: true`: the publisher promises no rate (version 2).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub on_demand: bool,
 }
 
 /// A subscriber edge: topic → node, tagged causal / state / required.
@@ -103,6 +259,9 @@ pub struct SubEdgeOut {
     pub max_age_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_transport_ms: Option<f64>,
+    /// The reaction this subscriber owes (version 2): a detector.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_violation: Option<OnViolationOut>,
 }
 
 /// A node-level path: input/output are the node's own endpoint names.
@@ -110,8 +269,14 @@ pub struct SubEdgeOut {
 pub struct NodePathOut {
     pub node: String,
     pub path_name: String,
+    /// The endpoints that trigger the path: its effective trigger's inputs
+    /// (version 2; version 1 copied the legacy `input:` list).
     pub input: Vec<String>,
     pub output: Vec<String>,
+    /// What fires the path (version 2).
+    pub trigger: TriggerOut,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub safe_state: Option<SafeStateOut>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_latency_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -200,6 +365,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
         .nodes
         .keys()
         .map(|fqn| {
+            let contracted = node_meta.contains_key(fqn);
             let (pkg, criticality) = node_meta.get(fqn).cloned().unwrap_or_default();
             let scope_id = global.nodes[fqn].scope_id;
             NodeOut {
@@ -207,6 +373,14 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
                 scope_id,
                 pkg,
                 criticality,
+                derived_criticality: index.derived_criticality.get(fqn).map(|d| {
+                    DerivedCriticalityOut {
+                        level: d.level.clone(),
+                        hazard: d.hazard.clone(),
+                        role: d.role,
+                    }
+                }),
+                contracted,
             }
         })
         .collect();
@@ -220,6 +394,15 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             msg_type: t.msg_type.clone(),
             rate_hz: t.rate_hz,
             max_transport_ms: t.max_transport_ms,
+            derived_rate_hz: t.derived_rate_hz,
+            external: index.externals.get(&t.fqn).map(|s| {
+                use ros_launch_manifest_types::ExternalSide as S;
+                match s {
+                    S::Pub => "pub",
+                    S::Sub => "sub",
+                    S::Both => "both",
+                }
+            }),
         })
         .collect();
 
@@ -238,6 +421,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
                 rate_hz: topic.rate_hz,
                 min_rate_hz: props.and_then(|p| p.min_rate_hz),
                 max_rate_hz: props.and_then(|p| p.max_rate_hz),
+                on_demand: props.is_some_and(|p| p.on_demand == Some(true)),
             });
         }
         for sref in &topic.subscribers {
@@ -259,6 +443,12 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
                 max_transport_ms: props
                     .and_then(|p| p.max_transport.map(|d| d.as_millis_f64()))
                     .or(topic.max_transport_ms),
+                on_violation: props.and_then(|p| p.on_violation.as_ref()).map(|ov| {
+                    OnViolationOut {
+                        reaction: ov.reaction.clone(),
+                        on: ov.on.iter().map(|k| fault_kind(*k)).collect(),
+                    }
+                }),
             });
         }
     }
@@ -273,8 +463,17 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
         .map(|p| NodePathOut {
             node: p.node_fqn.clone(),
             path_name: p.path_name.clone(),
-            input: p.path.input.clone(),
+            input: match p.path.effective_trigger() {
+                ros_launch_manifest_types::EffectiveTrigger::Input(eps) => eps,
+                _ => Vec::new(),
+            },
             output: p.path.output.clone(),
+            trigger: trigger_out(&p.path),
+            safe_state: p.path.safe_state.as_ref().map(|ss| SafeStateOut {
+                emits: ss.emits.clone(),
+                settle_ms: ss.settle.map(|d| d.as_millis_f64()),
+                derived: ss.settle_profile.is_some(),
+            }),
             max_latency_ms: p.path.max_latency.map(|d| d.as_millis_f64()),
             tolerance_ms: p.path.tolerance.map(|d| d.as_millis_f64()),
             scope_id: p.scope_id,
@@ -302,6 +501,78 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
 
     let cycles = find_cycles(&global);
 
+    let endpoints = |refs: &[String]| -> Vec<EndpointOut> {
+        refs.iter()
+            .filter_map(|r| split_endpoint_ref(r))
+            .map(|(node, endpoint)| EndpointOut { node, endpoint })
+            .collect()
+    };
+    let services: Vec<ServiceOut> = index
+        .services
+        .values()
+        .map(|s| ServiceOut {
+            fqn: s.fqn.clone(),
+            srv_type: s.srv_type.clone(),
+            servers: endpoints(&s.servers),
+            clients: endpoints(&s.clients),
+            external: index.endpoint_externals.get(&s.fqn).map(|e| {
+                use ros_launch_manifest_types::ExternalEndpointSide as E;
+                match e {
+                    E::Server => "server",
+                    E::Client => "client",
+                    E::Both => "both",
+                }
+            }),
+        })
+        .collect();
+    let hazards: Vec<HazardOut> = index
+        .hazards
+        .iter()
+        .map(|h| HazardOut {
+            name: h.name.clone(),
+            scope_id: h.scope_id,
+            severity: h.decl.severity.clone(),
+            guards: h
+                .guards
+                .iter()
+                .map(|g| GuardOut {
+                    members: g.members.clone(),
+                    all_of: g.all_of,
+                })
+                .collect(),
+            on: h.decl.on.iter().map(|k| fault_kind(*k)).collect(),
+            ftti_ms: h.decl.ftti.map(|d| d.as_millis_f64()),
+            reaction: h.decl.reaction.clone(),
+            entry_speed_mps: h.decl.entry_speed,
+        })
+        .collect();
+    let functions: Vec<FunctionOut> = index
+        .functions
+        .iter()
+        .map(|f| FunctionOut {
+            name: f.name.clone(),
+            scope_id: f.scope_id,
+            members: f.group.members.clone(),
+            all_of: f.group.all_of,
+        })
+        .collect();
+    let modes: Vec<ModeOut> = index
+        .modes
+        .iter()
+        .map(|m| ModeOut {
+            name: m.name.clone(),
+            scope_id: m.scope_id,
+            requires: m.decl.requires.clone(),
+            fallback: m.decl.fallback.clone(),
+            reaction: m.decl.reaction.clone(),
+            window_ms: m.decl.window.as_ref().map(|w| w.duration.as_millis_f64()),
+            exit: m.decl.exit.as_ref().map(|e| ExitOut {
+                on: e.on.clone(),
+                to: e.to.clone(),
+            }),
+        })
+        .collect();
+
     GraphExport {
         version: SCHEMA_VERSION,
         nodes,
@@ -311,6 +582,35 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
         node_paths,
         scope_paths,
         cycles,
+        services,
+        hazards,
+        functions,
+        modes,
+    }
+}
+
+/// A path's trigger as the export writes it (version 2).
+fn trigger_out(path: &ros_launch_manifest_types::PathDecl) -> TriggerOut {
+    use ros_launch_manifest_types::EffectiveTrigger as T;
+    match path.effective_trigger() {
+        T::Timer { rate_hz } => TriggerOut::Timer {
+            rate_hz,
+            jitter_ms: path.timer_jitter().map(|d| d.as_millis_f64()),
+        },
+        T::Input(eps) => TriggerOut::Input(eps),
+        T::Once => TriggerOut::Once,
+        T::Spontaneous => TriggerOut::Spontaneous,
+        T::Unclassified => TriggerOut::Unclassified,
+    }
+}
+
+fn fault_kind(kind: ros_launch_manifest_types::FaultKind) -> &'static str {
+    use ros_launch_manifest_types::FaultKind as F;
+    match kind {
+        F::Omission => "omission",
+        F::Late => "late",
+        F::Loss => "loss",
+        F::Reported => "reported",
     }
 }
 
