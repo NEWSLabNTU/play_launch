@@ -305,7 +305,19 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     deadline/monitor (D2, with nano-ros), an on-demand topic with no
     minimum rate (D3; 2 start-up `rate-hierarchy-runtime` violations on the
     board), and route versus callback at run time (D4). Plus 6 open
-    Dependabot alerts (T3).
+    Dependabot alerts (T3). Extended 2026-10-05 with the checker's DX gaps
+    from the island's survey (`docs/dx-ux-gaps-2026-10.md` there): a
+    contract that states the grammar it needs (D5; the PATH 0.12.0 refuses
+    the island contract with an unknown key and never names a version),
+    contract-vs-code endpoint diff (D6), the rlm semantics the island's
+    head comment had to explain (D7), acknowledged warnings (D8), param
+    bindings (D9), `bounded_by:` (D10); `--version` with git describe and
+    the rlm tag (I2), refusals naming the checker (I3), a parse refusal
+    distinct from a rule failure and `--expect` (I4), ASCII / no colour /
+    width when piped (I5), a complete `--export-graph` (I6), a
+    `declared-not-charged` notice (I7), `endpoint-unwired` (I8), rlm
+    refusing `/` in an endpoint key and better suggestions (I9, I10),
+    install prefixes per scope (I11). Cheap first: I2-I5, I7-I10, T9.
     [phase-85-what-the-island-left-open.md](./phase-85-what-the-island-left-open.md).
   - **Phase 84** - complete: a window is a least time, and its notice is
     charged once (2026-09-29, rlm **v0.1.47**, text only). rlm said a
