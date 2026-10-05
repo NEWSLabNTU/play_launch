@@ -27,3 +27,7 @@ pub mod runtime_enforcement;
 pub mod sched;
 pub mod util;
 pub mod web;
+
+/// The full `--version` string (phase 85 I2): crate version, git describe of
+/// the tree it was built from, and the pinned `ros-launch-manifest` tag.
+pub const LONG_VERSION: &str = env!("PLAY_LAUNCH_LONG_VERSION");

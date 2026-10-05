@@ -74,6 +74,10 @@ name = "manifest_check"
 path = "tests/manifest_check.rs"
 
 [[test]]
+name = "check_dx"
+path = "tests/check_dx.rs"
+
+[[test]]
 name = "sched_apply"
 path = "tests/sched_apply.rs"
 
