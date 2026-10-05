@@ -26,7 +26,15 @@ ros-launch-resolve check <pkg> <launch> --export-graph <path> [--contracts <dir>
 Format is picked by extension: `.dot` (case-insensitive) writes a Graphviz
 digraph; anything else (including no extension) writes pretty-printed JSON.
 
-## JSON schema (`version: 1`)
+## JSON schema (`version: 2`)
+
+Version 2 (phase 85 I6) carries everything the fault-reaction walk reads, so
+a figure or a report can be drawn from the export alone: services and their
+edges, `external:` marks, detectors (`on_violation`), node-path triggers and
+safe states, hazards, functions and modes. One field changed meaning: a node
+path's `input` is now its EFFECTIVE trigger's inputs. Version 1 copied the
+legacy `input:` list, so every `trigger: { input: [...] }` path exported
+`input: []`, indistinguishable from a timer; `trigger` now says which.
 
 Top level:
 
@@ -40,26 +48,56 @@ Top level:
 | `node_paths` | `NodePathOut[]` | intra-node `paths:` (endpoint → endpoint) |
 | `scope_paths` | `ScopePathOut[]` | cross-node `paths:` (topic → topic) |
 | `cycles` | `CycleOut[]` | cycle catalogue, computed before `state:` cuts |
+| `services` | `ServiceOut[]` | client -> service -> server (v2) |
+| `hazards` | `HazardOut[]` | guards, fault classes, interval, reaction (v2) |
+| `functions` | `FunctionOut[]` | named guard groups (v2) |
+| `modes` | `ModeOut[]` | operational modes and the ladder (v2) |
 
 `NodeOut`: `fqn`, `scope_id`, `pkg` (optional), `criticality` (optional,
-`high`\|`medium`\|`low` string as authored — advisory, not validated here).
+`high`\|`medium`\|`low` string as authored — advisory, not validated here),
+`derived_criticality` (optional, v2: `{level, hazard, role}`, what the
+hazards derive), `contracted` (v2: declared in a contract).
 
 `TopicOut`: `fqn`, `type` (msg type), `rate_hz` (optional, topic-level
-declared rate), `max_transport_ms` (optional).
+declared rate), `max_transport_ms` (optional), `derived_rate_hz` (optional,
+v2), `external` (optional, v2: `pub`\|`sub`\|`both`, the side provided
+outside the tree).
 
 `PubEdgeOut`: `node`, `topic`, `endpoint`, `rate_hz` (topic-level — the
 primary "declared rate fact"), `min_rate_hz`/`max_rate_hz` (optional,
-endpoint-level overrides).
+endpoint-level overrides), `on_demand` (v2, present when `true`: the
+publisher promises no rate).
 
 `SubEdgeOut`: `topic`, `node`, `endpoint`, `causal` (bool, `!state`),
 `state` (bool, the endpoint's `state: true`), `required` (bool, orthogonal
 to `causal`/`state`), `min_rate_hz`, `max_age_ms`, `max_transport_ms`
-(all optional).
+(all optional; the transport is the subscriber's own, else its topic's),
+`on_violation` (optional, v2: `{reaction, on: [fault classes]}`, the edge
+of a detector).
 
 `NodePathOut`: `node`, `path_name`, `input`/`output` (the node's own
-endpoint names, not topic FQNs), `max_latency_ms`, `tolerance_ms`,
-`correlation` (all optional), `scope_id`, `cross_node: false` (always —
-node paths are intra-node by construction).
+endpoint names, not topic FQNs; `input` is the effective trigger's inputs),
+`trigger` (v2: `{"timer": {"rate_hz", "jitter_ms"?}}`, `{"input": [...]}`,
+`"once"`, `"spontaneous"` or `"unclassified"`), `safe_state` (optional, v2:
+`{emits, settle_ms?, derived}`), `max_latency_ms`, `tolerance_ms` (both
+optional), `scope_id`, `cross_node: false` (always — node paths are
+intra-node by construction).
+
+`ServiceOut` (v2): `fqn`, `type`, `servers`/`clients` (`[{node,
+endpoint}]`), `external` (optional: `server`\|`client`\|`both`).
+
+`HazardOut` (v2): `name`, `scope_id`, `severity` (optional), `guards`
+(`[{members: [topic FQN], all_of}]`, one per group), `on` (the fault
+classes claimed; empty when none is named), `ftti_ms`, `reaction` (a scope
+path or a mode), `entry_speed_mps` (all optional but `guards` and `on`).
+
+`FunctionOut` (v2): `name`, `scope_id`, `members`, `all_of`.
+
+`ModeOut` (v2): `name`, `scope_id`, `requires` (functions), `fallback` (the
+ladder, in order), `reaction` (the rung's scope path), `window_ms` (a
+windowed rung's least duration), `exit` (`{on, to}`) (the last three
+optional). A hazard's ladder is its `reaction` mode's `fallback`, each rung's
+`reaction` the scope path that reaches it.
 
 `ScopePathOut`: `scope_id`, `path_name`, `input_topics`/`output_topics`
 (resolved topic FQNs, potentially spanning many nodes), `max_latency_ms`,
