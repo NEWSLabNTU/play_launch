@@ -394,6 +394,11 @@ RankedPlan {
     ],
     warnings: [],
 }
+== contract_grammar_newer/launch/bringup.launch.xml
+RankedPlan {
+    items: [],
+    warnings: [],
+}
 == contract_merge/launch/bringup.launch.xml
 RankedPlan {
     items: [],
