@@ -1,6 +1,8 @@
 # Phase 85 - what the island's board runs left open
 
-Status: **planned** (2026-10-01). Follows phase 84. Records the open work
+Status: **in progress** (2026-10-01; cheap items in 0.13.1, structural
+items on branch `phase85-rest` with rlm **v0.1.49**, 2026-10-06). Follows
+phase 84. Records the open work
 found by the Autoware Safety Island's RTSS@Work demo on the S32K344 board:
 `simple-autoware-safety-island`, `docs/takeover-trace.md` section 10 ("The
 board budget", phase8-W30, follow-ups F1-F3) and section 11 ("Fresh runs
@@ -421,6 +423,162 @@ Each under a day, one repository. Ticked items are on branch
   `max_rate_hz`), else least edit distance within len/3, ties listed;
   every unknown key of a file in one refusal. rlm `phase85-cheap`
   (e1679d9), same pin note as I9. T8 in rlm.
-- [ ] T9 the two re-verifications.
+- [x] T9 the two re-verifications, on 0.13.1 + rlm v0.1.49 (branch
+  `phase85-rest`). DX 2.10 closed: `check safety_island.launch.xml` from
+  inside the launch directory, `./safety_island.launch.xml` and the
+  absolute path print the same 19 cross-scope lines and the same summary
+  (1 clean, 0 errors, 5 warnings). DX 1.11 closed by construction: rlm's
+  `sched/tests/docs_yaml.rs` (added for issue 0038) feeds every fenced
+  `yaml` block of the hand-written docs to the parser and passes at
+  v0.1.49; the remaining mentions of `max_drop_rate`, `max_latency_ms`
+  and `chains:` are migration tables, struct fields and an
+  `expect-error` example. play_launch's own guides are not gated that
+  way.
 
 Structural: D5-D10, and I6 (a day or two, no design question) and I11.
+
+## Structural, done (branch `phase85-rest`, rlm v0.1.49)
+
+rlm commits on its `main`: D3 `356383c`, D1 `957075d`, D5 `7936317`, D7
+`4ed31f2`, release `25c069b` (tag `v0.1.49`; workspace Cargo version 0.1.7
+-> 0.1.8, because `Trigger::Timer` gained a field and four structs did).
+
+- [x] I1 (F1) the guard edge's link (play_launch). `walk_reaction`
+  charges `sub.max_transport ?? topic.max_transport` on the hop into the
+  detecting subscriber, ONCE, in the route, for every fault class; after
+  a window's deadline the route is charged without it. A reported fault's
+  detection (period + path latency) stops at the publish, so it does not
+  charge the link again (charging both, as "in walk_reaction and in a
+  reported fault's detection" could be read, would count it twice).
+  `--explain` prints `route = link 57.00ms (...) + path 206.00ms` or
+  "not charged after a window's deadline" per row, and the legend says so;
+  `declared-not-charged` keeps only declarations on no guard edge (the
+  island: control_mode's 143 ms, whose hop is the driver's answer, an
+  exit). The island contract, unedited: hpc_loss floor route 239.33 ->
+  296.33 (total 4904.67 -> 4961.67), odd_exit takeover route 206 -> 263
+  (WINDOWS 10206 -> 10263), comfortable 20508.67 -> 20565.67, floor
+  14710.67 -> 14767.67; the window still ends within 10206 ms (its first
+  hop, call_mrm 206, carries no link). Every verdict unchanged (14/14 in
+  `.github/check-contracts.sh`). With call_mrm at 149 (the island's phase
+  9 W5): routes 57 + 149, window end 10149, totals 4904.67 / 20451.67 /
+  14653.67. Fixture `contract_takeover_link` (T1).
+- [x] D3 an on-demand publisher (rlm + play_launch). Key:
+  `pub.<ep>.on_demand: true`, a boolean flag beside `state`/`required`
+  (a closed `rate:` key would have duplicated `min_rate_hz`, and
+  `min_rate_hz: 0` reads as a typo and divides by zero in every
+  consumer that takes a period). Refused beside `min_rate_hz` and under
+  `sub:`/`cli:`. The model carries `PubContract.on_demand`; its doc tells
+  nano-ros to derive NO rate monitor for the endpoint. `rate-hierarchy`
+  (rlm per manifest, play_launch across scopes): a topic `rate_hz` beside
+  it, or a non-`state` subscriber's `min_rate_hz` when every publisher is
+  on demand, is an error. Fixtures `contract_on_demand(_bad)` (T2).
+- [x] D1 (F2) timer release jitter (rlm + play_launch). Key: `trigger: {
+  timer: { rate_hz: 10, jitter: 18ms } }`, less than one period;
+  `PathDecl::timer_jitter()`, `PathContract.timer_jitter_ms` (beside the
+  trigger: `sched`'s `EffectiveTrigger` is constructed by every consumer
+  and stays as it was). The walk's sampling hop is charged period +
+  jitter (`(+33.33ms sampling + 5.00ms jitter)`), and `window-expiry`
+  reads the owner's notice as period + jitter ("its 100.00ms timer
+  ('on_timer') released up to 18.00ms late"). The island with `jitter:
+  18ms` on mrm_handler's `on_timer` (contract not edited; a copy): only
+  the window note changes, and window-expiry holds (118 <= call_mrm 206,
+  and <= 149). The tick share leaves `call_mrm` only if the reaction at
+  the guard becomes a sampling hop itself (the handler latches the
+  availability and acts on its tick): today `on_violation.reaction` must
+  name a path the subscriber triggers, so that is a grammar follow-up,
+  not this key. The chain derivation's sampling cost is still one
+  period. Fixtures `contract_takeover_jitter(_short)` (T2).
+- [x] D5 the grammar a contract needs (rlm). Key: top-level `rlm:
+  v0.1.49` (also `0.1.49`, `>=0.1.49`), optional, beside `version: 1`
+  (the file format, unchanged). `parse_manifest_str` reads it before any
+  key of the body; a newer one is refused at `rlm`: "this contract needs
+  rlm >= v0.1.50; this checker reads rlm v0.1.49", which play_launch
+  turns into exit 3 with the I3 line. `GRAMMAR_VERSION` is held to the
+  CHANGELOG by a test. Since-versions, the cheap way: `field_table::SINCE`
+  dates keys from v0.1.49 on, and the format reference prints "since
+  v0.1.49"; no column on `Field`. A checker before v0.1.49 refuses `rlm:`
+  as an unknown key (the fallback). Fixture `contract_grammar_newer` (T4).
+- [x] I6 a complete `--export-graph` (play_launch). Schema version 2:
+  `services` (servers, clients, external), `topics[].external`,
+  `pub_edges[].on_demand`, `sub_edges[].on_violation`,
+  `node_paths[].trigger` (timer with rate and jitter, input list, once,
+  ...) and `safe_state`, `input` = the effective trigger's inputs,
+  `hazards` (guard groups, `on`, FTTI, reaction), `functions`, `modes`
+  (requires, fallback, reaction, window, exit), `nodes[].contracted` and
+  `derived_criticality`. Done-test: the deck's `Model` built from the
+  island's export alone equals the one built from export + contract YAML
+  (contracted nodes, externals, services, path triggers, safe states,
+  hazards, modes, scope paths, and the walked route per hazard and rung).
+  The deck script is unedited; it warns "export version 2, expected 1"
+  and carries on. T7.
+- [x] D7 the head comment's semantics (rlm, text). Twelve of the thirteen
+  items are now in their key's row of the field table, so in the
+  generated format reference (`srv`/`cli`, `input`, `trigger`,
+  `min_rate_hz`, `state`, `max_transport` x2, `max_latency`,
+  `concurrency`, `criticality`, `severity_levels`, `window`, `settle`);
+  the endpoint-key item landed with I9. The ones that change a number are
+  already beside it in `--explain`: the link and the hop after a deadline
+  (I1's route notes), the sampling hop (`(+N ms sampling)`, now with
+  jitter), the settle formula (`settle-derived`), the window's notice
+  (`window-expiry`'s note). Not done: DX 1.1's provenance field (a
+  `source:` per number) -- it pairs with D9 below.
+
+## Design decisions (no code)
+
+- **D2 (with nano-ros 474 D4): a service edge's cost.** Key:
+  `services.<s>.max_transport` (every client) and `cli.<ep>.max_transport`
+  (one client), the same precedence as a topic's and a subscriber's, for
+  the hop from the client's call to the server's dispatch (the
+  comfortable operator's serve-after-tick, 0.85-1.18 ms). The walk
+  charges it on the client -> server edge as it charges I1's link. It is
+  an EDGE cost, so it never becomes a node path's `max_latency`, and
+  that is the budget / deadline split this case needs: a cost the checker
+  charges lives on an edge or a trigger (`max_transport`, `jitter`), a
+  deadline the image schedules and monitors stays on the path. No new
+  "budget" kind. Waits on nano-ros 474 D4 agreeing that an edge cost
+  derives no deadline or monitor, and on whether `srv.<ep>.max_response`
+  (runtime only today) should bound the same hop.
+- **D4 (with nano-ros 474 D3): route versus callback.** They are two
+  quantities and the contract should say so rather than pretend one
+  checks the other: a node path's `max_latency` is one dispatch (what the
+  image's latency monitor measures); a rung's ROUTE is detection fire ->
+  the rung's first output (tick wait + link + work). Proposed: the model
+  carries the checker's per-rung route (`contracts.hazards.<h>.rungs[]:
+  {rung, route_ms, output}`, a consequence written by `check`, never
+  authored), and nano-ros may generate a route monitor stamped at the
+  `on_violation` fire and at the first publish on the rung's output,
+  reported as `route-runtime`. Waits on nano-ros 474 D3 (whether the
+  image can stamp the fire), and on I1/D1 settling what ROUTE includes.
+- **D8: acknowledging a true warning.** Key: a top-level
+  `acknowledged:` list of `{ rule: <id>, at: <diagnostic path>, reason:
+  <text> }`. A matching diagnostic is printed as `ack[<rule>]` with the
+  reason and counted apart ("5 warnings, 2 acknowledged"); exit codes and
+  `--expect` unchanged; an entry that matches nothing is itself a warning
+  (`ack-stale`), so an acknowledgement cannot outlive its finding.
+  Errors cannot be acknowledged. Waits on an rlm context for the list and
+  on the diagnostic path being stable enough to match (today it is the
+  rule's `path:`; the two island `reaction-unguarded` warnings have
+  distinct ones, `hazards.<h>.reaction`).
+- **D9: a general `param:` binding.** Shape: any duration or rate may be
+  written `{ value: <n>, param: <node>.<param>, unit: s|ms|hz }`, as
+  `window: { duration, param }` already is; `lease_duration`, `max_age`
+  and a timer's `rate_hz` are the island's cases (500 ms detection,
+  `update_rate`). The checker reads the launch parameter as
+  `window-param` does and refuses a mismatch (`param-mismatch`); `unit:`
+  is required because parameters carry none (the island's timeouts are
+  seconds as doubles, its rates integers). DX 1.1's `source:` (where a
+  measured number came from, free text) is the same slot for numbers no
+  parameter holds. Waits on rlm choosing between a per-key map form and a
+  sibling `<key>_param:` (the map form breaks every consumer that reads
+  the key as a scalar), and on nano-ros wanting the binding in the model.
+- **D10 (WG): `bounded_by:`.** Shape: `nodes.<n>.bounded_by: [<node>]`,
+  the nodes whose monitoring bounds this node's failure, so the derived
+  criticality of a QM node feeding an ASIL-B fallback can be justified
+  below the hazard's level instead of inheriting it by reachability.
+  The derivation would stay the max over hazards and print the bound as
+  a justification. No work until the WG rules on decomposition.
+
+Still open: D6 (contract vs code, consumer of nano-ros 463), I11 (install
+prefix per scope), T3 (Dependabot), the provenance field (D7, D9), and the
+island's own move (phase 9 W5: call_mrm 206 -> 149, and the link re-sized
+from 57 to about 81 ms).
