@@ -311,3 +311,37 @@ fn an_unwired_endpoint_is_a_warning() {
         "{s}"
     );
 }
+
+/// T4 (D5): a contract whose `rlm:` header names a grammar newer than the
+/// checker's is refused BEFORE its body is read (so not for the key a newer
+/// grammar might know), naming both releases and this checker, with the
+/// refusal exit code. The release the refusal names is the rlm tag
+/// `--version` names: the binary and its grammar cannot disagree.
+#[test]
+fn a_contract_needing_a_newer_grammar_names_both_releases() {
+    let out = check("contract_grammar_newer", &[]);
+    let s = text(&out);
+    assert_eq!(out.status.code(), Some(3), "{s}");
+    let version = String::from_utf8_lossy(
+        &play_launch()
+            .arg("--version")
+            .output()
+            .expect("runs")
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    let tag = version
+        .rsplit("rlm ")
+        .next()
+        .and_then(|t| t.strip_suffix(')'))
+        .unwrap_or_else(|| panic!("no rlm tag: {version}"));
+    assert!(
+        s.contains(&format!(
+            "this contract needs rlm >= v99.0.0; this checker reads rlm {tag}"
+        )),
+        "{s}"
+    );
+    assert!(s.contains("this checker: play_launch"), "{s}");
+    assert!(!s.contains("not_a_key_yet"), "{s}");
+}

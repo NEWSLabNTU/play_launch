@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<!-- Phase 85 T4 (D5): a contract whose `rlm:` header names a grammar newer
+     than this checker's. No package needs to be built. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="talker"/>
+</launch>

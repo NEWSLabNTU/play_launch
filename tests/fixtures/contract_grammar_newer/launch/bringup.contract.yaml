@@ -1,0 +1,16 @@
+# Phase 85 T4 (D5) -- a contract that states it needs a grammar newer than
+# any checker's (rlm v0.1.49 `rlm:` header). It is refused before its body
+# is read, naming both releases, with the refusal exit code (3) -- not for
+# `not_a_key_yet`, the key a newer grammar might know.
+version: 1
+rlm: v99.0.0
+
+nodes:
+  talker:
+    pub:
+      chatter: { not_a_key_yet: 1 }
+
+topics:
+  /chatter:
+    type: std_msgs/msg/String
+    pub: [talker/chatter]
