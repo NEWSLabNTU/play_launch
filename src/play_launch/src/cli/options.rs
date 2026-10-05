@@ -162,7 +162,12 @@ pub enum Command {
     #[command(after_help = "Examples:\n  \
         play_launch check autoware_launch planning_simulator.launch.xml\n  \
         play_launch check autoware_launch planning_simulator.launch.xml --format json --explain\n  \
-        play_launch check --contracts ~/contracts /path/to/launch.py arg:=value")]
+        play_launch check --contracts ~/contracts /path/to/launch.py arg:=value\n  \
+        play_launch check bringup.launch.xml --expect ladder-rung-budget\n\n\
+        Exit status:\n  \
+        0  no Error-severity diagnostic (with --expect: exactly the expected rules erred)\n  \
+        1  an Error-severity diagnostic, or an --expect mismatch, or the launch file failed\n  \
+        3  a contract file was refused (error[manifest-parse]): it was not checked at all")]
     Check(CheckArgs),
 
     /// Plot resource usage from execution logs
@@ -387,6 +392,15 @@ pub struct CheckArgs {
     /// consequence of the contract, printed to stdout, never written back.
     #[arg(long, value_name = "WHAT")]
     pub emit: Option<String>,
+
+    /// Expect the check to FAIL with exactly these rules (repeatable). Exit 0
+    /// only when every Error-severity diagnostic is one of them, each of
+    /// them fired, and no contract file was refused; otherwise a line names
+    /// what differed and the exit is non-zero (1, or 3 for a refusal). For a
+    /// CI negative test: an exit-code-only comparison passes on a checker
+    /// too old to parse the contract.
+    #[arg(long, value_name = "RULE_ID")]
+    pub expect: Vec<String>,
 }
 
 // `CheckArgs::contract_sources` is gone: resolving the overlay/provider
