@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Phase 85 T4/T5: a provider contract (bringup.contract.yaml) this
+       grammar refuses, for the refusal's checker line (I3) and its own exit
+       code (I4). No package needs to be built: `check` works off the launch
+       file's path. -->
+  <node pkg="contract_dx_demo" exec="sensor_node" name="sensor_node" namespace="/perception"/>
+</launch>

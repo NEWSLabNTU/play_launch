@@ -125,6 +125,8 @@ fn main() -> eyre::Result<()> {
     // names `play_launch` at the version the user installed rather than the
     // shared library crate. See `ros_launch_resolve::producer`.
     ros_launch_resolve::producer::set(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    // Phase 85 I3: a contract refusal names the checker as `--version` does.
+    ros_launch_resolve::producer::set_checker(format!("play_launch {}", play_launch::LONG_VERSION));
 
     // Parse command-line options first (before initializing tracing)
     let opts = Options::parse();

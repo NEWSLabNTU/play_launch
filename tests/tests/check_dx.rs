@@ -51,3 +51,38 @@ fn version_names_the_commit_and_the_rlm_tag() {
     // Built from this checkout, so the describe is present too.
     assert!(inner.contains(", "), "no git describe: {v}");
 }
+
+/// Run `play_launch check` on `tests/fixtures/<dir>/launch/bringup.launch.xml`.
+fn check(dir: &str, extra: &[&str]) -> Output {
+    let launch = fixtures::repo_root()
+        .join("tests/fixtures")
+        .join(dir)
+        .join("launch/bringup.launch.xml");
+    play_launch()
+        .arg("check")
+        .arg(&launch)
+        .args(extra)
+        .output()
+        .expect("play_launch check runs")
+}
+
+/// T4 (I3): an unknown key's refusal names this checker and its grammar, so
+/// an old binary does not read as the author's typo. The existing message is
+/// kept; one line is appended.
+#[test]
+fn a_refusal_names_the_checker_and_its_rlm_tag() {
+    let out = check("contract_unknown_key", &[]);
+    let s = text(&out);
+    assert!(s.contains("error[manifest-parse]"), "{s}");
+    assert!(s.contains("unknown key"), "{s}");
+    assert!(s.contains("is now UNCHECKED"), "{s}");
+    let version = String::from_utf8_lossy(
+        &play_launch().arg("--version").output().expect("runs").stdout,
+    )
+    .trim()
+    .to_string();
+    assert!(
+        s.contains(&format!("this checker: {version}; the contract's grammar may be newer")),
+        "no checker line naming `{version}`:\n{s}"
+    );
+}
