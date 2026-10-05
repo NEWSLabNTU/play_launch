@@ -992,7 +992,10 @@ mod tests {
 
     fn timer_path(rate_hz: f64, out: &[&str], latency_ms: Option<f64>) -> PathDecl {
         PathDecl {
-            trigger: Some(Trigger::Timer { rate_hz }),
+            trigger: Some(Trigger::Timer {
+                rate_hz,
+                jitter: None,
+            }),
             output: out.iter().map(|s| s.to_string()).collect(),
             max_latency: latency_ms
                 .map(ros_launch_manifest_types::duration::Duration::from_millis_f64),

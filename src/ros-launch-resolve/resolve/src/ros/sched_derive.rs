@@ -221,12 +221,18 @@ mod tests {
         let dump = dump_with_two_nodes();
 
         let tick = PathDecl {
-            trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: 50.0 }),
+            trigger: Some(ros_launch_manifest_types::Trigger::Timer {
+                rate_hz: 50.0,
+                jitter: None,
+            }),
             output: vec!["chatter".to_string()],
             ..Default::default()
         };
         let slow = PathDecl {
-            trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: 5.0 }),
+            trigger: Some(ros_launch_manifest_types::Trigger::Timer {
+                rate_hz: 5.0,
+                jitter: None,
+            }),
             output: vec!["chatter".to_string()],
             ..Default::default()
         };
@@ -422,7 +428,10 @@ mod tests {
             node_fqn: "/talker".to_string(),
             path_name: "publish".to_string(),
             path: PathDecl {
-                trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: 10.0 }),
+                trigger: Some(ros_launch_manifest_types::Trigger::Timer {
+                    rate_hz: 10.0,
+                    jitter: None,
+                }),
                 output: vec!["out_ep".to_string()],
                 ..Default::default()
             },
@@ -489,7 +498,10 @@ mod tests {
             node_fqn: "/talker".to_string(),
             path_name: "tick".to_string(),
             path: PathDecl {
-                trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: 20.0 }),
+                trigger: Some(ros_launch_manifest_types::Trigger::Timer {
+                    rate_hz: 20.0,
+                    jitter: None,
+                }),
                 ..Default::default()
             },
             scope_id: 0,
@@ -531,7 +543,10 @@ mod tests {
         // "criticality = max over member nodes" rule.
         let ms = ros_launch_manifest_types::duration::Duration::from_millis_f64;
         let tick = PathDecl {
-            trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: 50.0 }),
+            trigger: Some(ros_launch_manifest_types::Trigger::Timer {
+                rate_hz: 50.0,
+                jitter: None,
+            }),
             output: vec!["chatter".to_string()],
             max_latency: Some(ms(2.0)),
             ..Default::default()
@@ -1110,7 +1125,10 @@ mod tests {
         let ms = ros_launch_manifest_types::duration::Duration::from_millis_f64;
         let mut index = chain_index_for_cost_tests();
         let diag = PathDecl {
-            trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: 1.0 }),
+            trigger: Some(ros_launch_manifest_types::Trigger::Timer {
+                rate_hz: 1.0,
+                jitter: None,
+            }),
             output: vec!["diag".to_string()],
             max_latency: Some(ms(1.0)),
             ..Default::default()

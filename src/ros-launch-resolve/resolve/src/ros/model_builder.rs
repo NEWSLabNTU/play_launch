@@ -192,13 +192,17 @@ fn resolve_endpoint_ref(nodes: &IndexMap<String, model::NodeInstance>, ep_ref: &
 
 fn pub_contract(p: &EndpointProps, topic_qos: Option<&QosDecl>) -> Option<model::PubContract> {
     let qos = effective_qos(topic_qos, p.qos.as_ref());
-    if p.min_rate_hz.is_none() && p.max_rate_hz.is_none() && qos.is_none() {
+    // Phase 85 D3: `on_demand` is a statement of its own -- the endpoint
+    // promises no rate, so a consumer derives no rate monitor for it.
+    let on_demand = p.on_demand == Some(true);
+    if p.min_rate_hz.is_none() && p.max_rate_hz.is_none() && qos.is_none() && !on_demand {
         return None;
     }
     Some(model::PubContract {
         min_rate_hz: p.min_rate_hz,
         max_rate_hz: p.max_rate_hz,
         qos,
+        on_demand,
     })
 }
 
@@ -362,6 +366,12 @@ fn path_contract(
     // model documents as carrying none.
     trigger: Option<EffectiveTrigger>,
 ) -> model::PathContract {
+    // Phase 85 D1: a timer's release jitter, beside its trigger. Node paths
+    // only, like the trigger.
+    let timer_jitter_ms = trigger
+        .as_ref()
+        .and(decl.timer_jitter())
+        .map(|d| d.as_millis_f64());
     model::PathContract {
         safe_state: decl.safe_state.as_ref().map(|s| model::SafeStateContract {
             emits: emits_key(&s.emits),
@@ -406,6 +416,7 @@ fn path_contract(
         // `contract-axes.md` §5 names.
         max_jitter_ms: decl.max_jitter.map(|d| d.as_millis_f64()),
         miss: decl.miss.as_ref().map(super::sched_derive::convert_miss),
+        timer_jitter_ms,
     }
 }
 
@@ -1973,7 +1984,10 @@ mod tests {
                 node_fqn: "/perception/detector".to_string(),
                 path_name: "sample".to_string(),
                 path: ros_launch_manifest_types::PathDecl {
-                    trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: 50.0 }),
+                    trigger: Some(ros_launch_manifest_types::Trigger::Timer {
+                        rate_hz: 50.0,
+                        jitter: None,
+                    }),
                     output: vec!["scan".to_string()],
                     ..Default::default()
                 },
@@ -2522,7 +2536,10 @@ mod tests {
         index.node_paths.push(node_path(
             "tick",
             PathDecl {
-                trigger: Some(Trigger::Timer { rate_hz: 10.0 }),
+                trigger: Some(Trigger::Timer {
+                    rate_hz: 10.0,
+                    jitter: None,
+                }),
                 output: out(),
                 ..Default::default()
             },
@@ -2613,7 +2630,10 @@ mod tests {
         index.node_paths.push(node_path(
             "tick",
             PathDecl {
-                trigger: Some(Trigger::Timer { rate_hz: 10.0 }),
+                trigger: Some(Trigger::Timer {
+                    rate_hz: 10.0,
+                    jitter: None,
+                }),
                 output: vec!["objects".to_string()],
                 ..Default::default()
             },

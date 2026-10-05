@@ -2575,7 +2575,10 @@ mod tests {
                 node_fqn: node.to_string(),
                 path_name: "tick".to_string(),
                 path: ros_launch_manifest_types::PathDecl {
-                    trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: rate }),
+                    trigger: Some(ros_launch_manifest_types::Trigger::Timer {
+                        rate_hz: rate,
+                        jitter: None,
+                    }),
                     output: vec!["out".to_string()],
                     ..Default::default()
                 },
@@ -2638,7 +2641,10 @@ mod tests {
             node_fqn: "/fast_node".to_string(),
             path_name: "tick".to_string(),
             path: PathDecl {
-                trigger: Some(Trigger::Timer { rate_hz: 50.0 }),
+                trigger: Some(Trigger::Timer {
+                    rate_hz: 50.0,
+                    jitter: None,
+                }),
                 output: vec!["tick_out".to_string()],
                 // Deliberately the LOOSER deadline of the two paths: the
                 // chain_aware mapper ranks the downstream Segment (`react`)
@@ -2729,7 +2735,10 @@ mod tests {
                 paths: BTreeMap::from([(
                     "tick".to_string(),
                     PathDecl {
-                        trigger: Some(Trigger::Timer { rate_hz: 50.0 }),
+                        trigger: Some(Trigger::Timer {
+                            rate_hz: 50.0,
+                            jitter: None,
+                        }),
                         output: vec!["tick_out".to_string()],
                         max_latency: Some(
                             ros_launch_manifest_types::duration::Duration::from_millis_f64(20.0),
@@ -3669,7 +3678,10 @@ nodes = ["fast_node"]
             ),
         ] {
             let decl = PathDecl {
-                trigger: Some(Trigger::Timer { rate_hz: rate }),
+                trigger: Some(Trigger::Timer {
+                    rate_hz: rate,
+                    jitter: None,
+                }),
                 output: vec![endpoint.to_string()],
                 ..Default::default()
             };
@@ -4041,7 +4053,10 @@ overrides:
                 node_fqn: node.to_string(),
                 path_name: "tick".to_string(),
                 path: ros_launch_manifest_types::PathDecl {
-                    trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: rate }),
+                    trigger: Some(ros_launch_manifest_types::Trigger::Timer {
+                        rate_hz: rate,
+                        jitter: None,
+                    }),
                     output: vec!["out".to_string()],
                     ..Default::default()
                 },
