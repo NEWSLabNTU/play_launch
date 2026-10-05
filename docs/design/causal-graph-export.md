@@ -54,7 +54,7 @@ Top level:
 | `modes` | `ModeOut[]` | operational modes and the ladder (v2) |
 
 `NodeOut`: `fqn`, `scope_id`, `pkg` (optional), `criticality` (optional,
-`high`\|`medium`\|`low` string as authored — advisory, not validated here),
+`high`\|`medium`\|`low` string as authored -- advisory, not validated here),
 `derived_criticality` (optional, v2: `{level, hazard, role}`, what the
 hazards derive), `contracted` (v2: declared in a contract).
 
@@ -80,7 +80,7 @@ endpoint names, not topic FQNs; `input` is the effective trigger's inputs),
 `trigger` (v2: `{"timer": {"rate_hz", "jitter_ms"?}}`, `{"input": [...]}`,
 `"once"`, `"spontaneous"` or `"unclassified"`), `safe_state` (optional, v2:
 `{emits, settle_ms?, derived}`), `max_latency_ms`, `tolerance_ms` (both
-optional), `scope_id`, `cross_node: false` (always — node paths are
+optional), `scope_id`, `cross_node: false` (always -- node paths are
 intra-node by construction).
 
 `ServiceOut` (v2): `fqn`, `type`, `servers`/`clients` (`[{node,

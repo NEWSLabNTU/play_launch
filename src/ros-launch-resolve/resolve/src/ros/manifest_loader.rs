@@ -3045,7 +3045,7 @@ fn check_fault_reaction(
                             .iter()
                             .map(ToString::to_string)
                             .collect::<Vec<_>>()
-                            .join(" → "),
+                            .join(" -> "),
                     ),
                 )
             }

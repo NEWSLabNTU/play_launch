@@ -295,7 +295,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     application`. Issue #0046 ruled. W4 (a sampling hop in the reaction walk)
     is separate.
     [phase-82-what-a-detector-may-see.md](./phase-82-what-a-detector-may-see.md).
-  - **Phase 85** - planned: what the island's board runs left open
+  - **Phase 85** - in progress: what the island's board runs left open
     (2026-10-01). The Autoware Safety Island's S32K344 runs (phase8-W30,
     W31) sized `call_mrm` at 206 ms = link 57 + tick 118 + work 31, because
     0.13.0 charges no `max_transport` in the fault arithmetic (I1: charge it
@@ -317,7 +317,11 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     width when piped (I5), a complete `--export-graph` (I6), a
     `declared-not-charged` notice (I7), `endpoint-unwired` (I8), rlm
     refusing `/` in an endpoint key and better suggestions (I9, I10),
-    install prefixes per scope (I11). Cheap first: I2-I5, I7-I10, T9.
+    install prefixes per scope (I11). Cheap first: I2-I5, I7-I10, T9
+    (0.13.1). Structural on `phase85-rest` with rlm v0.1.49: I1 (the link
+    charged on the guard edge), D1 (`jitter:`), D3 (`on_demand:`), D5
+    (`rlm:` header), I6 (export v2), D7 (text); D2, D4, D8-D10 decided,
+    not built; D6, I11, T3 open.
     [phase-85-what-the-island-left-open.md](./phase-85-what-the-island-left-open.md).
   - **Phase 84** - complete: a window is a least time, and its notice is
     charged once (2026-09-29, rlm **v0.1.47**, text only). rlm said a

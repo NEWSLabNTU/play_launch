@@ -6,6 +6,32 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+Phase 85, the structural items (`docs/roadmap/phase-85-what-the-island-left-open.md`).
+ros-launch-manifest moves from v0.1.48 to v0.1.49 (an on-demand
+publisher, a timer's release jitter, the `rlm:` grammar header; its crates
+are now 0.1.8).
+
+- **Visible:** a hazard's reaction route charges the guard edge's link
+  (`max_transport` on the detecting subscriber, else its topic's), once,
+  and not after a window's deadline (I1). A contract that states one sees
+  its ROUTE and TOTAL grow by it: the Autoware Safety Island's routes
+  grow by its 57 ms until its `call_mrm` drops to 149. `--explain` says
+  where the link is charged, and `declared-not-charged` keeps only the
+  declarations on no guard edge.
+- A timer's `jitter:` is charged where a tick is waited for: the reaction
+  walk's sampling hop and `window-expiry`'s notice (D1).
+- `on_demand: true` on a publisher: no rate in the model, so no runtime
+  rate monitor; `rate-hierarchy` refuses a rate required of it across
+  scopes (D3).
+- A contract whose `rlm:` header names a newer grammar is refused before
+  its body is read, naming both releases (exit 3) (D5).
+- **Visible:** `--export-graph` schema version 2: services, externals,
+  detectors, path triggers and safe states, hazards, functions and modes;
+  a node path's `input` is its effective trigger's inputs (I6). A reader
+  that required `version == 1` must accept 2.
+
 ## 0.13.1 - 2026-10-06
 
 Phase 85 "cheap first": what the Autoware Safety Island's CI needed from
