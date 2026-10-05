@@ -20,16 +20,16 @@ fn container_events_launch() -> String {
         .to_string()
 }
 
-/// `play_launch --version` → `0.10.0` (whatever the binary says).
+/// `play_launch --version` -> `0.10.0` (whatever the binary says).
 fn binary_version(env: &std::collections::HashMap<String, String>) -> String {
     let out = fixtures::play_launch_cmd(env)
         .arg("--version")
         .output()
         .expect("run play_launch --version");
     let text = String::from_utf8_lossy(&out.stdout);
-    text.trim()
-        .rsplit(' ')
-        .next()
+    // `play_launch X.Y.Z (<describe>, rlm vA.B.C)` since phase 85 I2.
+    text.split_whitespace()
+        .nth(1)
         .expect("version string")
         .to_string()
 }
