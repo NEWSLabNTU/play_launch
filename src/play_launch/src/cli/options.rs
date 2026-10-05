@@ -57,7 +57,7 @@ pub enum Feature {
 /// Resolve, run, and analyze ROS 2 launch executions with resource monitoring
 #[derive(Parser)]
 #[command(name = "play_launch")]
-#[command(version)]
+#[command(version = env!("PLAY_LAUNCH_LONG_VERSION"))]
 #[command(about = "Resolve, run, and analyze ROS 2 launch executions with resource monitoring")]
 // HISTORY (a `//` comment, not a doc comment: clap renders doc comments into
 // `--help`). RFC-0060 W3 moved `resolve`/`dump`/`check`/`plot`/`contract` out
