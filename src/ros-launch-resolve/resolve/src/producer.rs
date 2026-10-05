@@ -37,6 +37,28 @@ pub fn set(tool: impl Into<String>, version: impl Into<String>) {
 }
 
 /// The `(tool, version)` pair to stamp into `meta.resolver`.
+/// The `ros-launch-manifest` tag this crate was built against (phase 85 I3).
+pub const RLM_TAG: &str = env!("RLM_PINNED_TAG");
+
+static CHECKER: OnceLock<String> = OnceLock::new();
+
+/// Name the binary that is checking contracts, as its `--version` reads
+/// (phase 85 I3), e.g. `play_launch 0.13.0 (v0.13.0-3-gabc1234, rlm
+/// v0.1.47)`. A contract refusal ends with it, so an unknown key that is
+/// really an old checker says so. First call wins, like [`set`].
+pub fn set_checker(identity: impl Into<String>) {
+    let _ = CHECKER.set(identity.into());
+}
+
+/// The checker's identity: what [`set_checker`] stored, else this library
+/// with its pinned rlm tag.
+pub fn checker() -> String {
+    CHECKER
+        .get()
+        .cloned()
+        .unwrap_or_else(|| format!("{DEFAULT_TOOL} {DEFAULT_VERSION} (rlm {RLM_TAG})"))
+}
+
 pub fn get() -> (String, String) {
     PRODUCER
         .get()
@@ -54,5 +76,12 @@ mod tests {
         let (tool, version) = super::get();
         assert_eq!(tool, super::DEFAULT_TOOL);
         assert!(!version.is_empty());
+    }
+
+    #[test]
+    fn the_default_checker_names_the_rlm_tag() {
+        let c = super::checker();
+        assert!(c.contains(&format!("rlm {}", super::RLM_TAG)), "{c}");
+        assert!(super::RLM_TAG.starts_with('v'), "{}", super::RLM_TAG);
     }
 }

@@ -1,0 +1,12 @@
+# Phase 85 T4/T5 -- DELIBERATELY REFUSED. `max_rate` is not a key of
+# `nodes.<n>.pub.<ep>` (the key is `max_rate_hz`), so the whole file is
+# dropped with error[manifest-parse]. The refusal must name this checker's
+# version and rlm tag (I3) and exit with the parse-refusal code, 3, not the
+# rule-failure code, 1 (I4). Keep it wrong.
+version: 1
+
+nodes:
+  sensor_node:
+    pub:
+      points_raw:
+        max_rate: 100

@@ -593,12 +593,24 @@ pub fn load_manifests(
                     }
                     _ => None,
                 };
+                // Phase 85 I3: a key this grammar does not know may be a key
+                // a newer grammar does. Name the checker, so an old binary
+                // does not read as the author's typo.
+                let checker_line = match &e {
+                    ros_launch_manifest_types::parse::ParseError::Field { .. } => format!(
+                        "\n  this checker: {}; the contract's grammar may be newer than \
+                         this binary",
+                        crate::producer::checker()
+                    ),
+                    _ => String::new(),
+                };
                 index.load_diagnostics.push(Diagnostic {
                     rule_id: "manifest-parse".to_string(),
                     severity: Severity::Error,
                     message: format!(
                         "could not parse contract {}{}: {e}. Every contract in this \
-                         file is now UNCHECKED — the file is dropped, not partially read",
+                         file is now UNCHECKED — the file is dropped, not partially read\
+                         {checker_line}",
                         path.display(),
                         line.map_or(String::new(), |l| format!(":{l}"))
                     ),
