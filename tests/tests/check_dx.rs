@@ -50,8 +50,18 @@ fn version_names_the_commit_and_the_rlm_tag() {
         .unwrap_or_else(|| panic!("unclosed: {v}"));
     let rlm = inner.rsplit(", ").next().unwrap();
     assert!(rlm.starts_with("rlm v"), "no rlm tag last: {v}");
-    // Built from this checkout, so the describe is present too.
-    assert!(inner.contains(", "), "no git describe: {v}");
+    // Built from this checkout: when git can read it here, the describe
+    // must be there too. (Without git, build.rs omits it rather than
+    // inventing one, and the version is still well-formed.)
+    let git_works = Command::new("git")
+        .args(["-c", "safe.directory=*", "-C"])
+        .arg(fixtures::repo_root())
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if git_works {
+        assert!(inner.contains(", "), "no git describe: {v}");
+    }
 }
 
 /// Run `play_launch check` on `tests/fixtures/<dir>/launch/bringup.launch.xml`.
