@@ -54,7 +54,11 @@ fn embed_long_version() {
     );
 
     let git = |args: &[&str]| -> Option<String> {
+        // `safe.directory=*`: a container build (CI, the wheel builder) runs
+        // as a user that does not own the checkout, and git then refuses
+        // every command, which dropped the describe from those binaries.
         let out = std::process::Command::new("git")
+            .args(["-c", "safe.directory=*"])
             .args(args)
             .current_dir(&manifest_dir)
             .output()
