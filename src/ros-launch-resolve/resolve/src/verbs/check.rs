@@ -237,7 +237,8 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     if index.manifests.is_empty() && index.load_diagnostics.is_empty() {
         crate::say!(
             "No manifests found (overlay={:?}, provider={})",
-            sources.overlay, sources.provider
+            sources.overlay,
+            sources.provider
         );
         if index.merge_diagnostics.is_empty() {
             return Ok(if dropped_is_error { 1 } else { 0 });
@@ -606,9 +607,9 @@ fn render_scope_diagnostics(
                 // Phase 85 I5: colour only on a terminal without NO_COLOR
                 // (codespan's own `Auto` coloured a pipe), and the text
                 // through `util::out` for `--ascii` / `--width`.
-                let mut buf = if crate::util::out::color_wanted(
-                    std::io::IsTerminal::is_terminal(&std::io::stderr()),
-                ) {
+                let mut buf = if crate::util::out::color_wanted(std::io::IsTerminal::is_terminal(
+                    &std::io::stderr(),
+                )) {
                     termcolor::Buffer::ansi()
                 } else {
                     termcolor::Buffer::no_color()

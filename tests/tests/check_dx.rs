@@ -7,9 +7,11 @@
 //! shell sees.
 
 use play_launch_tests::fixtures;
-use std::collections::HashMap;
-use std::process::{Command, Output};
-use std::sync::OnceLock;
+use std::{
+    collections::HashMap,
+    process::{Command, Output},
+    sync::OnceLock,
+};
 
 fn test_env() -> &'static HashMap<String, String> {
     static ENV: OnceLock<HashMap<String, String>> = OnceLock::new();
@@ -77,12 +79,18 @@ fn a_refusal_names_the_checker_and_its_rlm_tag() {
     assert!(s.contains("unknown key"), "{s}");
     assert!(s.contains("is now UNCHECKED"), "{s}");
     let version = String::from_utf8_lossy(
-        &play_launch().arg("--version").output().expect("runs").stdout,
+        &play_launch()
+            .arg("--version")
+            .output()
+            .expect("runs")
+            .stdout,
     )
     .trim()
     .to_string();
     assert!(
-        s.contains(&format!("this checker: {version}; the contract's grammar may be newer")),
+        s.contains(&format!(
+            "this checker: {version}; the contract's grammar may be newer"
+        )),
         "no checker line naming `{version}`:\n{s}"
     );
 }
@@ -119,9 +127,9 @@ fn a_refusal_has_its_own_exit_code_and_json_entry() {
         .unwrap_or_else(|e| panic!("stdout is not one JSON array ({e}):\n{stdout}"));
     let entries = report.as_array().expect("an array");
     assert!(
-        entries
-            .iter()
-            .any(|d| d["rule"] == "manifest-parse" && d["file"] == "<load>" && d["severity"] == "error"),
+        entries.iter().any(|d| d["rule"] == "manifest-parse"
+            && d["file"] == "<load>"
+            && d["severity"] == "error"),
         "{stdout}"
     );
 
@@ -142,22 +150,36 @@ fn expect_passes_only_on_exactly_the_expected_rules() {
     let out = check("contract_error", &["--expect", "ladder-rung-budget"]);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
     let s = text(&out);
-    assert!(s.contains("expected error[ladder-rung-budget] did not fire"), "{s}");
+    assert!(
+        s.contains("expected error[ladder-rung-budget] did not fire"),
+        "{s}"
+    );
     assert!(s.contains("unexpected error[rate-hierarchy]"), "{s}");
 
     // It fired, alongside rules that were not expected.
-    let out = check_takeover("contract_takeover_budget", &["--expect", "ladder-rung-budget"]);
+    let out = check_takeover(
+        "contract_takeover_budget",
+        &["--expect", "ladder-rung-budget"],
+    );
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
-    assert!(text(&out).contains("unexpected error[fault-reaction-budget]"), "{}", text(&out));
+    assert!(
+        text(&out).contains("unexpected error[fault-reaction-budget]"),
+        "{}",
+        text(&out)
+    );
 
     // Every rule it fails, expected: a pass.
     let out = check_takeover(
         "contract_takeover_budget",
         &[
-            "--expect", "ladder-rung-budget",
-            "--expect", "fault-reaction-budget",
-            "--expect", "settle-param-unresolved",
-            "--expect", "window-param",
+            "--expect",
+            "ladder-rung-budget",
+            "--expect",
+            "fault-reaction-budget",
+            "--expect",
+            "settle-param-unresolved",
+            "--expect",
+            "window-param",
         ],
     );
     assert_eq!(out.status.code(), Some(0), "{}", text(&out));
@@ -165,7 +187,11 @@ fn expect_passes_only_on_exactly_the_expected_rules() {
     // A refusal never passes an expectation, and keeps its own code.
     let out = check("contract_unknown_key", &["--expect", "rate-hierarchy"]);
     assert_eq!(out.status.code(), Some(3), "{}", text(&out));
-    assert!(text(&out).contains("expect: FAILED -- 1 contract file(s) were refused"), "{}", text(&out));
+    assert!(
+        text(&out).contains("expect: FAILED -- 1 contract file(s) were refused"),
+        "{}",
+        text(&out)
+    );
 }
 
 /// T6 (I5): through a pipe, `check --explain` is plain ASCII with no colour,
@@ -179,14 +205,21 @@ fn piped_output_is_ascii_without_colour_and_width_bounds_it() {
         "{}",
         text(&out)
     );
-    assert!(all.iter().all(|b| *b < 0x80), "a non-ASCII byte:\n{}", text(&out));
+    assert!(
+        all.iter().all(|b| *b < 0x80),
+        "a non-ASCII byte:\n{}",
+        text(&out)
+    );
     assert!(!all.contains(&0x1b), "an ESC byte:\n{}", text(&out));
     // The route arrow survives as `->`.
     assert!(text(&out).contains(" -> "), "{}", text(&out));
 
     let out = check_takeover("contract_takeover", &["--explain", "--width", "100"]);
     let s = text(&out);
-    assert!(s.lines().all(|l| l.chars().count() <= 100), "a line over 100:\n{s}");
+    assert!(
+        s.lines().all(|l| l.chars().count() <= 100),
+        "a line over 100:\n{s}"
+    );
 }
 
 /// T6 (I5): on a terminal, colour is on unless NO_COLOR is set. Uses
@@ -197,7 +230,8 @@ fn no_color_turns_colour_off_on_a_terminal() {
         eprintln!("SKIP: no_color_turns_colour_off_on_a_terminal: `script` not installed");
         return;
     }
-    let launch = fixtures::repo_root().join("tests/fixtures/contract_error/launch/bringup.launch.xml");
+    let launch =
+        fixtures::repo_root().join("tests/fixtures/contract_error/launch/bringup.launch.xml");
     let cmdline = format!(
         "{} check {}",
         fixtures::play_launch_bin().display(),
@@ -215,9 +249,16 @@ fn no_color_turns_colour_off_on_a_terminal() {
             .expect("script runs")
             .stdout
     };
-    assert!(run(false).contains(&0x1b), "a terminal without NO_COLOR is coloured");
+    assert!(
+        run(false).contains(&0x1b),
+        "a terminal without NO_COLOR is coloured"
+    );
     let plain = run(true);
-    assert!(!plain.contains(&0x1b), "{}", String::from_utf8_lossy(&plain));
+    assert!(
+        !plain.contains(&0x1b),
+        "{}",
+        String::from_utf8_lossy(&plain)
+    );
     assert!(String::from_utf8_lossy(&plain).contains("error[rate-hierarchy]"));
 }
 
@@ -234,8 +275,14 @@ fn a_transport_bound_says_it_is_not_charged() {
         s.contains("`nodes.control_node.sub.scan.max_transport: 57ms` on '/dx/control_node/scan'"),
         "{s}"
     );
-    assert!(s.contains("`topics./dx/cmd.max_transport: 3ms` on topic '/dx/cmd'"), "{s}");
-    assert!(s.contains("is not charged by the fault-reaction arithmetic yet"), "{s}");
+    assert!(
+        s.contains("`topics./dx/cmd.max_transport: 3ms` on topic '/dx/cmd'"),
+        "{s}"
+    );
+    assert!(
+        s.contains("is not charged by the fault-reaction arithmetic yet"),
+        "{s}"
+    );
 }
 
 /// T7 (I8): an endpoint under `sub:`/`pub:` that no topic wires is a

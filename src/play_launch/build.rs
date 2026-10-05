@@ -75,11 +75,21 @@ fn embed_long_version() {
         let common = git(&["rev-parse", "--git-common-dir"])
             .map(|c| {
                 let c = std::path::PathBuf::from(c);
-                if c.is_absolute() { c } else { manifest_dir.join(c) }
+                if c.is_absolute() {
+                    c
+                } else {
+                    manifest_dir.join(c)
+                }
             })
             .unwrap_or_else(|| git_dir.clone());
-        println!("cargo:rerun-if-changed={}", common.join("packed-refs").display());
-        println!("cargo:rerun-if-changed={}", common.join("refs/tags").display());
+        println!(
+            "cargo:rerun-if-changed={}",
+            common.join("packed-refs").display()
+        );
+        println!(
+            "cargo:rerun-if-changed={}",
+            common.join("refs/tags").display()
+        );
         if let Ok(head) = std::fs::read_to_string(git_dir.join("HEAD"))
             && let Some(r) = head.trim().strip_prefix("ref: ")
         {
