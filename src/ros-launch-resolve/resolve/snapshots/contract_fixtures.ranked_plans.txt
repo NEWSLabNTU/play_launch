@@ -957,6 +957,53 @@ RankedPlan {
     ],
     warnings: [],
 }
+== contract_transport_notice/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/dx/control_node",
+            path: "control",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
+        },
+        RankItem {
+            node: "/dx/sensor_node",
+            path: "tick",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=100)",
+        },
+    ],
+    warnings: [],
+}
+== contract_unknown_key/launch/bringup.launch.xml
+RankedPlan {
+    items: [],
+    warnings: [],
+}
+== contract_unwired/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/dx/sensor_node",
+            path: "tick",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=100)",
+        },
+    ],
+    warnings: [],
+}
 == contract_w1d/launch/bringup.launch.xml
 RankedPlan {
     items: [
