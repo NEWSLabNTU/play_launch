@@ -1,0 +1,31 @@
+# Phase 85 T7 (I8) -- control_node declares `sub: odom`, and no `topics:`
+# list names control_node/odom, so the endpoint is in no graph edge and no
+# count. `check` warns endpoint-unwired for it, once, and for nothing else:
+# `scan` is wired, and `cmd` is a path output (the `wiring` rule's).
+version: 1
+
+nodes:
+  sensor_node:
+    pub:
+      scan: {}
+    paths:
+      tick:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [scan]
+
+  control_node:
+    sub:
+      scan: {}
+      odom: { state: true }
+    pub:
+      cmd: {}
+    paths:
+      control:
+        trigger: { input: [scan] }
+        output: [cmd]
+
+topics:
+  /dx/scan:
+    type: std_msgs/msg/String
+    pub: [sensor_node/scan]
+    sub: [control_node/scan]
