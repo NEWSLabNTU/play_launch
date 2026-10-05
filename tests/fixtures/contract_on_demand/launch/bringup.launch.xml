@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!-- Phase 85 T2 (D3): an on-demand publisher, and a subscriber that requires
+     no rate of it. No package needs to be built. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="listener" name="operator"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="planner"/>
+</launch>

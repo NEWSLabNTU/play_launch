@@ -1,0 +1,36 @@
+# Phase 85 T2 (D3) -- an on-demand publisher (rlm v0.1.49 `on_demand:
+# true`): the comfortable-stop operator publishes its velocity limit from
+# its `operate` service callback, and promises no rate. The model carries
+# `on_demand: true` on the endpoint, so the image derives no rate monitor
+# for it. The planner requires no rate of it, so the contract is clean;
+# contract_on_demand_bad gives the planner a `min_rate_hz`.
+version: 1
+rlm: v0.1.49
+
+nodes:
+  operator:
+    srv:
+      operate: {}
+    pub:
+      limit: { on_demand: true }
+    paths:
+      operate:
+        trigger: { input: [operate] }
+        output: [limit]
+        max_latency: 2ms
+
+  planner:
+    sub:
+      limit: {}
+
+topics:
+  /limit:
+    type: std_msgs/msg/Float64
+    pub: [operator/limit]
+    sub: [planner/limit]
+
+services:
+  /operate:
+    type: std_srvs/srv/Trigger
+    server: [operator/operate]
+    external: client

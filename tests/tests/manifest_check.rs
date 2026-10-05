@@ -1659,6 +1659,45 @@ fn takeover_link_is_charged_on_the_guard_edge() {
     );
 }
 
+/// Phase 85 T2 (D3): an on-demand publisher (rlm v0.1.49 `on_demand: true`)
+/// reaches the model as a statement -- `on_demand: true` and no rate -- so
+/// the image derives no rate monitor for it; a subscriber that requires a
+/// rate of it is a `rate-hierarchy` error.
+#[test]
+fn an_on_demand_publisher_promises_no_rate() {
+    let base = fixtures::repo_root().join("tests/fixtures");
+    assert!(
+        check_fixture("contract_on_demand").contains("0 with errors"),
+        "{}",
+        check_fixture("contract_on_demand")
+    );
+    let model_path = std::env::temp_dir().join("play_launch_p85_d3_model.yaml");
+    let status = play_launch_cmd()
+        .arg("resolve")
+        .arg(base.join("contract_on_demand/launch/bringup.launch.xml"))
+        .arg("-o")
+        .arg(&model_path)
+        .status()
+        .expect("resolve runs");
+    assert!(status.success(), "resolve failed");
+    let model = std::fs::read_to_string(&model_path).expect("model written");
+    assert!(
+        model.contains("/operator/limit:\n      on_demand: true"),
+        "{model}"
+    );
+    let _ = std::fs::remove_file(&model_path);
+
+    let out = check_fixture("contract_on_demand_bad");
+    assert!(
+        out.contains(
+            "error[rate-hierarchy]: subscriber 'planner/limit' requires min_rate_hz (10), but \
+             every publisher of the topic is on demand (`on_demand: true` on 'operator/limit') \
+             and promises no rate"
+        ),
+        "{out}"
+    );
+}
+
 /// Phase 84: the window is charged up to its deadline, so the route below
 /// must hold the owner's late notice of it. A 5 Hz tick under a 110 ms hop
 /// leaves 90 ms charged nowhere, once per rung below; the arithmetic itself
