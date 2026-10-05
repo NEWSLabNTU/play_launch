@@ -1619,6 +1619,46 @@ fn takeover_ladder_fits_and_explains_itself() {
     }
 }
 
+/// Phase 85 T1 (I1): the island's shape -- an availability publisher outside
+/// the tree, behind a link the detecting subscriber states as
+/// `max_transport: 57ms`, and a `call_mrm` that holds only the tick and the
+/// work (149 ms). The route reads link + path on the guard edge, and the hop
+/// after the window's deadline is charged no link: the request ends within
+/// 10149 ms. Without the key the routes are 57 ms shorter, so `--explain`
+/// changes with it (it was byte-identical before I1).
+#[test]
+fn takeover_link_is_charged_on_the_guard_edge() {
+    let (code, out) = check_takeover("contract_takeover_link", &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    for needle in [
+        "hpc_loss  estop        floor    500.00      0.00  239.33    4165.33 derived   4904.67  10000.00   5095.33",
+        "odd_exit  takeover     window   100.00      0.00  206.00  window >=10000.00         -  30000.00         -",
+        "odd_exit  comfortable  rung     100.00  10206.00  149.00    9996.67 derived  20451.67  30000.00   9548.33",
+        "odd_exit  estop        floor    100.00  10206.00  182.33    4165.33 derived  14653.67  30000.00  15346.33",
+        "hpc_loss/estop: route = link 57.00ms (max_transport into '/handler/availability', \
+         sub-level) + path 182.33ms",
+        "odd_exit/takeover: route = link 57.00ms (max_transport into '/handler/availability', \
+         sub-level) + path 149.00ms",
+        "odd_exit/comfortable: route = path 149.00ms; the guard edge's link (57.00ms into \
+         '/handler/availability') is not charged after a window's deadline",
+        "odd_exit/takeover: lasts at least 10000.00ms once on, and ends within 10149.00ms",
+        "reaction route link 57.00ms into /handler/availability + /handler/call_mrm",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    // The charged declaration is no longer `declared-not-charged`; the
+    // driver's 143 ms is on no guard edge, so it still is.
+    assert_eq!(
+        out.matches("info[declared-not-charged]").count(),
+        1,
+        "{out}"
+    );
+    assert!(
+        out.contains("`nodes.handler.sub.control_mode.max_transport: 143ms`"),
+        "{out}"
+    );
+}
+
 /// Phase 84: the window is charged up to its deadline, so the route below
 /// must hold the owner's late notice of it. A 5 Hz tick under a 110 ms hop
 /// leaves 90 ms charged nowhere, once per rung below; the arithmetic itself

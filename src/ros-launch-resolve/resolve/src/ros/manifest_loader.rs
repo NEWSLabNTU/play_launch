@@ -15,7 +15,7 @@ use ros_launch_manifest_types::{
     substitute_manifest,
 };
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt,
     path::{Path, PathBuf},
 };
@@ -344,6 +344,9 @@ pub struct RungBudget {
     pub total_ms: Option<f64>,
     pub ftti_ms: Option<f64>,
     pub note: String,
+    /// How ROUTE divides into the guard edge's link and the path hops, when
+    /// a link is charged (phase 85 I1). Empty when none is.
+    pub route_note: String,
 }
 
 /// The complete resolved manifest index for the launch tree.
@@ -355,6 +358,11 @@ pub struct ManifestIndex {
     /// The fault-reaction arithmetic per (hazard, rung), for `--explain`
     /// (phase 83).
     pub budgets: Vec<RungBudget>,
+    /// The `max_transport` declarations some reaction route charged on its
+    /// guard edge (phase 85 I1): a subscriber endpoint FQN for a sub-level
+    /// declaration, a topic FQN for a topic-level one. What
+    /// `declared-not-charged` leaves out.
+    pub charged_transport: BTreeSet<String>,
     /// Hazards, one entry per declaration (phase 71).
     pub hazards: Vec<ResolvedHazard>,
     /// Named guard groups (phase 75).
@@ -1039,23 +1047,26 @@ fn check_endpoint_unwired(index: &mut ManifestIndex) {
 }
 
 /// `declared-not-charged` (phase 85 I7): an info per `max_transport`
-/// declaration, sub-level or topic-level, because the fault-reaction
-/// arithmetic does not charge it yet.
+/// declaration, sub-level or topic-level, that the fault-reaction arithmetic
+/// does not charge.
 ///
-/// `walk_reaction` sums path latencies and sampling periods, and a fault's
-/// detection is the publisher's period plus its path latency: a transport
-/// bound changes no hazard's numbers, so the island contract's `--explain`
-/// output was byte-identical with and without `max_transport: 57ms`, and
-/// nothing said so. Path and chain latencies (`scope-budget`, the shared
-/// chain derivation) do charge it; the notice names the fault arithmetic
-/// only. Retire it when phase 85 I1 charges the key on the guard edge.
+/// Phase 85 I1 charges the key on a reaction route's GUARD EDGE (the hop
+/// into the subscriber that detects the fault) and nowhere else in the
+/// fault arithmetic, so a declaration on any other subscriber changes no
+/// hazard's numbers. Before I1 that was every declaration: the island
+/// contract's `--explain` output was byte-identical with and without
+/// `max_transport: 57ms`, and nothing said so. Path and chain latencies
+/// (`scope-budget`, the shared chain derivation) charge every declaration;
+/// the notice names the fault arithmetic only.
 fn note_declared_not_charged(index: &mut ManifestIndex) {
     let mut out: Vec<Diagnostic> = Vec::new();
     let mut manifests: Vec<&ResolvedManifest> = index.manifests.values().collect();
     manifests.sort_by_key(|m| m.scope_id);
-    let tail = "is not charged by the fault-reaction arithmetic yet: hazard detection and \
+    let tail = "is not charged by the fault-reaction arithmetic: no hazard's reaction route \
+                enters through it (a route is charged `max_transport` on its guard edge only, \
+                the hop into the subscriber that detects the fault), so hazard detection and \
                 reaction routes (the `--explain` budgets) do not include it; path and chain \
-                latencies do. Phase 85 I1 charges it on the guard edge";
+                latencies do";
     for m in manifests {
         for (node, decl) in &m.manifest.nodes {
             for (side, eps) in [("sub", &decl.subscribers), ("pub", &decl.publishers)] {
@@ -1066,6 +1077,9 @@ fn note_declared_not_charged(index: &mut ManifestIndex) {
                     let key = format!("nodes.{node}.{side}.{ep}.max_transport");
                     let fqn =
                         resolve_endpoint_ref(index, m.scope_id, &m.ns, &format!("{node}/{ep}"));
+                    if side == "sub" && index.charged_transport.contains(&fqn) {
+                        continue;
+                    }
                     out.push(Diagnostic {
                         rule_id: "declared-not-charged".to_string(),
                         severity: Severity::Info,
@@ -1085,6 +1099,12 @@ fn note_declared_not_charged(index: &mut ManifestIndex) {
                 continue;
             };
             let key = format!("topics.{topic}.max_transport");
+            if index
+                .charged_transport
+                .contains(&qualify_name(&m.ns, topic))
+            {
+                continue;
+            }
             out.push(Diagnostic {
                 rule_id: "declared-not-charged".to_string(),
                 severity: Severity::Info,
@@ -1669,6 +1689,76 @@ struct ReactionWalk {
     /// The hops on the longest branch, for the message and for the
     /// criticality derivation.
     hops: Vec<ReactionHop>,
+    /// The guard edge's link, already included in `route_ms` (phase 85 I1).
+    link: Option<GuardLink>,
+}
+
+/// The transport a reaction route is charged on its GUARD EDGE: the hop from
+/// the guard topic's publisher into the detecting subscriber (phase 85 I1).
+/// The subscriber's own `max_transport`, else its topic's.
+///
+/// The edge is charged once, in the route, whatever the fault class: an
+/// omission is noticed up to one link after the last sample left (the lease
+/// runs from the last take), and a report reaches the subscriber one link
+/// after it is published. A reported fault's detection is the publisher's
+/// period plus its path latency and stops at the publish, so charging the
+/// link there as well would count it twice.
+#[derive(Clone)]
+struct GuardLink {
+    /// The detecting subscriber, `node/endpoint`.
+    sub_ref: String,
+    ms: f64,
+    /// `sub` when the subscriber states it, `topic` when it inherits it.
+    from: &'static str,
+    /// The guard topic's FQN.
+    topic: String,
+}
+
+impl GuardLink {
+    /// The declaration charged: the subscriber's, or its topic's.
+    fn declared_on(&self) -> String {
+        if self.from == "sub" {
+            self.sub_ref.clone()
+        } else {
+            self.topic.clone()
+        }
+    }
+}
+
+impl ReactionWalk {
+    /// The route charged after a window's DEADLINE (phase 85 I1): the window's
+    /// owner reads the deadline on its own clock, so nothing crosses the
+    /// guard edge there and its link is not charged.
+    fn route_after_deadline_ms(&self) -> f64 {
+        self.route_ms - self.link.as_ref().map_or(0.0, |l| l.ms)
+    }
+
+    /// The route as charged, and how it divides when a link is part of it.
+    fn charged(&self, after_deadline: bool) -> (f64, String) {
+        match (&self.link, after_deadline) {
+            (Some(l), false) => (
+                self.route_ms,
+                format!(
+                    "route = link {:.2}ms (max_transport into '{}', {}-level) + path {:.2}ms",
+                    l.ms,
+                    l.sub_ref,
+                    l.from,
+                    self.route_ms - l.ms
+                ),
+            ),
+            (Some(l), true) => (
+                self.route_after_deadline_ms(),
+                format!(
+                    "route = path {:.2}ms; the guard edge's link ({:.2}ms into '{}') is not \
+                     charged after a window's deadline, which its owner reads on its own clock",
+                    self.route_after_deadline_ms(),
+                    l.ms,
+                    l.sub_ref
+                ),
+            ),
+            (None, _) => (self.route_ms, String::new()),
+        }
+    }
 }
 
 /// Where a reaction's settle is declared: the node, its path, and the
@@ -1818,6 +1908,7 @@ fn walk_reaction(
                     route_ms: hop_ms,
                     settle,
                     hops: vec![hop],
+                    link: None,
                 }
             } else {
                 // Continue from every topic this reaction publishes onto and
@@ -1955,9 +2046,33 @@ fn walk_reaction(
             } else {
                 (hop_paths, false)
             };
-            if let Some(candidate) = advance(
+            let Some(mut candidate) = advance(
                 &node_fqn, hop_paths, sampled, depth, sinks, topics, services, node_paths, graph,
-            ) && best
+            ) else {
+                continue;
+            };
+            // Phase 85 I1: the guard edge. Only at the guard: past it the
+            // walk charges path latencies and clocks, as before.
+            if depth == 0 {
+                let own = props
+                    .and_then(|p| p.max_transport)
+                    .map(|d| d.as_millis_f64());
+                let link = match (own, topic.max_transport_ms) {
+                    (Some(ms), _) => Some((ms, "sub")),
+                    (None, Some(ms)) => Some((ms, "topic")),
+                    (None, None) => None,
+                };
+                if let Some((ms, from)) = link.filter(|(ms, _)| *ms > 0.0) {
+                    candidate.route_ms += ms;
+                    candidate.link = Some(GuardLink {
+                        sub_ref: sub_ref.clone(),
+                        ms,
+                        from,
+                        topic: topic_fqn.to_string(),
+                    });
+                }
+            }
+            if best
                 .as_ref()
                 .is_none_or(|b| candidate.route_ms > b.route_ms)
             {
@@ -2290,6 +2405,8 @@ fn check_fault_reaction(
     // `window-expiry`'s warning is about the declaration, once per window
     // however many hazards wait it out (phase 84).
     let mut expiry_warned: HashSet<(usize, String)> = HashSet::new();
+    // Phase 85 I1: the guard edges some route charged a link on.
+    let mut charged_links: BTreeSet<String> = BTreeSet::new();
     let hazards = index.hazards.clone();
     let topics = index.topics.clone();
     let services = index.services.clone();
@@ -2649,10 +2766,22 @@ fn check_fault_reaction(
                 &node_paths,
                 graph,
             );
-            let route_ms = walk
-                .as_ref()
-                .map(|w| w.route_ms)
-                .or_else(|| rp.path.max_latency.map(|d| d.as_millis_f64()));
+            // Phase 85 I1: the guard edge's link is charged unless a window's
+            // deadline is what starts this rung.
+            let after_deadline = !windows.is_empty();
+            let (route_ms, route_note) = match &walk {
+                Some(w) => {
+                    let (ms, note) = w.charged(after_deadline);
+                    if let Some(l) = w.link.as_ref().filter(|_| !after_deadline) {
+                        charged_links.insert(l.declared_on());
+                    }
+                    (Some(ms), note)
+                }
+                None => (
+                    rp.path.max_latency.map(|d| d.as_millis_f64()),
+                    String::new(),
+                ),
+            };
             // A windowed rung is transitional: its sink is a notification,
             // not a safe state, so it has no settle and is not a promise of
             // its own -- which is also why it is exempt from
@@ -2706,6 +2835,7 @@ fn check_fault_reaction(
                         "lasts at least {d:.2}ms once on; transitional: charged to every rung \
                          below it up to its deadline"
                     ),
+                    route_note,
                     ..Default::default()
                 });
                 windows.push(WaitedWindow {
@@ -2765,6 +2895,7 @@ fn check_fault_reaction(
                 settle_how: settle.how,
                 total_ms: Some(total),
                 ftti_ms: Some(ftti),
+                route_note,
                 ..Default::default()
             });
             if total > ftti {
@@ -2837,19 +2968,41 @@ fn check_fault_reaction(
         };
         let settle_ms = settle.ms;
         let declared_ms = reaction.path.max_latency.map(|d| d.as_millis_f64());
+        // Phase 85 I1: the floor's route, with the guard edge's link unless a
+        // window's deadline starts it.
+        let floor_after_deadline = !windows.is_empty();
+        let floor_split = walk
+            .as_ref()
+            .map(|w| w.charged(floor_after_deadline).1)
+            .unwrap_or_default();
+        if let Some(l) = walk
+            .as_ref()
+            .and_then(|w| w.link.as_ref())
+            .filter(|_| !floor_after_deadline)
+        {
+            charged_links.insert(l.declared_on());
+        }
         let (frti_route, route_note) = match (&walk, declared_ms) {
-            (Some(w), _) => (
-                w.route_ms,
-                format!(
-                    "reaction route {} = {:.2}ms",
-                    w.hops
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(" → "),
-                    w.route_ms
-                ),
-            ),
+            (Some(w), _) => {
+                let (ms, _) = w.charged(floor_after_deadline);
+                let link = match &w.link {
+                    Some(l) if !floor_after_deadline => {
+                        format!("link {:.2}ms into {} + ", l.ms, l.sub_ref)
+                    }
+                    _ => String::new(),
+                };
+                (
+                    ms,
+                    format!(
+                        "reaction route {link}{} = {ms:.2}ms",
+                        w.hops
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(" → "),
+                    ),
+                )
+            }
             (None, Some(d)) => {
                 diags.push(Diagnostic {
                     rule_id: "reaction-unreachable".to_string(),
@@ -2945,6 +3098,7 @@ fn check_fault_reaction(
             settle_how: settle.how,
             total_ms: fdti_ms.map(|f| f + waited + frti),
             ftti_ms,
+            route_note: floor_split,
             ..Default::default()
         });
         let Some(ftti) = ftti_ms else {
@@ -3001,6 +3155,7 @@ fn check_fault_reaction(
     diags.retain(|d| seen.insert((d.rule_id.clone(), d.path.clone(), d.message.clone())));
     index.merge_diagnostics.extend(diags);
     index.budgets = budgets;
+    index.charged_transport = charged_links;
 }
 
 /// Re-run the requirement checks once per mode whose `overrides:` pin

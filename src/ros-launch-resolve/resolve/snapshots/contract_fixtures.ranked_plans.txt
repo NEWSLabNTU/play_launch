@@ -957,6 +957,52 @@ RankedPlan {
     ],
     warnings: [],
 }
+== contract_takeover_link/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/handler",
+            path: "on_timer",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "call_mrm",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "driver_exit",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
+        },
+        RankItem {
+            node: "/estop_op",
+            path: "on_timer",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+        },
+    ],
+    warnings: [],
+}
 == contract_transport_notice/launch/bringup.launch.xml
 RankedPlan {
     items: [

@@ -273,8 +273,10 @@ fn no_color_turns_colour_off_on_a_terminal() {
 }
 
 /// T7 (I7): every `max_transport` declaration, subscriber- or topic-level,
-/// gets one `declared-not-charged` info naming the key, until phase 85 I1
-/// charges it in the fault arithmetic.
+/// that no reaction route charges gets one `declared-not-charged` info
+/// naming the key. This fixture has no hazard, so neither is on a guard
+/// edge; T1 (`takeover_link_is_charged_on_the_guard_edge`) is the charged
+/// case.
 #[test]
 fn a_transport_bound_says_it_is_not_charged() {
     let out = check("contract_transport_notice", &[]);
@@ -290,7 +292,7 @@ fn a_transport_bound_says_it_is_not_charged() {
         "{s}"
     );
     assert!(
-        s.contains("is not charged by the fault-reaction arithmetic yet"),
+        s.contains("is not charged by the fault-reaction arithmetic: no hazard's reaction route enters through it"),
         "{s}"
     );
 }
