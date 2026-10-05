@@ -220,3 +220,20 @@ fn no_color_turns_colour_off_on_a_terminal() {
     assert!(!plain.contains(&0x1b), "{}", String::from_utf8_lossy(&plain));
     assert!(String::from_utf8_lossy(&plain).contains("error[rate-hierarchy]"));
 }
+
+/// T7 (I7): every `max_transport` declaration, subscriber- or topic-level,
+/// gets one `declared-not-charged` info naming the key, until phase 85 I1
+/// charges it in the fault arithmetic.
+#[test]
+fn a_transport_bound_says_it_is_not_charged() {
+    let out = check("contract_transport_notice", &[]);
+    let s = text(&out);
+    assert_eq!(out.status.code(), Some(0), "{s}");
+    assert_eq!(s.matches("info[declared-not-charged]").count(), 2, "{s}");
+    assert!(
+        s.contains("`nodes.control_node.sub.scan.max_transport: 57ms` on '/dx/control_node/scan'"),
+        "{s}"
+    );
+    assert!(s.contains("`topics./dx/cmd.max_transport: 3ms` on topic '/dx/cmd'"), "{s}");
+    assert!(s.contains("is not charged by the fault-reaction arithmetic yet"), "{s}");
+}

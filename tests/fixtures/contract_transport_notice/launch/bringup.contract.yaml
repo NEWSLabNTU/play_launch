@@ -1,0 +1,40 @@
+# Phase 85 T7 (I7) -- clean, with two transport bounds the fault-reaction
+# arithmetic does not read: the subscriber-level one on control_node/scan
+# (the island's shape, `max_transport: 57ms` on the handler's input) and a
+# topic-level default on /dx/cmd (absolute: the nodes sit in /dx, the
+# launch scope at /). Each must produce one
+# info[declared-not-charged] until phase 85 I1 charges the key; then T1
+# takes over.
+version: 1
+
+nodes:
+  sensor_node:
+    pub:
+      scan: {}
+    paths:
+      tick:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [scan]
+        max_latency: 5ms
+
+  control_node:
+    sub:
+      scan:
+        max_transport: 57ms
+    pub:
+      cmd: {}
+    paths:
+      control:
+        trigger: { input: [scan] }
+        output: [cmd]
+        max_latency: 10ms
+
+topics:
+  /dx/scan:
+    type: std_msgs/msg/String
+    pub: [sensor_node/scan]
+    sub: [control_node/scan]
+  /dx/cmd:
+    type: std_msgs/msg/String
+    pub: [control_node/cmd]
+    max_transport: 3ms
