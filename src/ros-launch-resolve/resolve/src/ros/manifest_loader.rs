@@ -970,6 +970,72 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
 
     // Phase 85 I7: a stated key the fault arithmetic does not read.
     note_declared_not_charged(index);
+
+    // Phase 85 I8: an endpoint no topic wires.
+    check_endpoint_unwired(index);
+}
+
+/// `endpoint-unwired` (phase 85 I8, the cheap half of D6): a warning per
+/// endpoint under a node's `sub:`/`pub:` that no topic wires -- no `topics:`
+/// entry in any scope lists it, and no topic derived from the launch
+/// file's remaps carries it.
+///
+/// Such an endpoint was dropped from the graph and from every count with no
+/// diagnostic, so an author could not tell a typo in a `topics:` list from
+/// an endpoint the graph knows. An endpoint a path names as `input:` or
+/// `output:` is the `wiring` rule's (it already warns), so it is skipped
+/// here rather than reported twice.
+fn check_endpoint_unwired(index: &mut ManifestIndex) {
+    let mut wired_pub: HashSet<&str> = HashSet::new();
+    let mut wired_sub: HashSet<&str> = HashSet::new();
+    for t in index.topics.values() {
+        wired_pub.extend(t.publishers.iter().map(String::as_str));
+        wired_sub.extend(t.subscribers.iter().map(String::as_str));
+    }
+    let mut out: Vec<Diagnostic> = Vec::new();
+    let mut manifests: Vec<&ResolvedManifest> = index.manifests.values().collect();
+    manifests.sort_by_key(|m| m.scope_id);
+    for m in manifests {
+        for (node, decl) in &m.manifest.nodes {
+            let in_paths: HashSet<&str> = decl
+                .paths
+                .values()
+                .flat_map(|p| p.input.iter().chain(p.output.iter()))
+                .map(String::as_str)
+                .collect();
+            for (side, eps, wired, list) in [
+                ("sub", &decl.subscribers, &wired_sub, "sub"),
+                ("pub", &decl.publishers, &wired_pub, "pub"),
+            ] {
+                for ep in eps.keys() {
+                    if in_paths.contains(ep.as_str()) {
+                        continue;
+                    }
+                    let fqn =
+                        resolve_endpoint_ref(index, m.scope_id, &m.ns, &format!("{node}/{ep}"));
+                    if wired.contains(fqn.as_str()) {
+                        continue;
+                    }
+                    let key = format!("nodes.{node}.{side}.{ep}");
+                    out.push(Diagnostic {
+                        rule_id: "endpoint-unwired".to_string(),
+                        severity: Severity::Warning,
+                        message: format!(
+                            "{}: node '{}' declares `{side}: {ep}` ('{fqn}'), and no topic \
+                             wires it -- no `topics.<name>.{list}:` list names \
+                             '{node}/{ep}' -- so it is in no graph edge and no count. \
+                             Wire it under `topics:`, or drop the declaration",
+                            super::value_rules::site(index, m.scope_id, &key),
+                            resolve_node_fqn(index, m.scope_id, &m.ns, node),
+                        ),
+                        path: key,
+                        span: None,
+                    });
+                }
+            }
+        }
+    }
+    index.merge_diagnostics.extend(out);
 }
 
 /// `declared-not-charged` (phase 85 I7): an info per `max_transport`

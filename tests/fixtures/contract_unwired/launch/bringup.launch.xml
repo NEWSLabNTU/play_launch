@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Phase 85 T7 (I8): a contract with one endpoint no topic wires
+       (bringup.contract.yaml). No package needs to be built. -->
+  <node pkg="contract_dx_demo" exec="sensor_node" name="sensor_node" namespace="/dx"/>
+  <node pkg="contract_dx_demo" exec="control_node" name="control_node" namespace="/dx"/>
+</launch>

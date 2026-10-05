@@ -237,3 +237,18 @@ fn a_transport_bound_says_it_is_not_charged() {
     assert!(s.contains("`topics./dx/cmd.max_transport: 3ms` on topic '/dx/cmd'"), "{s}");
     assert!(s.contains("is not charged by the fault-reaction arithmetic yet"), "{s}");
 }
+
+/// T7 (I8): an endpoint under `sub:`/`pub:` that no topic wires is a
+/// warning naming the node and the key; a wired one and a path's own
+/// endpoint (the `wiring` rule's) are not.
+#[test]
+fn an_unwired_endpoint_is_a_warning() {
+    let out = check("contract_unwired", &[]);
+    let s = text(&out);
+    assert_eq!(out.status.code(), Some(0), "a warning, not an error:\n{s}");
+    assert_eq!(s.matches("warning[endpoint-unwired]").count(), 1, "{s}");
+    assert!(
+        s.contains("node '/dx/control_node' declares `sub: odom` ('/dx/control_node/odom')"),
+        "{s}"
+    );
+}
