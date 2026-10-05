@@ -476,6 +476,17 @@ fn nearest_file_scope_id(
     }
 }
 
+/// Set by a caller that renders [`ManifestIndex::load_diagnostics`] and
+/// `merge_diagnostics` itself (`check`, phase 85 I5): the loader then logs
+/// them at DEBUG instead of WARN, so a parse failure is printed once.
+static DIAGNOSTICS_RENDERED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// See [`DIAGNOSTICS_RENDERED`].
+pub fn set_diagnostics_rendered(on: bool) {
+    DIAGNOSTICS_RENDERED.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Load manifests for all file scopes in the launch tree.
 ///
 /// For each scope with a known `(pkg, file)` origin, resolves the contract
@@ -679,6 +690,12 @@ pub fn load_manifests(
                 scope.file().unwrap_or("?")
             );
             match diag.severity {
+                // `check` renders these itself (phase 85 I5): print once.
+                Severity::Error
+                    if DIAGNOSTICS_RENDERED.load(std::sync::atomic::Ordering::Relaxed) =>
+                {
+                    debug!("{scope_label} {diag}")
+                }
                 Severity::Error => warn!("{scope_label} {diag}"),
                 Severity::Warning => debug!("{scope_label} {diag}"),
                 Severity::Info => debug!("{scope_label} {diag}"),
@@ -746,9 +763,14 @@ pub fn load_manifests(
     // A contract that could not be loaded is an ERROR, not a warning: the
     // file is dropped whole, so every contract in it silently stops being
     // checked. Folded first so the tally below includes it.
+    let rendered = DIAGNOSTICS_RENDERED.load(std::sync::atomic::Ordering::Relaxed);
     for diag in &index.load_diagnostics {
         index.total_errors += 1;
-        warn!("[load] {diag}");
+        if rendered {
+            debug!("[load] {diag}");
+        } else {
+            warn!("[load] {diag}");
+        }
     }
 
     // Fold merge diagnostics into the total counts and log them
@@ -756,7 +778,11 @@ pub fn load_manifests(
         match diag.severity {
             Severity::Error => {
                 index.total_errors += 1;
-                warn!("[cross-scope] {diag}");
+                if rendered {
+                    debug!("[cross-scope] {diag}");
+                } else {
+                    warn!("[cross-scope] {diag}");
+                }
             }
             Severity::Warning => {
                 index.total_warnings += 1;

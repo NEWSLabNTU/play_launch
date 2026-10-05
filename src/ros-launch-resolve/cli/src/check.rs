@@ -28,6 +28,8 @@ pub fn handle_check(args: &CheckArgs) -> Result<()> {
         export_graph: args.export_graph.clone(),
         emit: args.emit.clone(),
         expect: args.expect.clone(),
+        ascii: args.ascii,
+        width: args.width,
     })?;
 
     if code != 0 {

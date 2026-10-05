@@ -2171,6 +2171,7 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "sha2",
+ "termcolor",
  "tokio",
  "toml",
  "tracing",

@@ -372,6 +372,15 @@ pub struct CheckArgs {
     /// Only meaningful together with a resolved scheduling platform file
     /// (`--sched`, or one resolved via the overlay/provider channels) — a
     /// no-op note is printed otherwise (not an error).
+    ///
+    /// When the contract declares hazards, also prints the fault-reaction
+    /// budget table, one row per (hazard, rung), in ms: HAZARD, RUNG, ROLE
+    /// (rung, window, floor, skipped), DETECT (the fault's detection time),
+    /// WINDOWS (route and window of every windowed rung passed on the way),
+    /// ROUTE (the reaction route of this rung, one number summed over its
+    /// hops), SETTLE (time to settle, and how it was obtained), TOTAL
+    /// (DETECT + WINDOWS + ROUTE + SETTLE), FTTI (the hazard's fault-tolerant
+    /// time interval) and SLACK (FTTI - TOTAL).
     #[arg(long)]
     pub explain: bool,
 
@@ -401,6 +410,19 @@ pub struct CheckArgs {
     /// too old to parse the contract.
     #[arg(long, value_name = "RULE_ID")]
     pub expect: Vec<String>,
+
+    /// ASCII-only output: `->` for the route arrow, `--` for an em dash,
+    /// `-`/`|`/`+` for the section rules and source frames. On by itself
+    /// when stderr is not a terminal (a pipe, a CI log). ANSI colour is
+    /// likewise only emitted on a terminal, and never with NO_COLOR set.
+    #[arg(long)]
+    pub ascii: bool,
+
+    /// Wrap every output line longer than N characters (at a space; the
+    /// continuation is indented). Off by default, so a script's grep sees
+    /// each diagnostic on one line.
+    #[arg(long, value_name = "N")]
+    pub width: Option<usize>,
 }
 
 // `CheckArgs::contract_sources` is gone: resolving the overlay/provider

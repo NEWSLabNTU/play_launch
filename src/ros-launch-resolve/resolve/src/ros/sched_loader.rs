@@ -1916,14 +1916,14 @@ pub fn check_sched(
 ) -> Result<DerivedSchedPlan> {
     let derived = derive_sched_plan(dump, index, sched_path, target, SchedApplyMode::Warn)?;
 
-    eprintln!(
+    crate::say!(
         "Scheduling ({}, mapper={}): {} tier(s)",
         derived.target,
         derived.mapper,
         derived.plan.tiers.len()
     );
     for t in &derived.plan.tiers {
-        eprintln!(
+        crate::say!(
             "  tier {:<16} prio={:<4} sched_class={:<10} core={:<4} members={}",
             t.name,
             t.priority,
@@ -1932,13 +1932,13 @@ pub fn check_sched(
             t.members.len(),
         );
         for m in &t.members {
-            eprintln!("      {m}");
+            crate::say!("      {m}");
         }
     }
     // Single authoritative surfacing point for `check` (45.1a): structured,
     // deduped, with a summary line (45.1c) — `render_explain` must NOT
     // re-print these, even under `--explain`.
-    eprint!(
+    crate::say_raw!(
         "{}",
         render_sched_warnings_summary(&derived.warnings, derived.suppressed_contradictions)
     );
@@ -1959,7 +1959,7 @@ pub fn print_explain(
     platform: &ResolvedPlatformFile,
     index: Option<&ManifestIndex>,
 ) {
-    eprint!("{}", render_explain(derived, platform, index));
+    crate::say_raw!("{}", render_explain(derived, platform, index));
 }
 
 /// One `--explain` table row (Phase 45.6, design "Consumers become
