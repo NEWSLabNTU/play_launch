@@ -678,6 +678,15 @@ pub struct CheckArgs {
     /// consequence of the contract, printed to stdout, never written back.
     #[arg(long, value_name = "WHAT")]
     pub emit: Option<String>,
+
+    /// Expect the check to FAIL with exactly these rules (repeatable). Exit 0
+    /// only when every Error-severity diagnostic is one of them, each of
+    /// them fired, and no contract file was refused; otherwise a line names
+    /// what differed and the exit is non-zero (1, or 3 for a refusal). For a
+    /// CI negative test: an exit-code-only comparison passes on a checker
+    /// too old to parse the contract.
+    #[arg(long, value_name = "RULE_ID")]
+    pub expect: Vec<String>,
 }
 
 // `CheckArgs::contract_sources` moved to `verbs::check::CheckInputs` with the

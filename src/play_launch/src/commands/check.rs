@@ -34,6 +34,7 @@ pub fn handle_check(args: &CheckArgs) -> Result<()> {
         explain: args.explain,
         export_graph: args.export_graph.clone(),
         emit: args.emit.clone(),
+        expect: args.expect.clone(),
     })?;
 
     if code != 0 {

@@ -86,3 +86,84 @@ fn a_refusal_names_the_checker_and_its_rlm_tag() {
         "no checker line naming `{version}`:\n{s}"
     );
 }
+
+/// `check` on a takeover fixture, with the fixture ament tree on the path
+/// (the settle derivation reads the operators' parameter files from it).
+fn check_takeover(dir: &str, extra: &[&str]) -> Output {
+    let root = fixtures::repo_root().join("tests/fixtures");
+    let ament = root.join("contract_takeover/ament");
+    let prefix = match test_env().get("AMENT_PREFIX_PATH") {
+        Some(p) if !p.is_empty() => format!("{}:{p}", ament.display()),
+        _ => ament.display().to_string(),
+    };
+    play_launch()
+        .arg("check")
+        .arg(root.join(dir).join("launch/bringup.launch.xml"))
+        .args(extra)
+        .env("AMENT_PREFIX_PATH", prefix)
+        .output()
+        .expect("play_launch check runs")
+}
+
+/// T5 (I4): a refused contract exits 3, not 1, and the JSON report names the
+/// refusal as a `manifest-parse` entry under `<load>`.
+#[test]
+fn a_refusal_has_its_own_exit_code_and_json_entry() {
+    let out = check("contract_unknown_key", &[]);
+    assert_eq!(out.status.code(), Some(3), "{}", text(&out));
+
+    let out = check("contract_unknown_key", &["--format", "json"]);
+    assert_eq!(out.status.code(), Some(3), "{}", text(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let report: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("stdout is not one JSON array ({e}):\n{stdout}"));
+    let entries = report.as_array().expect("an array");
+    assert!(
+        entries
+            .iter()
+            .any(|d| d["rule"] == "manifest-parse" && d["file"] == "<load>" && d["severity"] == "error"),
+        "{stdout}"
+    );
+
+    // A rule failure is still 1.
+    let out = check("contract_error", &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+}
+
+/// T5 (I4): `--expect` passes only on exactly the expected errors.
+#[test]
+fn expect_passes_only_on_exactly_the_expected_rules() {
+    // contract_error fails rate-hierarchy and nothing else.
+    let out = check("contract_error", &["--expect", "rate-hierarchy"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    assert!(text(&out).contains("expect: ok"), "{}", text(&out));
+
+    // The expected rule did not fire.
+    let out = check("contract_error", &["--expect", "ladder-rung-budget"]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    let s = text(&out);
+    assert!(s.contains("expected error[ladder-rung-budget] did not fire"), "{s}");
+    assert!(s.contains("unexpected error[rate-hierarchy]"), "{s}");
+
+    // It fired, alongside rules that were not expected.
+    let out = check_takeover("contract_takeover_budget", &["--expect", "ladder-rung-budget"]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    assert!(text(&out).contains("unexpected error[fault-reaction-budget]"), "{}", text(&out));
+
+    // Every rule it fails, expected: a pass.
+    let out = check_takeover(
+        "contract_takeover_budget",
+        &[
+            "--expect", "ladder-rung-budget",
+            "--expect", "fault-reaction-budget",
+            "--expect", "settle-param-unresolved",
+            "--expect", "window-param",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+
+    // A refusal never passes an expectation, and keeps its own code.
+    let out = check("contract_unknown_key", &["--expect", "rate-hierarchy"]);
+    assert_eq!(out.status.code(), Some(3), "{}", text(&out));
+    assert!(text(&out).contains("expect: FAILED -- 1 contract file(s) were refused"), "{}", text(&out));
+}

@@ -16,6 +16,15 @@
 //! | no manifests found at all                           | `Ok(0)`         |
 //! | manifests checked, no Error-severity diagnostic     | `Ok(0)`         |
 //! | at least one Error-severity diagnostic (post-filter)| `Ok(1)`         |
+//! | a contract file was REFUSED (`manifest-parse`)      | `Ok(3)`         |
+//! | `--expect`: exactly the expected rules erred        | `Ok(0)`         |
+//! | `--expect`: a rule missing, an extra rule, a drop   | `Ok(1)`         |
+//!
+//! Phase 85 I4: a refusal is its own verdict, [`EXIT_REFUSED`] (3), so a CI
+//! script expecting a rule to fail (exit 1) cannot pass on a checker too old
+//! to parse the contract. It wins over every other outcome, `--rule` and
+//! `--expect` included: a refused file was not checked at all. 2 is not used
+//! because clap exits 2 on a usage error.
 //!
 //! The error count is taken AFTER `--rule` filtering and spans both
 //! per-scope and cross-scope diagnostics, so `--rule` narrows the exit code
@@ -65,7 +74,16 @@ pub struct CheckInputs {
     /// `diagnostics-params` — `diagnostic_updater` parameters restated from
     /// the declared endpoint bounds (phase 71 W5).
     pub emit: Option<String>,
+    /// Phase 85 I4: the rule ids this check is EXPECTED to fail with. Empty
+    /// = an ordinary check. Otherwise the verdict is 0 only when every
+    /// Error-severity diagnostic is one of these rules, each of them fired,
+    /// and no contract was refused -- see [`expect_verdict`].
+    pub expect: Vec<String>,
 }
+
+/// Exit status for a contract file the grammar refused (`manifest-parse`),
+/// distinct from 1 (the contract has errors). Phase 85 I4.
+pub const EXIT_REFUSED: i32 = 3;
 
 impl CheckInputs {
     /// Build the two-step `ContractSources` from these inputs.
@@ -237,11 +255,115 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // Summary
     print_summary(&index, rule_filter.as_ref());
 
+    let refused = index
+        .load_diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "manifest-parse")
+        .count();
+
+    if !inputs.expect.is_empty() {
+        let (code, line) = expect_verdict(&index, &inputs.expect, refused, dropped_is_error);
+        eprintln!("{line}");
+        return Ok(code);
+    }
+
+    if refused > 0 {
+        return Ok(EXIT_REFUSED);
+    }
+
     if has_filtered_errors(&index, rule_filter.as_ref()) || dropped_is_error {
         return Ok(1);
     }
 
     Ok(0)
+}
+
+/// `--expect <rule-id>` (phase 85 I4): the verdict of a NEGATIVE test.
+///
+/// A CI script that wants a contract to fail one named rule used to compare
+/// exit codes only, and a contract the checker could not parse also exits
+/// non-zero, so a checker too old for the grammar passed every negative test.
+/// Here the expected outcome is stated, and anything else is a failure with a
+/// line saying which:
+///
+/// - a refused contract file: [`EXIT_REFUSED`] -- the rules never ran;
+/// - an expected rule that did not fire as an error: 1;
+/// - an Error-severity diagnostic from a rule not expected: 1;
+/// - a dropped (unsupported) launch action, unless downgraded: 1.
+///
+/// The rule set is taken BEFORE `--rule` filtering: `--rule` narrows what is
+/// printed, `--expect` states the whole verdict.
+pub fn expect_verdict(
+    index: &manifest_loader::ManifestIndex,
+    expect: &[String],
+    refused: usize,
+    dropped_is_error: bool,
+) -> (i32, String) {
+    use std::collections::BTreeMap;
+    let want: std::collections::BTreeSet<&str> = expect.iter().map(String::as_str).collect();
+    if refused > 0 {
+        return (
+            EXIT_REFUSED,
+            format!(
+                "expect: FAILED -- {refused} contract file(s) were refused \
+                 (error[manifest-parse]), so the expected rule(s) [{}] were never checked",
+                want.iter().copied().collect::<Vec<_>>().join(", ")
+            ),
+        );
+    }
+    let mut fired: BTreeMap<&str, usize> = BTreeMap::new();
+    for d in index
+        .manifests
+        .values()
+        .flat_map(|m| m.diagnostics.iter())
+        .chain(index.merge_diagnostics.iter())
+        .chain(index.load_diagnostics.iter())
+        .filter(|d| d.severity == Severity::Error)
+    {
+        *fired.entry(d.rule_id.as_str()).or_default() += 1;
+    }
+    let missing: Vec<&str> = want
+        .iter()
+        .copied()
+        .filter(|r| !fired.contains_key(r))
+        .collect();
+    let extra: Vec<String> = fired
+        .iter()
+        .filter(|(r, _)| !want.contains(*r))
+        .map(|(r, n)| format!("error[{r}] x{n}"))
+        .collect();
+    let mut why: Vec<String> = Vec::new();
+    if !missing.is_empty() {
+        why.push(format!(
+            "expected {} did not fire",
+            missing
+                .iter()
+                .map(|r| format!("error[{r}]"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !extra.is_empty() {
+        why.push(format!("unexpected {}", extra.join(", ")));
+    }
+    if dropped_is_error {
+        why.push("unsupported launch action(s) were dropped".to_string());
+    }
+    if why.is_empty() {
+        (
+            0,
+            format!(
+                "expect: ok -- the errors are exactly [{}]",
+                fired
+                    .iter()
+                    .map(|(r, n)| format!("error[{r}] x{n}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )
+    } else {
+        (1, format!("expect: FAILED -- {}", why.join("; ")))
+    }
 }
 
 /// `check --explain`'s fault-reaction table (phase 83): per hazard, every

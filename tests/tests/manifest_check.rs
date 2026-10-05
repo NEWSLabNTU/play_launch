@@ -1747,7 +1747,8 @@ fn takeover_budget_rules_fire_on_their_fixture() {
 #[test]
 fn an_exit_without_a_window_refuses_the_contract() {
     let (code, out) = check_takeover("contract_takeover_exit", &[]);
-    assert_eq!(code, 1, "{out}");
+    // Phase 85 I4: a refusal is its own exit status, not a rule failure.
+    assert_eq!(code, 3, "{out}");
     assert!(out.contains("error[manifest-parse]"), "{out}");
     assert!(out.contains("bringup.contract.yaml:"), "{out}");
     assert!(
