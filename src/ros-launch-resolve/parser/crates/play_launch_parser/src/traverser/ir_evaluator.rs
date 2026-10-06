@@ -379,6 +379,9 @@ fn ir_to_container_action(
             namespace: namespace.as_ref().map(|n| n.parts.clone()),
             args: args.as_ref().map(|a| a.parts.clone()),
             ros_args: ros_args.as_ref().map(|a| a.parts.clone()),
+            // The IR does not model container respawn (dormant feature).
+            respawn: None,
+            respawn_delay: None,
             composable_nodes: nodes
                 .iter()
                 .map(|n| composable_decl_to_action(n, context))

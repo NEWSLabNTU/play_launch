@@ -666,6 +666,13 @@ impl LaunchTraverser {
             .map(parse_substitutions)
             .transpose()?;
 
+        let respawn = yaml_str(map, "respawn")
+            .map(parse_substitutions)
+            .transpose()?;
+        let respawn_delay = yaml_str(map, "respawn_delay")
+            .map(parse_substitutions)
+            .transpose()?;
+
         // Parse composable_node children
         let composable_nodes = parse_yaml_composable_nodes(map, "composable_node", &self.context)?;
 
@@ -676,6 +683,8 @@ impl LaunchTraverser {
             executable,
             args,
             ros_args,
+            respawn,
+            respawn_delay,
             composable_nodes,
         };
 

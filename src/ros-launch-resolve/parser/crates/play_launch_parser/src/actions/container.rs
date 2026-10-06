@@ -27,7 +27,47 @@ pub struct ContainerAction {
     /// (`--log-level <container>:=warn`). Survives a `--container-mode`
     /// override untouched: that rewrites `args`, never this.
     pub ros_args: Option<Vec<Substitution>>,
+    /// `<node_container respawn=… respawn_delay=…>` — a container is a node,
+    /// and ROS 2 honours both. These used to be accepted by the attribute
+    /// spec and then dropped, so a respawning container did not respawn
+    /// under the Rust parser while the Python one carried it. Composables
+    /// have no respawn attribute of their own; play_launch's
+    /// `composable_respawn: inherit` reads the container's.
+    pub respawn: Option<Vec<Substitution>>,
+    pub respawn_delay: Option<Vec<Substitution>>,
     pub composable_nodes: Vec<ComposableNodeAction>,
+}
+
+/// The container's `respawn`/`respawn_delay`, resolved the way the Python
+/// dump does (`composable_node_container.py`): `respawn` is `Some(true)` only
+/// when it is true — false and unset are both `None` — and a delay is kept
+/// as given.
+fn resolve_respawn(
+    respawn: Option<&Vec<Substitution>>,
+    respawn_delay: Option<&Vec<Substitution>>,
+    context: &LaunchContext,
+) -> Result<(Option<bool>, Option<f64>)> {
+    let respawn = respawn
+        .map(|subs| {
+            resolve_substitutions(subs, context)
+                .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))
+        })
+        .transpose()?
+        .and_then(|v| {
+            matches!(v.trim().to_ascii_lowercase().as_str(), "true" | "1" | "yes").then_some(true)
+        });
+    let respawn_delay = respawn_delay
+        .map(|subs| {
+            let v = resolve_substitutions(subs, context)
+                .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+            v.trim().parse::<f64>().map_err(|_| {
+                ParseError::InvalidSubstitution(format!(
+                    "Failed to parse node_container respawn_delay value '{v}' as number"
+                ))
+            })
+        })
+        .transpose()?;
+    Ok((respawn, respawn_delay))
 }
 
 /// Composable node action
@@ -116,6 +156,15 @@ impl ContainerAction {
             .map(|s| parse_substitutions(&s))
             .transpose()?;
 
+        let respawn = entity
+            .optional_attr_str("respawn")?
+            .map(|s| parse_substitutions(&s))
+            .transpose()?;
+        let respawn_delay = entity
+            .optional_attr_str("respawn_delay")?
+            .map(|s| parse_substitutions(&s))
+            .transpose()?;
+
         // Parse composable_node children
         let mut composable_nodes = Vec::new();
         for child in entity.children() {
@@ -155,6 +204,8 @@ impl ContainerAction {
             executable,
             args,
             ros_args,
+            respawn,
+            respawn_delay,
             composable_nodes,
         })
     }
@@ -193,6 +244,8 @@ impl ContainerAction {
         };
         let arguments = resolve_args(&self.args)?;
         let ros_arguments = resolve_args(&self.ros_args)?;
+        let (respawn, respawn_delay) =
+            resolve_respawn(self.respawn.as_ref(), self.respawn_delay.as_ref(), context)?;
 
         let empty_args = Vec::new();
         let arg_list = arguments.as_deref().unwrap_or(&empty_args);
@@ -227,8 +280,8 @@ impl ContainerAction {
             params_files: Vec::new(),
             param_sources: Vec::new(),
             remaps: Vec::new(),
-            respawn: None,
-            respawn_delay: None,
+            respawn,
+            respawn_delay,
             ros_args: ros_arguments,
             scope: None,
         })
@@ -281,6 +334,8 @@ impl ContainerAction {
         };
         let arguments = resolve_args(&self.args)?;
         let ros_arguments = resolve_args(&self.ros_args)?;
+        let (respawn, respawn_delay) =
+            resolve_respawn(self.respawn.as_ref(), self.respawn_delay.as_ref(), context)?;
 
         let empty_args = Vec::new();
         let arg_list = arguments.as_deref().unwrap_or(&empty_args);
@@ -316,8 +371,8 @@ impl ContainerAction {
             params_files: Vec::new(),
             param_sources: Vec::new(),
             remaps: Vec::new(),
-            respawn: None,
-            respawn_delay: None,
+            respawn,
+            respawn_delay,
             ros_args: ros_arguments,
             scope: None,
         })

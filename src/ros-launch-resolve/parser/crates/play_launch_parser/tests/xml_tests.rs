@@ -826,6 +826,46 @@ fn test_node_container() {
     assert_eq!(container["namespace"].as_str().unwrap(), "/test");
 }
 
+/// A container is a node: ROS 2 honours `respawn`/`respawn_delay` on it, and
+/// the Python dump carries them (`composable_node_container.py`). The Rust
+/// parser accepted both attributes and then dropped them, so a respawning
+/// container never respawned and play_launch's `composable_respawn: inherit`
+/// had nothing to inherit. Python's shape is kept: `respawn` is set only when
+/// true.
+#[test]
+fn test_node_container_respawn_is_carried() {
+    let mut temp_file = NamedTempFile::new().unwrap();
+    let launch_content = r#"<?xml version="1.0"?>
+<launch>
+    <arg name="rs" default="true"/>
+    <node_container pkg="rclcpp_components" exec="component_container" name="a"
+                    respawn="$(var rs)" respawn_delay="2.5" />
+    <node_container pkg="rclcpp_components" exec="component_container" name="b"
+                    respawn="false" />
+    <node_container pkg="rclcpp_components" exec="component_container" name="c" />
+</launch>
+"#;
+    temp_file.write_all(launch_content.as_bytes()).unwrap();
+
+    let result = parse_launch_file(temp_file.path(), HashMap::new()).expect("parses");
+    let json = serde_json::to_value(result).unwrap();
+    let containers = json["container"].as_array().unwrap();
+    let by_name = |n: &str| {
+        containers
+            .iter()
+            .find(|c| c["name"] == n)
+            .unwrap_or_else(|| panic!("container {n}"))
+    };
+    assert_eq!(by_name("a")["respawn"], serde_json::json!(true));
+    assert_eq!(by_name("a")["respawn_delay"], serde_json::json!(2.5));
+    assert!(
+        by_name("b")["respawn"].is_null(),
+        "false is None, as in Python"
+    );
+    assert!(by_name("c")["respawn"].is_null());
+    assert!(by_name("c")["respawn_delay"].is_null());
+}
+
 #[test]
 fn test_node_container_hyphenated() {
     // Create temporary launch file with node-container (hyphenated)
