@@ -89,7 +89,7 @@ impl ComposableSupervisor {
                 self.handle_component_unloaded(&event).await;
             }
             CE::CRASHED => {
-                self.handle_component_crashed(&event).await;
+                self.handle_component_crashed(&event, config).await;
             }
             _ => {} // Unknown event type, ignore
         }
@@ -402,12 +402,21 @@ impl ComposableSupervisor {
     }
 
     /// Handle a CRASHED ComponentEvent.
-    async fn handle_component_crashed(&mut self, event: &play_launch_msgs::msg::ComponentEvent) {
-        self.on_crashed(event.unique_id, &event.error_message).await;
+    async fn handle_component_crashed(
+        &mut self,
+        event: &play_launch_msgs::msg::ComponentEvent,
+        config: &ActorConfig,
+    ) {
+        self.on_crashed(event.unique_id, &event.error_message, config)
+            .await;
     }
 
     /// A loaded composable's process died, from either report channel.
-    pub(super) async fn on_crashed(&mut self, unique_id: u64, error: &str) {
+    ///
+    /// Both channels report the same crash while both are live; whichever
+    /// arrives first clears `unique_id`, so the second finds nothing and the
+    /// crash is counted — and a reload scheduled — exactly once.
+    pub(super) async fn on_crashed(&mut self, unique_id: u64, error: &str, config: &ActorConfig) {
         // Find composable node by unique_id
         let entry = self
             .composable_nodes
@@ -440,6 +449,8 @@ impl ComposableSupervisor {
             },
         )
         .await;
+
+        self.schedule_crash_reload(&name, config).await;
     }
     /// Transition all composable nodes to Blocked state.
     ///
@@ -460,6 +471,9 @@ impl ComposableSupervisor {
                 entry.state = ComposableState::Blocked { reason };
                 entry.unique_id = None;
                 entry.load_started_at = None;
+                // The container's own restart reloads it; a crash reload
+                // still pending would double-load.
+                entry.retry_after = None;
                 blocked.push(name.clone());
             }
         }

@@ -123,6 +123,17 @@ pub enum StateEvent {
         /// Composable node name
         name: String,
     },
+    /// A crashed composable node will be reloaded into its container after
+    /// `delay` (`composable_respawn`). Its state stays `Failed` until the
+    /// reload starts; this event only carries the restart count.
+    ComposableRespawning {
+        /// Composable node name
+        name: String,
+        /// Reloads scheduled for this composable so far, this one included
+        restart_count: u32,
+        /// Delay before the reload (seconds)
+        delay: f64,
+    },
     /// Composable node blocked (container unavailable)
     Blocked {
         /// Composable node name
@@ -168,6 +179,7 @@ impl StateEvent {
             | StateEvent::LoadSucceeded { name, .. }
             | StateEvent::LoadFailed { name, .. }
             | StateEvent::Unloaded { name }
+            | StateEvent::ComposableRespawning { name, .. }
             | StateEvent::Blocked { name, .. }
             | StateEvent::ParameterChanged { name, .. } => name,
         }

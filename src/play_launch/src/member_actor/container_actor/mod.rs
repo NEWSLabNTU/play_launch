@@ -19,6 +19,8 @@
 //!   container's answer decides.
 //! - [`process_lifecycle`]: spawn/exit/stop/restart/respawn handling
 //!   (methods on the actor).
+//! - [`respawn_policy`]: when a crashed composable is reloaded — inherit vs
+//!   on-crash, delay, backoff, and the crash-loop give-up.
 //! - [`timing`]: every Duration const in one place (knobs in phase-52).
 //!
 //! Note: Containers have special spawning requirements (container_state_rx
@@ -31,6 +33,7 @@ mod control_channel;
 mod control_events;
 mod load_policy;
 mod process_lifecycle;
+mod respawn_policy;
 mod ros_client;
 mod supervisor;
 mod timing;

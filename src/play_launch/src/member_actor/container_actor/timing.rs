@@ -74,6 +74,12 @@ pub struct LoadTimings {
     pub stall_cpu_threshold_pct: f64,
     pub stall_action: StallAction,
     pub composable_respawn: ComposableRespawn,
+    /// Crash-loop bound for composable respawn: reloads allowed per window.
+    pub composable_respawn_max_restarts: u32,
+    /// Sliding window over which composable crashes are counted.
+    pub composable_respawn_window: Duration,
+    /// Ceiling of the exponential backoff between reloads.
+    pub composable_respawn_max_backoff: Duration,
 }
 
 impl Default for LoadTimings {
@@ -96,6 +102,9 @@ impl Default for LoadTimings {
             stall_cpu_threshold_pct: 1.0,
             stall_action: StallAction::Report,
             composable_respawn: ComposableRespawn::Off,
+            composable_respawn_max_restarts: 5,
+            composable_respawn_window: Duration::from_secs(300),
+            composable_respawn_max_backoff: Duration::from_secs(60),
         }
     }
 }
@@ -121,6 +130,11 @@ impl LoadTimings {
             stall_cpu_threshold_pct: s.stall_cpu_threshold_pct,
             stall_action: s.stall_action,
             composable_respawn: s.composable_respawn,
+            composable_respawn_max_restarts: s.composable_respawn_max_restarts.max(1),
+            composable_respawn_window: Duration::from_secs(s.composable_respawn_window_secs),
+            composable_respawn_max_backoff: Duration::from_secs(
+                s.composable_respawn_max_backoff_secs,
+            ),
         }
     }
 }

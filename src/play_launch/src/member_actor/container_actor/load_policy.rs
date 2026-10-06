@@ -22,6 +22,7 @@
 
 use super::{
     control_channel::ControlChannel,
+    respawn_policy::{CrashDecision, RespawnPolicy},
     supervisor::{CancelIntent, ComposableSupervisor},
 };
 use crate::{
@@ -33,7 +34,7 @@ use crate::{
     },
 };
 use std::time::{Duration, Instant};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// One composable's answer to "should anything happen to this load now?".
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,8 +52,6 @@ enum SweepAction {
         unique_id: Option<u64>,
         unanswered: u32,
     },
-    /// A crash-respawn delay has elapsed.
-    RetryNow,
 }
 
 /// Decide what is due for one entry. Pure, so the policy is testable without a
@@ -146,11 +145,6 @@ impl ComposableSupervisor {
             .composable_nodes
             .iter()
             .filter_map(|(name, entry)| {
-                if let Some(at) = entry.retry_after
-                    && now >= at
-                {
-                    return Some((name.clone(), SweepAction::RetryNow));
-                }
                 if !matches!(entry.state, ComposableState::Loading { .. }) {
                     return None;
                 }
@@ -208,37 +202,10 @@ impl ComposableSupervisor {
                         t.unanswered_probes = unanswered + 1;
                     }
                 }
-                SweepAction::RetryNow => {
-                    info!("{}: reloading '{}' after its crash", self.name(), name);
-                    self.start_socket_load(&name, control).await;
-                }
             }
         }
 
         self.check_for_stalls(control).await;
-    }
-
-    /// Put an entry back into `Loading` and dispatch it over the socket.
-    ///
-    /// Used by the paths that restart a load from a terminal state (a crash
-    /// reload); the ones that never left `Loading` — a lost load, a confirmed
-    /// cancellation — dispatch directly.
-    async fn start_socket_load(&mut self, name: &str, control: &mut ControlChannel) {
-        let started_at = Instant::now();
-        if let Some(entry) = self.composable_nodes.get_mut(name) {
-            entry.retry_after = None;
-            entry.unique_id = None;
-            entry.state = ComposableState::Loading { started_at };
-            entry.load_started_at = Some(started_at);
-        }
-        emit(
-            self.state_tx(),
-            StateEvent::LoadStarted {
-                name: name.to_string(),
-            },
-        )
-        .await;
-        self.send_load_over_socket(name, control).await;
     }
 
     fn tracking_mut(&mut self, name: &str) -> Option<&mut super::supervisor::LoadTracking> {
@@ -482,34 +449,66 @@ impl ComposableSupervisor {
 
     /// A composable that crashed after loading. The id is confirmed gone — the
     /// container reaped the child and erased it — so this is the one retry
-    /// that needs no confirmation step.
-    pub(super) fn schedule_crash_reload(&mut self, name: &str, config: &ActorConfig) {
-        if self.timings.composable_respawn != ComposableRespawn::OnCrash {
-            return;
-        }
+    /// that needs no confirmation step. Whether, when, and how often is
+    /// `respawn_policy`'s call; the reload itself is dispatched by
+    /// `reload_due_crashes` through the same path a manual load takes.
+    pub(super) async fn schedule_crash_reload(&mut self, name: &str, config: &ActorConfig) {
+        let policy = RespawnPolicy::from_timings(&self.timings);
         let container = self.name().to_string();
-        let max = config.max_respawn_attempts;
-        let delay = config.respawn_delay;
         let Some(entry) = self.composable_nodes.get_mut(name) else {
             return;
         };
-        entry.crash_count += 1;
-        let crash_count = entry.crash_count;
-        if let Some(max) = max
-            && crash_count > max
-        {
-            warn!(
-                "{}: '{}' crashed {} times; not reloading again",
-                container, name, crash_count
-            );
-            return;
-        }
-        entry.retry_after = Some(Instant::now() + Duration::from_secs_f64(delay));
-        entry.tracking = None;
-        info!(
-            "{}: '{}' crashed; reloading in {:.1}s (attempt {})",
-            container, name, delay, crash_count
+        let base_delay = Duration::from_secs_f64(config.respawn_delay.max(0.0));
+        let decision = policy.on_crash(
+            &mut entry.crash_history,
+            Instant::now(),
+            config.respawn_enabled,
+            base_delay,
         );
+        match decision {
+            CrashDecision::Disabled => {
+                entry.retry_after = None;
+                if policy.mode == ComposableRespawn::Inherit {
+                    info!(
+                        "{}: '{}' is not reloaded: its container is not respawn=\"true\" \
+                         (composable_respawn: inherit)",
+                        container, name
+                    );
+                }
+            }
+            CrashDecision::GiveUp { crashes_in_window } => {
+                entry.retry_after = None;
+                error!(
+                    "{}: '{}' crashed {} times within {}s; giving up — it stays Failed \
+                     (composable_respawn_max_restarts: {}). Load it manually to retry.",
+                    container,
+                    name,
+                    crashes_in_window,
+                    policy.window.as_secs(),
+                    policy.max_restarts.max(1)
+                );
+            }
+            CrashDecision::Reload { delay, restart } => {
+                entry.retry_after = Some(Instant::now() + delay);
+                entry.tracking = None;
+                info!(
+                    "{}: '{}' crashed; reloading in {:.1}s (restart {})",
+                    container,
+                    name,
+                    delay.as_secs_f64(),
+                    restart
+                );
+                emit(
+                    self.state_tx(),
+                    StateEvent::ComposableRespawning {
+                        name: name.to_string(),
+                        restart_count: restart,
+                        delay: delay.as_secs_f64(),
+                    },
+                )
+                .await;
+            }
+        }
     }
 
     /// Stall detection. Evidence, never a clock alone — and disabled unless an

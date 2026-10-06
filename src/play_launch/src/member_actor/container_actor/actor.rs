@@ -357,6 +357,7 @@ impl ContainerActor {
             // inside the `select!` also keeps the arm from borrowing
             // `self.supervisor` while another arm holds its receiver.
             let start_delay_wakeup = self.supervisor.next_start_delay_wakeup();
+            let crash_reload_wakeup = self.supervisor.next_crash_reload_wakeup();
 
             tokio::select! {
                 status = child.wait() => {
@@ -373,6 +374,9 @@ impl ContainerActor {
                             return self.handle_restart_command(&mut child, pid).await;
                         }
                         ControlEvent::LoadComposable { name } => {
+                            // A manual load (web UI / API) is an operator's
+                            // fresh start for the crash-loop bound.
+                            self.supervisor.reset_crash_window(&name);
                             self.supervisor
                                 .handle_load_composable(&name, &self.clients, self.control.as_mut())
                                 .await;
@@ -465,6 +469,21 @@ impl ContainerActor {
                 } => {
                     self.supervisor
                         .handle_load_all_composables(&self.clients, self.control.as_mut())
+                        .await;
+                }
+
+                // A crashed composable whose respawn delay has elapsed
+                // (`composable_respawn`). Same shape as the `<timer>` arm:
+                // sleep to the earliest deadline rather than rounding the
+                // launch file's `respawn_delay` up to the 5 s tick.
+                _ = async {
+                    match crash_reload_wakeup {
+                        Some(at) => tokio::time::sleep_until(at).await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    self.supervisor
+                        .reload_due_crashes(&self.clients, self.control.as_mut())
                         .await;
                 }
 

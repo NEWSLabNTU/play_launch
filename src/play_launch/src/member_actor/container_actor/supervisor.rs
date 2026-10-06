@@ -143,8 +143,8 @@ pub(super) struct ComposableNodeEntry {
     pub(super) tracking: Option<LoadTracking>,
     /// Set when a reload is due at a specific time (crash respawn delay).
     pub(super) retry_after: Option<Instant>,
-    /// Crashes seen since this composable last loaded successfully.
-    pub(super) crash_count: u32,
+    /// Crash-respawn bookkeeping (recent crashes + lifetime restart count).
+    pub(super) crash_history: super::respawn_policy::CrashHistory,
     /// Whether the "waiting N seconds" line has already been printed for this
     /// composable's launch `<timer>`. The deferral is re-evaluated on every
     /// wake-up of the auto-load pass, and an operator needs to be told once,
@@ -219,7 +219,7 @@ impl ComposableSupervisor {
             load_started_at: None,
             tracking: None,
             retry_after: None,
-            crash_count: 0,
+            crash_history: Default::default(),
             start_delay_announced: false,
         };
 
@@ -635,6 +635,8 @@ impl ComposableSupervisor {
         // Check current state
         match &entry.state {
             ComposableState::Unloaded | ComposableState::Failed { .. } => {
+                // Whoever loads it now supersedes a pending crash reload.
+                entry.retry_after = None;
                 // Transition to Loading and start the load operation
                 let started_at = Instant::now();
                 entry.state = ComposableState::Loading { started_at };
@@ -740,6 +742,9 @@ impl ComposableSupervisor {
                 return;
             }
         };
+
+        // An operator's unload also cancels a pending crash reload.
+        entry.retry_after = None;
 
         // Check current state - only unload if loaded
         match &entry.state {
@@ -857,6 +862,53 @@ impl ComposableSupervisor {
             })
             .filter_map(|entry| entry.metadata.start_after.filter(|at| *at > now))
             .min()
+    }
+
+    /// When the earliest pending crash reload is due (`None`: nothing pending).
+    pub(super) fn next_crash_reload_wakeup(&self) -> Option<tokio::time::Instant> {
+        self.composable_nodes
+            .values()
+            .filter_map(|entry| entry.retry_after)
+            .min()
+            .map(tokio::time::Instant::from_std)
+    }
+
+    /// Dispatch every crash reload whose delay has elapsed, through the same
+    /// `handle_load_composable` path a manual load (web UI / API) takes, so
+    /// the socket-vs-LoadNode choice and all load accounting are shared.
+    pub(super) async fn reload_due_crashes(
+        &mut self,
+        clients: &ContainerClients,
+        mut control: Option<&mut ControlChannel>,
+    ) {
+        let now = Instant::now();
+        let due: Vec<(String, u32)> = self
+            .composable_nodes
+            .iter_mut()
+            .filter_map(|(name, entry)| {
+                let at = entry.retry_after?;
+                if at > now {
+                    return None;
+                }
+                entry.retry_after = None;
+                Some((name.clone(), entry.crash_history.restarts))
+            })
+            .collect();
+        for (name, restart) in due {
+            info!(
+                "{}: reloading '{}' after its crash (restart {})",
+                self.container_name, name, restart
+            );
+            self.handle_load_composable(&name, clients, control.as_deref_mut())
+                .await;
+        }
+    }
+
+    /// An operator's manual load starts the crash-loop bound afresh.
+    pub(super) fn reset_crash_window(&mut self, name: &str) {
+        if let Some(entry) = self.composable_nodes.get_mut(name) {
+            entry.crash_history.reset_window();
+        }
     }
 
     /// Handle LoadAllComposables control event.

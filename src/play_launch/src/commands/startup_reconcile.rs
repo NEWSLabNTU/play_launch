@@ -148,6 +148,7 @@ mod tests {
             respawn_enabled: None,
             respawn_delay: None,
             auto_load: Some(true),
+            restart_count: Some(0),
             output_dir: std::path::PathBuf::from("/nonexistent"),
         }
     }

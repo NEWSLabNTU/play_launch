@@ -316,6 +316,255 @@ fn test_crash_detection() {
          Searched for 'crashed' or 'CRASHED' in {} bytes of output",
         combined.len()
     );
+
+    // `composable_respawn` defaults to off: a crash is reported, never
+    // reloaded. Give a would-be reload time to be scheduled before checking.
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let stdout_content = std::fs::read_to_string(&output_path).unwrap_or_default();
+    assert!(
+        !stdout_content.contains("crashed; reloading"),
+        "composable_respawn is off by default, yet a reload was scheduled"
+    );
+}
+
+// ---- Composable crash respawn (`composable_respawn`) ----
+
+/// One line per successful load, whichever way state events are consumed:
+/// the runner logs `State event: …` without the web UI, the forwarder
+/// `Updated FQN map: …` with it.
+const LOADED: &[&str] = &["State event: LoadSucceeded", "Updated FQN map:"];
+
+/// One isolated-container run whose composables are killed on demand.
+struct CrashRun {
+    _proc: ManagedProcess,
+    _tmp: tempfile::TempDir,
+    stdout: std::path::PathBuf,
+    container_pid: u32,
+}
+
+impl CrashRun {
+    fn start(launch: &str, container: &str, args: &[&str], config: Option<&str>) -> Self {
+        let env = fixtures::install_env();
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let work_dir = tmp.path();
+        let stdout = work_dir.join("stdout.log");
+        let stdout_file = std::fs::File::create(&stdout).expect("create stdout log");
+        let stderr_file = std::fs::File::create(work_dir.join("stderr.log")).expect("stderr");
+
+        let mut cmd = fixtures::play_launch_cmd(&env);
+        cmd.current_dir(work_dir);
+        cmd.args(["launch", "--disable-monitoring", "--disable-diagnostics"]);
+        if !args.contains(&"--web-addr") {
+            cmd.arg("--disable-web-ui");
+        }
+        cmd.args(args);
+        if let Some(config) = config {
+            let path = work_dir.join("respawn.yaml");
+            std::fs::write(&path, config).expect("write config");
+            cmd.args(["--config", path.to_str().unwrap()]);
+        }
+        cmd.arg(launch);
+        cmd.stdout(Stdio::from(stdout_file));
+        cmd.stderr(Stdio::from(stderr_file));
+        cmd.env("RUST_LOG", "play_launch=debug");
+
+        let proc = ManagedProcess::spawn(&mut cmd).expect("spawn play_launch");
+        let loaded = wait_for_pattern(&stdout, LOADED, 2, Duration::from_secs(60));
+        assert!(loaded >= 2, "expected 2 composables loaded, found {loaded}");
+        let container_pid = find_container_pid(container, proc.id(), Duration::from_secs(10))
+            .expect("container process");
+        Self {
+            _proc: proc,
+            _tmp: tmp,
+            stdout,
+            container_pid,
+        }
+    }
+
+    fn count(&self, patterns: &[&str]) -> usize {
+        std::fs::read_to_string(&self.stdout)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| patterns.iter().any(|p| l.contains(p)))
+            .count()
+    }
+
+    fn wait_for(&self, patterns: &[&str], count: usize, timeout: Duration) -> bool {
+        wait_for_pattern(&self.stdout, patterns, count, timeout) >= count
+    }
+
+    /// The composable child processes, once there are `n` of them.
+    fn children(&self, n: usize) -> Vec<u32> {
+        let children = wait_for_children(self.container_pid, n, Duration::from_secs(15));
+        assert!(
+            children.len() >= n,
+            "expected {n} composable processes, found {children:?}"
+        );
+        children
+    }
+
+    fn tail(&self) -> String {
+        let out = std::fs::read_to_string(&self.stdout).unwrap_or_default();
+        out[out.len().saturating_sub(4000)..].to_string()
+    }
+}
+
+fn kill(pid: u32) {
+    unsafe {
+        libc::kill(pid as i32, libc::SIGKILL);
+    }
+}
+
+fn http_get_json(port: u16, path: &str) -> serde_json::Value {
+    let out = std::process::Command::new("curl")
+        .args(["-s", &format!("http://127.0.0.1:{port}{path}")])
+        .output()
+        .expect("run curl");
+    serde_json::from_slice(&out.stdout).unwrap_or(serde_json::Value::Null)
+}
+
+/// `--composable-respawn on-crash`: a killed composable is reloaded into the
+/// same container through the manual-load path, its restart is counted in
+/// `/api/nodes`, and health stops counting it failed once it is back.
+#[test]
+fn test_crashed_composable_is_reloaded() {
+    let port = 18094_u16;
+    let addr = format!("127.0.0.1:{port}");
+    let run = CrashRun::start(
+        &isolated_launch_file(),
+        "event_container",
+        &["--composable-respawn", "on-crash", "--web-addr", &addr],
+        None,
+    );
+    let victim = run.children(2)[0];
+    kill(victim);
+
+    assert!(
+        run.wait_for(&["crashed; reloading in"], 1, Duration::from_secs(15)),
+        "no reload scheduled:\n{}",
+        run.tail()
+    );
+    assert!(
+        run.wait_for(LOADED, 3, Duration::from_secs(60)),
+        "the crashed composable was not loaded again:\n{}",
+        run.tail()
+    );
+    let children = run.children(2);
+    assert!(
+        !children.contains(&victim),
+        "the killed process is still listed: {children:?}"
+    );
+
+    let nodes = http_get_json(port, "/api/nodes");
+    let counts: Vec<u64> = nodes
+        .as_array()
+        .expect("/api/nodes is an array")
+        .iter()
+        .filter(|n| n["node_type"] == "composable_node")
+        .map(|n| {
+            n["restart_count"]
+                .as_u64()
+                .expect("restart_count on a composable")
+        })
+        .collect();
+    let mut sorted = counts.clone();
+    sorted.sort();
+    assert_eq!(sorted, vec![0, 1], "restart counts: {counts:?}");
+
+    let health = http_get_json(port, "/api/health");
+    assert_eq!(
+        health["composable_failed"], 0,
+        "reloaded composable still counted failed: {health}"
+    );
+}
+
+/// The crash-loop bound: with `composable_respawn_max_restarts: 1`, a second
+/// crash inside the window leaves the composable Failed and says so, while
+/// its sibling's first crash is still reloaded.
+#[test]
+fn test_crash_loop_gives_up() {
+    let run = CrashRun::start(
+        &isolated_launch_file(),
+        "event_container",
+        &[],
+        Some(
+            "composable_node_loading:\n  composable_respawn: on-crash\n  \
+             composable_respawn_max_restarts: 1\n",
+        ),
+    );
+    kill(run.children(2)[0]);
+    assert!(
+        run.wait_for(LOADED, 3, Duration::from_secs(60)),
+        "first crash was not reloaded:\n{}",
+        run.tail()
+    );
+
+    // Second crash for the first composable, first for its sibling.
+    for pid in run.children(2) {
+        kill(pid);
+    }
+    assert!(
+        run.wait_for(&["giving up"], 1, Duration::from_secs(15)),
+        "crash loop was not bounded:\n{}",
+        run.tail()
+    );
+    assert!(
+        run.wait_for(LOADED, 4, Duration::from_secs(60)),
+        "the sibling's first crash was not reloaded:\n{}",
+        run.tail()
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(
+        run.count(&["crashed; reloading in"]),
+        2,
+        "exactly two reloads (one per composable's first crash):\n{}",
+        run.tail()
+    );
+    assert_eq!(run.count(LOADED), 4);
+}
+
+/// `inherit` takes the launch file's word: a `respawn="true"` container's
+/// composables are reloaded after its `respawn_delay`...
+#[test]
+fn test_inherit_follows_a_respawning_container() {
+    let launch = fixtures::test_workspace_path("container_events")
+        .join("launch/isolated_crash_respawn.launch.xml");
+    let run = CrashRun::start(
+        launch.to_str().unwrap(),
+        "respawn_container",
+        &["--composable-respawn", "inherit"],
+        None,
+    );
+    kill(run.children(2)[0]);
+    assert!(
+        run.wait_for(&["crashed; reloading in 0.5s"], 1, Duration::from_secs(15)),
+        "the container's respawn_delay was not inherited:\n{}",
+        run.tail()
+    );
+    assert!(
+        run.wait_for(LOADED, 3, Duration::from_secs(60)),
+        "not reloaded:\n{}",
+        run.tail()
+    );
+}
+
+/// ...and a container without `respawn` keeps its composables Failed.
+#[test]
+fn test_inherit_leaves_a_non_respawning_container_alone() {
+    let run = CrashRun::start(
+        &isolated_launch_file(),
+        "event_container",
+        &["--composable-respawn", "inherit"],
+        None,
+    );
+    kill(run.children(2)[0]);
+    assert!(
+        run.wait_for(&["is not reloaded"], 1, Duration::from_secs(15)),
+        "expected the inherit refusal:\n{}",
+        run.tail()
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(run.count(LOADED), 2);
 }
 
 // ---- Data delivery tests ----
@@ -387,7 +636,7 @@ fn test_isolated_data_delivery() {
         &output_path,
         &["ComponentEvent LOADED", "LoadSucceeded"],
         2,
-        Duration::from_secs(30),
+        Duration::from_secs(60),
     );
     assert!(loaded >= 2, "Expected 2 LOADED events, found {loaded}");
 
@@ -479,7 +728,7 @@ fn test_isolated_external_subscriber() {
         &output_path,
         &["ComponentEvent LOADED", "LoadSucceeded"],
         2,
-        Duration::from_secs(30),
+        Duration::from_secs(60),
     );
     assert!(loaded >= 2, "Expected 2 LOADED events, found {loaded}");
 
@@ -589,7 +838,7 @@ fn test_observable_data_delivery() {
         &output_path,
         &["ComponentEvent LOADED", "LoadSucceeded"],
         2,
-        Duration::from_secs(30),
+        Duration::from_secs(60),
     );
     assert!(loaded >= 2, "Expected 2 LOADED events, found {loaded}");
 

@@ -123,6 +123,9 @@ pub struct MemberSummary {
     /// Auto-load when container starts (for composable nodes)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_load: Option<bool>,
+    /// Composable nodes only: crash reloads scheduled so far
+    /// (`composable_respawn`). `None` for processes.
+    pub restart_count: Option<u32>,
     /// Output directory for logs
     pub output_dir: PathBuf,
 }

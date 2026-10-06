@@ -256,6 +256,11 @@ export function applyStateEvent(event) {
             updated.status = { type: 'Composable', value: { status: 'unloaded' } };
             break;
 
+        case 'composable_respawning':
+            // Status stays failed until the reload starts (load_started).
+            updated.restart_count = event.restart_count;
+            break;
+
         case 'blocked':
             // One BlockReason since phase-51: snake_case ("container_not_started")
             // on both the SSE and REST wires. The UI only checks the status

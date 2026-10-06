@@ -258,6 +258,10 @@ play_launch launch <pkg> <file> --disable-web-ui
 play_launch launch <pkg> <file> --disable-all
 play_launch launch <pkg> <file> --disable-respawn
 
+# Reload a composable node whose process crashed (default: off)
+play_launch launch <pkg> <file> --composable-respawn on-crash  # always
+play_launch launch <pkg> <file> --composable-respawn inherit   # only under a respawn="true" container
+
 # Enable only specific features
 play_launch launch <pkg> <file> --enable monitoring
 play_launch launch <pkg> <file> --enable web-ui --enable diagnostics

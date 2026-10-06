@@ -27,6 +27,8 @@ pub struct MemberRunner {
     /// Shared state map — written ONLY via `state_reducer` from the event
     /// stream owned here
     shared_state: Arc<dashmap::DashMap<String, MemberState>>,
+    /// Composable restart counters — written ONLY via `state_reducer`
+    restart_counts: Arc<state_reducer::RestartCounts>,
     /// Members launched with `on_exit=Shutdown()`, by canonical member id
     shutdown_on_exit: HashSet<String>,
     /// The same shutdown lever `MemberHandle::shutdown` pulls. Stops the actors, but
@@ -45,6 +47,7 @@ impl MemberRunner {
         tasks: HashMap<String, JoinHandle<Result<()>>>,
         state_rx: mpsc::Receiver<StateEvent>,
         shared_state: Arc<dashmap::DashMap<String, MemberState>>,
+        restart_counts: Arc<state_reducer::RestartCounts>,
         shutdown_on_exit: HashSet<String>,
         shutdown_tx: Arc<watch::Sender<bool>>,
     ) -> Self {
@@ -52,6 +55,7 @@ impl MemberRunner {
             tasks,
             state_rx,
             shared_state,
+            restart_counts,
             shutdown_on_exit,
             shutdown_tx,
             shutdown_hook: None,
@@ -107,6 +111,7 @@ impl MemberRunner {
     pub async fn next_state_event(&mut self) -> Option<StateEvent> {
         let event = self.state_rx.recv().await?;
         state_reducer::apply(&self.shared_state, &event);
+        state_reducer::apply_restart_count(&self.restart_counts, &event);
         Self::honour_on_exit_shutdown(
             &self.shutdown_on_exit,
             &self.shutdown_tx,
@@ -125,6 +130,7 @@ impl MemberRunner {
             tasks,
             mut state_rx,
             shared_state,
+            restart_counts,
             shutdown_on_exit,
             shutdown_tx,
             shutdown_hook,
@@ -152,6 +158,7 @@ impl MemberRunner {
                 Some(event) = state_rx.recv() => {
                     tracing::debug!("State event: {:?}", event);
                     state_reducer::apply(&shared_state, &event);
+                    state_reducer::apply_restart_count(&restart_counts, &event);
                     Self::honour_on_exit_shutdown(
                         &shutdown_on_exit,
                         &shutdown_tx,

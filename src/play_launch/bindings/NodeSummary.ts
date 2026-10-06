@@ -52,6 +52,11 @@ respawn_delay?: number | null,
  */
 auto_load?: boolean | null, 
 /**
+ * Composable nodes only: how many times a crash reload has been
+ * scheduled (`composable_respawn`). Absent for processes.
+ */
+restart_count?: number | null, 
+/**
  * Whether this composable node has its own log files (isolated mode)
  */
 has_own_logs: boolean, };

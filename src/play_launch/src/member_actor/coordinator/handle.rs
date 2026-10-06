@@ -22,6 +22,8 @@ pub struct MemberHandle {
     metadata: Arc<RwLock<HashMap<String, MemberMetadata>>>,
     /// Shared state map (actors write directly, Web UI reads)
     shared_state: Arc<dashmap::DashMap<String, MemberState>>,
+    /// Composable crash-reload counters (reducer-written, read here)
+    restart_counts: Arc<super::state_reducer::RestartCounts>,
     /// Shutdown signal broadcaster. Shared with `MemberRunner`, which pulls the same
     /// lever when a node declared `on_exit=Shutdown()` exits.
     shutdown_tx: Arc<watch::Sender<bool>>,
@@ -35,10 +37,12 @@ pub struct MemberHandle {
 
 impl MemberHandle {
     /// Create a new MemberHandle (called from builder)
+    #[allow(clippy::too_many_arguments)] // one call site, the builder
     pub(super) fn new(
         control_channels: HashMap<String, mpsc::Sender<ControlEvent>>,
         metadata: Arc<RwLock<HashMap<String, MemberMetadata>>>,
         shared_state: Arc<dashmap::DashMap<String, MemberState>>,
+        restart_counts: Arc<super::state_reducer::RestartCounts>,
         shutdown_tx: Arc<watch::Sender<bool>>,
         virtual_member_routing: HashMap<String, String>,
         shared_ros_node: Option<Arc<rclrs::Node>>,
@@ -48,6 +52,7 @@ impl MemberHandle {
             control_channels,
             metadata,
             shared_state,
+            restart_counts,
             shutdown_tx,
             virtual_member_routing,
             shared_ros_node,
@@ -70,7 +75,7 @@ impl MemberHandle {
                     .get(name)
                     .map(|entry| entry.value().clone())
                     .unwrap_or(MemberState::Pending);
-                super::summary::build_summary(meta, state)
+                super::summary::build_summary(meta, state, self.restart_count(name))
             })
             .collect()
     }
@@ -84,7 +89,16 @@ impl MemberHandle {
             .get(name)
             .map(|entry| entry.value().clone())
             .unwrap_or(MemberState::Pending);
-        Some(super::summary::build_summary(meta, state))
+        Some(super::summary::build_summary(
+            meta,
+            state,
+            self.restart_count(name),
+        ))
+    }
+
+    /// Crash reloads scheduled for a member (0 when none ever were).
+    fn restart_count(&self, name: &str) -> u32 {
+        self.restart_counts.get(name).map(|c| *c).unwrap_or(0)
     }
 
     /// Get health summary statistics

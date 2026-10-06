@@ -212,7 +212,10 @@ composable_node_loading:
   stall_after_secs: 0             # 0 = never declare a stall
   stall_cpu_threshold_pct: 1.0    # evidence for a stall, not the trigger alone
   stall_action: report            # report | fail | restart
-  composable_respawn: off         # off | on-crash  (see below)
+  composable_respawn: off         # off | inherit | on-crash  (see below)
+  composable_respawn_max_restarts: 5
+  composable_respawn_window_secs: 300
+  composable_respawn_max_backoff_secs: 60
 ```
 
 **Correction 1 — `max_load_attempts` defaults to 2, not 1.** The draft said
@@ -232,11 +235,42 @@ of the aggressive setting is worse than the failure mode of the passive one.
 
 Separable, and worth stating because it is the one retry that is unambiguously
 safe: a `crashed` frame means the container reaped the child and erased its id.
-`composable_respawn: on-crash` would reload it after `respawn_delay`, bounded
-by `max_respawn_attempts`, reusing the node-level respawn accounting so a
-crash-looping composable cannot spin. Off by default until the crash-loop
-accounting is shared, since a composable that crashes in its constructor and is
+Off by default, since a composable that crashes in its constructor and is
 retried forever is a worse outcome than one that stays failed and says so.
+`composable_node_loading.composable_respawn` (or `--composable-respawn`)
+turns it on; `--disable-respawn` forces it off.
+
+**Where the launch-file semantics come from.** launch_ros' `ComposableNode`
+has no `respawn`/`respawn_delay` (and the model carries none for a
+composable), so a composable inherits its CONTAINER's:
+
+- `inherit` reloads only when the container is `respawn="true"`, and follows
+  the web UI's respawn toggle on that container.
+- `on-crash` reloads whatever the container declares.
+
+Both wait the container's `respawn_delay` (0 when unset) before the first
+reload. The Rust parser used to drop `respawn`/`respawn_delay` on
+`<node_container>`; it now carries them the way the Python dump does
+(`respawn` set only when true), so `inherit` has something to inherit.
+
+**Bound** (`container_actor/respawn_policy.rs`, unit-tested). Crashes are
+counted per composable over a sliding `composable_respawn_window_secs` (300).
+The n-th crash inside the window reloads after `respawn_delay` for n = 1 and
+`max(respawn_delay, 1 s) * 2^(n-1)` after that, capped at
+`max(composable_respawn_max_backoff_secs, respawn_delay)` (60). A crash beyond
+`composable_respawn_max_restarts` (5) inside the window leaves the composable
+`Failed` with an error line naming the bound. A manual load (web UI or
+`POST /api/nodes/<id>/load`) starts the window afresh.
+
+**Mechanics.** Both report channels (control socket `crashed`, ComponentEvent
+`CRASHED`) land in `on_crashed`; whichever arrives first clears the
+`unique_id`, so a crash is counted once. The reload is dispatched by
+`reload_due_crashes` through `handle_load_composable` — the path a manual
+load takes — so it works on the socket and on the LoadNode path alike. While
+it waits, the composable stays `Failed` (it is down, and `composable_failed`
+says so); `/api/nodes` carries `restart_count` for every composable, and the
+SSE stream a `composable_respawning` event. An operator unload, a manual load,
+or the container itself going down cancels a pending reload.
 
 **Correction 2 — a restarted load must not inherit the previous attempt's
 events.** The ComponentEvent topic still delivers the CANCELLED attempt's

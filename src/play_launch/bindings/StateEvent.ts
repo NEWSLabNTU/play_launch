@@ -78,7 +78,19 @@ error: string, } | { "type": "unloaded",
 /**
  * Composable node name
  */
-name: string, } | { "type": "blocked", 
+name: string, } | { "type": "composable_respawning", 
+/**
+ * Composable node name
+ */
+name: string, 
+/**
+ * Reloads scheduled for this composable so far, this one included
+ */
+restart_count: number, 
+/**
+ * Delay before the reload (seconds)
+ */
+delay: number, } | { "type": "blocked", 
 /**
  * Composable node name
  */

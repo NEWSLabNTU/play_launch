@@ -270,6 +270,7 @@ export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
                     <span class="node-name">${name}</span>
                     ${ordinal && html`<span class="node-ordinal" title="Duplicate name — canonical id ${id}">${ordinal}</span>`}
                     ${node.pid != null && html`<span class="node-pid">PID ${node.pid}</span>`}
+                    ${isComposable && node.restart_count != null && node.restart_count > 0 && html`<span class="node-pid" title="Reloaded after a crash (composable_respawn)">restarts ${node.restart_count}</span>`}
                     <${DiagnosticBadge} level=${node.diagnostic_level} />
                     <${StderrIcon} node=${node} />
                 </div>

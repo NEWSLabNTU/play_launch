@@ -309,7 +309,7 @@ rclcpp_components::ComponentManager           (upstream)
 
 All features **enabled by default**: monitoring, diagnostics, web UI (http://127.0.0.1:8080).
 
-Key flags: `--config <PATH>`, `--disable-monitoring`, `--disable-diagnostics`, `--disable-web-ui`, `--disable-all`, `--web-addr <IP:PORT>`, `--disable-respawn`, `--enable <FEATURE>`, `--container-mode <MODE>`.
+Key flags: `--config <PATH>`, `--disable-monitoring`, `--disable-diagnostics`, `--disable-web-ui`, `--disable-all`, `--web-addr <IP:PORT>`, `--disable-respawn`, `--composable-respawn <off|inherit|on-crash>`, `--enable <FEATURE>`, `--container-mode <MODE>`.
 
 **Container mode** (`--container-mode`, default `isolated`):
 - `observable` — override all containers to use `play_launch_container` with `ComponentEvent` publishing

@@ -250,6 +250,7 @@ impl MemberCoordinatorBuilder {
 
         // Initialize shared state map (will be populated before spawning actors)
         let shared_state = Arc::new(dashmap::DashMap::new());
+        let restart_counts = Arc::new(super::state_reducer::RestartCounts::new());
 
         // Collect all metadata first before spawning actors
         // (We'll populate shared_state before spawning to avoid race conditions)
@@ -653,6 +654,7 @@ impl MemberCoordinatorBuilder {
             control_channels,
             Arc::new(tokio::sync::RwLock::new(metadata_map)),
             shared_state.clone(),
+            restart_counts.clone(),
             shutdown_tx.clone(),
             virtual_member_routing,
             shared_ros_node,
@@ -663,6 +665,7 @@ impl MemberCoordinatorBuilder {
             tasks,
             state_rx,
             shared_state,
+            restart_counts,
             shutdown_on_exit_ids,
             shutdown_tx,
         );

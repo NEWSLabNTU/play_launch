@@ -27,7 +27,11 @@ pub(super) fn stderr_info(output_dir: &Path) -> (Option<u64>, u64, Option<Vec<St
 }
 
 /// Build a `MemberSummary` from metadata + the current mirrored state.
-pub(super) fn build_summary(meta: &MemberMetadata, state: MemberState) -> MemberSummary {
+pub(super) fn build_summary(
+    meta: &MemberMetadata,
+    state: MemberState,
+    restart_count: u32,
+) -> MemberSummary {
     let pid = match &state {
         MemberState::Running { pid } => Some(*pid),
         _ => None,
@@ -53,6 +57,7 @@ pub(super) fn build_summary(meta: &MemberMetadata, state: MemberState) -> Member
         respawn_enabled: meta.respawn_enabled,
         respawn_delay: meta.respawn_delay,
         auto_load: meta.auto_load,
+        restart_count: (meta.member_type == MemberType::ComposableNode).then_some(restart_count),
         output_dir: meta.output_dir.clone(),
     }
 }

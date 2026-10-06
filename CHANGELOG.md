@@ -32,6 +32,34 @@ are now 0.1.8).
   a node path's `input` is its effective trigger's inputs (I6). A reader
   that required `version == 1` must accept 2.
 
+### A crashed composable can be reloaded (`--composable-respawn`)
+
+Under `--container-mode isolated` each composable is its own process, and one
+that crashed used to stay `Failed` while its container, its siblings and the
+web UI stayed up — a stack that looked healthy with, say, its planner dead.
+
+- `--composable-respawn <off|inherit|on-crash>` (config
+  `composable_node_loading.composable_respawn`), **default `off`**, so nothing
+  changes unless asked. `inherit` reloads only under a `respawn="true"`
+  container (composables have no respawn attribute of their own); `on-crash`
+  always. The first reload waits the container's `respawn_delay`.
+- Bounded: exponential backoff, and more than
+  `composable_respawn_max_restarts` (5) crashes within
+  `composable_respawn_window_secs` (300) leaves it `Failed` with an error line.
+- The reload goes through the same path as `POST /api/nodes/<id>/load`, on the
+  control socket and the LoadNode service alike. Previously `on-crash` worked
+  only over the socket, and missed a crash that the ComponentEvent reported
+  first.
+- `/api/nodes` carries `restart_count` for composables (shown on the web UI
+  card); SSE emits `composable_respawning`.
+- `--disable-respawn` now also turns composable respawn off.
+
+### Parser
+
+- `<node_container respawn= respawn_delay=>` is carried by the Rust parser
+  (it was accepted and dropped; the Python dump always carried it). A
+  container declared `respawn="true"` now respawns under the default parser.
+
 ## 0.13.1 - 2026-10-06
 
 Phase 85 "cheap first": what the Autoware Safety Island's CI needed from

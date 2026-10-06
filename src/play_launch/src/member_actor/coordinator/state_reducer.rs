@@ -48,10 +48,28 @@ pub(crate) fn apply(shared: &SharedState, event: &StateEvent) {
         StateEvent::Unloaded { .. } => Some(MemberState::Unloaded),
         StateEvent::Blocked { reason, .. } => Some(MemberState::Blocked { reason: *reason }),
         StateEvent::ParameterChanged { .. } => None,
+        // The composable stays Failed until the reload starts (LoadStarted).
+        StateEvent::ComposableRespawning { .. } => None,
     };
 
     if let Some(state) = next {
         shared.insert(event.member_name().to_string(), state);
+    }
+}
+
+/// Per-member restart counters (composable crash reloads), folded from the
+/// same event stream as the state mirror.
+pub(crate) type RestartCounts = DashMap<String, u32>;
+
+/// Fold one actor event into the restart counters.
+pub(crate) fn apply_restart_count(counts: &RestartCounts, event: &StateEvent) {
+    if let StateEvent::ComposableRespawning {
+        name,
+        restart_count,
+        ..
+    } = event
+    {
+        counts.insert(name.clone(), *restart_count);
     }
 }
 
@@ -71,6 +89,33 @@ pub(crate) fn init(shared: &SharedState, id: &str, state: MemberState) {
 mod tests {
     use super::*;
     use crate::member_actor::model::BlockReason;
+
+    /// A scheduled crash reload records the count and leaves the state alone:
+    /// the composable is down until the reload starts, so `composable_failed`
+    /// keeps counting it.
+    #[test]
+    fn composable_respawning_counts_without_changing_state() {
+        let shared = SharedState::new();
+        let counts = RestartCounts::new();
+        let failed = StateEvent::LoadFailed {
+            name: "c".into(),
+            error: "Crashed: SIGABRT".into(),
+        };
+        apply(&shared, &failed);
+        apply_restart_count(&counts, &failed);
+        let respawning = StateEvent::ComposableRespawning {
+            name: "c".into(),
+            restart_count: 2,
+            delay: 1.0,
+        };
+        apply(&shared, &respawning);
+        apply_restart_count(&counts, &respawning);
+        assert!(matches!(
+            *shared.get("c").unwrap(),
+            MemberState::Failed { .. }
+        ));
+        assert_eq!(*counts.get("c").unwrap(), 2);
+    }
 
     #[test]
     fn started_maps_to_running() {

@@ -195,14 +195,10 @@ impl ComposableSupervisor {
             ContainerMsg::Crashed {
                 unique_id, error, ..
             } => {
-                let name = self.name_for_unique_id(unique_id);
-                self.on_crashed(unique_id, &error).await;
-                // The container reaped the child and erased its id, so this is
-                // the one retry that needs no confirmation step — it is
-                // already confirmed.
-                if let Some(name) = name {
-                    self.schedule_crash_reload(&name, config);
-                }
+                // The container reaped the child and erased its id, so a
+                // reload needs no confirmation step; `on_crashed` schedules it
+                // (once, whichever report channel arrives first).
+                self.on_crashed(unique_id, &error, config).await;
             }
         }
     }

@@ -521,7 +521,10 @@ composable_node_loading:
   stall_after_secs: 0                  # 0 = never declare a stall
   stall_cpu_threshold_pct: 1.0
   stall_action: report                 # report | fail | restart
-  composable_respawn: off              # off | on-crash
+  composable_respawn: off              # off | inherit | on-crash (--composable-respawn)
+  composable_respawn_max_restarts: 5   # reloads per window; one more crash -> stays Failed
+  composable_respawn_window_secs: 300
+  composable_respawn_max_backoff_secs: 60
 
 cgroups:
   # Inert unless play_launch can create cgroups — start it under

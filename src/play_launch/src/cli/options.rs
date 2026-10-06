@@ -760,8 +760,18 @@ pub struct ContainerOptions {
     pub load_orphan_composable_nodes: bool,
 
     /// Disable automatic respawn even if configured in launch file
+    /// (also forces --composable-respawn off)
     #[arg(long)]
     pub disable_respawn: bool,
+
+    /// Reload a composable node into its container when its process crashes
+    /// (overrides config `composable_node_loading.composable_respawn`,
+    /// default off). The first reload waits the container's respawn_delay;
+    /// repeats back off exponentially, and more than
+    /// `composable_respawn_max_restarts` (5) crashes within
+    /// `composable_respawn_window_secs` (300) leaves the composable Failed.
+    #[arg(long, value_enum, value_name = "MODE")]
+    pub composable_respawn: Option<crate::cli::config::ComposableRespawn>,
 
     /// Container mode: which container binary to use for composable nodes.
     /// - observable: use play_launch_container with ComponentEvent publishing
@@ -966,6 +976,7 @@ impl Default for ContainerOptions {
             standalone_composable_nodes: false,
             load_orphan_composable_nodes: false,
             disable_respawn: false,
+            composable_respawn: None,
             container_mode: ContainerMode::Isolated,
             load_total_budget: None,
             load_node_timeout: None,

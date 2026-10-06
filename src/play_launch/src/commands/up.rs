@@ -940,6 +940,13 @@ pub(crate) async fn play(
         if let Some(secs) = common.containers.load_node_timeout {
             settings.load_node_timeout_millis = secs * 1000;
         }
+        if let Some(mode) = common.containers.composable_respawn {
+            settings.composable_respawn = mode;
+        }
+        // `--disable-respawn` means NO automatic respawn, composables included.
+        if common.containers.disable_respawn {
+            settings.composable_respawn = crate::cli::config::ComposableRespawn::Off;
+        }
         crate::member_actor::container_actor::LoadTimings::from_settings(&settings)
     };
     info!(

@@ -648,11 +648,34 @@ pub struct ComposableNodeLoadingSettings {
     #[serde(default)]
     pub stall_action: StallAction,
 
-    /// Whether a composable that CRASHED after loading is reloaded. Off by
-    /// default: a component that dies in its constructor and is retried
-    /// forever is a worse outcome than one that stays failed and says so.
+    /// Whether a composable that CRASHED after loading is reloaded into its
+    /// container. Off by default: a component that dies in its constructor
+    /// and is retried forever is a worse outcome than one that stays failed
+    /// and says so. `--composable-respawn` overrides it; `--disable-respawn`
+    /// forces it off.
+    ///
+    /// launch_ros' `ComposableNode` has no `respawn`/`respawn_delay` of its
+    /// own, so the launch-file semantics come from the CONTAINER: `inherit`
+    /// reloads a composable only when its container is `respawn="true"`, and
+    /// both modes wait the container's `respawn_delay` before the first
+    /// reload.
     #[serde(default)]
     pub composable_respawn: ComposableRespawn,
+
+    /// Crash-loop bound: at most this many reloads of one composable within
+    /// `composable_respawn_window_secs`. The next crash inside the window
+    /// leaves it `Failed` and says so. Clamped to at least 1.
+    #[serde(default = "default_composable_respawn_max_restarts")]
+    pub composable_respawn_max_restarts: u32,
+
+    /// Sliding window for `composable_respawn_max_restarts` (seconds).
+    #[serde(default = "default_composable_respawn_window_secs")]
+    pub composable_respawn_window_secs: u64,
+
+    /// Ceiling for the exponential backoff between reloads of a composable
+    /// that keeps crashing inside the window (seconds).
+    #[serde(default = "default_composable_respawn_max_backoff_secs")]
+    pub composable_respawn_max_backoff_secs: u64,
 
     /// How long to wait for the container's control-channel `Hello` before
     /// falling back to the `LoadNode` service (milliseconds).
@@ -686,6 +709,9 @@ impl Default for ComposableNodeLoadingSettings {
             stall_cpu_threshold_pct: default_stall_cpu_threshold_pct(),
             stall_action: StallAction::default(),
             composable_respawn: ComposableRespawn::default(),
+            composable_respawn_max_restarts: default_composable_respawn_max_restarts(),
+            composable_respawn_window_secs: default_composable_respawn_window_secs(),
+            composable_respawn_max_backoff_secs: default_composable_respawn_max_backoff_secs(),
         }
     }
 }
@@ -729,14 +755,27 @@ pub enum StallAction {
 }
 
 /// Whether a composable that crashed after loading is reloaded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum ComposableRespawn {
     /// Leave it failed and reported (the pre-phase-64 behaviour).
     #[default]
     Off,
-    /// Reload it, bounded by the container's `max_respawn_attempts`.
+    /// Reload it only when its container is `respawn="true"` in the launch
+    /// file (composables have no respawn attribute of their own).
+    Inherit,
+    /// Reload every crashed composable, whatever its container declares.
     OnCrash,
+}
+
+fn default_composable_respawn_max_restarts() -> u32 {
+    5
+}
+fn default_composable_respawn_window_secs() -> u64 {
+    300
+}
+fn default_composable_respawn_max_backoff_secs() -> u64 {
+    60
 }
 
 fn default_control_socket() -> bool {

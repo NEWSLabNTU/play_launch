@@ -1,0 +1,12 @@
+<launch>
+  <!-- A respawning container: `composable_respawn: inherit` reloads its
+       composables after the container's respawn_delay. -->
+  <node_container pkg="play_launch_container" exec="component_container"
+                  name="respawn_container" namespace=""
+                  args="--isolated" respawn="true" respawn_delay="0.5">
+    <composable_node pkg="composition" plugin="composition::Talker"
+                     name="talker" namespace=""/>
+    <composable_node pkg="composition" plugin="composition::Listener"
+                     name="listener" namespace=""/>
+  </node_container>
+</launch>

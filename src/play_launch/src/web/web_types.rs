@@ -166,6 +166,11 @@ pub struct NodeSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional = nullable))]
     pub auto_load: Option<bool>,
+    /// Composable nodes only: how many times a crash reload has been
+    /// scheduled (`composable_respawn`). Absent for processes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub restart_count: Option<u32>,
     /// Whether this composable node has its own log files (isolated mode)
     pub has_own_logs: bool,
 }
@@ -214,6 +219,7 @@ impl NodeSummary {
             respawn_enabled: member.respawn_enabled,
             respawn_delay: member.respawn_delay,
             auto_load: member.auto_load,
+            restart_count: member.restart_count,
             has_own_logs,
         }
     }
