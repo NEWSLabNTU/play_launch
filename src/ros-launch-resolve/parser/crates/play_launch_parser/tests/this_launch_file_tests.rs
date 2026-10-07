@@ -21,18 +21,14 @@ use play_launch_parser::parse_launch_file;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Mutex, MutexGuard, OnceLock},
 };
 
-/// Registers the Python backend and serialises entry into the interpreter, the
-/// way `python_tests.rs` does — tests in one binary run on separate threads.
-fn python_test_guard() -> MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    play_launch_parser_pyexec::register();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
+/// Registers the Python backend and serialises entry into the interpreter.
+///
+/// One definition, in the crate that owns the interpreter (issue #0050): two
+/// independently-written locks over one interpreter is not a fix, and this file
+/// and `python_tests.rs` each had their own.
+use play_launch_parser_pyexec::python_test_guard;
 
 fn fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/launch")

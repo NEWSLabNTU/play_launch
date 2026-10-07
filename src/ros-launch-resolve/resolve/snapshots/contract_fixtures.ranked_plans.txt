@@ -1,3 +1,19 @@
+== contract_action_unserved/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/nav/mission_planner",
+            path: "plan",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=100)",
+        },
+    ],
+    warnings: [],
+}
 == contract_concurrency/launch/bringup.launch.xml
 RankedPlan {
     items: [

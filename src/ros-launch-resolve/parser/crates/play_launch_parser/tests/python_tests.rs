@@ -2,23 +2,13 @@ use play_launch_parser::parse_launch_file;
 use std::{collections::HashMap, io::Write, path::PathBuf};
 use tempfile::NamedTempFile;
 
-use std::sync::{Mutex, MutexGuard};
-
-/// Global mutex to serialize Python tests
-/// This prevents race conditions in the Python interpreter's global state
-static PYTHON_TEST_LOCK: Mutex<()> = Mutex::new(());
-
-/// Helper to get a lock for Python tests to ensure they run serially
-/// Recovers from poisoned mutex if a previous test panicked
-fn python_test_guard() -> MutexGuard<'static, ()> {
-    // Registration is the CALLER's job since 0897 W2b: the parser
-    // no longer links libpython, so a test that executes a
-    // `.launch.py` has to say WHICH implementation runs it. Doing it
-    // in the guard every Python test already takes means there is one
-    // place to say it rather than forty-five.
-    play_launch_parser_pyexec::register();
-    PYTHON_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-}
+/// Serialises entry into the interpreter and registers the backend.
+///
+/// One definition, in the crate that owns the interpreter (issue #0050) —
+/// its own doc says it is defined there "rather than copied into each test
+/// module", and this file and `this_launch_file_tests.rs` had copied it
+/// anyway. Two independently-written locks over one interpreter is not a fix.
+use play_launch_parser_pyexec::python_test_guard;
 
 /// Create a temporary launch file with a .launch.py suffix for inline test content.
 /// Returns a NamedTempFile that stays alive (and on disk) while the returned value exists.

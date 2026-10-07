@@ -1117,7 +1117,6 @@ mod tests {
                 take_count: Some(29.0),
                 avg_pub_rate_hz: Some(1.03),
                 duration_ms: Some(28_000.0),
-                ..Default::default()
             },
         );
         let text = build(

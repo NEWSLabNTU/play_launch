@@ -44,6 +44,76 @@ pub fn play_launch_bin() -> PathBuf {
         .expect("play_launch binary not found. Run `just build` first, or ensure it is on PATH.")
 }
 
+/// Locate the `ros-launch-resolve` CLI, which owns `check`, `resolve`,
+/// `contract` and the rest of layer 2's verbs.
+///
+/// It is neither installed nor on `PATH`, so this finds it in a cargo target
+/// directory — and there are TWO it can be in, which is the whole reason this
+/// lives here rather than being copied into each suite.
+///
+/// Layer 2 is its own cargo workspace, so a plain `cargo build` there would
+/// write to `src/ros-launch-resolve/target/`. But cargo's config walk ignores
+/// workspace boundaries, so building it in-tree picks up this repository's
+/// colcon-generated `.cargo/config.toml`, whose `target-dir` redirects
+/// everything to `build/.cargo_target/play_launch/`. Which path holds the
+/// binary therefore depends on whether a colcon build has ever run — present
+/// on a developer's machine, absent on a clean clone.
+///
+/// The old copies of this helper looked in `src/ros-launch-resolve/target`
+/// only. On a clean clone that is right. On a machine that had run `just
+/// build` it found a LEFTOVER from before the config existed and tested it
+/// happily: a month-old binary, with every assertion passing against last
+/// month's code, and the skip message advising a `cargo build` that writes
+/// somewhere else. Same family as issue #0020 (a stale pip install shadowing
+/// the real one) and the stale-submodule misdiagnosis — the artifact looks
+/// right and is not the one just built.
+///
+/// So: scan both roots and take the NEWEST, rather than the first found.
+pub fn resolve_cli_bin() -> Option<PathBuf> {
+    let roots = [
+        repo_root().join("build/.cargo_target/play_launch"),
+        repo_root().join("src/ros-launch-resolve/target"),
+    ];
+
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    for root in &roots {
+        for profile in ["debug", "release"] {
+            let candidate = root.join(profile).join("ros-launch-resolve");
+            let Ok(meta) = std::fs::metadata(&candidate) else {
+                continue;
+            };
+            if !meta.is_file() {
+                continue;
+            }
+            let Ok(mtime) = meta.modified() else {
+                continue;
+            };
+            if best
+                .as_ref()
+                .is_none_or(|(best_mtime, _)| mtime > *best_mtime)
+            {
+                best = Some((mtime, candidate));
+            }
+        }
+    }
+
+    match best {
+        Some((_, path)) => Some(path),
+        None => {
+            eprintln!(
+                "SKIP: ros-launch-resolve CLI not built — looked for \
+                 {{debug,release}}/ros-launch-resolve under {} and {}. \
+                 Run `cd src/ros-launch-resolve && cargo build`; which of the two \
+                 it lands in depends on whether this repository has a \
+                 colcon-generated .cargo/config.toml redirecting target-dir.",
+                roots[0].display(),
+                roots[1].display()
+            );
+            None
+        }
+    }
+}
+
 /// Source a bash setup file and return the resulting environment variables.
 fn source_env(script: &Path) -> HashMap<String, String> {
     assert!(

@@ -80,3 +80,29 @@ Not done, and worth a follow-up: `python_tests.rs` and
 `this_launch_file_tests.rs` still define their own `python_test_guard()` with
 the same body. They are separate binaries, so this is duplication rather than
 a correctness problem, but they should collapse onto the shared one.
+
+## Follow-up, done (2026-10-07)
+
+Both copies are gone. `python_tests.rs` and `this_launch_file_tests.rs` now
+`use play_launch_parser_pyexec::python_test_guard;` and define nothing.
+
+Two notes on why this was worth doing even though it was not a correctness
+problem. The copies were not identical — one held a `static Mutex<()>`, the
+other a `OnceLock<Mutex<()>>` built inside the function, and one called
+`register()` before taking the lock while the other took it after. Nothing
+depended on the difference, but three spellings of one rule is how a real
+divergence eventually hides. And the shared definition's own doc comment
+asserted the thing that was false:
+
+> Defined HERE, in the crate that owns the interpreter, rather than copied into
+> each test module: `play_launch_parser`'s Python suites already depend on this
+> crate (they call [`register`]), so one definition covers every test binary
+> that can start an interpreter. Two independently-written locks over one
+> interpreter is not a fix.
+
+That paragraph was written by this issue's fix and was true of `c_abi.rs` only;
+the two files it was about kept their copies for another two weeks. The
+comment now describes the tree.
+
+Verified: `cargo test -p play_launch_parser --test python_tests --test
+this_launch_file_tests` — 61 passed and 4 passed, 0 failed.

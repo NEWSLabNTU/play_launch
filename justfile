@@ -1100,6 +1100,10 @@ check:
     echo "=== issue index vs statuses ==="
     just check-issue-index
 
+    echo ""
+    echo "=== phase 78: a promise is not a period (issue #0056) ==="
+    just check-sched-rates
+
 # Fail when `docs/issues/README.md`'s Open list disagrees with the per-file
 # `status:` frontmatter. The list is prose and the statuses are data, so they
 # drift — and they drifted twice in one day: once four shipped issues stayed
@@ -1112,6 +1116,23 @@ check-issue-index:
     #!/usr/bin/env bash
     set -e
     python3 scripts/check_issue_index.py
+
+# Phase 78 / issue #0056: `min_rate_hz` is read in exactly ONE scheduling path,
+# and that read is written down.
+#
+# Phase 78's acceptance list ends with "No `min_rate_hz` read remains in any
+# scheduling path of this repository (`git grep ...` returns nothing)". Nothing
+# ever ran that grep -- it was a sentence in a roadmap document, and the roadmap
+# is deliberately outside `check-rt-docs`'s scope, which reads what a USER reads.
+# The claim is now false on purpose: issue #0056 restored one read, because
+# phase 78's narrowing had silenced `rate_priority_contradictions`, the one rule
+# whose subject IS the authored promises.
+#
+# So the gate is not "none" but "one, with its reason": it fails when a SECOND
+# read appears. One read with a decision behind it is a decision; two is the
+# phase being undone one call site at a time.
+check-sched-rates:
+    python3 scripts/check_sched_rates.py
 
 # Issue #0036: fail when the user-facing docs or help text drift back to the
 # phase-38 world. Same shape as the #0015 gate in `commands/cap_status.rs`

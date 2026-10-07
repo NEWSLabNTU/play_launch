@@ -1,0 +1,67 @@
+# Three actions, one defect: the cross-scope `dangling-entity` loop must fire
+# on exactly one of them.
+#
+#   /nav/navigate_to_pose  client, no server, not external  -> ERROR
+#   /nav/dock              client, server in this tree      -> clean
+#   /nav/remote_recovery   client, `external: server`       -> clean
+#
+# Before the fix it fired on NONE. rlm's own `dangling-entity` rule raises an
+# Error for the first case ("goals can't be processed"), `load_manifests` drops
+# every per-manifest `dangling-entity` on the grounds that the cross-scope
+# index is authoritative, and the cross-scope replacement iterated
+# `index.topics` and `index.services` and never `index.actions`. So for actions
+# alone the suppression removed a check and nothing re-emitted it: this file
+# used to report "1 clean, 0 with errors" and exit 0.
+#
+# The two clean rows are what makes the rule falsifiable in both directions --
+# a loop that reported every action with a client would pass a test that only
+# asserted the first row.
+version: 1
+
+nodes:
+  mission_planner:
+    cli:
+      navigate: {}
+      dock_request: {}
+      recover: {}
+    pub:
+      route: {}
+    paths:
+      plan:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [route]
+        max_latency: 5ms
+
+  route_monitor:
+    sub:
+      route:
+        min_rate_hz: 10
+
+  dock_controller:
+    srv:
+      dock: {}
+
+topics:
+  /nav/route:
+    type: std_msgs/msg/String
+    pub: [mission_planner/route]
+    sub: [route_monitor/route]
+
+actions:
+  # The defect: nobody serves it, and the author did not say it is external.
+  /nav/navigate_to_pose:
+    type: nav2_msgs/action/NavigateToPose
+    client: [mission_planner/navigate]
+
+  # Served inside this tree.
+  /nav/dock:
+    type: nav2_msgs/action/DockRobot
+    server: [dock_controller/dock]
+    client: [mission_planner/dock_request]
+
+  # Served by another image. `external: server` is the author stating the fact
+  # the rule would otherwise guess at -- the same skip the service loop honours.
+  /nav/remote_recovery:
+    type: nav2_msgs/action/NavigateToPose
+    external: server
+    client: [mission_planner/recover]

@@ -46,22 +46,14 @@ fn resolve_cli_cmd(env: &std::collections::HashMap<String, String>) -> Option<Co
 /// ("depend on ros-launch-resolve; drop the resolve pipeline", RFC-0060 W3)
 /// moved it into the extracted CLI, and `play_launch` no longer has a
 /// `contract` subcommand at all (`unrecognized subcommand 'contract'`).
-/// The binary is not installed or on `PATH`, so this looks in the
-/// submodule's own target dir and the test skips if it has not been built.
+/// One definition, in `fixtures`. The binary is neither installed nor on
+/// `PATH`, and there are TWO cargo target directories it can be in depending
+/// on whether a colcon build has generated a `.cargo/config.toml` that
+/// redirects `target-dir` — this file and `manifest_check.rs` each held a copy
+/// that knew only the first, and so tested a leftover. The test skips if it
+/// has not been built. (Layer 2 stopped being a submodule in phase-55 W1.)
 fn resolve_cli_bin() -> Option<PathBuf> {
-    let root = fixtures::repo_root().join("src/ros-launch-resolve/target");
-    for profile in ["debug", "release"] {
-        let candidate = root.join(profile).join("ros-launch-resolve");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    eprintln!(
-        "SKIP: ros-launch-resolve CLI not built ({}/{{debug,release}}/ros-launch-resolve \
-         missing) — run `cd src/ros-launch-resolve && cargo build` first",
-        root.display()
-    );
-    None
+    fixtures::resolve_cli_bin()
 }
 
 fn simple_launch_dir() -> PathBuf {

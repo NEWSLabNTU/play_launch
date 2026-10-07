@@ -234,6 +234,28 @@ default tier is where `chain_aware` already puts it.
   (`git grep min_rate_hz src/ros-launch-resolve/resolve/src/ros/sched_*`
   returns nothing).
 
+  **Superseded by issue #0056 (2026-09-29), and the grep was never run.** It
+  was a sentence here, and a roadmap document is deliberately outside
+  `just check-rt-docs`'s scope -- that gate reads what a USER reads. One read
+  is back, on purpose: this phase's narrowing also reached
+  `rate_priority_contradictions`, the one rule whose entire subject is an
+  author who writes `min_rate_hz: 100` on one node and `10` on another and
+  then expects the first to outrank the second. With the declared rates gone
+  the rule had nothing to compare and went silent -- a check disabled by a fix
+  to a different problem. `sched_loader.rs`'s `declared_rate_facts` now
+  collects the authored rates for `input_with_declared_rates`, which builds a
+  WIDENED COPY handed to that rule alone; `MapperNode.rate_hz` stays the
+  fastest timer trigger, so no promise reaches the ranking.
+
+  The invariant that remains is therefore "exactly one read, and it is named",
+  and it IS automated: `just check-sched-rates`
+  (`scripts/check_sched_rates.py`, part of `just check`) fails when a second
+  read appears, which is the regression that matters. Occurrences inside
+  `#[cfg(test)]` are not reads -- `sched_derive.rs` builds a manifest carrying
+  `min_rate_hz: Some(30.0)` as the input that pins this phase's own guarantee,
+  and counting it would fail the gate on the evidence for the rule it
+  enforces.
+
 ## Limits
 
 - **The checker still derives from `ManifestIndex`.** `derive_topic_rates`,

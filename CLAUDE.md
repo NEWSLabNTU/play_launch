@@ -615,6 +615,54 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-07**: **Three items the campaign left unfiled, and a stale binary
+  that had been answering for the resolver.** (#0059) `load_manifests` drops
+  every per-manifest `dangling-entity` diagnostic because the cross-scope index
+  is authoritative for them — and that index's loop covered `index.topics` and
+  `index.services` and never `index.actions`. rlm's own rule DOES check actions
+  (an Error, "goals can't be processed"), so for actions alone the suppression
+  removed a real check and nothing re-emitted it: a contract whose action
+  nobody serves reported `1 clean, 0 with errors`, exit 0. Both halves are
+  defensible alone, which is why it survived — the drop reads as
+  deduplication and the replacement reads as complete. Third loop added,
+  mirroring the service one (same severity, same `external: server` skip).
+  Fixture `contract_action_unserved` carries **three** actions (unserved,
+  served here, `external: server`) so the rule is falsifiable in both
+  directions; a loop reporting every action with a client would pass a test
+  asserting only the first. The ranked-plan snapshot gained the fixture and no
+  existing plan moved — a wiring diagnostic must not reach scheduling.
+  (#0060) Phase 78's acceptance list still claimed "No `min_rate_hz` read
+  remains in any scheduling path" and named a `git grep` **nothing ever ran**.
+  #0056 had restored one read deliberately: phase 78's narrowing had silenced
+  `rate_priority_contradictions`, the one rule whose subject IS the authored
+  promises. The claim is stamped superseded in place (the roadmap is
+  deliberately outside `check-rt-docs`, which reads what a USER reads), and
+  `just check-sched-rates` now enforces the invariant that survives — exactly
+  one read, allowlisted **by function rather than line** with its reason, and
+  failing in both directions so the licence cannot outlive the read. It
+  corrected its own author on the first run (the read is in
+  `declared_rate_facts`, not the caller I had listed) and was checked by
+  injecting a second read.
+  Also: the two copies of `python_test_guard` in `play_launch_parser`'s test
+  files collapsed onto `play_launch_parser_pyexec::python_test_guard`, whose
+  own doc comment had asserted since #0050 that it existed "rather than copied
+  into each test module" while both copies remained.
+  **Found on the way, and worse than any of the three**: `manifest_check.rs`
+  and `contract_eject.rs` each located the `ros-launch-resolve` CLI by looking
+  in `src/ros-launch-resolve/target/` only. Cargo's config walk ignores
+  workspace boundaries, so building layer 2 in-tree picks up the
+  colcon-generated `.cargo/config.toml` whose `target-dir` redirects to
+  `build/.cargo_target/play_launch/` — and the old path held an eleven-gigabyte
+  leftover with a binary a month old. Roughly fifteen tests had been asserting
+  against last month's code, passing, while the skip message advised a
+  `cargo build` that writes elsewhere; on a clean clone (no colcon config) the
+  path is correct, so CI could never see it. One definition now lives in
+  `fixtures::resolve_cli_bin` and takes the **newest** of both roots. This is
+  #0020's family and the stale-submodule misdiagnosis's: the artifact looks
+  right and is not the one just built. It cost me the first negative control of
+  the session — a debug `eprintln!` that never printed is what exposed it,
+  which is the argument for running a control rather than inferring one.
+
 - **2026-09-29**: Phase 84 -- **a window is a least time** (manifest
   **`v0.1.47`**, text only). A `window:` rung lasts AT LEAST its duration; the
   WINDOWS term ends at the deadline and the rung below's own route, walked

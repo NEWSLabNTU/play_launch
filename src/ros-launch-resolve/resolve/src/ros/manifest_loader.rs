@@ -821,6 +821,7 @@ pub fn load_manifests(
 /// After all manifests are loaded and merged, this checks for:
 /// - Topics with 0 publishers across the entire tree (dangling sub)
 /// - Services with 0 servers across the entire tree (dangling client)
+/// - Actions with 0 servers across the entire tree (dangling client)
 /// - Cross-scope path budget-overflow (parent vs child paths matched
 ///   by resolved (input, output) topics)
 /// - Critical-path latency for each scope path (Phase 35.3/35.4):
@@ -913,6 +914,47 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
                     service.scope_ids.len()
                 ),
                 path: format!("services.{fqn}"),
+                span: None,
+            });
+        }
+    }
+
+    // Dangling action: 0 servers across the merged tree.
+    //
+    // Same question as a service's, same vocabulary, same severity -- an
+    // action client whose server exists nowhere in the tree sends goals that
+    // can never be processed. `external: server` skips it for the reason the
+    // service loop gives.
+    //
+    // This loop is the whole reason `index.actions` is checked at all.
+    // `load_manifests` drops every per-manifest `dangling-entity` diagnostic
+    // (and `service-wiring`) on the grounds that the cross-scope index is
+    // authoritative for them -- but the replacement covered topics and
+    // services only, and rlm's own rule DOES check actions (an Error:
+    // "action 'X' has no server (goals can't be processed)"). So for actions
+    // alone the suppression removed a real check and nothing re-emitted it:
+    // `check` on a contract whose action nobody serves printed
+    // "1 clean, 0 with errors" and exited 0. Fixture
+    // `tests/fixtures/contract_action_unserved`.
+    for (fqn, action) in &index.actions {
+        let server_external = matches!(
+            index.endpoint_externals.get(fqn).copied(),
+            Some(
+                ros_launch_manifest_types::ExternalEndpointSide::Server
+                    | ros_launch_manifest_types::ExternalEndpointSide::Both
+            )
+        );
+        if action.servers.is_empty() && !action.clients.is_empty() && !server_external {
+            index.merge_diagnostics.push(Diagnostic {
+                rule_id: "dangling-entity".to_string(),
+                severity: Severity::Error,
+                message: format!(
+                    "action '{}' has 0 servers across the manifest tree (declared in {} scope(s)) \
+                     -- goals can't be processed",
+                    fqn,
+                    action.scope_ids.len()
+                ),
+                path: format!("actions.{fqn}"),
                 span: None,
             });
         }

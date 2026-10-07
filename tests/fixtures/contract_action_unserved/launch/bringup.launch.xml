@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<!-- An action with a CLIENT and no server anywhere in the tree. rlm's own
+     `dangling-entity` rule calls that an Error ("goals can't be processed").
+     play_launch dropped every per-manifest `dangling-entity` in favour of a
+     cross-scope loop that covered topics and services only, so for actions the
+     suppression removed a check and nothing replaced it. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="mission_planner" namespace="/nav"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="route_monitor"   namespace="/nav"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="dock_controller"  namespace="/nav"/>
+</launch>

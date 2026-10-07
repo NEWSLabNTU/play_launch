@@ -24,6 +24,21 @@ check is for.
 
 ## Resolved
 
+**#0060** -- phase 78's acceptance list still claimed no `min_rate_hz` read
+remained in any scheduling path, and named a `git grep` nothing ever ran.
+Issue #0056 had restored one read deliberately (the widened copy
+`rate_priority_contradictions` needs). The claim is stamped superseded naming
+that read, and `just check-sched-rates` now fails when a SECOND one appears --
+allowlisted by function, with its reason, and failing in both directions. See
+`0060-*`.
+
+**#0059** -- `load_manifests` drops every per-manifest `dangling-entity`
+diagnostic because the cross-scope index is authoritative for them, and that
+index's loop covered topics and services only. rlm raises an Error for an
+action with a client and no server; play_launch deleted it and re-emitted
+nothing, so an unserved action reported `1 clean, 0 with errors`. Third loop
+added, mirroring the service one. See `0059-*`.
+
 **#0058** -- the hazard observers (live and `measure`) took a reaction only
 from a host PUBLISH of a sink, so the Autoware Safety Island's braking
 command, published on an MCU, read as "NOTHING reacted". Phase 83: a sink no

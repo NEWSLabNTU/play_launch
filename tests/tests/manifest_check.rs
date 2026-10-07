@@ -46,24 +46,14 @@ fn play_launch_cmd() -> Command {
     fixtures::play_launch_cmd(test_env())
 }
 
-/// Locate the `ros-launch-resolve` CLI, which owns `check` (mirrors
-/// `contract_eject.rs`'s `resolve_cli_bin`). The binary is not installed or
-/// on `PATH`, so this looks in the submodule's own target dir and the test
-/// skips cleanly (returns `None`) when it has not been built.
+/// Locate the `ros-launch-resolve` CLI, which owns `check`. One definition,
+/// in `fixtures` — this file and `contract_eject.rs` each held a copy that
+/// searched `src/ros-launch-resolve/target` only, and so tested whatever
+/// leftover binary sat there on a machine whose `.cargo/config.toml`
+/// redirects the target directory elsewhere. The test skips cleanly (returns
+/// `None`) when the CLI has not been built.
 fn ros_launch_resolve_bin() -> Option<PathBuf> {
-    let root = fixtures::repo_root().join("src/ros-launch-resolve/target");
-    for profile in ["debug", "release"] {
-        let candidate = root.join(profile).join("ros-launch-resolve");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    eprintln!(
-        "SKIP: ros-launch-resolve CLI not built ({}/{{debug,release}}/ros-launch-resolve \
-         missing) — run `cd src/ros-launch-resolve && cargo build` first",
-        root.display()
-    );
-    None
+    fixtures::resolve_cli_bin()
 }
 
 fn manifest_fixture_dir() -> PathBuf {
@@ -1894,4 +1884,47 @@ fn an_exit_without_a_window_refuses_the_contract() {
         out.contains("at 'modes.takeover.exit': an exit is only for a windowed rung"),
         "{out}"
     );
+}
+
+/// An action nobody serves is an Error, and the cross-scope loop is the only
+/// thing that can say so.
+///
+/// `load_manifests` drops every per-manifest `dangling-entity` diagnostic (and
+/// `service-wiring`) because the cross-scope index is authoritative for them —
+/// but the replacement in `run_cross_scope_checks` iterated `index.topics` and
+/// `index.services` and never `index.actions`, while rlm's own rule DOES check
+/// actions. So for actions alone the suppression removed a real check and
+/// nothing re-emitted it: this fixture reported "1 clean, 0 with errors" and
+/// exited 0.
+///
+/// The fixture carries three actions so the rule is falsifiable in both
+/// directions — a loop that reported every action with a client would pass a
+/// test that only asserted the first row.
+#[test]
+fn an_action_with_no_server_anywhere_is_reported() {
+    let out = check_fixture("contract_action_unserved");
+
+    assert!(
+        out.contains(
+            "error[dangling-entity]: action '/nav/navigate_to_pose' has 0 servers across the \
+             manifest tree (declared in 1 scope(s)) -- goals can't be processed"
+        ),
+        "{out}"
+    );
+
+    // Served in this tree, and served by another image: neither is a finding.
+    for clean in ["/nav/dock", "/nav/remote_recovery"] {
+        assert!(
+            !out.contains(&format!("action '{clean}'")),
+            "action '{clean}' should not be reported: {out}"
+        );
+    }
+
+    // Exactly one, so the loop is not reporting every action with a client.
+    assert_eq!(
+        out.matches("error[dangling-entity]: action").count(),
+        1,
+        "{out}"
+    );
+    assert!(out.contains("0 clean, 1 with errors"), "{out}");
 }
