@@ -20,8 +20,10 @@
 //! and nextest runs these in parallel.
 
 use play_launch_tests::{fixtures, process::ManagedProcess};
-use std::process::{Output, Stdio};
-use std::time::Duration;
+use std::{
+    process::{Output, Stdio},
+    time::Duration,
+};
 use tempfile::TempDir;
 
 /// `play_launch run <args...> demo_nodes_cpp talker` in a private cwd.

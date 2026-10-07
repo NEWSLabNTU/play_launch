@@ -1,9 +1,10 @@
-use std::collections::HashMap;
-use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    process::Stdio,
+    time::{Duration, Instant},
+};
 
-use play_launch_tests::fixtures;
-use play_launch_tests::process::ManagedProcess;
+use play_launch_tests::{fixtures, process::ManagedProcess};
 
 fn parallel_slow_launch() -> String {
     fixtures::test_workspace_path("parallel_loading")
@@ -298,10 +299,8 @@ fn test_fast_not_blocked_by_slow() {
         std::thread::sleep(std::time::Duration::from_secs(1));
         let stdout = std::fs::read_to_string(&output_path).unwrap_or_default();
 
-        let talker_done = stdout.contains(&format!(
-            " LOADED for '{}'",
-            composable_id("fast_talker")
-        ));
+        let talker_done =
+            stdout.contains(&format!(" LOADED for '{}'", composable_id("fast_talker")));
         let slow_done = stdout.contains(&format!(" LOADED for '{}'", composable_id("slow_node")));
 
         if talker_done && !talker_loaded {
@@ -418,7 +417,10 @@ fn test_unload_via_web_api() {
     // Wait for unload confirmation (either ComponentEvent or actor log)
     let unloaded = wait_for_line(
         &output_path,
-        &format!("Successfully unloaded composable node '{}'", composable_id("fast_talker")),
+        &format!(
+            "Successfully unloaded composable node '{}'",
+            composable_id("fast_talker")
+        ),
         Duration::from_secs(15),
     );
 
@@ -427,8 +429,7 @@ fn test_unload_via_web_api() {
     let snippet = stdout.len().saturating_sub(2000);
     eprintln!("{}", &stdout[snippet..]);
 
-    let has_event =
-        stdout.contains(&format!(" UNLOADED for '{}'", composable_id("fast_talker")));
+    let has_event = stdout.contains(&format!(" UNLOADED for '{}'", composable_id("fast_talker")));
     eprintln!("unloaded={unloaded}, has_component_event={has_event}");
 
     assert!(unloaded, "Expected unload confirmation for fast_talker");
@@ -478,7 +479,10 @@ fn test_unload_and_reload() {
     // Wait for unload confirmation
     let unloaded = wait_for_line(
         &output_path,
-        &format!("Successfully unloaded composable node '{}'", composable_id("fast_talker")),
+        &format!(
+            "Successfully unloaded composable node '{}'",
+            composable_id("fast_talker")
+        ),
         Duration::from_secs(15),
     );
     assert!(unloaded, "Expected unload confirmation for fast_talker");
@@ -552,7 +556,10 @@ fn test_unload_during_construction() {
     // Wait for unload confirmation
     let unloaded = wait_for_line(
         &output_path,
-        &format!("Successfully unloaded composable node '{}'", composable_id("slow_node")),
+        &format!(
+            "Successfully unloaded composable node '{}'",
+            composable_id("slow_node")
+        ),
         Duration::from_secs(15),
     );
 

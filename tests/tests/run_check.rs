@@ -54,7 +54,10 @@ fn run_check_states_that_no_contracts_were_checked() {
          reports a pass over an empty check.\nstdout: {stdout}\nstderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(out.status.success(), "expected exit 0 with no platform file");
+    assert!(
+        out.status.success(),
+        "expected exit 0 with no platform file"
+    );
 }
 
 /// `resolve_platform_file` only LOCATES a path; on the explicit `--sched`

@@ -154,7 +154,9 @@ fn the_resolver_and_the_shared_derivation_take_the_same_route() {
         .elements
         .iter()
         .flat_map(|e| match e {
-            ChainElement::Segment { nodes_in_topo_order } => nodes_in_topo_order
+            ChainElement::Segment {
+                nodes_in_topo_order,
+            } => nodes_in_topo_order
                 .iter()
                 .map(|n| n.node.clone())
                 .collect::<Vec<_>>(),

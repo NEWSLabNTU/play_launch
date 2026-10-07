@@ -7,11 +7,12 @@
 //!
 //! Design: `docs/design/composable-load-lifecycle.md`.
 
-use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::{
+    process::Stdio,
+    time::{Duration, Instant},
+};
 
-use play_launch_tests::fixtures;
-use play_launch_tests::process::ManagedProcess;
+use play_launch_tests::{fixtures, process::ManagedProcess};
 
 fn launch_path(name: &str) -> String {
     fixtures::test_workspace_path("parallel_loading")
@@ -32,7 +33,12 @@ fn container_events_launch() -> String {
 /// Log fragments that would mean the supervisor decided to load something
 /// again. Deliberately anchored: the correct behaviour prints "not resending",
 /// and a marker matching that substring would pass this assertion by accident.
-const RESEND_MARKERS: &[&str] = &["; resending", "re-dispatching", "— reloading", "reloading '"];
+const RESEND_MARKERS: &[&str] = &[
+    "; resending",
+    "re-dispatching",
+    "— reloading",
+    "reloading '",
+];
 
 struct Run {
     _proc: ManagedProcess,
@@ -265,7 +271,9 @@ fn test_stall_restart_cancels_before_it_reloads() {
     );
 
     let text = run.text();
-    let cancel_at = text.find("cancelling").expect("a cancel must precede the reload");
+    let cancel_at = text
+        .find("cancelling")
+        .expect("a cancel must precede the reload");
     let reload_at = text
         .find("cancelled and confirmed gone")
         .expect("the confirmation must be logged");

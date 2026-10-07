@@ -5,11 +5,9 @@
 //! built to survive a congested rmw layer are absent from the socket path
 //! rather than merely quiet on it.
 
-use std::process::Stdio;
-use std::time::Duration;
+use std::{process::Stdio, time::Duration};
 
-use play_launch_tests::fixtures;
-use play_launch_tests::process::ManagedProcess;
+use play_launch_tests::{fixtures, process::ManagedProcess};
 
 fn launch_file() -> String {
     fixtures::test_workspace_path("container_events")
@@ -179,9 +177,7 @@ fn test_control_socket_can_be_turned_off() {
         "expected both composables loaded over LoadNode:\n{text}"
     );
     assert!(
-        LOAD_NODE_SERVICE_MARKERS
-            .iter()
-            .any(|m| text.contains(m)),
+        LOAD_NODE_SERVICE_MARKERS.iter().any(|m| text.contains(m)),
         "expected the LoadNode service path with control_socket: false:\n{text}"
     );
     assert!(
@@ -214,9 +210,7 @@ fn test_observable_keeps_load_node_and_reports_on_the_socket() {
         "observable must not take loads over the socket:\n{text}"
     );
     assert!(
-        LOAD_NODE_SERVICE_MARKERS
-            .iter()
-            .any(|m| text.contains(m)),
+        LOAD_NODE_SERVICE_MARKERS.iter().any(|m| text.contains(m)),
         "expected observable loads to use the LoadNode service:\n{text}"
     );
     assert!(

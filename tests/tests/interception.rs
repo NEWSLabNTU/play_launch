@@ -6,11 +6,8 @@
 //! - Summary files (frontier_summary.json, stats_summary.json) are written
 //! - When disabled, no interception artifacts are created
 
-use play_launch_tests::fixtures;
-use play_launch_tests::process::ManagedProcess;
-use std::path::Path;
-use std::process::Stdio;
-use std::time::Duration;
+use play_launch_tests::{fixtures, process::ManagedProcess};
+use std::{path::Path, process::Stdio, time::Duration};
 
 /// Path to the interception .so (built by `just build-interception`).
 fn interception_so_path() -> std::path::PathBuf {

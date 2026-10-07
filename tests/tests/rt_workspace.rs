@@ -34,7 +34,9 @@ fn fixture_dir() -> PathBuf {
 /// now answers `unrecognized subcommand 'dump'`. The binary is neither
 /// installed nor on `PATH`, so this looks in the submodule's own target dir
 /// and returns `None` (test skips) when it has not been built.
-fn resolve_cli_cmd(env: &std::collections::HashMap<String, String>) -> Option<std::process::Command> {
+fn resolve_cli_cmd(
+    env: &std::collections::HashMap<String, String>,
+) -> Option<std::process::Command> {
     let root = fixtures::repo_root().join("src/ros-launch-resolve/target");
     let bin = ["debug", "release"]
         .iter()

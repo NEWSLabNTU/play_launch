@@ -1,7 +1,9 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 /// Per-process counter combined with PID to produce a unique ROS_DOMAIN_ID
 /// across all nextest worker processes (each test binary is a separate process).

@@ -12,10 +12,12 @@
 //! `tests/tests/migrated_verbs.rs`).
 
 use play_launch_tests::fixtures;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::OnceLock;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::OnceLock,
+};
 
 /// The environment every process this file spawns runs in (issue #0051).
 ///
@@ -1089,7 +1091,12 @@ fn w1d_write_only_fields_now_have_rules_that_fail() {
     // `jitter-range` (phase 70 W2) fires on the same declaration from the
     // other side: a 0..200ms range cannot fit a 5ms jitter bound whatever the
     // route's sampling jitter is.
-    for rule in ["jitter-feasibility", "jitter-range", "lifespan-age", "sync-budget"] {
+    for rule in [
+        "jitter-feasibility",
+        "jitter-range",
+        "lifespan-age",
+        "sync-budget",
+    ] {
         assert!(
             out.contains(rule),
             "expected {rule} to fire on contract_w1d; got:\n{out}"
@@ -1113,7 +1120,10 @@ fn phase67_vocabulary_checks_out_end_to_end() {
     // Derived callback groups: the route through `boxes` may be blocked by
     // the sibling `masks` path they share a group with.
     assert!(out.contains("path-exclusion"), "got:\n{out}");
-    assert!(out.contains("to_masks"), "the blocking sibling is named:\n{out}");
+    assert!(
+        out.contains("to_masks"),
+        "the blocking sibling is named:\n{out}"
+    );
     // The per-manifest sum is SUPERSEDED where a real route exists, so the
     // two must not both report a total for one path.
     assert!(
@@ -1126,7 +1136,10 @@ fn phase67_vocabulary_checks_out_end_to_end() {
 //    are REFUSALS, which is the half that matters for safety.
 
 fn check_with_sched(dir: &str) -> String {
-    let base = fixtures::repo_root().join("tests/fixtures").join(dir).join("launch");
+    let base = fixtures::repo_root()
+        .join("tests/fixtures")
+        .join(dir)
+        .join("launch");
     let out = play_launch_cmd()
         .arg("check")
         .arg(base.join("bringup.launch.xml"))
@@ -1306,7 +1319,10 @@ fn fault_reaction_budget_fits_and_names_its_terms() {
         out.contains("detection 100.00ms") && out.contains("settle 200.00ms"),
         "the verdict must name the derived terms:\n{out}"
     );
-    assert!(out.contains("fits the fault-tolerant time interval"), "{out}");
+    assert!(
+        out.contains("fits the fault-tolerant time interval"),
+        "{out}"
+    );
     // Who watches the watcher: the reaction's sink is deliberately unguarded.
     assert!(out.contains("reaction-unguarded"), "{out}");
     // Phase 72: the `high` label on the brake is what ASIL_D already derives.
@@ -1328,7 +1344,10 @@ fn fault_reaction_rules_fire_on_a_broken_chain() {
         // Phase 72: a `low` label on a node that reacts for an ASIL_D hazard.
         "warning[criticality-mismatch]",
     ] {
-        assert!(out.contains(needle), "expected `{needle}` on contract_fault_late:\n{out}");
+        assert!(
+            out.contains(needle),
+            "expected `{needle}` on contract_fault_late:\n{out}"
+        );
     }
 }
 
@@ -1475,7 +1494,9 @@ fn contract_qos_becomes_qos_override_parameters_on_the_model() {
     assert!(status.success(), "resolve failed");
     let model = std::fs::read_to_string(&out_path).expect("model written");
     assert!(
-        model.contains("qos_overrides./safety/scan.subscription.liveliness_lease_duration: 100000000"),
+        model.contains(
+            "qos_overrides./safety/scan.subscription.liveliness_lease_duration: 100000000"
+        ),
         "the lease must reach the node as an rclcpp qos_overrides parameter, in ns:\n{model}"
     );
     assert!(model.contains("lease_duration_ms: 100.0"), "{model}");
@@ -1489,14 +1510,28 @@ fn contract_qos_becomes_qos_override_parameters_on_the_model() {
 fn modes_resolve_and_a_correct_ladder_is_quiet() {
     let out = check_fixture("contract_modes");
     assert!(out.contains("fault-reaction-budget"), "{out}");
-    assert!(out.contains("fits the fault-tolerant time interval"), "{out}");
-    for rule in ["ladder-unterminated", "ladder-rung-budget", "mode-requires-unguarded", "override-target-missing"] {
-        assert!(!out.contains(rule), "`{rule}` must not fire on a correct contract:\n{out}");
+    assert!(
+        out.contains("fits the fault-tolerant time interval"),
+        "{out}"
+    );
+    for rule in [
+        "ladder-unterminated",
+        "ladder-rung-budget",
+        "mode-requires-unguarded",
+        "override-target-missing",
+    ] {
+        assert!(
+            !out.contains(rule),
+            "`{rule}` must not fire on a correct contract:\n{out}"
+        );
     }
     // W3's second half: `degraded` RELAXES the budget, so running the checks
     // in that mode introduces nothing. A mode-tagged finding here would mean
     // the per-mode pass reports what the default run already said.
-    assert!(!out.contains("[mode:"), "a relaxing override must introduce nothing:\n{out}");
+    assert!(
+        !out.contains("[mode:"),
+        "a relaxing override must introduce nothing:\n{out}"
+    );
 }
 
 /// And the four mode rules on a contract built to break each one.
@@ -1516,7 +1551,10 @@ fn mode_rules_fire_on_a_broken_ladder() {
         "warning[mode:scope-budget]",
         "in mode 'restricted'",
     ] {
-        assert!(out.contains(needle), "expected `{needle}` on contract_modes_bad:\n{out}");
+        assert!(
+            out.contains(needle),
+            "expected `{needle}` on contract_modes_bad:\n{out}"
+        );
     }
     // An override the rule REJECTS must not reach the arithmetic: `stopped`
     // pins a max_jitter the path never declares, and gets exactly one

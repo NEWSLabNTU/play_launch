@@ -407,7 +407,10 @@ fn the_graph_export_carries_what_the_walk_reads() {
             .unwrap_or_else(|| panic!("no path {node}/{name}"))
             .clone()
     };
-    assert_eq!(path("/estop_op", "on_timer")["trigger"]["timer"]["rate_hz"], 30.0);
+    assert_eq!(
+        path("/estop_op", "on_timer")["trigger"]["timer"]["rate_hz"],
+        30.0
+    );
     assert_eq!(path("/estop_op", "on_timer")["safe_state"]["emits"], "cmd");
     let call_mrm = path("/handler", "call_mrm");
     assert_eq!(call_mrm["trigger"]["input"][0], "availability");

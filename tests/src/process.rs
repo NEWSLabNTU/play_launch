@@ -1,7 +1,9 @@
-use std::io;
-use std::os::unix::process::CommandExt;
-use std::process::{Child, Command, ExitStatus};
-use std::time::{Duration, Instant};
+use std::{
+    io,
+    os::unix::process::CommandExt,
+    process::{Child, Command, ExitStatus},
+    time::{Duration, Instant},
+};
 
 /// RAII wrapper that spawns a process in its own process group and guarantees
 /// cleanup on drop — even if the test panics.

@@ -13,8 +13,7 @@ use std::collections::BTreeSet;
 /// Resolve the fixture for one `host:=` value with one parser.
 fn resolve(parser: &str, host: &str, out: &std::path::Path) -> serde_json::Value {
     let env = fixtures::install_env();
-    let launch =
-        fixtures::repo_root().join("tests/fixtures/multihost/launch/multihost.launch.xml");
+    let launch = fixtures::repo_root().join("tests/fixtures/multihost/launch/multihost.launch.xml");
     let mut cmd = fixtures::ros_launch_resolve_cmd(&env);
     cmd.args([
         "resolve",
@@ -114,8 +113,7 @@ fn check_honours_launch_args_given_a_direct_path() {
         eprintln!("skip: ROS env not available");
         return;
     }
-    let launch =
-        fixtures::repo_root().join("tests/fixtures/multihost/launch/multihost.launch.xml");
+    let launch = fixtures::repo_root().join("tests/fixtures/multihost/launch/multihost.launch.xml");
 
     // `resolve` is the reference: host:=robot1 selects talker1 + hub.
     let tmp = tempfile::TempDir::new().expect("tempdir");
@@ -124,18 +122,12 @@ fn check_honours_launch_args_given_a_direct_path() {
 
     for (label, mut cmd) in [
         ("play_launch", fixtures::play_launch_cmd(&env)),
-        (
-            "ros-launch-resolve",
-            fixtures::ros_launch_resolve_cmd(&env),
-        ),
+        ("ros-launch-resolve", fixtures::ros_launch_resolve_cmd(&env)),
     ] {
         cmd.args(["check", launch.to_str().unwrap(), "host:=robot1"]);
         let output = cmd.output().expect("run check");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "{label} check failed:\n{stderr}"
-        );
+        assert!(output.status.success(), "{label} check failed:\n{stderr}");
         assert!(
             stderr.contains(&format!("{reference} nodes")),
             "{label} check must parse the same {reference} nodes `resolve` does \
@@ -160,8 +152,7 @@ fn launch_honours_launch_args_given_a_direct_path() {
         eprintln!("skip: ROS env not available");
         return;
     }
-    let launch =
-        fixtures::repo_root().join("tests/fixtures/multihost/launch/multihost.launch.xml");
+    let launch = fixtures::repo_root().join("tests/fixtures/multihost/launch/multihost.launch.xml");
 
     // `resolve` is the reference: host:=robot1 selects talker1 + hub.
     let tmp = tempfile::TempDir::new().expect("tempdir");

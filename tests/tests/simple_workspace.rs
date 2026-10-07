@@ -1,5 +1,4 @@
-use play_launch_tests::fixtures;
-use play_launch_tests::process::ManagedProcess;
+use play_launch_tests::{fixtures, process::ManagedProcess};
 
 /// `(plain_nodes, containers, composables)` from resolving `launch_file`
 /// with the given parser. Phase 47.B6 — the model-shaped sibling of the

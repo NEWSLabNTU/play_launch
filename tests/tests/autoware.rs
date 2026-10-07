@@ -1,8 +1,6 @@
 use std::process::Stdio;
 
-use play_launch_tests::fixtures;
-use play_launch_tests::health::HealthReport;
-use play_launch_tests::process::ManagedProcess;
+use play_launch_tests::{fixtures, health::HealthReport, process::ManagedProcess};
 
 fn require_autoware() {
     let script = fixtures::test_workspace_path("autoware").join("activate_autoware.sh");
@@ -298,7 +296,10 @@ fn test_autoware_mrm_chain_fault_reaction_budget() {
         plain.contains("hazard 'mode_unavailable': detection 500.00ms"),
         "{plain}"
     );
-    assert!(plain.contains("= 1944.00ms fits the fault-tolerant time interval 2000.00ms"), "{plain}");
+    assert!(
+        plain.contains("= 1944.00ms fits the fault-tolerant time interval 2000.00ms"),
+        "{plain}"
+    );
     assert!(
         plain.contains("hazard 'mode_unavailable_tight'") && plain.contains("1944.00ms exceeds"),
         "{plain}"
@@ -364,7 +365,9 @@ fn test_autoware_topic_graph_derived_from_remaps() {
         .as_array()
         .expect("sub side");
     assert!(
-        gate_in.iter().any(|s| s.as_str().is_some_and(|s| s.contains("vehicle_cmd_gate"))),
+        gate_in
+            .iter()
+            .any(|s| s.as_str().is_some_and(|s| s.contains("vehicle_cmd_gate"))),
         "{gate_in:?}"
     );
 }

@@ -1,5 +1,7 @@
-use std::fmt;
-use std::path::{Path, PathBuf};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 use crate::fixtures;
 
@@ -146,29 +148,6 @@ impl HealthReport {
 /// names want to match on `rviz2`.
 fn bare_member_name(id: &str) -> &str {
     id.split_once(":/").map_or(id, |(_kind, name)| name)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::bare_member_name;
-
-    #[test]
-    fn strips_the_kind_prefix() {
-        assert_eq!(bare_member_name("node:/rviz2"), "rviz2");
-        assert_eq!(bare_member_name("composable:/fast_talker"), "fast_talker");
-    }
-
-    #[test]
-    fn leaves_an_unprefixed_name_alone() {
-        assert_eq!(bare_member_name("rviz2"), "rviz2");
-    }
-
-    #[test]
-    fn keeps_a_namespaced_name_after_the_prefix() {
-        // Only the `<kind>:/` prefix is stripped — a namespaced node keeps its
-        // path, so an ignore entry must spell it the same way.
-        assert_eq!(bare_member_name("node:/perception/detector"), "perception/detector");
-    }
 }
 
 /// Strip ANSI escape sequences from a string.
@@ -444,5 +423,31 @@ impl fmt::Display for HealthReport {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bare_member_name;
+
+    #[test]
+    fn strips_the_kind_prefix() {
+        assert_eq!(bare_member_name("node:/rviz2"), "rviz2");
+        assert_eq!(bare_member_name("composable:/fast_talker"), "fast_talker");
+    }
+
+    #[test]
+    fn leaves_an_unprefixed_name_alone() {
+        assert_eq!(bare_member_name("rviz2"), "rviz2");
+    }
+
+    #[test]
+    fn keeps_a_namespaced_name_after_the_prefix() {
+        // Only the `<kind>:/` prefix is stripped — a namespaced node keeps its
+        // path, so an ignore entry must spell it the same way.
+        assert_eq!(
+            bare_member_name("node:/perception/detector"),
+            "perception/detector"
+        );
     }
 }

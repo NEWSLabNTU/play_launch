@@ -17,11 +17,9 @@
 //!
 //! Either substring proves the apply-layer ran, not just the parser/resolver.
 
-use std::process::Stdio;
-use std::time::Duration;
+use std::{process::Stdio, time::Duration};
 
-use play_launch_tests::fixtures;
-use play_launch_tests::process::ManagedProcess;
+use play_launch_tests::{fixtures, process::ManagedProcess};
 
 /// Write a scheduling spec TOML assigning every node in the launch tree to a
 /// single `rt` real-time tier via a root scope selector. Using `scope = "/"`

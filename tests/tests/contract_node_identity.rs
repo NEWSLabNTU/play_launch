@@ -17,8 +17,10 @@
 //! pattern and same skip as `manifest_check.rs`).
 
 use play_launch_tests::fixtures;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 fn ros_launch_resolve_bin() -> Option<PathBuf> {
     let root = fixtures::repo_root().join("src/ros-launch-resolve/target");

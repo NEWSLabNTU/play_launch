@@ -19,12 +19,13 @@
 //! BEFORE stopping it, because a `Web server shutting down...` after our
 //! SIGTERM is the correct one.
 
-use play_launch_tests::fixtures;
-use play_launch_tests::process::ManagedProcess;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{Duration, Instant};
+use play_launch_tests::{fixtures, process::ManagedProcess};
+use std::{
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    sync::atomic::{AtomicU32, Ordering},
+    time::{Duration, Instant},
+};
 use tempfile::TempDir;
 
 static UNIT_SEQ: AtomicU32 = AtomicU32::new(0);
@@ -57,7 +58,15 @@ fn talker_cmd(work: &Path, in_scope: bool) -> Command {
             UNIT_SEQ.fetch_add(1, Ordering::Relaxed)
         );
         let mut c = Command::new("systemd-run");
-        c.args(["--user", "--scope", "--quiet", "--collect", "--unit", &unit, "--"]);
+        c.args([
+            "--user",
+            "--scope",
+            "--quiet",
+            "--collect",
+            "--unit",
+            &unit,
+            "--",
+        ]);
         c.arg(&bin);
         c
     } else {
@@ -73,7 +82,13 @@ fn talker_cmd(work: &Path, in_scope: bool) -> Command {
     // Defaults ON. Port 0 gives the web UI an ephemeral port: the fixed
     // 8080 would collide with any other play_launch on the host, and a
     // bind failure is just another way for the web task to end early.
-    cmd.args(["run", "demo_nodes_cpp", "talker", "--web-addr", "127.0.0.1:0"]);
+    cmd.args([
+        "run",
+        "demo_nodes_cpp",
+        "talker",
+        "--web-addr",
+        "127.0.0.1:0",
+    ]);
     // `run` writes its log to STDOUT (`main.rs::logs_to_stderr` sends only
     // the model-emitting verbs to stderr), so both streams go to one file.
     let log = std::fs::File::create(work.join("launcher.log")).unwrap();
@@ -108,7 +123,8 @@ fn run_until_talker_publishes(in_scope: bool) -> (String, String) {
             }
         }
         // A failed spawn ends the run; stop waiting on it.
-        let launcher = std::fs::read_to_string(work.path().join("launcher.log")).unwrap_or_default();
+        let launcher =
+            std::fs::read_to_string(work.path().join("launcher.log")).unwrap_or_default();
         if launcher.contains("Unable to start") {
             break;
         }

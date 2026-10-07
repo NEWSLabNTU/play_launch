@@ -173,7 +173,10 @@ fn a_run_without_events_names_the_config_that_produces_them() {
 #[test]
 fn a_model_without_contracts_says_there_is_nothing_to_attribute_to() {
     let dir = tempfile::TempDir::new().unwrap();
-    let run = write_run(dir.path(), &invocation(1, 1_000_000_000, 5_000_000, 6_000_000));
+    let run = write_run(
+        dir.path(),
+        &invocation(1, 1_000_000_000, 5_000_000, 6_000_000),
+    );
     let model = write_model(
         dir.path(),
         "meta:\n  version: 1\nstructure:\n  nodes:\n    /detector:\n      scope: \"0\"\n      pkg: demo\n      exec: detector\n",
@@ -188,7 +191,10 @@ fn a_model_without_contracts_says_there_is_nothing_to_attribute_to() {
 #[test]
 fn the_fragment_parses_as_yaml_and_can_be_appended_to_a_platform_file() {
     let dir = tempfile::TempDir::new().unwrap();
-    let run = write_run(dir.path(), &invocation(1, 1_000_000_000, 5_000_000, 6_000_000));
+    let run = write_run(
+        dir.path(),
+        &invocation(1, 1_000_000_000, 5_000_000, 6_000_000),
+    );
     let model = write_model(dir.path(), MODEL);
 
     let out = measure(&run, &model);

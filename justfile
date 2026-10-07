@@ -68,6 +68,19 @@ install-deps:
     # through a build or a check with `command not found`.
     pip install uv 'wheel>=0.40' ruff
 
+    # `just check` runs ament_cpplint AND ament_clang_format over the C++
+    # packages. cpplint ships with a normal desktop ROS install; clang-format
+    # does NOT, and it has no PyPI distribution, so the two sat side by side
+    # in the same recipe with only one of them ever present. `check` now
+    # reports it as not-run rather than skipping every later gate, which is
+    # how the gap became visible at all -- but reporting a gap is not closing
+    # it, so install it here. Not fatal: a machine without apt, or an image
+    # that deliberately omits it, still gets a usable `just check`.
+    if command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get install -y ros-{{ros_distro}}-ament-clang-format ||
+            echo 'WARNING: ament-clang-format not installed; just check will report that gate as not run.'
+    fi
+
     source /opt/ros/{{ros_distro}}/setup.bash
     rosdep update
     rosdep install --from-paths src --ignore-src -r -y
@@ -1044,65 +1057,125 @@ benchmark-parsers ITERATIONS="5":
     ITERATIONS={{ITERATIONS}} ./scripts/benchmark_parsers.sh
 
 # Run checks (clippy + rustfmt check + ruff + cpplint + clang-format)
+#
+# EVERY step runs, even after one fails. `set -e` used to abort here, and the
+# step order decided what got checked: a missing `ruff` module — a linter that
+# is not even this project's code — took the web-UI lint, the layer-2 isolation
+# gate, the field census, the RT doc gate, the issue index and the phase-78 gate
+# with it, and the recipe exited 1 having silently skipped six gates. The exit
+# code was right and told you almost nothing.
+#
+# So failures ACCUMULATE and are summarised at the end. A tool that is not
+# installed is reported separately from a check that failed, because they call
+# for different actions: MISSING is the machine, FAILED is the code. Missing
+# tools do not fail the recipe — the same ruling as `test-all`'s
+# "Silently-skipped tests" summary and the parity gates' `SKIP:` lines, which
+# exist so an unrunnable gate is VISIBLE rather than either green or red. A
+# missing tool that stayed silent is the bug being fixed; one that is announced
+# every run is doing its job.
 check:
     #!/usr/bin/env bash
-    set -e
+    # No `set -u`: colcon's own `install/setup.bash` reads `$COLCON_TRACE`
+    # unbound, so `-u` kills the recipe on its first line.
+    set -o pipefail
     source install/setup.bash
 
-    echo "=== play_launch (clippy) ==="
-    (
-    cd src/play_launch &&
-    cargo clippy --all-targets --all-features -- -D warnings
-    )
+    failed=()
+    missing=()
 
-    echo ""
-    echo "=== play_launch (rustfmt) ==="
-    (cd src/play_launch && cargo +nightly fmt --check)
+    # Run a step, record it, keep going.
+    step() {
+        local label="$1"; shift
+        echo ""
+        echo "=== $label ==="
+        if "$@"; then
+            return 0
+        fi
+        echo "  FAILED: $label"
+        failed+=("$label")
+        return 0
+    }
 
-    echo ""
-    echo "=== play_launch_parser (clippy + rustfmt) ==="
-    (cd src/ros-launch-resolve/parser && just check)
+    # Same, for a step whose external tool may not be installed. The tool's
+    # ABSENCE is not a failure; its verdict is.
+    step_tool() {
+        local label="$1" tool="$2"; shift 2
+        echo ""
+        echo "=== $label ==="
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            echo "  SKIPPED: $tool is not installed (see \`just install-deps\`)"
+            missing+=("$label ($tool)")
+            return 0
+        fi
+        if "$@"; then
+            return 0
+        fi
+        echo "  FAILED: $label"
+        failed+=("$label")
+        return 0
+    }
+
+    step "play_launch (clippy)" \
+        bash -c 'cd src/play_launch && cargo clippy --all-targets --all-features -- -D warnings'
+
+    step "play_launch (rustfmt)" \
+        bash -c 'cd src/play_launch && cargo +nightly fmt --check'
+
+    step "play_launch_parser (clippy + rustfmt)" \
+        bash -c 'cd src/ros-launch-resolve/parser && just check'
 
     # The resolve/cli workspace had no rustfmt gate, and nine files drifted
     # from the nightly style its rustfmt.toml asks for.
-    echo ""
-    echo "=== ros-launch-resolve (rustfmt) ==="
-    (cd src/ros-launch-resolve && cargo +nightly fmt --check)
+    step "ros-launch-resolve (rustfmt)" \
+        bash -c 'cd src/ros-launch-resolve && cargo +nightly fmt --check'
+
+    # `tests/` is excluded from the root workspace, so nothing here reached it
+    # and 55 sites across 26 files had drifted from the root `rustfmt.toml`.
+    # That is not cosmetic: the next person to run `cargo fmt` there gets a
+    # 26-file diff mixed into whatever they were actually changing. Note
+    # `+nightly` — the config asks for `format_code_in_doc_comments` and
+    # `imports_granularity`, which stable rustfmt ignores with a warning, so
+    # formatting this crate with stable produces a DIFFERENT result that this
+    # gate would then reject.
+    step "play-launch-tests (clippy + rustfmt)" \
+        bash -c 'cd tests && cargo +nightly fmt --check && cargo clippy --all-targets -- -D warnings'
+
+    step "Python (ruff)" python3 -m ruff check python/
+
+    step_tool "C++ (cpplint)" ament_cpplint ament_cpplint {{cpp_packages}}
+
+    step_tool "C++ (clang-format check)" ament_clang_format ament_clang_format {{cpp_packages}}
+
+    step "Web UI (html/css/js lint + TypeScript)" just check-web-ui
+
+    step "layer-2 isolation" just check-layer2-isolation
+
+    step "Contract field census (nothing new went unread)" just check-field-census
+
+    step "RT scheduling doc drift (issue #0036)" just check-rt-docs
+
+    step "issue index vs statuses" just check-issue-index
+
+    step "phase 78: a promise is not a period (issue #0056)" just check-sched-rates
 
     echo ""
-    echo "=== Python (ruff) ==="
-    python3 -m ruff check python/
-
-    echo ""
-    echo "=== C++ (cpplint) ==="
-    ament_cpplint {{cpp_packages}}
-
-    echo ""
-    echo "=== C++ (clang-format check) ==="
-    ament_clang_format {{cpp_packages}}
-
-    echo ""
-    echo "=== Web UI (html/css/js lint + TypeScript) ==="
-    just check-web-ui
-
-    echo ""
-    just check-layer2-isolation
-
-    echo ""
-    echo "=== Contract field census (nothing new went unread) ==="
-    just check-field-census
-
-    echo ""
-    echo "=== RT scheduling doc drift (issue #0036) ==="
-    just check-rt-docs
-
-    echo ""
-    echo "=== issue index vs statuses ==="
-    just check-issue-index
-
-    echo ""
-    echo "=== phase 78: a promise is not a period (issue #0056) ==="
-    just check-sched-rates
+    if [ ${#missing[@]} -ne 0 ]; then
+        echo "Not run — tool not installed (${#missing[@]}):"
+        printf '  - %s\n' "${missing[@]}"
+        echo '  These are NOT counted as passing. `just install-deps` installs them;'
+        echo '  ament_clang_format ships in the ros-<distro>-ament-clang-format package.'
+        echo ""
+    fi
+    if [ ${#failed[@]} -ne 0 ]; then
+        echo "FAILED (${#failed[@]}):"
+        printf '  - %s\n' "${failed[@]}"
+        exit 1
+    fi
+    if [ ${#missing[@]} -ne 0 ]; then
+        echo "All checks that could run passed (${#missing[@]} not run)."
+    else
+        echo "All checks passed."
+    fi
 
 # Fail when `docs/issues/README.md`'s Open list disagrees with the per-file
 # `status:` frontmatter. The list is prose and the statuses are data, so they

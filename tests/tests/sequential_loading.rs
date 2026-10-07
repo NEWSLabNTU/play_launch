@@ -1,5 +1,4 @@
-use play_launch_tests::fixtures;
-use play_launch_tests::process::ManagedProcess;
+use play_launch_tests::{fixtures, process::ManagedProcess};
 
 fn launch_file() -> String {
     fixtures::test_workspace_path("sequential_loading")

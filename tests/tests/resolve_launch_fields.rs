@@ -20,7 +20,12 @@ fn resolve_fixture(out: &std::path::Path) -> serde_json::Value {
     let launch =
         fixtures::repo_root().join("tests/fixtures/launch_fields/launch/launch_fields.launch.xml");
     let mut cmd = fixtures::ros_launch_resolve_cmd(&env);
-    cmd.args(["resolve", launch.to_str().unwrap(), "-o", out.to_str().unwrap()]);
+    cmd.args([
+        "resolve",
+        launch.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+    ]);
     let output = cmd.output().expect("run ros-launch-resolve resolve");
     assert!(
         output.status.success(),
