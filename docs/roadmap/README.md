@@ -295,6 +295,14 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     application`. Issue #0046 ruled. W4 (a sampling hop in the reaction walk)
     is separate.
     [phase-82-what-a-detector-may-see.md](./phase-82-what-a-detector-may-see.md).
+  - **Phase 86** - designed: a lifecycle node's autostart comes from the
+    launch file (2026-10-10). `<lifecycle_node>` is dispatched (XML/YAML,
+    Jazzy `autostart`), the Python `LifecycleNode` captures `autostart`, `up`
+    drives `Active` nodes to active, and the rlm bump stops projecting
+    nano-ros's system-wide `[lifecycle]`, `features` and `[deploy.*]` build
+    fields into the model (rlm `docs/model-boundary.md`; nano-ros phase 486
+    W5/W7).
+    [phase-86-lifecycle-autostart-from-the-launch-file.md](./phase-86-lifecycle-autostart-from-the-launch-file.md).
   - **Phase 85** - in progress: what the island's board runs left open
     (2026-10-01). The Autoware Safety Island's S32K344 runs (phase8-W30,
     W31) sized `call_mrm` at 206 ms = link 57 + tick 118 + work 31, because
