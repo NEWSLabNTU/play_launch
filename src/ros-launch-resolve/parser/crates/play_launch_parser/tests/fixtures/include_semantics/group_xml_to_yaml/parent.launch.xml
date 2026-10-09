@@ -1,0 +1,20 @@
+<launch>
+  <arg name="child_let" default="none"/>
+  <let name="parent_let" value="P"/>
+  <group>
+    <include file="$(dirname)/child.launch.yaml">
+      <arg name="who" value="a"/>
+      <arg name="flag" value="false"/>
+    </include>
+  </group>
+  <group>
+    <include file="$(dirname)/child.launch.yaml">
+      <arg name="who" value="b"/>
+    </include>
+  </group>
+  <group>
+    <include file="$(dirname)/child.launch.yaml">
+    </include>
+  </group>
+  <node pkg="demo_nodes_cpp" exec="talker" name="p_xml_$(var child_let)"/>
+</launch>

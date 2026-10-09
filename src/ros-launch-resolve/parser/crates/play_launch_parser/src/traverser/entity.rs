@@ -106,8 +106,17 @@ impl LaunchTraverser {
 
                 // Only save/restore scope when scoped=true (default).
                 // When scoped=false, namespace/env changes leak to siblings.
+                //
+                // A scoped group is also what scopes LAUNCH CONFIGURATIONS:
+                // `GroupAction` wraps its body in `PushLaunchConfigurations`/
+                // `PushEnvironment` ... `Pop*`. An `<include>` does not, so a
+                // group is the only thing keeping an included file's `<arg>`s
+                // and `<let>`s from reaching the includer's later siblings.
                 let scope = if group.scoped {
-                    Some(self.context.save_scope())
+                    Some((
+                        self.context.save_scope(),
+                        self.context.push_launch_configurations(),
+                    ))
                 } else {
                     None
                 };
@@ -157,8 +166,9 @@ impl LaunchTraverser {
                     .try_for_each(|child| self.traverse_entity(&child));
 
                 // Restore scope only if scoped=true
-                if let Some(saved) = scope {
+                if let Some((saved, configurations)) = scope {
                     self.context.restore_scope(saved);
+                    self.context.pop_launch_configurations(configurations);
                 }
                 self.current_scope_id = prev_scope_id;
                 result?;

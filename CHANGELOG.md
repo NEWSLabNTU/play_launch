@@ -6,6 +6,33 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Visible:** an `<include>` no longer scopes launch configurations, in any
+  frontend; a scoped `<group>` does. This is what `ros2 launch` does
+  (`IncludeLaunchDescription` sets its arguments in the includer's context
+  and runs the file there). Three consequences, each measured against stock
+  `ros2 launch`:
+  - an XML or YAML file included from XML or YAML now receives the
+    include's `<arg>`s. A YAML target never did, so it ran on its own
+    defaults whatever was passed;
+  - an argument one include passes persists into a later sibling include
+    that does not pass it, and what an included file declares or `<let>`s
+    is visible to the includer afterwards. An XML target used to run
+    isolated, so a launch that resolved before may resolve to different
+    nodes now. The new result is the one `ros2 launch` starts;
+  - a scoped `<group>` (the default, XML and YAML) now pops the launch
+    configurations and environment set inside it. It used to restore only
+    the namespace and remaps, so a `<let>` inside a group leaked out. The
+    YAML frontend also honours `scoped: false` now.
+
+  Wrap an include in `<group>` to keep its arguments from reaching later
+  siblings. Python launch files are unchanged: configurations a
+  `.launch.py` sets still do not leave the Python frontend.
+- Nodes from an included YAML launch file are attributed to that file's
+  scope, not to the includer's. A self-include through YAML is now caught as
+  a circular include rather than recursing until the stack overflows.
+
 ## 0.14.0 - 2026-10-10
 
 Phase 85, the structural items (`docs/roadmap/phase-85-what-the-island-left-open.md`).

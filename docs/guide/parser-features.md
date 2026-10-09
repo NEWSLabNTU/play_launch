@@ -27,7 +27,7 @@ All YAML action types below are supported by the official ROS 2 YAML frontend vi
 | `if`/`unless`          | attrs T U           | `condition=` T     | keys T                      | T         |
 | `OpaqueFunction`       | —                   | `OpaqueFunc` T     | —                           | T         |
 | **Substitutions**      | all 10 types T U    | all types T        | via XML engine              | T U       |
-| **Scoping**            | group/include T     | isolated ctx T     | parent scope T              | T         |
+| **Scoping**            | group/include T     | include unscoped ² | group/include T             | T         |
 
 ### Additional YAML actions in official ROS 2 (not yet implemented)
 
@@ -59,6 +59,12 @@ appended, and the timer walks its `actions` and stamps exactly those, through
 `GroupAction`, nested timers (which add), helper functions and
 `OpaqueFunction`. `launch_ros`'s `RosTimer` is handled the same way; it used
 to discard its period with no diagnostic at all.
+
+² **The Python frontend passes include arguments, and they persist into later
+siblings as in `ros2 launch`, but a configuration the `.launch.py` sets itself**
+(`SetLaunchConfiguration`, a `DeclareLaunchArgument` default) does not cross
+back from the Python half. A file it includes does not see that value, and
+neither does a file that includes it.
 
 Four shapes still cannot be attributed, and each is reported by name in
 `dropped_actions` (so `check` refuses) rather than guessed at: the same action
@@ -123,8 +129,13 @@ Handles the full ROS 2 XML launch specification. All elements support `if=` and 
 
 ### Scoping
 
-- `<group>`: saves/restores scope; optional `ns=` pushes namespace
-- `<include>`: creates isolated child context (variables don't leak to parent)
+- `<group>`: scoped by default. It saves and restores the namespace, remaps,
+  launch configurations and environment; `scoped="false"` lets all of them
+  reach the siblings. Optional `ns=` pushes a namespace.
+- `<include>`: does **not** scope, as in `ros2 launch`. Its `<arg>`s are set in
+  the includer's context and the file runs there, so an argument persists into
+  later sibling includes and the file's `<let>`s are visible afterwards. Wrap
+  an include in `<group>` to contain it.
 - `<let>`: sets variable in current scope (sequential resolution)
 - `<push-ros-namespace>` / `<pop-ros-namespace>`: modifies namespace stack
 
@@ -224,7 +235,8 @@ Any YAML action mapping can include `if:` or `unless:` keys:
 
 ### Scoping
 
-**YAML modifies parent scope** — unlike XML `<include>` which creates isolated child contexts, YAML launch files operate directly on the caller's context. This is critical for the preset pattern used by Autoware:
+**An include runs in the caller's context**, for YAML and XML alike, and
+receives the include's `arg:` list. Autoware's preset pattern depends on this:
 
 ```xml
 <!-- XML file includes YAML preset, then uses variables it declared -->
@@ -234,7 +246,7 @@ Any YAML action mapping can include `if:` or `unless:` keys:
 </include>
 ```
 
-Groups within YAML use save/restore scope (same as XML groups).
+Groups within YAML scope exactly like XML groups, including `scoped: false`.
 
 ### Value types
 

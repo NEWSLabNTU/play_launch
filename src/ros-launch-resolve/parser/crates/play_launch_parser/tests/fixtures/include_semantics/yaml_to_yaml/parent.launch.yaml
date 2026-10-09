@@ -1,0 +1,20 @@
+launch:
+  - arg: {name: child_let, default: "none"}
+  - let: {name: parent_let, value: "P"}
+  - include:
+      file: "$(dirname)/child.launch.yaml"
+      arg:
+        - {name: who, value: "a"}
+        - {name: flag, value: "false"}
+  - include:
+      file: "$(dirname)/child.launch.yaml"
+      arg:
+        - {name: who, value: "b"}
+  - include:
+      file: "$(dirname)/child.launch.yaml"
+  - include:
+      file: "$(dirname)/child.launch.yaml"
+      arg:
+        - {name: who, value: "d"}
+        - {name: flag, value: "true"}
+  - node: {pkg: demo_nodes_cpp, exec: talker, name: "p_yaml_$(var child_let)"}

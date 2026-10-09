@@ -177,3 +177,33 @@ fn deep_chain_under_cap_resolves_to_leaf() {
     assert_eq!(record.node.len(), 1, "leaf node should land");
     assert_eq!(record.node[0].executable, "talker");
 }
+
+/// The YAML frontend never entered the include chain, so a cycle through
+/// YAML files was not detected: it recursed until the stack overflowed.
+#[test]
+fn cycle_through_yaml_is_detected() {
+    let dir = TempDir::new().unwrap();
+    let a = dir.path().join("a.launch.yaml");
+    let b = dir.path().join("b.launch.yaml");
+    write(
+        &dir,
+        "a.launch.yaml",
+        &format!("launch:\n  - include: {{file: \"{}\"}}\n", b.display()),
+    );
+    write(
+        &dir,
+        "b.launch.yaml",
+        &format!("launch:\n  - include: {{file: \"{}\"}}\n", a.display()),
+    );
+
+    let opts = ParseOptions {
+        strict_includes: true,
+        ..ParseOptions::default()
+    };
+    let err = parse_launch_file_with_options(&a, HashMap::new(), opts)
+        .expect_err("strict mode must raise CircularInclude through YAML too");
+    assert!(
+        matches!(err, ParseError::CircularInclude { .. }),
+        "expected CircularInclude, got {err:?}"
+    );
+}

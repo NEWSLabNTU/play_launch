@@ -1,0 +1,12 @@
+<launch>
+  <arg name="x" default="outer"/>
+  <group>
+    <let name="x" value="scoped"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="inside_$(var x)"/>
+  </group>
+  <node pkg="demo_nodes_cpp" exec="talker" name="after_scoped_$(var x)"/>
+  <group scoped="false">
+    <let name="x" value="unscoped"/>
+  </group>
+  <node pkg="demo_nodes_cpp" exec="talker" name="after_unscoped_$(var x)"/>
+</launch>

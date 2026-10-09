@@ -286,8 +286,20 @@ impl LaunchTraverser {
     }
 
     /// Process a YAML group action
+    ///
+    /// Same scoping as the XML `<group>`: `scoped` (default true) pushes the
+    /// namespace, remaps, launch configurations and environment on entry and
+    /// pops them on exit; `scoped: false` lets all of it reach the siblings.
     fn process_yaml_group(&mut self, map: &Mapping, path: &Path) -> Result<()> {
-        let scope = self.context.save_scope();
+        let scoped = yaml_value_string(map, "scoped")
+            .map(|s| !s.trim().eq_ignore_ascii_case("false"))
+            .unwrap_or(true);
+        let scope = scoped.then(|| {
+            (
+                self.context.save_scope(),
+                self.context.push_launch_configurations(),
+            )
+        });
 
         // Push namespace if specified
         if let Some(ns_str) = yaml_str(map, "ns") {
@@ -307,7 +319,10 @@ impl LaunchTraverser {
             Ok(())
         };
 
-        self.context.restore_scope(scope);
+        if let Some((saved, configurations)) = scope {
+            self.context.restore_scope(saved);
+            self.context.pop_launch_configurations(configurations);
+        }
         result
     }
 

@@ -98,191 +98,124 @@ impl LaunchTraverser {
             log::trace!("Include args: {:?}", arg_names);
         }
 
-        // Check if this is a Python launch file
-        // Check file extension and handle non-XML files
-        if let Some(ext) = resolved_path.extension().and_then(|s| s.to_str()) {
-            match ext {
-                "py" => {
-                    log::debug!("Including Python launch file: {}", resolved_path.display());
+        // A `.launch.py` target is executed by the Python frontend, which
+        // carries its own argument and capture plumbing.
+        if resolved_path.extension().and_then(|s| s.to_str()) == Some("py") {
+            log::debug!("Including Python launch file: {}", resolved_path.display());
 
-                    // Create args for the Python file (include args override current context)
-                    let mut python_args = self.context.configurations();
-                    for (key, value_subs) in &include.args {
-                        let resolved_value = resolve_substitutions(value_subs, &self.context)
-                            .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                        log::trace!("  Include arg: {} = {}", key, resolved_value);
-                        python_args.insert(key.clone(), resolved_value);
-                    }
+            // Create args for the Python file (include args override current context)
+            let mut python_args = self.context.configurations();
+            for (key, value_subs) in &include.args {
+                let resolved_value = resolve_substitutions(value_subs, &self.context)
+                    .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+                log::trace!("  Include arg: {} = {}", key, resolved_value);
+                python_args.insert(key.clone(), resolved_value);
+            }
 
-                    // Push scope for this Python include
-                    let py_file_name = resolved_path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-                    let py_pkg = extract_package_from_path(&resolved_path);
-                    let py_path = canonicalize_path(&resolved_path);
-                    let py_ns = self.context.current_namespace();
-                    let child_scope_id = self.scope_table.push(
-                        py_pkg,
-                        py_file_name,
-                        py_path,
-                        py_ns,
-                        python_args.clone(),
-                        Some(self.current_scope_id),
-                    );
-                    let prev_scope_id = self.current_scope_id;
-                    self.current_scope_id = child_scope_id;
+            // Push scope for this Python include
+            let py_file_name = resolved_path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let py_pkg = extract_package_from_path(&resolved_path);
+            let py_path = canonicalize_path(&resolved_path);
+            let py_ns = self.context.current_namespace();
+            let child_scope_id = self.scope_table.push(
+                py_pkg,
+                py_file_name,
+                py_path,
+                py_ns,
+                python_args.clone(),
+                Some(self.current_scope_id),
+            );
+            let prev_scope_id = self.current_scope_id;
+            self.current_scope_id = child_scope_id;
 
-                    // Track counts before execution to stamp new entries
-                    let prev_rec = self.records.len();
-                    let prev_cont = self.containers.len();
-                    let prev_ln = self.load_nodes.len();
-                    let prev_cap_nodes = self.context.captured_nodes().len();
-                    let prev_cap_containers = self.context.captured_containers().len();
-                    let prev_cap_load_nodes = self.context.captured_load_nodes().len();
+            let mark = self.delay_mark();
 
-                    // Issue 0030: the file's own declarations are what the
-                    // include has to have passed; they come back with the
-                    // execution, so the check follows it.
-                    let result = self
-                        .execute_python_file(&resolved_path, &python_args)
-                        .and_then(|declared| {
-                            check_required_include_args(
-                                &py_required_args(&declared),
-                                &given_names(&include.args),
-                                &resolved_path,
-                            )
-                        });
-
-                    // Stamp scope on records added during this Python execution.
-                    // XML records created via process_xml_include_with_namespace
-                    // already have scope from their child traverser, so only stamp
-                    // those that are still None.
-                    for rec in &mut self.records[prev_rec..] {
-                        if rec.scope.is_none() {
-                            rec.scope = Some(child_scope_id);
-                        }
-                    }
-                    for rec in &mut self.containers[prev_cont..] {
-                        if rec.scope.is_none() {
-                            rec.scope = Some(child_scope_id);
-                        }
-                    }
-                    for rec in &mut self.load_nodes[prev_ln..] {
-                        if rec.scope.is_none() {
-                            rec.scope = Some(child_scope_id);
-                        }
-                    }
-
-                    // Stamp scope on captures added during this Python execution.
-                    for cap in &mut self.context.captured_nodes_mut()[prev_cap_nodes..] {
-                        if cap.scope_id.is_none() {
-                            cap.scope_id = Some(child_scope_id);
-                        }
-                    }
-                    for cap in &mut self.context.captured_containers_mut()[prev_cap_containers..] {
-                        if cap.scope_id.is_none() {
-                            cap.scope_id = Some(child_scope_id);
-                        }
-                    }
-                    for cap in &mut self.context.captured_load_nodes_mut()[prev_cap_load_nodes..] {
-                        if cap.scope_id.is_none() {
-                            cap.scope_id = Some(child_scope_id);
-                        }
-                    }
-
-                    // Update scope args with all resolved configurations
-                    let final_args = self.context.configurations();
-                    self.scope_table.update_args(child_scope_id, final_args);
-
-                    self.current_scope_id = prev_scope_id;
-                    return result;
-                }
-                "yaml" | "yml" => {
-                    // YAML files in <include> are always launch files
-                    // (parameter files are handled in <param from="..."> context)
-                    log::debug!("Including YAML launch file: {}", resolved_path.display());
-
-                    // Push scope for this YAML include
-                    let yaml_file_name = resolved_path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-                    let yaml_pkg = extract_package_from_path(&resolved_path);
-                    let yaml_path = canonicalize_path(&resolved_path);
-                    let yaml_ns = self.context.current_namespace();
-                    let child_scope_id = self.scope_table.push(
-                        yaml_pkg,
-                        yaml_file_name,
-                        yaml_path,
-                        yaml_ns,
-                        self.context.configurations(),
-                        Some(self.current_scope_id),
-                    );
-                    let prev_scope_id = self.current_scope_id;
-                    self.current_scope_id = child_scope_id;
-
-                    // Same rule as the XML branch below (issue 0029), read off
-                    // the YAML `launch:` list before it is processed.
-                    let required = yaml_required_args(&resolved_path)?;
+            // Issue 0030: the file's own declarations are what the
+            // include has to have passed; they come back with the
+            // execution, so the check follows it.
+            let result = self
+                .execute_python_file(&resolved_path, &python_args)
+                .and_then(|declared| {
                     check_required_include_args(
-                        &required,
+                        &py_required_args(&declared),
                         &given_names(&include.args),
                         &resolved_path,
-                    )?;
+                    )
+                });
 
-                    let result = self.process_yaml_launch_file(&resolved_path);
+            // Records from an XML/YAML file the `.launch.py` included
+            // already carry that include's scope; only the rest are
+            // this file's.
+            self.stamp_scope_since(mark, child_scope_id);
 
-                    // Update scope args with all resolved configurations
-                    let final_args = self.context.configurations();
-                    self.scope_table.update_args(child_scope_id, final_args);
+            // Update scope args with all resolved configurations
+            let final_args = self.context.configurations();
+            self.scope_table.update_args(child_scope_id, final_args);
 
-                    self.current_scope_id = prev_scope_id;
-                    return result;
-                }
-                _ => {}
-            }
+            self.current_scope_id = prev_scope_id;
+            return result;
         }
 
-        // Create a new context for the included file (O(1) with Arc, not O(n) clone!)
-        // Start with current context and apply include args
-        let mut include_context = self.context.child();
-        include_context.set_current_file(resolved_path.clone());
-        for (key, value_subs) in &include.args {
-            // IMPORTANT: Resolve substitutions in the argument value using the include_context
-            // (not the parent context) so that later args can reference earlier args
-            // Example: <arg name="A" value="x"/>
-            //          <arg name="B" value="$(var A)/y"/>  <-- B can reference A
-            let resolved_value = resolve_substitutions(value_subs, &include_context)
-                .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-            log::debug!("[RUST] Setting include arg: {} = {}", key, resolved_value);
-            include_context.set_configuration(key.clone(), resolved_value);
-        }
-
-        log::debug!(
-            "[RUST] Include context has {} configs after setting include args",
-            include_context.configurations().len()
+        // XML and YAML targets share one path, because `launch` gives them one
+        // semantics: `IncludeLaunchDescription.execute` returns
+        // `[SetLaunchConfiguration(name, value) for each <arg>, description]`,
+        // and the description's entities then run in the SAME context as the
+        // include. Nothing is scoped by the include itself — only a scoped
+        // `<group>` around it pushes and pops launch configurations. So:
+        //
+        // - the include's arguments are set in the current context, in order
+        //   (a later one can read an earlier one);
+        // - the included file's `<arg>` defaults apply only where nothing is
+        //   set, so a passed value wins and an earlier sibling's value
+        //   persists into a later sibling that does not pass one;
+        // - whatever the included file declares or `<let>`s stays visible to
+        //   the includer afterwards.
+        //
+        // This was previously split by frontend: an XML target ran in an
+        // isolated child context, and a YAML target ran in the includer's
+        // context but never received the include's arguments at all, so every
+        // YAML file included with `<arg>`s silently took its own defaults.
+        let is_yaml = matches!(
+            resolved_path.extension().and_then(|s| s.to_str()),
+            Some("yaml" | "yml")
         );
 
-        // Parse and traverse the included file
-        let content = read_file_cached(&resolved_path)?;
-        let doc = roxmltree::Document::parse(&content)?;
-        let root = xml::XmlEntity::new(doc.root_element());
+        // Parsed up front: launch checks the include's required arguments
+        // against the included description before anything runs.
+        let xml_content = if is_yaml {
+            None
+        } else {
+            Some(read_file_cached(&resolved_path)?)
+        };
+        let xml_doc = xml_content
+            .as_deref()
+            .map(roxmltree::Document::parse)
+            .transpose()?;
 
-        // What launch demands of an include (issue 0029): every `<arg>` the
-        // included file declares without a default, outside any condition and
-        // outside any nested `<include>` (whose own include answers for it),
-        // must be named among THIS include's `<arg>`s. The parent's scope does
-        // not count, so this is checked before the file is traversed with a
-        // context that would happily supply the value.
-        let required = xml_required_args(&root);
+        // What launch demands of an include (issues 0029/0030): every
+        // argument the included file declares without a default, outside any
+        // condition and outside any nested include, must be named among THIS
+        // include's own arguments. The scope does not count, which is why
+        // this is checked against `include.args` and not the context.
+        let required = match &xml_doc {
+            Some(doc) => xml_required_args(&xml::XmlEntity::new(doc.root_element())),
+            None => {
+                log::debug!("Including YAML launch file: {}", resolved_path.display());
+                yaml_required_args(&resolved_path)?
+            }
+        };
         check_required_include_args(&required, &given_names(&include.args), &resolved_path)?;
 
-        // Create temporary traverser for included file with extended include chain
-        let mut child_chain = self.include_chain.clone();
-        child_chain.push(canonical_path);
+        for (key, value_subs) in &include.args {
+            let resolved_value = resolve_substitutions(value_subs, &self.context)
+                .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+            log::debug!("[RUST] Setting include arg: {} = {}", key, resolved_value);
+            self.context.set_configuration(key.clone(), resolved_value);
+        }
 
         // Push a new scope for this include
         let include_file_name = resolved_path
@@ -290,90 +223,66 @@ impl LaunchTraverser {
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
-        let include_pkg = extract_package_from_path(&resolved_path);
-        let include_path = canonicalize_path(&resolved_path);
-        let include_ns = include_context.current_namespace();
-        let include_args = include_context.configurations();
         let child_scope_id = self.scope_table.push(
-            include_pkg,
+            extract_package_from_path(&resolved_path),
             include_file_name,
-            include_path,
-            include_ns,
-            include_args,
+            canonicalize_path(&resolved_path),
+            self.context.current_namespace(),
+            self.context.configurations(),
             Some(self.current_scope_id),
         );
+        let prev_scope_id = std::mem::replace(&mut self.current_scope_id, child_scope_id);
+        let prev_file = self.context.current_file().cloned();
+        let mark = self.delay_mark();
+        self.include_chain.push(canonical_path);
 
-        let mut included_traverser = LaunchTraverser {
-            context: include_context,
-            include_chain: child_chain,
-            max_include_depth: self.max_include_depth,
-            strict_includes: self.strict_includes,
-            records: Vec::new(),
-            containers: Vec::new(),
-            load_nodes: Vec::new(),
-            scope_table: std::mem::take(&mut self.scope_table),
-            current_scope_id: child_scope_id,
-            dropped_actions: Vec::new(),
+        let result = match &xml_doc {
+            Some(doc) => {
+                self.context.set_current_file(resolved_path.clone());
+                self.traverse_entity(&xml::XmlEntity::new(doc.root_element()))
+            }
+            None => self.process_yaml_launch_file(&resolved_path),
         };
-        included_traverser.traverse_entity(&root)?;
 
-        // Take back the scope table (child may have added entries from nested includes)
-        self.scope_table = std::mem::take(&mut included_traverser.scope_table);
-
-        // Update scope args with all resolved configurations (includes defaults
-        // from <arg default="..."/> that were processed during traversal)
-        let final_args = included_traverser.context.configurations();
+        self.include_chain.pop();
+        match prev_file {
+            Some(prev) => self.context.set_current_file(prev),
+            None => self.context.clear_current_file(),
+        }
+        // Everything the file produced that no nested include already
+        // claimed belongs to this scope.
+        self.stamp_scope_since(mark, child_scope_id);
+        // The scope's args are every configuration in effect once the file
+        // has run, including the defaults its `<arg>`s supplied.
+        let final_args = self.context.configurations();
         self.scope_table.update_args(child_scope_id, final_args);
+        self.current_scope_id = prev_scope_id;
 
-        // Merge records from included file into current records
-        // An action dropped inside an included file is dropped from THIS
-        // launch too — the parent is what `check` inspects.
-        for dropped in std::mem::take(&mut included_traverser.dropped_actions) {
-            self.note_dropped(dropped);
+        result
+    }
+
+    /// Stamp `scope_id` on every record and capture appended since `mark`
+    /// that does not carry a scope yet. Innermost includes stamp first, so
+    /// an entry already stamped belongs to a nested include and is kept.
+    fn stamp_scope_since(&mut self, mark: super::delay::DelayMark, scope_id: usize) {
+        for rec in &mut self.records[mark.records..] {
+            rec.scope.get_or_insert(scope_id);
         }
-        self.records.extend(included_traverser.records);
-        self.containers.extend(included_traverser.containers);
-        self.load_nodes.extend(included_traverser.load_nodes);
-
-        // Merge captures from included file's context, stamping scope_id
-        let child_scope = included_traverser.current_scope_id;
-        for node in included_traverser.context.captured_nodes() {
-            let mut node_copy = node.clone();
-            if node_copy.scope_id.is_none() {
-                node_copy.scope_id = Some(child_scope);
-            }
-            self.context.capture_node(node_copy);
+        for rec in &mut self.containers[mark.containers..] {
+            rec.scope.get_or_insert(scope_id);
         }
-
-        for container in included_traverser.context.captured_containers() {
-            let mut container_copy = container.clone();
-            if container_copy.scope_id.is_none() {
-                container_copy.scope_id = Some(child_scope);
-            }
-            self.context.capture_container(container_copy);
+        for rec in &mut self.load_nodes[mark.load_nodes..] {
+            rec.scope.get_or_insert(scope_id);
         }
-
-        for load_node in included_traverser.context.captured_load_nodes() {
-            let mut load_node_copy = load_node.clone();
-            if load_node_copy.scope_id.is_none() {
-                load_node_copy.scope_id = Some(child_scope);
-            }
-            self.context.capture_load_node(load_node_copy);
+        for cap in &mut self.context.captured_nodes_mut()[mark.captured_nodes..] {
+            cap.scope_id.get_or_insert(scope_id);
         }
-
-        // CRITICAL: Merge global parameters from included file back to parent context
-        // SetParameter actions in Python files (called from XML includes) write to the
-        // child context. We must propagate them back so into_record_json() can find them.
-        for (key, value) in included_traverser.context.global_parameters() {
-            self.context.set_global_parameter(key, value);
+        for cap in &mut self.context.captured_containers_mut()[mark.captured_containers..] {
+            cap.scope_id.get_or_insert(scope_id);
         }
-
-        // NOTE: Do NOT merge configurations from included file back to parent context.
-        // In ROS 2, included files have isolated scope — their <arg> defaults and internal
-        // variables should not leak to the parent. Merging them causes bugs when sibling
-        // includes declare args with the same name (e.g., "node_name") but different defaults.
-
-        Ok(())
+        for cap in &mut self.context.captured_load_nodes_mut()[mark.captured_load_nodes..] {
+            cap.scope_id.get_or_insert(scope_id);
+        }
     }
 }
 

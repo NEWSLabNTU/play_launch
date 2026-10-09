@@ -137,9 +137,13 @@ impl LaunchTraverser {
             self.context.set_global_parameter(key, value);
         }
 
-        // NOTE: Do NOT merge configurations from included file back to parent context.
-        // In ROS 2, included files have isolated scope — their <arg> defaults and internal
-        // variables should not leak to the parent.
+        // An include does not scope launch configurations — only a scoped
+        // group does (see `traverser::include`). The child context exists here
+        // for the namespace re-prefixing below, not for isolation, so what the
+        // included file set (its arguments, their defaults, its `<let>`s and
+        // `<set_env>`s) is visible to the `.launch.py`'s later includes.
+        self.context
+            .adopt_configurations_from(&included_traverser.context);
 
         // Apply ROS namespace if provided (for includes from Python OpaqueFunction)
         if let Some(ref ns) = ros_namespace

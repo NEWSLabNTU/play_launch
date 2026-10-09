@@ -34,6 +34,17 @@ The parser evaluates conditions during parsing and processes only the selected p
   into the LoadNode request, so a graph check could not see it and only stock
   `ros2 launch` disagreed. Fixture:
   `tests/fixtures/launch/test_container_namespace_scope.launch.xml`.
+- **An `<include>` does not scope launch configurations; a scoped `<group>`
+  does** — in every frontend. `IncludeLaunchDescription` sets its `<arg>`s in
+  the includer's context and runs the file there, so an argument one include
+  passes persists into a later sibling include that does not pass it, and an
+  included file's `<let>`s are visible to the includer. `process_include`
+  traverses XML and YAML targets in the includer's own traverser and context;
+  scoped groups call `push_launch_configurations`/`pop_launch_configurations`.
+  It used to isolate XML targets, and it dropped the arguments of YAML
+  targets entirely. Fixtures and the stock-`ros2 launch` expectations:
+  `tests/include_semantics.rs` in the parser crate. Remaining gap: a
+  `.launch.py`'s own configurations do not cross the pyexec boundary.
 - **Conditional substitutions** (IfElse, Equals, etc.): call `perform()` to evaluate → "true"/"false"
 - **LaunchConfiguration substitutions**: call `__str__()` to preserve as `$(var name)` for replay-time
 - **Float parameters**: always include decimal point (`0.0` not `0`) for ROS type preservation
@@ -614,6 +625,25 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-10-10**: **An XML include into a YAML launch file dropped its
+  arguments, and the reason was that includes had two wrong scoping models.**
+  Reported from AutoSDV: `coach_pursuit.launch.xml` passes `launch_map:=false`
+  and the rest to `autosdv.launch.yaml`, and play_launch resolved NDT,
+  planning and stock control anyway, 164 nodes where 75 was right. The YAML
+  branch of `process_include` checked the include's required arguments and
+  never set them. The XML branch ran its target in an isolated child context.
+  Neither is what `launch` does. Stock `ros2 launch` was the oracle, run on a
+  3x3 parent/child frontend matrix: an include is not scoped at all, so
+  `flag=false` passed to one include persists into its next sibling, and the
+  parent sees the child's `<let>`. Only a scoped group pops configurations,
+  and the parser's groups restored only namespace and remaps, so a `<let>`
+  inside a group leaked out. The XML isolation had mostly hidden this. Both
+  are fixed together, since fixing either alone regresses through the other.
+  The YAML path also never entered the include chain (a YAML cycle
+  overflowed the stack) and never stamped its records' scope. The Autoware
+  parity gate is unchanged (119 = 119). Not fixed: configurations a
+  `.launch.py` sets do not cross the pyexec boundary.
 
 - **2026-10-09**: **`play_launch run` exits on a signal (#0061), and `just
   check` reports what failed.** `run` kept its own copy of the signal loop.

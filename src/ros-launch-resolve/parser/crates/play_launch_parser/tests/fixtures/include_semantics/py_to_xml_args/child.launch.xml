@@ -1,0 +1,6 @@
+<launch>
+  <arg name="who" default="default_who"/>
+  <arg name="flag" default="true"/>
+  <let name="child_let" value="set_by_child"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="c_xml_$(var who)" if="$(var flag)"/>
+</launch>

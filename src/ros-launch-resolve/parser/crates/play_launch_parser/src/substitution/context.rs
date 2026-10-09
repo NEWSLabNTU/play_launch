@@ -59,6 +59,15 @@ pub struct ScopeSnapshot {
     remapping_count: usize,
 }
 
+/// What a scoped group saves on entry and puts back on exit: launch's
+/// `PushLaunchConfigurations` + `PushEnvironment`, which `GroupAction` wraps
+/// around its body when `scoped` (the default). Only the LOCAL maps are held —
+/// a parent scope is immutable, so restoring the local layer restores all of it.
+pub struct ConfigurationSnapshot {
+    configurations: HashMap<String, Vec<Substitution>>,
+    environment: HashMap<String, String>,
+}
+
 /// Metadata for a declared argument
 #[derive(Debug, Clone)]
 pub struct ArgumentMetadata {
@@ -455,6 +464,52 @@ impl LaunchContext {
     pub fn restore_scope(&mut self, snapshot: ScopeSnapshot) {
         self.restore_namespace_depth(snapshot.namespace_depth);
         self.restore_remapping_count(snapshot.remapping_count);
+    }
+
+    /// Save the launch configurations and environment, as launch's
+    /// `PushLaunchConfigurations` / `PushEnvironment` do at the top of a
+    /// scoped `GroupAction`. Pair with [`Self::pop_launch_configurations`].
+    ///
+    /// The group is the ONLY thing that scopes configurations in launch: an
+    /// `<include>` sets its arguments in the current context and runs the
+    /// included description there (`IncludeLaunchDescription.execute`
+    /// returns `[SetLaunchConfiguration(..)..., description]`), so whatever
+    /// the included file declares or `<let>`s is visible to the includer's
+    /// later actions unless a group around the include pops it.
+    pub fn push_launch_configurations(&self) -> ConfigurationSnapshot {
+        ConfigurationSnapshot {
+            configurations: self.local_configurations.clone(),
+            environment: self.local_environment.clone(),
+        }
+    }
+
+    /// Take over the configurations and environment a [`Self::child`] set in
+    /// its own local scope, as if they had been set here.
+    ///
+    /// For a traversal that must run in a child context for reasons other
+    /// than scoping (the Python→XML include re-prefixes namespaces on what the
+    /// child produced) but whose configuration effects `launch` does not
+    /// scope.
+    pub fn adopt_configurations_from(&mut self, child: &LaunchContext) {
+        self.local_configurations.extend(
+            child
+                .local_configurations
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+        self.local_environment.extend(
+            child
+                .local_environment
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+    }
+
+    /// Put back what [`Self::push_launch_configurations`] saved, discarding
+    /// every configuration and environment change made since.
+    pub fn pop_launch_configurations(&mut self, snapshot: ConfigurationSnapshot) {
+        self.local_configurations = snapshot.configurations;
+        self.local_environment = snapshot.environment;
     }
 
     /// Declare argument in local scope only

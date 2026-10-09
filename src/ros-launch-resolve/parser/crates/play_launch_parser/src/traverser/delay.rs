@@ -17,14 +17,18 @@ use super::super::LaunchTraverser;
 
 /// How many members existed before a timer body was traversed. Everything
 /// appended past these indices belongs to the timer.
+///
+/// An `<include>` uses the same mark to stamp its scope on what the included
+/// file produced (`traverser::include`), since it, too, runs in the
+/// includer's own traverser and context.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DelayMark {
-    records: usize,
-    containers: usize,
-    load_nodes: usize,
-    captured_nodes: usize,
-    captured_containers: usize,
-    captured_load_nodes: usize,
+    pub(super) records: usize,
+    pub(super) containers: usize,
+    pub(super) load_nodes: usize,
+    pub(super) captured_nodes: usize,
+    pub(super) captured_containers: usize,
+    pub(super) captured_load_nodes: usize,
 }
 
 /// Nested timers ADD: ROS 2 starts the inner timer when the outer one fires,

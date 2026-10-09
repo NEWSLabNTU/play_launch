@@ -1,151 +1,93 @@
-# ROS 2 Launch File Include Scoping Behavior
+# Include and Group Scoping
 
-## Research Findings
+What `<include>` and `<group>` do to launch configurations, as `launch`
+implements it and as this parser now follows it.
 
-This document analyzes the scoping behavior of ROS 2 launch file includes based on official documentation and observed behavior.
+## The rule
 
-### Official Documentation
+**An include does not scope launch configurations. A scoped group does.**
 
-#### From ROS 2 Design Documents
+`IncludeLaunchDescription.execute` (launch 1.0.14, Humble; unchanged in
+Jazzy) ends with:
 
-**[ROS 2 Launch XML Format](https://design.ros2.org/articles/roslaunch_xml.html)**:
-> "The included launch file description has its own scope for launch configurations."
-
-> "Arguments are limited to the scope of their definition and thus have to be explicitly passed to included files if any."
-
-**[ROS 2 Launch System](https://design.ros2.org/articles/roslaunch.html)**:
-> "Changes to the local state by included launch descriptions persist, as they should be thought of as truly included in the same file, as if you had copied the contents of the included launch description in place of the include action."
-
-**Apparent Contradiction**:
-The XML format documentation suggests isolated scoping, while the main launch system documentation indicates configuration changes persist. The truth appears to be:
-- **Arguments (`<arg>`)** are scoped - must be explicitly passed
-- **Launch configurations (set via actions)** persist after include
-
-### Observed Behavior in Autoware
-
-#### YAML Preset Files
-
-Autoware uses YAML files to declare launch arguments that affect subsequent XML includes:
-
-```xml
-<!-- tier4_planning_component.launch.xml -->
-<include file="$(find-pkg-share autoware_launch)/config/planning/preset/default_preset.yaml"/>
-
-<include file="$(find-pkg-share tier4_planning_launch)/launch/planning.launch.xml">
-  <arg name="velocity_smoother_type_param_path"
-       value="...$(var velocity_smoother_type)..."/>
-</include>
+```python
+set_launch_configuration_actions = [SetLaunchConfiguration(n, v) for n, v in self.launch_arguments]
+return [*set_launch_configuration_actions, launch_description]
 ```
 
-The YAML file declares `velocity_smoother_type`, and the second include references it in an arg value.
+The arguments are set in the includer's own context and the included
+description's entities run there. Nothing is pushed or popped. `GroupAction`
+with `scoped=True` (the default) is what wraps its body in
+`PushLaunchConfigurations` / `PushEnvironment` ... `Pop*`.
 
-**Key Finding**: YAML includes modify the parent context's launch configurations, making variables available to subsequent includes.
+This holds for every frontend. `<include>` in XML, `include:` in YAML and
+`IncludeLaunchDescription` in Python are the same action.
 
-### Implementation Analysis
+## Consequences, measured
 
-#### XML Include Behavior
+All of these come from stock `ros2 launch` on the fixtures in
+`crates/play_launch_parser/tests/fixtures/include_semantics/`, checked by
+`tests/include_semantics.rs`:
 
-Our parser creates isolated child contexts for XML includes:
+- An include's `<arg>`s reach the included file and beat its `<arg default>`s.
+- **An argument persists into later sibling includes.** If the first include
+  passes `flag=false` and the second passes nothing, the second sees `false`.
+  Its own `<arg name="flag" default="true"/>` does not apply, because a
+  declaration's default is used only when the configuration is unset.
+- What the included file declares or `<let>`s is visible to the includer
+  afterwards.
+- A scoped `<group>` around the include undoes all three. This is why
+  Autoware wraps its component includes in `<group>`.
+- A `<let>` inside a scoped group does not survive the group. With
+  `scoped="false"` (XML) or `scoped: false` (YAML) it does.
 
-```rust
-let mut include_context = self.context.child();  // Line 505
-// Process included file with child context
-// Context changes are discarded after processing
-```
+## What the parser did before, and why it was wrong
 
-This follows the XML format spec: each XML include has its own scope.
+Until this change the parser split the behaviour by frontend:
 
-#### YAML Include Behavior
+- **XML target:** ran in an isolated child context (`LaunchContext::child()`),
+  with nothing coming back. That rested on a sentence in the ROS 2 XML design
+  article ("The included launch file description has its own scope for launch
+  configurations"), which the implementation does not do.
+- **YAML target:** ran in the includer's context, which is right, but the
+  include's arguments were never applied. Every YAML file included with
+  arguments ran on its own defaults. The YAML path existed to make Autoware's
+  preset files (`config/*/preset/*_preset.yaml`, included for their
+  side effects) work, and those take no arguments, so nothing noticed.
+- **Groups:** restored only the namespace and remaps on exit, so a `<let>`
+  inside a group leaked out. Isolating XML includes had hidden most of this.
 
-YAML includes modify the parent context directly:
+The parallel include processing that the old version of this document
+justified the isolation with no longer exists.
 
-```rust
-self.process_yaml_launch_file(&resolved_path)?;  // Line 496
-// Modifies self.context in place
-// Changes persist in parent scope
-```
+## Implementation
 
-This allows YAML preset files to declare arguments that affect subsequent includes.
+- `traverser/include.rs`, `process_include`: one path for XML and YAML
+  targets. It checks required arguments, sets the include's arguments in
+  `self.context` in order, then traverses the file in the same traverser and
+  context. It also pushes the file onto `include_chain` (the YAML path never
+  did, so a YAML cycle overflowed the stack) and stamps the include's scope
+  on what the file produced.
+- `traverser/xml_include.rs` (a `.launch.py` including XML): keeps its child
+  traverser for namespace re-prefixing, and adopts the child's configurations
+  afterwards (`LaunchContext::adopt_configurations_from`).
+- `traverser/entity.rs` and `traverser/yaml.rs`, groups: a scoped group calls
+  `push_launch_configurations` / `pop_launch_configurations` alongside
+  `save_scope` / `restore_scope`.
 
-### Parallel vs Sequential Include Processing
+## Known remaining divergence
 
-#### XML Includes (Safe for Parallel Processing)
+Python launch files. A configuration that a `.launch.py` sets
+(`SetLaunchConfiguration`, its `DeclareLaunchArgument` defaults) is written to
+the pyexec half's own context and does not cross back to the host. So:
 
-Each XML include:
-1. Clones parent context
-2. Creates child context from clone
-3. Processes in isolation
-4. Discards context changes
-5. Merges only records/containers/load_nodes
+- an XML/YAML file that includes a `.launch.py` does not see what the Python
+  file set;
+- an XML/YAML file included from a `.launch.py` does not see the Python
+  file's own `SetLaunchConfiguration`s.
 
-**Result**: No inter-dependency between sibling includes → parallel processing is safe.
+Arguments do cross in both directions, and so does sibling persistence.
+Closing the gap means carrying configurations back over the pyexec ABI.
 
-#### YAML Includes (Require Sequential Processing)
-
-YAML includes:
-1. Modify parent context directly
-2. Changes must be visible to subsequent includes
-3. Cannot be processed in parallel with dependent includes
-
-**Example Dependency Chain**:
-```
-YAML declares velocity_smoother_type
-  ↓
-XML include references $(var velocity_smoother_type) in arg value
-```
-
-If processed in parallel:
-- YAML modifies clone context (discarded)
-- XML sees original context (missing velocity_smoother_type)
-- **Result**: Undefined variable error ✗
-
-If processed sequentially:
-- YAML modifies self.context
-- XML sees updated self.context
-- **Result**: Variable resolved correctly ✓
-
-### Implementation Decision
-
-**Solution**: Detect YAML includes during batch collection and process them sequentially:
-
-```rust
-// Check if this is a YAML include
-let is_yaml = file_path_str.ends_with(".yaml") || file_path_str.ends_with(".yml");
-
-if is_yaml {
-    // Process any collected XML includes first (in parallel)
-    // Then process YAML include sequentially
-    // Break batching to restart collection after YAML
-}
-```
-
-This ensures:
-- ✅ XML includes processed in parallel for performance
-- ✅ YAML includes processed sequentially to modify parent context
-- ✅ Subsequent includes see YAML-declared variables
-
-### Undocumented Behavior
-
-The ROS 2 documentation does **not** explicitly document:
-1. YAML launch file scoping behavior
-2. The distinction between YAML and XML include semantics
-3. When/how configurations from includes persist vs. are isolated
-
-This behavior was reverse-engineered from:
-- Autoware's actual usage patterns
-- Testing with planning_simulator.launch.xml
-- Observing that YAML preset files must affect parent scope
-
-### Conclusion
-
-**XML Includes**: Isolated child scope → safe for parallel processing
-**YAML Includes**: Modify parent scope → must be sequential before dependent includes
-
-This hybrid approach maintains performance (parallel XML) while preserving correctness (sequential YAML).
-
-### Sources
-
-- [ROS 2 Launch XML Format](https://design.ros2.org/articles/roslaunch_xml.html)
-- [ROS 2 Launch System](https://design.ros2.org/articles/roslaunch.html)
-- [Using Python, XML, and YAML for ROS 2 Launch Files](https://docs.ros.org/en/foxy/How-To-Guides/Launch-file-different-formats.html)
-- [Managing large projects (ROS 2 Humble)](https://docs.ros.org/en/humble/Tutorials/Intermediate/Launch/Using-ROS2-Launch-For-Large-Projects.html)
+The `forwarding="false"` attribute of `<group>` is accepted and not
+implemented.

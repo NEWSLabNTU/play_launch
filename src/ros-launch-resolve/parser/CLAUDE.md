@@ -386,8 +386,14 @@ For detailed information, see:
 
 ## ROS 2 Include Scoping Behavior
 
-**Critical**: YAML and XML includes have different scoping semantics:
-- **XML includes**: isolated child scope (safe for parallel processing)
-- **YAML includes**: modify parent scope directly (must be sequential)
+**An include does not scope launch configurations; a scoped group does.** This
+is the same for every frontend. `IncludeLaunchDescription` sets its arguments
+in the includer's context and runs the included file there, so an argument
+persists into later sibling includes and an included file's `<let>`s are
+visible to the includer. Only `<group>` (scoped by default) pushes and pops
+configurations. Measured against stock `ros2 launch`; see
+`docs/include_scoping_behavior.md` and `tests/include_semantics.rs`.
 
-This is undocumented in ROS 2 but essential for Autoware's preset system. See `docs/include_scoping_behavior.md`.
+This file used to say that XML includes are isolated and YAML includes modify
+the parent. Neither half was what launch does, and the YAML half also dropped
+the include's arguments.
