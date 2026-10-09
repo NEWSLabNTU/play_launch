@@ -46,10 +46,36 @@ pub use executor::PythonLaunchExecutor;
 pub struct Pyo3Backend;
 
 impl play_launch_parser::python_backend::PythonBackend for Pyo3Backend {
-    fn exec_file(&self, path: &str) -> Result<(), String> {
-        executor::PythonLaunchExecutor::new()
-            .execute(path)
-            .map_err(|e| e.to_string())
+    fn exec_file(
+        &self,
+        path: &str,
+        state: play_launch_parser::exchange::ContextState,
+        host: &mut dyn play_launch_parser::exchange::IncludeHost,
+    ) -> Result<play_launch_parser::exchange::ExecResult, String> {
+        use play_launch_parser::{
+            bridge::{LaunchContextGuard, drain_produced},
+            exchange::{ExecResult, ListSync},
+            substitution::context::LaunchContext,
+        };
+        // This half's own launch context, seeded with the includer's state.
+        // Python reads and writes it through the bridge while the file runs;
+        // the traverser sees it only through the exchange — at each include,
+        // and at the end.
+        let mut ctx = LaunchContext::new();
+        let sync = ctx.import_state(&state, &ListSync::default());
+        let (outcome, sync) = {
+            let _guard = LaunchContextGuard::new(&mut ctx);
+            api::visit::with_frame(host, sync, || {
+                executor::PythonLaunchExecutor::new()
+                    .execute(path)
+                    .map_err(|e| e.to_string())
+            })
+        };
+        outcome?;
+        Ok(ExecResult {
+            produced: drain_produced(&mut ctx),
+            state: ctx.export_state(&sync),
+        })
     }
 
     fn eval_expr(&self, expr: &str) -> Result<String, String> {

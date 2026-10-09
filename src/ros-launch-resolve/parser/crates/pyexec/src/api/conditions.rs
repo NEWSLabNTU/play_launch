@@ -1,24 +1,42 @@
-//! Mock `launch.conditions` module classes
+//! Mock `launch.conditions`.
+//!
+//! Conditions are evaluated when the action carrying them EXECUTES (see
+//! `api::visit`), against the launch context as it is at that point, and with
+//! `launch`'s own rule for a predicate string: `evaluate_condition_expression`
+//! accepts `true`/`1` and `false`/`0`, case-insensitively, and raises for
+//! anything else. The mock used to read `yes`/`on` as true and everything
+//! else — a typo included — as false.
 
 #![allow(non_local_definitions)] // pyo3 macros generate non-local impls
 
 use play_launch_parser::bridge::with_launch_context;
 use pyo3::{
+    exceptions::PyValueError,
     prelude::*,
     types::{PyDict, PyTuple},
 };
 
-/// Mock IfCondition class
-///
-/// Python equivalent:
-/// ```python
-/// from launch.conditions import IfCondition
-/// from launch.substitutions import LaunchConfiguration
-///
-/// condition = IfCondition(LaunchConfiguration('use_sim'))
-/// ```
-///
-/// Evaluates to true if the predicate evaluates to a truthy value
+/// Evaluate any condition object the way `launch` does: `condition.evaluate(context)`.
+pub(crate) fn evaluate(py: Python, condition: &Bound<'_, PyAny>) -> PyResult<bool> {
+    let context = crate::api::utils::create_launch_context(py)?;
+    condition
+        .call_method1("evaluate", (context,))?
+        .extract::<bool>()
+}
+
+/// `launch.conditions.evaluate_condition_expression`.
+fn condition_expression(py: Python, predicate: &Py<PyAny>) -> PyResult<bool> {
+    let value = crate::api::utils::pyobject_to_string(py, predicate)?;
+    match value.trim().to_lowercase().as_str() {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => Err(PyValueError::new_err(format!(
+            "invalid condition expression: Unexpected value '{value}', expected one of: \
+             ['true', '1', 'false', '0']"
+        ))),
+    }
+}
+
 #[pyclass(module = "launch.conditions", from_py_object)]
 pub struct IfCondition {
     predicate: Py<PyAny>,
@@ -35,15 +53,17 @@ impl Clone for IfCondition {
 #[pymethods]
 impl IfCondition {
     #[new]
-    fn new(predicate: Py<PyAny>) -> Self {
-        Self { predicate }
+    #[pyo3(signature = (predicate_expression = None, *, predicate = None))]
+    fn new(
+        predicate_expression: Option<Py<PyAny>>,
+        predicate: Option<Py<PyAny>>,
+    ) -> PyResult<Self> {
+        let predicate = predicate_expression
+            .or(predicate)
+            .ok_or_else(|| PyValueError::new_err("IfCondition needs a predicate expression"))?;
+        Ok(Self { predicate })
     }
 
-    /// Evaluate the condition
-    ///
-    /// Called by Python to check if the condition is true.
-    /// The real ROS 2 IfCondition.evaluate(context) accepts a LaunchContext,
-    /// but we resolve from thread-local state so we just ignore it.
     #[pyo3(signature = (*_args, **_kwargs))]
     pub fn evaluate(
         &self,
@@ -51,9 +71,7 @@ impl IfCondition {
         _args: &Bound<'_, PyTuple>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<bool> {
-        // Convert predicate to string and evaluate as boolean
-        let value = self.predicate_to_string(py)?;
-        Ok(Self::is_truthy(&value))
+        condition_expression(py, &self.predicate)
     }
 
     fn __repr__(&self) -> String {
@@ -61,87 +79,6 @@ impl IfCondition {
     }
 }
 
-impl IfCondition {
-    /// Convert predicate Py<PyAny> to string
-    fn predicate_to_string(&self, py: Python) -> PyResult<String> {
-        let pred_ref = self.predicate.bind(py);
-
-        // Try direct string extraction
-        if let Ok(s) = pred_ref.extract::<String>() {
-            return Ok(s);
-        }
-
-        // Try calling perform() method first (for LaunchConfiguration substitutions)
-        // This resolves the substitution to its actual value
-        if let Ok(has_perform) = pred_ref.hasattr("perform")
-            && has_perform
-        {
-            // Create a dummy context (not used by our LaunchConfiguration.perform())
-            if let Ok(context) = py.eval(c"type('Context', (), {})()", None, None)
-                && let Ok(result) = pred_ref.call_method1("perform", (context,))
-                && let Ok(s) = result.extract::<String>()
-            {
-                return Ok(s);
-            }
-        }
-
-        // Try calling __str__ method (for other substitutions)
-        if let Ok(str_result) = pred_ref.call_method0("__str__")
-            && let Ok(s) = str_result.extract::<String>()
-        {
-            return Ok(s);
-        }
-
-        // Fallback to repr
-        Ok(pred_ref.str()?.to_string())
-    }
-
-    /// Check if a string value is truthy
-    ///
-    /// Truthy values: "true", "True", "1", "yes", "Yes", "on", "On"
-    /// Falsy values: "false", "False", "0", "no", "No", "off", "Off", ""
-    /// Substitutions: "$(var name)" are resolved from LaunchContext before evaluation
-    fn is_truthy(value: &str) -> bool {
-        // Resolve LaunchConfiguration substitutions
-        let resolved_value = if value.starts_with("$(var ") && value.ends_with(')') {
-            // Extract variable name from "$(var variable_name)"
-            let var_name = &value[6..value.len() - 1]; // Skip "$(var " and ")"
-
-            // Look up in LaunchContext via thread-local
-            let resolved = with_launch_context(|ctx| ctx.get_configuration(var_name));
-            if let Some(val) = resolved {
-                val
-            } else {
-                // Variable not found - treat as empty/falsy
-                log::warn!(
-                    "LaunchConfiguration '{}' not found in launch args",
-                    var_name
-                );
-                return false;
-            }
-        } else {
-            value.to_string()
-        };
-
-        let lower = resolved_value.to_lowercase();
-        matches!(
-            lower.as_str(),
-            "true" | "1" | "yes" | "on" if !lower.is_empty()
-        )
-    }
-}
-
-/// Mock UnlessCondition class
-///
-/// Python equivalent:
-/// ```python
-/// from launch.conditions import UnlessCondition
-/// from launch.substitutions import LaunchConfiguration
-///
-/// condition = UnlessCondition(LaunchConfiguration('use_sim'))
-/// ```
-///
-/// Evaluates to true if the predicate evaluates to a falsy value (inverted IfCondition)
 #[pyclass(module = "launch.conditions", from_py_object)]
 pub struct UnlessCondition {
     predicate: Py<PyAny>,
@@ -158,11 +95,17 @@ impl Clone for UnlessCondition {
 #[pymethods]
 impl UnlessCondition {
     #[new]
-    fn new(predicate: Py<PyAny>) -> Self {
-        Self { predicate }
+    #[pyo3(signature = (predicate_expression = None, *, predicate = None))]
+    fn new(
+        predicate_expression: Option<Py<PyAny>>,
+        predicate: Option<Py<PyAny>>,
+    ) -> PyResult<Self> {
+        let predicate = predicate_expression
+            .or(predicate)
+            .ok_or_else(|| PyValueError::new_err("UnlessCondition needs a predicate expression"))?;
+        Ok(Self { predicate })
     }
 
-    /// Evaluate the condition (inverted)
     #[pyo3(signature = (*_args, **_kwargs))]
     pub fn evaluate(
         &self,
@@ -170,9 +113,7 @@ impl UnlessCondition {
         _args: &Bound<'_, PyTuple>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<bool> {
-        // Convert predicate to string and evaluate as boolean (inverted)
-        let value = self.predicate_to_string(py)?;
-        Ok(!IfCondition::is_truthy(&value))
+        Ok(!condition_expression(py, &self.predicate)?)
     }
 
     fn __repr__(&self) -> String {
@@ -180,62 +121,41 @@ impl UnlessCondition {
     }
 }
 
-impl UnlessCondition {
-    /// Convert predicate Py<PyAny> to string (same logic as IfCondition)
-    fn predicate_to_string(&self, py: Python) -> PyResult<String> {
-        let pred_ref = self.predicate.bind(py);
-
-        // Try direct string extraction
-        if let Ok(s) = pred_ref.extract::<String>() {
-            return Ok(s);
-        }
-
-        // Try calling perform() method first (for LaunchConfiguration substitutions)
-        // This resolves the substitution to its actual value
-        if let Ok(has_perform) = pred_ref.hasattr("perform")
-            && has_perform
-        {
-            // Create a dummy context (not used by our LaunchConfiguration.perform())
-            if let Ok(context) = py.eval(c"type('Context', (), {})()", None, None)
-                && let Ok(result) = pred_ref.call_method1("perform", (context,))
-                && let Ok(s) = result.extract::<String>()
-            {
-                return Ok(s);
-            }
-        }
-
-        // Try calling __str__ method (for other substitutions)
-        if let Ok(str_result) = pred_ref.call_method0("__str__")
-            && let Ok(s) = str_result.extract::<String>()
-        {
-            return Ok(s);
-        }
-
-        Ok(pred_ref.str()?.to_string())
-    }
+/// The configuration's value, `None` when it is unset — what
+/// `LaunchConfigurationEquals` compares.
+fn configuration(name: &str) -> Option<String> {
+    with_launch_context(|ctx| ctx.get_configuration(name))
 }
 
-/// Mock LaunchConfigurationEquals condition
-///
-/// Python equivalent:
-/// ```python
-/// from launch.conditions import LaunchConfigurationEquals
-///
-/// condition = LaunchConfigurationEquals('variable_name', 'expected_value')
-/// ```
+fn expected(py: Python, expected: &Option<Py<PyAny>>) -> PyResult<Option<String>> {
+    expected
+        .as_ref()
+        .map(|e| crate::api::utils::pyobject_to_string(py, e))
+        .transpose()
+}
+
 #[pyclass(module = "launch.conditions", from_py_object)]
-#[derive(Clone)]
 pub struct LaunchConfigurationEquals {
     variable_name: String,
-    expected_value: String,
+    expected_value: Option<Py<PyAny>>,
+}
+
+impl Clone for LaunchConfigurationEquals {
+    fn clone(&self) -> Self {
+        Python::attach(|py| Self {
+            variable_name: self.variable_name.clone(),
+            expected_value: self.expected_value.as_ref().map(|e| e.clone_ref(py)),
+        })
+    }
 }
 
 #[pymethods]
 impl LaunchConfigurationEquals {
     #[new]
-    fn new(variable_name: String, expected_value: String) -> Self {
+    #[pyo3(signature = (launch_configuration_name, expected_value = None))]
+    fn new(launch_configuration_name: String, expected_value: Option<Py<PyAny>>) -> Self {
         Self {
-            variable_name,
+            variable_name: launch_configuration_name,
             expected_value,
         }
     }
@@ -243,43 +163,40 @@ impl LaunchConfigurationEquals {
     #[pyo3(signature = (*_args, **_kwargs))]
     pub fn evaluate(
         &self,
-        _py: Python,
+        py: Python,
         _args: &Bound<'_, PyTuple>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<bool> {
-        let actual = with_launch_context(|ctx| ctx.get_configuration(&self.variable_name));
-        Ok(actual.as_deref() == Some(self.expected_value.as_str()))
+        Ok(configuration(&self.variable_name) == expected(py, &self.expected_value)?)
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "LaunchConfigurationEquals('{}', '{}')",
-            self.variable_name, self.expected_value
-        )
+        format!("LaunchConfigurationEquals('{}')", self.variable_name)
     }
 }
 
-/// Mock LaunchConfigurationNotEquals condition
-///
-/// Python equivalent:
-/// ```python
-/// from launch.conditions import LaunchConfigurationNotEquals
-///
-/// condition = LaunchConfigurationNotEquals('variable_name', 'expected_value')
-/// ```
 #[pyclass(module = "launch.conditions", from_py_object)]
-#[derive(Clone)]
 pub struct LaunchConfigurationNotEquals {
     variable_name: String,
-    expected_value: String,
+    expected_value: Option<Py<PyAny>>,
+}
+
+impl Clone for LaunchConfigurationNotEquals {
+    fn clone(&self) -> Self {
+        Python::attach(|py| Self {
+            variable_name: self.variable_name.clone(),
+            expected_value: self.expected_value.as_ref().map(|e| e.clone_ref(py)),
+        })
+    }
 }
 
 #[pymethods]
 impl LaunchConfigurationNotEquals {
     #[new]
-    fn new(variable_name: String, expected_value: String) -> Self {
+    #[pyo3(signature = (launch_configuration_name, expected_value = None))]
+    fn new(launch_configuration_name: String, expected_value: Option<Py<PyAny>>) -> Self {
         Self {
-            variable_name,
+            variable_name: launch_configuration_name,
             expected_value,
         }
     }
@@ -287,18 +204,14 @@ impl LaunchConfigurationNotEquals {
     #[pyo3(signature = (*_args, **_kwargs))]
     pub fn evaluate(
         &self,
-        _py: Python,
+        py: Python,
         _args: &Bound<'_, PyTuple>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<bool> {
-        let actual = with_launch_context(|ctx| ctx.get_configuration(&self.variable_name));
-        Ok(actual.as_deref() != Some(self.expected_value.as_str()))
+        Ok(configuration(&self.variable_name) != expected(py, &self.expected_value)?)
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "LaunchConfigurationNotEquals('{}', '{}')",
-            self.variable_name, self.expected_value
-        )
+        format!("LaunchConfigurationNotEquals('{}')", self.variable_name)
     }
 }

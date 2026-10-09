@@ -37,54 +37,20 @@ use std::ffi::{CStr, CString, c_char};
 /// in the same terms the in-process path would have.
 #[derive(serde::Deserialize)]
 struct Request {
-    /// `exec_file` or `eval_expr` — the two things ROS 2 defines in
-    /// terms of CPython.
+    /// `eval_expr` — the one operation left on this entry point. Running a
+    /// `.launch.py` goes through [`play_launch_py_exec`] (ABI 7), because it
+    /// needs a channel BACK to the caller at every include.
     op: String,
-    /// A launch file path, or an expression.
+    /// An expression.
     arg: String,
-    /// The caller's launch configurations — nano-ros issue 0935.
-    ///
-    /// `exec_file` needs these and CANNOT read them from the caller's
-    /// thread-local: both sides statically link `play_launch_parser`, so each
-    /// has its own. Empty for `eval_expr`, whose argument is self-contained.
-    #[serde(default)]
-    configs: std::collections::BTreeMap<String, String>,
-    /// The caller's ROS namespace stack (ABI 3). Without it every
-    /// `Node`, `ComposableNodeContainer` and `ComposableNode` a `.launch.py`
-    /// declares reads `get_current_ros_namespace()` from THIS object's fresh
-    /// context and lands at `/` — `/component_state_monitor/container` for a
-    /// file included under `/system`. The parity gate caught it as nodes
-    /// present on both sides under different names.
-    #[serde(default)]
-    namespace_stack: Vec<String>,
-    /// The caller's global parameters (ABI 4): everything a `<set_parameter>`
-    /// or an earlier `.launch.py`'s `SetParameter` put in the launch scope,
-    /// as `(name, value)` in the order they were set. `launch_ros` stores
-    /// these as `context.launch_configurations['global_params']`, and
-    /// Autoware's sensor pipelines read them back with
-    /// `dict(context.launch_configurations.get("global_params", {}))` and
-    /// index `gp["rear_overhang"]`. Without this field the vehicle-info
-    /// loader's parameters stayed in the context of the call that ran it,
-    /// and the next file's `OpaqueFunction` died with a KeyError
-    /// (play_launch issue 0028).
-    #[serde(default)]
-    global_parameters: Vec<(String, String)>,
 }
 
 #[derive(serde::Serialize)]
 struct Response {
     ok: bool,
-    /// The `$(eval …)` result. Empty for `exec_file`, which reports through
-    /// `captures`.
+    /// The `$(eval …)` result.
     value: String,
     error: String,
-    /// What `exec_file` produced — nano-ros issue 0935.
-    ///
-    /// These used to be left in this object's thread-local context and
-    /// discarded when the call returned, because the design assumed the caller
-    /// shared it. `None` for `eval_expr`, and for any failure.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    captures: Option<play_launch_parser::bridge::ExecCaptures>,
 }
 
 fn respond(r: Response) -> *mut c_char {
@@ -147,7 +113,6 @@ pub unsafe extern "C" fn play_launch_py_call(req: *const c_char) -> *mut c_char 
             ok: false,
             value: String::new(),
             error: format!("pyexec: panicked: {}", panic_message(&payload)),
-            captures: None,
         }),
     }
 }
@@ -174,7 +139,6 @@ unsafe fn call_inner(req: *const c_char) -> Response {
             ok: false,
             value: String::new(),
             error: "pyexec: null request".into(),
-            captures: None,
         };
     }
     let text = match unsafe { CStr::from_ptr(req) }.to_str() {
@@ -184,7 +148,6 @@ unsafe fn call_inner(req: *const c_char) -> Response {
                 ok: false,
                 value: String::new(),
                 error: format!("pyexec: request is not UTF-8: {e}"),
-                captures: None,
             };
         }
     };
@@ -195,49 +158,17 @@ unsafe fn call_inner(req: *const c_char) -> Response {
                 ok: false,
                 value: String::new(),
                 error: format!("pyexec: malformed request: {e}"),
-                captures: None,
             };
         }
     };
 
     use play_launch_parser::python_backend::PythonBackend;
     let backend = crate::Pyo3Backend;
-    let mut captures = None;
     let result = match req.op.as_str() {
-        "exec_file" => {
-            // issue 0935 — stand up THIS object's launch context around the
-            // execution, seeded from the caller's configurations. Python calls
-            // back into the copy of `play_launch_parser` linked HERE, so the
-            // context it reads has to be established here; the caller's is a
-            // different variable in a different copy of the crate.
-            let mut ctx = play_launch_parser::substitution::context::LaunchContext::new();
-            for (k, v) in &req.configs {
-                ctx.set_configuration(k.clone(), v.clone());
-            }
-            if !req.namespace_stack.is_empty() {
-                ctx.set_namespace_stack(req.namespace_stack.clone());
-            }
-            // Same reason as `configs`: `global_params` is read from THIS
-            // context, so what the caller already holds has to be seeded here
-            // before the file runs. They come back out in `captures` with
-            // whatever the file added; `merge_into` re-setting them is a no-op.
-            for (k, v) in &req.global_parameters {
-                ctx.set_global_parameter(k.clone(), v.clone());
-            }
-            let r = {
-                let _guard = play_launch_parser::bridge::LaunchContextGuard::new(&mut ctx);
-                backend.exec_file(&req.arg)
-            };
-            // Read them back BEFORE returning: they live in `ctx`, which dies
-            // with this scope. That silent discard is what issue 0935 was.
-            if r.is_ok() {
-                captures = Some(play_launch_parser::bridge::ExecCaptures::drain_from(
-                    &mut ctx,
-                ));
-            }
-            r.map(|()| String::new())
-        }
         "eval_expr" => backend.eval_expr(&req.arg),
+        "exec_file" => {
+            Err("pyexec: `exec_file` moved to `play_launch_py_exec` in C ABI 7".to_string())
+        }
         // Test-only: the ONLY way to drive a panic through the real export
         // and assert it comes back as `ok: false` rather than aborting the
         // process. `#[cfg(test)]` keeps it out of the shipped cdylib, so the
@@ -245,7 +176,7 @@ unsafe fn call_inner(req: *const c_char) -> Response {
         #[cfg(test)]
         "__test_panic" => panic!("deliberate panic from the test op"),
         other => Err(format!(
-            "pyexec: unknown op `{other}` (expected `exec_file` or `eval_expr`)"
+            "pyexec: unknown op `{other}` (expected `eval_expr`)"
         )),
     };
     match result {
@@ -253,15 +184,131 @@ unsafe fn call_inner(req: *const c_char) -> Response {
             ok: true,
             value,
             error: String::new(),
-            captures,
         },
         Err(error) => Response {
             ok: false,
             value: String::new(),
             error,
-            captures: None,
         },
     }
+}
+
+/// The caller's include callback: `request` is a NUL-terminated JSON
+/// [`play_launch_parser::exchange::IncludeRequest`]; the answer is a
+/// NUL-terminated JSON `{"ok":true,"state":ContextState}` or
+/// `{"ok":false,"error":"…"}`, owned by the CALLER and handed back to its
+/// `free` callback.
+pub type IncludeCallback =
+    unsafe extern "C" fn(data: *mut std::ffi::c_void, request: *const c_char) -> *mut c_char;
+/// Releases what [`IncludeCallback`] returned, with the caller's allocator.
+pub type FreeCallback = unsafe extern "C" fn(data: *mut std::ffi::c_void, p: *mut c_char);
+
+/// The traverser on the far side of the C boundary.
+struct CallbackHost {
+    include: IncludeCallback,
+    free: FreeCallback,
+    data: *mut std::ffi::c_void,
+}
+
+impl play_launch_parser::exchange::IncludeHost for CallbackHost {
+    fn include(
+        &mut self,
+        request: play_launch_parser::exchange::IncludeRequest,
+    ) -> Result<play_launch_parser::exchange::ContextState, String> {
+        let json = serde_json::to_string(&request)
+            .map_err(|e| format!("pyexec: include request serialisation failed: {e}"))?;
+        let json =
+            CString::new(json).map_err(|e| format!("pyexec: NUL in include request: {e}"))?;
+        // SAFETY: the caller promised `include`, `free` and `data` are valid for
+        // the duration of the `play_launch_py_exec` call this runs inside.
+        let raw = unsafe { (self.include)(self.data, json.as_ptr()) };
+        if raw.is_null() {
+            return Err("pyexec: the include callback returned null".to_string());
+        }
+        let text = unsafe { CStr::from_ptr(raw) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { (self.free)(self.data, raw) };
+        let v: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| format!("pyexec: malformed include answer: {e}"))?;
+        if v["ok"].as_bool().unwrap_or(false) {
+            serde_json::from_value(v["state"].clone())
+                .map_err(|e| format!("pyexec: malformed state in include answer: {e}"))
+        } else {
+            Err(v["error"].as_str().unwrap_or("include failed").to_string())
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ExecRequest {
+    path: String,
+    state: play_launch_parser::exchange::ContextState,
+}
+
+/// Run a `.launch.py` (C ABI 7).
+///
+/// `req` is a NUL-terminated JSON `{"path":…,"state":ContextState}`. Every
+/// `IncludeLaunchDescription` the file reaches is handed to `include` WHEN it
+/// is reached, and the file continues in the state that comes back — see
+/// [`play_launch_parser::exchange`]. Returns a NUL-terminated JSON
+/// `{"ok":true,"result":ExecResult}` or `{"ok":false,"error":"…"}`, which the
+/// caller MUST release with [`play_launch_py_free`]. Never returns null.
+///
+/// # Safety
+///
+/// `req` must be a valid NUL-terminated C string, and `include`, `free` and
+/// `data` valid, for the duration of the call. `include` may call back into
+/// this library (an included `.launch.py`), so it must not hold a lock this
+/// call could need.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn play_launch_py_exec(
+    req: *const c_char,
+    include: IncludeCallback,
+    free: FreeCallback,
+    data: *mut std::ffi::c_void,
+) -> *mut c_char {
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        exec_inner(req, include, free, data)
+    }));
+    let value = match outcome {
+        Ok(Ok(result)) => serde_json::json!({"ok": true, "result": result}),
+        Ok(Err(error)) => serde_json::json!({"ok": false, "error": error}),
+        Err(payload) => serde_json::json!({
+            "ok": false,
+            "error": format!("pyexec: panicked: {}", panic_message(&payload)),
+        }),
+    };
+    let text = value.to_string();
+    CString::new(text)
+        .unwrap_or_else(|_| {
+            CString::new(r#"{"ok":false,"error":"pyexec: NUL in response"}"#)
+                .expect("literal has no NUL")
+        })
+        .into_raw()
+}
+
+unsafe fn exec_inner(
+    req: *const c_char,
+    include: IncludeCallback,
+    free: FreeCallback,
+    data: *mut std::ffi::c_void,
+) -> Result<play_launch_parser::exchange::ExecResult, String> {
+    use play_launch_parser::python_backend::PythonBackend;
+    if req.is_null() {
+        return Err("pyexec: null request".into());
+    }
+    let text = unsafe { CStr::from_ptr(req) }
+        .to_str()
+        .map_err(|e| format!("pyexec: request is not UTF-8: {e}"))?;
+    let req: ExecRequest =
+        serde_json::from_str(text).map_err(|e| format!("pyexec: malformed request: {e}"))?;
+    let mut host = CallbackHost {
+        include,
+        free,
+        data,
+    };
+    crate::Pyo3Backend.exec_file(&req.path, req.state, &mut host)
 }
 
 /// Release a pointer returned by [`play_launch_py_call`].
@@ -316,7 +363,16 @@ pub extern "C" fn play_launch_py_abi_version() -> u32 {
     // new loader with a v6 object that cannot attribute — is not silent: such
     // an object reports every timer in `unsupported`, so `check` still
     // refuses. A bump would only break a working installed pair.
-    6
+    //
+    // 7: `exec_file` moved to `play_launch_py_exec`, which takes an include
+    // CALLBACK: a `.launch.py`'s includes run when the file reaches them, in
+    // the state it has built up, instead of being replayed from a list after
+    // it finished — and the state crosses back both at each include and at
+    // the end (`play_launch_parser::exchange`). Without that, a configuration
+    // a `.launch.py` set reached neither the files it included nor the file
+    // that included it. A different entry point and a different response,
+    // so a v6 object cannot even be asked.
+    7
 }
 
 #[cfg(test)]
@@ -410,98 +466,177 @@ mod tests {
         unsafe { play_launch_py_free(std::ptr::null_mut()) };
     }
 
-    /// nano-ros issue 0935 — `exec_file` must report through the CHANNEL, not
-    /// through a thread-local the caller cannot see.
-    ///
-    /// This is the test the old design could not have: every in-process test
-    /// links one copy of `play_launch_parser`, so a thread-local looked shared
-    /// and `.launch.py` passed here while aborting as shipped. Asserting on the
-    /// RESPONSE is what makes the boundary the subject.
-    #[test]
-    fn exec_file_returns_its_captures_over_the_wire() {
-        let dir = std::env::temp_dir().join("pyexec_abi_0935");
+    /// What the test callback saw, and what it answers with.
+    struct Recorder {
+        requests: Vec<serde_json::Value>,
+    }
+
+    unsafe extern "C" fn record_include(
+        data: *mut std::ffi::c_void,
+        request: *const c_char,
+    ) -> *mut c_char {
+        let recorder = unsafe { &mut *(data as *mut Recorder) };
+        let text = unsafe { CStr::from_ptr(request) }.to_str().unwrap();
+        let v: serde_json::Value = serde_json::from_str(text).unwrap();
+        // Answer with the state the file sent, plus one configuration the
+        // "included file" set — what the file must continue with.
+        let mut state = v["state"].clone();
+        state["configurations"]["set_by_include"] = serde_json::json!("yes");
+        recorder.requests.push(v);
+        CString::new(serde_json::json!({"ok": true, "state": state}).to_string())
+            .unwrap()
+            .into_raw()
+    }
+
+    unsafe extern "C" fn free_answer(_data: *mut std::ffi::c_void, p: *mut c_char) {
+        drop(unsafe { CString::from_raw(p) });
+    }
+
+    /// Run a file through the ABI 7 export, the way a loader would.
+    fn exec(path: &std::path::Path, state: serde_json::Value) -> (serde_json::Value, Recorder) {
+        let _guard = crate::python_test_guard();
+        let req = CString::new(
+            serde_json::json!({"path": path.to_str().unwrap(), "state": state}).to_string(),
+        )
+        .unwrap();
+        let mut recorder = Recorder {
+            requests: Vec::new(),
+        };
+        let raw = unsafe {
+            play_launch_py_exec(
+                req.as_ptr(),
+                record_include,
+                free_answer,
+                &mut recorder as *mut Recorder as *mut std::ffi::c_void,
+            )
+        };
+        assert!(!raw.is_null(), "the export must never return null");
+        let out = unsafe { CStr::from_ptr(raw) }.to_str().unwrap().to_string();
+        unsafe { play_launch_py_free(raw) };
+        (serde_json::from_str(&out).unwrap(), recorder)
+    }
+
+    fn write(name: &str, body: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pyexec_abi7_{name}"));
         std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("t.launch.py");
-        std::fs::write(
-            &file,
+        let file = dir.join(format!("{name}.launch.py"));
+        std::fs::write(&file, body).unwrap();
+        file
+    }
+
+    /// nano-ros issue 0935 — what a file produced comes back over the CHANNEL,
+    /// not through a thread-local the caller cannot see.
+    #[test]
+    fn exec_returns_what_the_file_produced_over_the_wire() {
+        let file = write(
+            "produced",
             "from launch import LaunchDescription\n\
              from launch_ros.actions import Node\n\
              def generate_launch_description():\n\
              \x20   return LaunchDescription([Node(package='p', executable='e', name='n')])\n",
-        )
-        .unwrap();
-
-        let req = serde_json::json!({
-            "op": "exec_file",
-            "arg": file.to_str().unwrap(),
-            "configs": {},
-        })
-        .to_string();
-        let v = call(&req);
-
+        );
+        let (v, _) = exec(&file, serde_json::json!({}));
         assert_eq!(v["ok"], true, "{v}");
-        let nodes = v["captures"]["nodes"]
-            .as_array()
-            .unwrap_or_else(|| panic!("captures.nodes must be in the RESPONSE: {v}"));
+        let nodes = v["result"]["produced"]["nodes"].as_array().expect("nodes");
         assert_eq!(nodes.len(), 1, "{v}");
         assert_eq!(nodes[0]["package"], "p", "{v}");
         assert_eq!(nodes[0]["executable"], "e", "{v}");
     }
 
-    /// The configurations a launch file reads come from the REQUEST, because
-    /// the caller's context is a different copy of the crate (issue 0935).
+    /// The configurations a file reads come from the REQUEST's state.
     #[test]
-    fn exec_file_sees_the_configurations_it_was_sent() {
-        let dir = std::env::temp_dir().join("pyexec_abi_0935_cfg");
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("cfg.launch.py");
-        std::fs::write(
-            &file,
+    fn exec_sees_the_configurations_it_was_sent() {
+        let file = write(
+            "cfg",
             "from launch import LaunchDescription\n\
              from launch.substitutions import LaunchConfiguration\n\
              from launch_ros.actions import Node\n\
              def generate_launch_description():\n\
              \x20   return LaunchDescription([\n\
-             \x20       Node(package='p', executable='e',\n\
-             \x20            name=LaunchConfiguration('who'))])\n",
-        )
-        .unwrap();
-
-        let req = serde_json::json!({
-            "op": "exec_file",
-            "arg": file.to_str().unwrap(),
-            "configs": { "who": "from_the_request" },
-        })
-        .to_string();
-        let v = call(&req);
-        assert_eq!(v["ok"], true, "{v}");
-        let nodes = v["captures"]["nodes"].as_array().expect("nodes");
-        assert_eq!(nodes.len(), 1, "{v}");
-        assert_eq!(
-            nodes[0]["name"], "from_the_request",
-            "the configuration must reach Python through the request: {v}"
+             \x20       Node(package='p', executable='e', name=LaunchConfiguration('who'))])\n",
         );
-    }
-
-    /// The version is what turns a stale pairing into a sentence rather than a
-    /// launch tree that silently resolves to nothing.
-    #[test]
-    fn the_abi_version_moved_with_the_contract() {
-        assert_eq!(play_launch_py_abi_version(), 6);
-    }
-
-    /// ABI 5 (issue 0030): every `DeclareLaunchArgument` a file constructs comes
-    /// back in `captures.declared_arguments` with whether it had a default and
-    /// whether it was constructed inside an `OpaqueFunction` — the two facts
-    /// launch's include-time check turns on. The traverser holds the include to
-    /// them; without them over the wire it has nothing to hold it to.
-    #[test]
-    fn exec_file_returns_its_declared_arguments_over_the_wire() {
-        let dir = std::env::temp_dir().join("pyexec_abi_0030_decl");
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("decl.launch.py");
-        std::fs::write(
+        let (v, _) = exec(
             &file,
+            serde_json::json!({"configurations": {"who": "from_the_request"}}),
+        );
+        assert_eq!(v["ok"], true, "{v}");
+        let nodes = v["result"]["produced"]["nodes"].as_array().expect("nodes");
+        assert_eq!(nodes[0]["name"], "from_the_request", "{v}");
+    }
+
+    /// ABI 7: what the file sets comes back in its final state — an include
+    /// scopes nothing, so it is the includer's from then on.
+    #[test]
+    fn exec_returns_the_configurations_the_file_set() {
+        let file = write(
+            "set",
+            "from launch import LaunchDescription\n\
+             from launch.actions import DeclareLaunchArgument, SetLaunchConfiguration\n\
+             def generate_launch_description():\n\
+             \x20   return LaunchDescription([\n\
+             \x20       DeclareLaunchArgument('declared', default_value='d'),\n\
+             \x20       SetLaunchConfiguration('set_here', 'x')])\n",
+        );
+        let (v, _) = exec(&file, serde_json::json!({}));
+        assert_eq!(v["ok"], true, "{v}");
+        let cfg = &v["result"]["state"]["configurations"];
+        assert_eq!(cfg["declared"], "d", "{v}");
+        assert_eq!(cfg["set_here"], "x", "{v}");
+    }
+
+    /// ABI 7: an include is handed over WHEN it is reached — with what came
+    /// before it and the state reached — and the file continues in the state
+    /// that comes back.
+    #[test]
+    fn an_include_is_run_where_it_is_reached() {
+        let file = write(
+            "inc",
+            "from launch import LaunchDescription\n\
+             from launch.actions import IncludeLaunchDescription, SetLaunchConfiguration\n\
+             from launch.substitutions import LaunchConfiguration\n\
+             from launch_ros.actions import Node\n\
+             def generate_launch_description():\n\
+             \x20   return LaunchDescription([\n\
+             \x20       Node(package='p', executable='e', name='before'),\n\
+             \x20       SetLaunchConfiguration('mine', 'before_include'),\n\
+             \x20       IncludeLaunchDescription('/nonexistent/child.launch.xml',\n\
+             \x20                                launch_arguments=[('k', 'v')]),\n\
+             \x20       Node(package='p', executable='e',\n\
+             \x20            name=LaunchConfiguration('set_by_include'))])\n",
+        );
+        let (v, rec) = exec(
+            &file,
+            serde_json::json!({"namespace_stack": ["/", "/system"]}),
+        );
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(rec.requests.len(), 1);
+        let req = &rec.requests[0];
+        assert_eq!(req["file_path"], "/nonexistent/child.launch.xml", "{req}");
+        assert_eq!(req["args"][0], serde_json::json!(["k", "v"]), "{req}");
+        // The include's arguments are set in the includer's context, and so
+        // is what the file set before it.
+        assert_eq!(req["state"]["configurations"]["k"], "v", "{req}");
+        assert_eq!(
+            req["state"]["configurations"]["mine"], "before_include",
+            "{req}"
+        );
+        assert_eq!(req["state"]["namespace_stack"][1], "/system", "{req}");
+        // What came before the include travels WITH it, in order.
+        assert_eq!(req["produced"]["nodes"][0]["name"], "before", "{req}");
+        // And the node after it read what the include set.
+        let nodes = v["result"]["produced"]["nodes"].as_array().expect("nodes");
+        assert_eq!(nodes.len(), 1, "{v}");
+        assert_eq!(nodes[0]["name"], "yes", "{v}");
+        assert_eq!(nodes[0]["namespace"], "/system", "{v}");
+    }
+
+    /// ABI 5: every `DeclareLaunchArgument` comes back with whether it had a
+    /// default, whether launch's include check can see it, and whether it was
+    /// unset when it executed.
+    #[test]
+    fn exec_returns_its_declared_arguments_over_the_wire() {
+        let file = write(
+            "decl",
             "from launch import LaunchDescription\n\
              from launch.actions import DeclareLaunchArgument, OpaqueFunction\n\
              def launch_setup(context, *args, **kwargs):\n\
@@ -511,18 +646,13 @@ mod tests {
              \x20       DeclareLaunchArgument('required', description='must be passed'),\n\
              \x20       DeclareLaunchArgument('optional', default_value='1'),\n\
              \x20       OpaqueFunction(function=launch_setup)])\n",
-        )
-        .unwrap();
-
-        let req = serde_json::json!({
-            "op": "exec_file",
-            "arg": file.to_str().unwrap(),
-            "configs": { "required": "x", "opaque": "y" },
-        })
-        .to_string();
-        let v = call(&req);
+        );
+        let (v, _) = exec(
+            &file,
+            serde_json::json!({"configurations": {"required": "x", "opaque": "y"}}),
+        );
         assert_eq!(v["ok"], true, "{v}");
-        let decl = v["captures"]["declared_arguments"]
+        let decl = v["result"]["produced"]["declared_arguments"]
             .as_array()
             .expect("declared_arguments");
         let find = |name: &str| {
@@ -533,27 +663,20 @@ mod tests {
         };
         assert_eq!(find("required")["has_default"], false, "{v}");
         assert_eq!(find("required")["opaque"], false, "{v}");
+        assert_eq!(find("required")["unset_at_execute"], false, "{v}");
         assert_eq!(find("required")["description"], "must be passed", "{v}");
         assert_eq!(find("optional")["has_default"], true, "{v}");
         assert_eq!(find("opaque")["has_default"], false, "{v}");
         assert_eq!(find("opaque")["opaque"], true, "{v}");
     }
 
-    /// ABI 4: global parameters the caller already holds — from an XML
-    /// `<set_parameter>`, or a `SetParameter` an EARLIER `.launch.py` returned —
-    /// reach this file's `OpaqueFunction` as `launch_configurations['global_params']`,
-    /// the way `launch_ros` stores them. Without it every Autoware sensor
-    /// pipeline that does `dict(context.launch_configurations.get("global_params", {}))`
-    /// and indexes `gp["rear_overhang"]` dies with a KeyError, because the
-    /// vehicle-info loader ran in a previous call and its parameters stayed in a
-    /// context that died with it (play_launch issue 0028).
+    /// ABI 4: global parameters the caller already holds reach this file's
+    /// `OpaqueFunction` as `launch_configurations['global_params']`, the way
+    /// `launch_ros` stores them (play_launch issue 0028).
     #[test]
-    fn exec_file_sees_the_global_parameters_it_was_sent() {
-        let dir = std::env::temp_dir().join("pyexec_abi_0028_gp");
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("gp.launch.py");
-        std::fs::write(
-            &file,
+    fn exec_sees_the_global_parameters_it_was_sent() {
+        let file = write(
+            "gp",
             "from launch import LaunchDescription\n\
              from launch.actions import OpaqueFunction\n\
              from launch_ros.actions import Node\n\
@@ -564,35 +687,21 @@ mod tests {
              \x20                name='ro_%d' % round(ro * 1000))]\n\
              def generate_launch_description():\n\
              \x20   return LaunchDescription([OpaqueFunction(function=launch_setup)])\n",
-        )
-        .unwrap();
-
-        let req = serde_json::json!({
-            "op": "exec_file",
-            "arg": file.to_str().unwrap(),
-            "global_parameters": [["rear_overhang", "0.821"], ["wheel_base", "2.061"]],
-        })
-        .to_string();
-        let v = call(&req);
-        assert_eq!(v["ok"], true, "{v}");
-        let nodes = v["captures"]["nodes"].as_array().expect("nodes");
-        assert_eq!(nodes.len(), 1, "{v}");
-        assert_eq!(
-            nodes[0]["name"], "ro_821",
-            "the global parameter must reach Python, typed, through the request: {v}"
         );
+        let (v, _) = exec(
+            &file,
+            serde_json::json!({"global_parameters": {"items": [["rear_overhang", "0.821"], ["wheel_base", "2.061"]], "same": false}}),
+        );
+        assert_eq!(v["ok"], true, "{v}");
+        let nodes = v["result"]["produced"]["nodes"].as_array().expect("nodes");
+        assert_eq!(nodes[0]["name"], "ro_821", "{v}");
     }
 
-    /// ABI 3: the namespace the caller is in reaches the nodes Python
-    /// declares. This is the Autoware `system.launch.xml` shape — a
-    /// `<group>` with a pushed namespace including a `.launch.py`.
+    /// ABI 3: the namespace the caller is in reaches what Python declares.
     #[test]
-    fn exec_file_declares_nodes_under_the_callers_namespace() {
-        let dir = std::env::temp_dir().join("pyexec_abi_3_ns");
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("ns.launch.py");
-        std::fs::write(
-            &file,
+    fn exec_declares_nodes_under_the_callers_namespace() {
+        let file = write(
+            "ns",
             "from launch import LaunchDescription\n\
              from launch_ros.actions import ComposableNodeContainer\n\
              from launch_ros.descriptions import ComposableNode\n\
@@ -601,61 +710,42 @@ mod tests {
              \x20   return LaunchDescription([ComposableNodeContainer(\n\
              \x20       namespace='monitor', name='container', package='rclcpp_components',\n\
              \x20       executable='component_container', composable_node_descriptions=[c])])\n",
-        )
-        .unwrap();
-        let req = serde_json::json!({
-            "op": "exec_file",
-            "arg": file.to_str().unwrap(),
-            "configs": {},
-            "namespace_stack": ["/", "/system"],
-        })
-        .to_string();
-        let v = call(&req);
-        assert_eq!(v["ok"], true, "{v}");
-        let containers = v["captures"]["containers"].as_array().expect("containers");
-        assert_eq!(containers.len(), 1, "{v}");
-        assert_eq!(
-            containers[0]["namespace"], "/system/monitor",
-            "the caller's namespace must prefix what Python declares: {v}"
         );
-        let loads = v["captures"]["load_nodes"].as_array().expect("load_nodes");
-        assert_eq!(loads.len(), 1, "{v}");
-        assert_eq!(loads[0]["namespace"], "/system/monitor", "{v}");
-    }
-
-    /// ABI 3: an `IncludeLaunchDescription` comes back to the caller, whose
-    /// traverser is the one that replays includes.
-    #[test]
-    fn exec_file_returns_its_includes_over_the_wire() {
-        let dir = std::env::temp_dir().join("pyexec_abi_3_inc");
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("inc.launch.py");
-        std::fs::write(
+        let (v, _) = exec(
             &file,
-            "from launch import LaunchDescription\n\
-             from launch.actions import IncludeLaunchDescription\n\
-             def generate_launch_description():\n\
-             \x20   return LaunchDescription([IncludeLaunchDescription(\n\
-             \x20       '/nonexistent/child.launch.xml', launch_arguments=[('k', 'v')])])\n",
-        )
-        .unwrap();
-        let req = serde_json::json!({
-            "op": "exec_file",
-            "arg": file.to_str().unwrap(),
-            "configs": {},
-            "namespace_stack": ["/", "/system"],
-        })
-        .to_string();
-        let v = call(&req);
+            serde_json::json!({"namespace_stack": ["/", "/system"]}),
+        );
         assert_eq!(v["ok"], true, "{v}");
-        let includes = v["captures"]["includes"]
+        let containers = v["result"]["produced"]["containers"]
             .as_array()
-            .unwrap_or_else(|| panic!("captures.includes must be in the RESPONSE: {v}"));
-        assert_eq!(includes.len(), 1, "{v}");
+            .expect("containers");
+        assert_eq!(containers[0]["namespace"], "/system/monitor", "{v}");
+        let loads = v["result"]["produced"]["load_nodes"]
+            .as_array()
+            .expect("load_nodes");
+        assert_eq!(loads[0]["namespace"], "/system/monitor", "{v}");
         assert_eq!(
-            includes[0]["file_path"], "/nonexistent/child.launch.xml",
+            loads[0]["target_container_name"], "/system/monitor/container",
             "{v}"
         );
-        assert_eq!(includes[0]["ros_namespace"], "/system", "{v}");
+    }
+
+    /// The version is what turns a stale pairing into a sentence rather than a
+    /// launch tree that silently resolves to nothing.
+    #[test]
+    fn the_abi_version_moved_with_the_contract() {
+        assert_eq!(play_launch_py_abi_version(), 7);
+    }
+
+    /// `exec_file` on the old entry point is refused by name, not answered
+    /// wrong.
+    #[test]
+    fn exec_file_on_the_old_entry_point_names_the_new_one() {
+        let v = call(r#"{"op":"exec_file","arg":"/x.launch.py"}"#);
+        assert_eq!(v["ok"], false, "{v}");
+        assert!(
+            v["error"].as_str().unwrap().contains("play_launch_py_exec"),
+            "{v}"
+        );
     }
 }

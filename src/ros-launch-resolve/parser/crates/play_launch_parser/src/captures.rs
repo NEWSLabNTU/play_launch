@@ -2,13 +2,13 @@
 //!
 //! These types are used by both the XML parser (via LaunchContext) and the Python
 //! API (via thread-local context) to store parsed nodes, containers, composable
-//! node loads, and includes during launch file traversal.
+//! node loads and declared arguments during launch file traversal.
 //!
 //! The `to_record()` implementations that convert captures to final record types
 //! are defined in `python/bridge.rs` (they depend on global parameter state).
 
 /// Captured node data from Python or XML parsing
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct NodeCapture {
     pub package: String,
     pub executable: String,
@@ -28,6 +28,11 @@ pub struct NodeCapture {
     /// swallowed into the mock `Node`'s `**_kwargs` with no diagnostic at all.
     pub ros_arguments: Vec<String>,
     pub env_vars: Vec<(String, String)>,
+    /// The global parameters (`<set_parameter>`, `SetParameter`) in effect
+    /// where this member was declared — positional, as launch applies them.
+    /// `None` means "not recorded" and falls back to the final set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global_params: Option<Vec<(String, String)>>,
     /// Scope ID from the launch tree (set by traverser after capture)
     pub scope_id: Option<usize>,
     /// Seconds to wait after launch start before this member is spawned,
@@ -39,7 +44,7 @@ pub struct NodeCapture {
 }
 
 /// Captured container data from Python or XML parsing
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ContainerCapture {
     pub name: String,
     pub namespace: String,
@@ -51,6 +56,24 @@ pub struct ContainerCapture {
     /// itself); a capture that arrived with a ready-made `cmd` already has
     /// them in it.
     pub ros_arguments: Vec<String>,
+    /// A container is a `Node`: its own parameters, parameter files,
+    /// remappings (global ones first), arguments and environment reach its
+    /// process exactly as a node's do.
+    #[serde(default)]
+    pub parameters: Vec<(String, String)>,
+    #[serde(default)]
+    pub params_files: Vec<String>,
+    #[serde(default)]
+    pub remappings: Vec<(String, String)>,
+    #[serde(default)]
+    pub arguments: Vec<String>,
+    #[serde(default)]
+    pub env_vars: Vec<(String, String)>,
+    /// The global parameters (`<set_parameter>`, `SetParameter`) in effect
+    /// where this member was declared — positional, as launch applies them.
+    /// `None` means "not recorded" and falls back to the final set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global_params: Option<Vec<(String, String)>>,
     /// Scope ID from the launch tree (set by traverser after capture)
     pub scope_id: Option<usize>,
     /// Seconds to wait after launch start before this member is spawned,
@@ -62,7 +85,7 @@ pub struct ContainerCapture {
 }
 
 /// Captured composable node data from Python or XML parsing
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LoadNodeCapture {
     pub package: String,
     pub plugin: String,
@@ -79,6 +102,11 @@ pub struct LoadNodeCapture {
     /// this struct simply had no field to hold them — so fixing the parser and
     /// the record still left that shape dropping every value.
     pub extra_args: std::collections::HashMap<String, String>,
+    /// The global parameters (`<set_parameter>`, `SetParameter`) in effect
+    /// where this member was declared — positional, as launch applies them.
+    /// `None` means "not recorded" and falls back to the final set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global_params: Option<Vec<(String, String)>>,
     /// Scope ID from the launch tree (set by traverser after capture)
     pub scope_id: Option<usize>,
     /// Seconds to wait after launch start before this member is spawned,
@@ -101,12 +129,10 @@ pub struct DeclaredArgumentCapture {
     pub description: Option<String>,
     pub has_default: bool,
     pub opaque: bool,
-}
-
-/// Captured include data from Python or XML parsing
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct IncludeCapture {
-    pub file_path: String,
-    pub args: Vec<(String, String)>,
-    pub ros_namespace: String,
+    /// The configuration was unset when the declaration EXECUTED, and it has
+    /// no default — launch's `DeclareLaunchArgument.execute` raises right
+    /// there. Recorded at that moment (C ABI 7), since by the end of the
+    /// file a later action may have set it.
+    #[serde(default)]
+    pub unset_at_execute: bool,
 }

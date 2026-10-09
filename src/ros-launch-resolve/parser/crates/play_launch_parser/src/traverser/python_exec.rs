@@ -1,16 +1,14 @@
-use super::{super::LaunchTraverser, include::validate_include_path};
+use super::{super::LaunchTraverser, include::IncludeArgs};
 use crate::{
+    captures::DeclaredArgumentCapture,
     error::{ParseError, Result},
-    record::{canonicalize_path, extract_package_from_path},
-    substitution::{parse_substitutions, resolve_substitutions},
+    exchange::{ContextState, ExecResult, IncludeHost, IncludeRequest, ListSync, Produced},
 };
-use std::{collections::HashMap, path::Path};
+use std::path::{Path, PathBuf};
 
 /// The two launch-file-location substitutions, as they cross the Python
 /// boundary. `ThisLaunchFileDir()` and `ThisLaunchFile()` are captured as these
-/// literal strings by the `pyexec` mock and resolved by the host — the mock
-/// cannot resolve them itself, since the dlopen'd object has its own
-/// `LaunchContext` and is never told the current file.
+/// literal strings by the `pyexec` mock and resolved by the host.
 ///
 /// `ThisLaunchFile()` emits `$(filename)` and not a token of its own, because
 /// in ROS 2 they ARE the same substitution class: `this_launch_file.py` is
@@ -24,30 +22,21 @@ const FILENAME_TOKEN: &str = "$(filename)";
 struct FileSubstitutions {
     dirname: Option<String>,
     /// The ABSOLUTE PATH, matching `Substitution::Filename` and ROS 2's
-    /// `ThisLaunchFile` — not `current_filename()`, which is the basename.
+    /// `ThisLaunchFile` — not the basename.
     filename: Option<String>,
 }
 
 impl FileSubstitutions {
-    fn of(context: &crate::substitution::LaunchContext) -> Self {
+    fn of(path: &Path) -> Self {
+        let abs = crate::record::absolute_path(path);
         Self {
-            dirname: context
-                .current_dir()
-                .and_then(|p| p.to_str().map(String::from)),
-            filename: context
-                .current_file()
-                .and_then(|p| p.to_str().map(String::from)),
+            dirname: abs.parent().and_then(|p| p.to_str().map(String::from)),
+            filename: abs.to_str().map(String::from),
         }
     }
 
-    fn is_noop(&self) -> bool {
-        self.dirname.is_none() && self.filename.is_none()
-    }
-
-    /// Rewrite the two file-location tokens, and ONLY those. `$(var ...)` is
-    /// deliberately left standing: it is preserved as a string so replay can
-    /// resolve it with different values (`execution/node_cmdline.rs`), whereas
-    /// `$(dirname)` is fixed at parse time and has no replay-time meaning.
+    /// Rewrite the two file-location tokens, and ONLY those. `$(dirname)` is
+    /// a property of the file that DECLARED the member, fixed at parse time.
     fn rewrite(&self, value: &mut String) {
         if let Some(dir) = &self.dirname
             && value.contains(DIRNAME_TOKEN)
@@ -73,27 +62,152 @@ impl FileSubstitutions {
             self.rewrite(value);
         }
     }
+
+    fn rewrite_produced(&self, produced: &mut Produced) {
+        for capture in &mut produced.nodes {
+            self.rewrite_pairs(&mut capture.parameters);
+            self.rewrite_all(&mut capture.params_files);
+            self.rewrite_pairs(&mut capture.remappings);
+            self.rewrite_all(&mut capture.arguments);
+            self.rewrite_all(&mut capture.ros_arguments);
+            self.rewrite_pairs(&mut capture.env_vars);
+            for source in &mut capture.param_sources {
+                match source {
+                    crate::record::types::ParamSource::Inline { value, .. } => self.rewrite(value),
+                    // File sources hold YAML CONTENT, not a path.
+                    crate::record::types::ParamSource::File { .. } => {}
+                }
+            }
+        }
+        for capture in &mut produced.containers {
+            self.rewrite_all(&mut capture.cmd);
+            self.rewrite_all(&mut capture.ros_arguments);
+            self.rewrite_pairs(&mut capture.parameters);
+            self.rewrite_all(&mut capture.params_files);
+            self.rewrite_pairs(&mut capture.remappings);
+            self.rewrite_all(&mut capture.arguments);
+            self.rewrite_pairs(&mut capture.env_vars);
+        }
+        for capture in &mut produced.load_nodes {
+            self.rewrite_pairs(&mut capture.parameters);
+            self.rewrite_pairs(&mut capture.remappings);
+            for value in capture.extra_args.values_mut() {
+                self.rewrite(value);
+            }
+        }
+    }
+}
+
+/// The traverser, as the Python half sees it while one `.launch.py` runs: it
+/// takes in what the file produced and runs each include the file reaches,
+/// in the state the file had reached, and hands its state back.
+struct PythonIncludeHost<'a> {
+    traverser: &'a mut LaunchTraverser,
+    /// The file being run, which owns every capture it produces.
+    path: PathBuf,
+    /// This side's reference point for the shared global lists.
+    sync: ListSync,
+    /// Every declaration the file executed, across all hand-overs.
+    declared: Vec<DeclaredArgumentCapture>,
+    /// The typed error an include failed with, so it survives the trip
+    /// through the Python half as more than a message.
+    error: Option<ParseError>,
+}
+
+impl PythonIncludeHost<'_> {
+    /// Take in a batch of what the file produced, in order.
+    fn take_in(&mut self, mut produced: Produced) {
+        FileSubstitutions::of(&self.path).rewrite_produced(&mut produced);
+        let ctx = &mut self.traverser.context;
+        ctx.captured_nodes_mut().extend(produced.nodes);
+        ctx.captured_containers_mut().extend(produced.containers);
+        ctx.captured_load_nodes_mut().extend(produced.load_nodes);
+        self.declared.extend(produced.declared_arguments);
+        // Anything the Python frontend could not model. Stamped with THIS
+        // file, which is the one thing the mock action could not know.
+        for (action, detail) in produced.unsupported {
+            log::warn!(
+                "Unsupported action type: {action} (in {})",
+                self.path.display()
+            );
+            self.traverser.note_dropped(crate::record::DroppedAction {
+                action,
+                file: Some(self.path.display().to_string()),
+                detail,
+            });
+        }
+    }
+
+    /// Adopt the state the file reached. An include scopes nothing, so this
+    /// IS the includer's state from here on.
+    fn adopt(&mut self, state: &ContextState) {
+        self.sync = self.traverser.context.import_state(state, &self.sync);
+    }
+}
+
+impl IncludeHost for PythonIncludeHost<'_> {
+    fn include(&mut self, request: IncludeRequest) -> std::result::Result<ContextState, String> {
+        let IncludeRequest {
+            produced,
+            state,
+            file_path,
+            args,
+            delay_secs,
+        } = request;
+        self.take_in(produced);
+        self.adopt(&state);
+
+        log::debug!(
+            "Python include from {}: {} ({} args)",
+            self.path.display(),
+            file_path,
+            args.len()
+        );
+        let mark = self.traverser.delay_mark();
+        let result = self
+            .traverser
+            .process_include_target(&file_path, IncludeArgs::Resolved(&args));
+        // A `TimerAction` around the include delays everything it starts,
+        // as `<timer>` around an `<include>` does.
+        if let Some(secs) = delay_secs {
+            self.traverser.apply_start_delay(mark, secs);
+        }
+        // The included file ran with this file as the current file's
+        // includer; it is the current file again.
+        self.traverser.context.set_current_file(self.path.clone());
+        if let Err(e) = result {
+            let message = e.to_string();
+            self.error = Some(e);
+            return Err(message);
+        }
+
+        let out = self.traverser.context.export_state(&self.sync);
+        self.sync = self.traverser.context.list_sync();
+        Ok(out)
+    }
 }
 
 impl LaunchTraverser {
     /// Run a `.launch.py` and hand back what it declared (issue 0030), so an
-    /// include of it can be held to launch's required-argument rule. Before
-    /// returning, a declaration with no default whose name is still unset is
+    /// include of it can be held to launch's required-argument rule. A
+    /// declaration with no default whose name was unset when it executed is
     /// refused the way `DeclareLaunchArgument.execute` refuses it.
+    ///
+    /// The file runs in this traverser's context and leaves its state there:
+    /// an include scopes nothing, so what the file declares, sets, pushes or
+    /// appends is the includer's afterwards. Each `IncludeLaunchDescription`
+    /// it reaches is run here, at that point, in the state the file had built
+    /// up — see [`crate::exchange`].
     pub(crate) fn execute_python_file(
         &mut self,
         path: &Path,
-        args: &HashMap<String, String>,
-    ) -> Result<Vec<crate::captures::DeclaredArgumentCapture>> {
-        // The file being executed is the current file for as long as it runs —
-        // the Python path is the one frontend that never said so, which left
-        // `ThisLaunchFileDir()` (captured as `$(dirname)`) resolving against
-        // the INCLUDING XML file's directory, or failing outright for a root
-        // `.launch.py` where nothing had set a current file at all. Saved and
-        // restored because this runs on the parent's own context, not a child.
+    ) -> Result<Vec<DeclaredArgumentCapture>> {
+        // The file being executed is the current file for as long as it runs.
+        // Restored afterwards: `$(dirname)` in the includer's later entities
+        // is the includer's directory again.
         let previous_file = self.context.current_file().cloned();
         self.context.set_current_file(path.to_path_buf());
-        let result = self.execute_python_file_inner(path, args);
+        let result = self.execute_python_file_inner(path);
         match previous_file {
             Some(prev) => self.context.set_current_file(prev),
             None => self.context.clear_current_file(),
@@ -101,57 +215,9 @@ impl LaunchTraverser {
         result
     }
 
-    /// Resolve `$(dirname)` / `$(filename)` in the captures a `.launch.py`
-    /// just produced, against the context's current file (that same file).
-    fn resolve_file_substitutions_in_captures(
-        &mut self,
-        first_node: usize,
-        first_container: usize,
-        first_load_node: usize,
-    ) {
-        let subs = FileSubstitutions::of(&self.context);
-        if subs.is_noop() {
-            return;
-        }
-
-        for capture in &mut self.context.captured_nodes_mut()[first_node..] {
-            subs.rewrite_pairs(&mut capture.parameters);
-            subs.rewrite_all(&mut capture.params_files);
-            subs.rewrite_pairs(&mut capture.remappings);
-            subs.rewrite_all(&mut capture.arguments);
-            subs.rewrite_all(&mut capture.ros_arguments);
-            subs.rewrite_pairs(&mut capture.env_vars);
-            for source in &mut capture.param_sources {
-                match source {
-                    crate::record::types::ParamSource::Inline { value, .. } => subs.rewrite(value),
-                    // File sources hold YAML CONTENT, not a path.
-                    crate::record::types::ParamSource::File { .. } => {}
-                }
-            }
-        }
-
-        for capture in &mut self.context.captured_containers_mut()[first_container..] {
-            subs.rewrite_all(&mut capture.cmd);
-            subs.rewrite_all(&mut capture.ros_arguments);
-        }
-
-        for capture in &mut self.context.captured_load_nodes_mut()[first_load_node..] {
-            subs.rewrite_pairs(&mut capture.parameters);
-            subs.rewrite_pairs(&mut capture.remappings);
-            for value in capture.extra_args.values_mut() {
-                subs.rewrite(value);
-            }
-        }
-    }
-
-    fn execute_python_file_inner(
-        &mut self,
-        path: &Path,
-        args: &HashMap<String, String>,
-    ) -> Result<Vec<crate::captures::DeclaredArgumentCapture>> {
-        // The backend, resolved BEFORE any context is published: if there is
-        // no Python half in this build, say so while we can still name the
-        // file, rather than failing somewhere inside the executor.
+    fn execute_python_file_inner(&mut self, path: &Path) -> Result<Vec<DeclaredArgumentCapture>> {
+        // The backend, resolved BEFORE anything runs: if there is no Python
+        // half in this build, say so while we can still name the file.
         let backend = crate::python_backend::require(
             crate::python_backend::PythonNeed::LaunchFile,
             &path.display().to_string(),
@@ -159,79 +225,38 @@ impl LaunchTraverser {
         .map_err(|e| ParseError::PythonError(e.to_string()))?;
 
         log::debug!("Executing Python file: {}", path.display());
-        log::trace!("Python file arguments: {} args", args.len());
-
-        // Write include args into context as configurations
-        // (Python API reads these via with_launch_context → get_configuration)
-        for (k, v) in args {
-            // Parse and resolve substitutions in the value
-            let resolved_value = match parse_substitutions(v) {
-                Ok(subs) => match resolve_substitutions(&subs, &self.context) {
-                    Ok(resolved) => {
-                        log::trace!("  Resolved '{}': '{}' -> '{}'", k, v, resolved);
-                        resolved
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to resolve substitutions in '{}': {}", v, e);
-                        v.clone()
-                    }
-                },
-                Err(e) => {
-                    log::trace!("No substitutions in '{}': {}", v, e);
-                    v.clone()
-                }
-            };
-            self.context.set_configuration(k.clone(), resolved_value);
-        }
-
-        // Add current ROS namespace for OpaqueFunction to access
-        let current_ns = self.context.current_namespace();
-        if !current_ns.is_empty() && current_ns != "/" {
-            self.context
-                .set_configuration("ros_namespace".to_string(), current_ns.clone());
-            log::debug!("Added ros_namespace='{}' to context", current_ns);
-        }
-
-        // Where this file's own captures will start. Everything appended by
-        // `exec_file` below belongs to THIS file, and is resolved against it
-        // before the include loop runs (each included file resolves its own).
-        let first_node = self.context.captured_nodes().len();
-        let first_container = self.context.captured_containers().len();
-        let first_load_node = self.context.captured_load_nodes().len();
-
-        // Set the thread-local context for Python API to access (cleared on guard drop)
-        let _ctx_guard = crate::bridge::LaunchContextGuard::new(&mut self.context);
-
         let path_str = path.to_str().ok_or_else(|| {
             ParseError::PythonError(format!("Invalid UTF-8 in path: {}", path.display()))
         })?;
-        let exec_result = backend.exec_file(path_str);
 
-        // Guard clears context on drop (including on early return/panic)
-        drop(_ctx_guard);
+        // The far side starts with nothing, so no list is "the same" yet.
+        let state = self.context.export_state(&ListSync::default());
+        let sync = self.context.list_sync();
+        let mut host = PythonIncludeHost {
+            traverser: self,
+            path: path.to_path_buf(),
+            sync,
+            declared: Vec::new(),
+            error: None,
+        };
+        let outcome = backend.exec_file(path_str, state, &mut host);
+        let ExecResult { produced, state } = match outcome {
+            Ok(r) => r,
+            // An include's own error, typed, beats its rendering as a Python
+            // exception.
+            Err(message) => {
+                return Err(host
+                    .error
+                    .take()
+                    .unwrap_or(ParseError::PythonError(message)));
+            }
+        };
+        host.take_in(produced);
+        host.adopt(&state);
+        let declared = std::mem::take(&mut host.declared);
 
-        // Propagate execution errors
-        exec_result.map_err(ParseError::PythonError)?;
-
-        // Issue 0034 residual: a node's parameters, parameter FILES, arguments
-        // and remappings reached the record — and the spawned command line —
-        // carrying a literal `$(dirname)`, because `NodeCapture::to_record`
-        // takes no context. The include path a few lines below was the only
-        // captured string anything resolved.
-        //
-        // Resolved HERE rather than at conversion time because `$(dirname)` is
-        // a property of the file that DECLARED the node: by `into_record_json`
-        // the context has been restored to the root file, so every capture
-        // from an included `.launch.py` would resolve against the wrong
-        // directory.
-        self.resolve_file_substitutions_in_captures(first_node, first_container, first_load_node);
-
-        // Take this file's declarations out of the context so a later file's
-        // do not mix with them (issue 0030), then apply launch's execute-time
-        // rule: no default and nothing set is an error naming the argument.
-        let declared = std::mem::take(self.context.captured_declarations_mut());
         for d in &declared {
-            if !d.has_default && self.context.get_configuration(&d.name).is_none() {
+            if !d.has_default && d.unset_at_execute {
                 return Err(ParseError::RequiredArgumentNotProvided {
                     name: d.name.clone(),
                     description: d
@@ -243,274 +268,13 @@ impl LaunchTraverser {
             }
         }
 
-        // Anything the Python frontend could not model. Stamped with THIS
-        // file, which is the one thing the mock action could not know.
-        for (action, detail) in self.context.take_unsupported_actions() {
-            log::warn!("Unsupported action type: {action} (in {})", path.display());
-            self.note_dropped(crate::record::DroppedAction {
-                action,
-                file: Some(path.display().to_string()),
-                detail,
-            });
-        }
-
-        // Python API stores captures directly in self.context via thread-local
-        // (SetParameter also writes global params directly to context via thread-local)
-        log::debug!("After Python execution:");
-        log::debug!("  Captured nodes: {}", self.context.captured_nodes().len());
         log::debug!(
-            "  Captured containers: {}",
-            self.context.captured_containers().len()
-        );
-        log::debug!(
-            "  Captured load_nodes: {}",
+            "Python file '{}' completed: {} nodes, {} containers, {} load_nodes captured so far",
+            path.display(),
+            self.context.captured_nodes().len(),
+            self.context.captured_containers().len(),
             self.context.captured_load_nodes().len()
         );
-
-        log::debug!(
-            "Python file '{}' completed - captures stored in context via thread-local",
-            path.display()
-        );
-
-        // Process includes recursively (get from context and clear)
-        let includes = self.context.captured_includes().to_vec();
-        // Clear captured includes to prevent reprocessing in recursive calls
-        self.context.captured_includes_mut().clear();
-
-        log::debug!(
-            "Processing {} captured includes from Python file '{}', current context namespace: '{}'",
-            includes.len(),
-            path.display(),
-            self.context.current_namespace()
-        );
-
-        for include in includes {
-            log::debug!(
-                "Processing Python include: {} with ROS namespace '{}'",
-                include.file_path,
-                include.ros_namespace
-            );
-
-            // Two argument sets, kept apart on purpose (issue 0030). What a
-            // `.launch.py` target EXECUTES with is the scope plus the include's
-            // arguments, as before. What an XML or YAML target is GIVEN is the
-            // include's own arguments only: the child context inherits the
-            // scope for substitution anyway, and launch's required-argument
-            // check looks at what was passed, never at what was in scope.
-            let own_names: Vec<String> = include.args.iter().map(|(k, _)| k.clone()).collect();
-            let own_args: HashMap<String, String> = include.args.iter().cloned().collect();
-            let mut include_args = args.clone();
-            for (key, value) in include.args {
-                include_args.insert(key, value);
-            }
-
-            // Parse and resolve substitutions in the file path
-            // (Python includes may contain substitutions like $(find-pkg-share pkg)/launch/file.xml)
-            let file_path_subs = parse_substitutions(&include.file_path)?;
-            let file_path_str =
-                resolve_substitutions(&file_path_subs, &self.context).map_err(|e| {
-                    ParseError::InvalidSubstitution(format!(
-                        "Failed to resolve Python include path '{}': {}",
-                        include.file_path, e
-                    ))
-                })?;
-
-            log::debug!(
-                "Resolved Python include path: {} -> {}",
-                include.file_path,
-                file_path_str
-            );
-
-            // Validate include path
-            let include_path = Path::new(&file_path_str);
-            validate_include_path(include_path, &file_path_str)?;
-
-            // Resolve relative paths relative to the current Python file
-            let resolved_include_path = if include_path.is_relative() {
-                // Resolve relative to the current Python file
-                if let Some(parent_dir) = path.parent() {
-                    parent_dir.join(include_path)
-                } else {
-                    include_path.to_path_buf()
-                }
-            } else {
-                include_path.to_path_buf()
-            };
-
-            // Determine the ROS namespace to apply
-            let ros_ns = if !include.ros_namespace.is_empty() && include.ros_namespace != "/" {
-                Some(include.ros_namespace.clone())
-            } else {
-                None
-            };
-
-            // Process the include with namespace context
-            let result =
-                if let Some(ext) = resolved_include_path.extension().and_then(|s| s.to_str()) {
-                    match ext {
-                        "py" => {
-                            // Push scope for this Python-to-Python include
-                            let py_file_name = resolved_include_path
-                                .file_name()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("unknown")
-                                .to_string();
-                            let py_pkg = extract_package_from_path(&resolved_include_path);
-                            let py_path = canonicalize_path(&resolved_include_path);
-                            let py_ns = self.context.current_namespace();
-                            let child_scope_id = self.scope_table.push(
-                                py_pkg,
-                                py_file_name,
-                                py_path,
-                                py_ns,
-                                include_args.clone(),
-                                Some(self.current_scope_id),
-                            );
-                            let prev_scope_id = self.current_scope_id;
-                            self.current_scope_id = child_scope_id;
-
-                            // Track captures before execution
-                            let prev_cap_nodes = self.context.captured_nodes().len();
-                            let prev_cap_containers = self.context.captured_containers().len();
-                            let prev_cap_load_nodes = self.context.captured_load_nodes().len();
-                            let prev_rec = self.records.len();
-                            let prev_cont = self.containers.len();
-                            let prev_ln = self.load_nodes.len();
-
-                            // Save scope so namespace is restored after include
-                            let scope = self.context.save_scope();
-                            if let Some(ref ns) = ros_ns {
-                                self.context.push_namespace(ns.clone());
-                            }
-                            let result = self
-                                .execute_python_file(&resolved_include_path, &include_args)
-                                .and_then(|declared| {
-                                    super::include::check_required_include_args(
-                                        &super::include::py_required_args(&declared),
-                                        &own_names,
-                                        &resolved_include_path,
-                                    )
-                                });
-                            self.context.restore_scope(scope);
-
-                            // Stamp scope on new captures/records
-                            for cap in &mut self.context.captured_nodes_mut()[prev_cap_nodes..] {
-                                if cap.scope_id.is_none() {
-                                    cap.scope_id = Some(child_scope_id);
-                                }
-                            }
-                            for cap in
-                                &mut self.context.captured_containers_mut()[prev_cap_containers..]
-                            {
-                                if cap.scope_id.is_none() {
-                                    cap.scope_id = Some(child_scope_id);
-                                }
-                            }
-                            for cap in
-                                &mut self.context.captured_load_nodes_mut()[prev_cap_load_nodes..]
-                            {
-                                if cap.scope_id.is_none() {
-                                    cap.scope_id = Some(child_scope_id);
-                                }
-                            }
-                            for rec in &mut self.records[prev_rec..] {
-                                if rec.scope.is_none() {
-                                    rec.scope = Some(child_scope_id);
-                                }
-                            }
-                            for rec in &mut self.containers[prev_cont..] {
-                                if rec.scope.is_none() {
-                                    rec.scope = Some(child_scope_id);
-                                }
-                            }
-                            for rec in &mut self.load_nodes[prev_ln..] {
-                                if rec.scope.is_none() {
-                                    rec.scope = Some(child_scope_id);
-                                }
-                            }
-
-                            // Update scope args with all resolved configurations
-                            let final_args = self.context.configurations();
-                            self.scope_table.update_args(child_scope_id, final_args);
-
-                            self.current_scope_id = prev_scope_id;
-                            result
-                        }
-                        "xml" => {
-                            // For XML includes, pass namespace directly
-                            self.process_xml_include_with_namespace(
-                                &resolved_include_path,
-                                &own_args,
-                                ros_ns.clone(),
-                            )
-                        }
-                        "yaml" | "yml" => {
-                            // Push scope for YAML include from Python
-                            let yaml_file_name = resolved_include_path
-                                .file_name()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("unknown")
-                                .to_string();
-                            let yaml_pkg = extract_package_from_path(&resolved_include_path);
-                            let yaml_path = canonicalize_path(&resolved_include_path);
-                            let yaml_ns = self.context.current_namespace();
-                            let child_scope_id = self.scope_table.push(
-                                yaml_pkg,
-                                yaml_file_name,
-                                yaml_path,
-                                yaml_ns,
-                                include_args.clone(),
-                                Some(self.current_scope_id),
-                            );
-                            let prev_scope_id = self.current_scope_id;
-                            self.current_scope_id = child_scope_id;
-
-                            // Issue 0030: the include's own arguments were
-                            // never applied on this path (only recorded in the
-                            // scope table); apply them, and hold the file to the
-                            // required-argument rule against them.
-                            let result = super::include::yaml_required_args(&resolved_include_path)
-                                .and_then(|required| {
-                                    super::include::check_required_include_args(
-                                        &required,
-                                        &own_names,
-                                        &resolved_include_path,
-                                    )
-                                })
-                                .and_then(|()| {
-                                    for (k, v) in &own_args {
-                                        self.context.set_configuration(k.clone(), v.clone());
-                                    }
-                                    self.process_yaml_launch_file(&resolved_include_path)
-                                });
-
-                            // Update scope args with all resolved configurations
-                            let final_args = self.context.configurations();
-                            self.scope_table.update_args(child_scope_id, final_args);
-
-                            self.current_scope_id = prev_scope_id;
-                            result
-                        }
-                        _ => {
-                            log::warn!(
-                                "Unknown file type for Python include: {}",
-                                resolved_include_path.display()
-                            );
-                            Ok(())
-                        }
-                    }
-                } else {
-                    log::warn!(
-                        "No file extension for Python include: {}",
-                        resolved_include_path.display()
-                    );
-                    Ok(())
-                };
-
-            // Propagate any errors
-            result?;
-        }
-
         Ok(declared)
     }
 }

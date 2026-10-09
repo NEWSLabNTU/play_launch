@@ -9,8 +9,6 @@ use pyo3::prelude::*;
 
 use crate::api::utils as sub_utils;
 
-use super::resolve_substitution_string;
-
 /// Mock LaunchConfiguration substitution
 ///
 /// Python equivalent:
@@ -23,9 +21,13 @@ use super::resolve_substitution_string;
 #[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct LaunchConfiguration {
+    #[pyo3(get)]
     variable_name: String,
-    #[allow(dead_code)] // Store for API compatibility
-    default: Option<String>,
+    /// Used when the configuration is unset. Unlike the mock this replaces,
+    /// it does NOT set the configuration — in `launch` a default belongs to
+    /// this substitution only.
+    #[pyo3(get)]
+    default: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -33,35 +35,15 @@ impl LaunchConfiguration {
     #[new]
     #[pyo3(signature = (variable_name, *, default=None, **_kwargs))]
     fn new(
-        variable_name: String,
+        py: Python,
+        variable_name: Py<PyAny>,
         default: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
-    ) -> Self {
-        // Accept str, bool, or any type — convert to string for storage.
-        // ROS 2 accepts SomeSubstitutionsType which includes bool, list, etc.
-        let default = default.map(|obj| {
-            Python::attach(|py| {
-                obj.bind(py)
-                    .str()
-                    .map_or_else(|_| format!("{:?}", obj), |s| s.to_string())
-            })
-        });
-
-        // Register default in LaunchContext so it's available for variable substitution.
-        // Only set if not already present (CLI args and DeclareLaunchArgument take precedence).
-        if let Some(ref default_val) = default {
-            use play_launch_parser::bridge::with_launch_context;
-            with_launch_context(|ctx| {
-                if ctx.get_configuration(&variable_name).is_none() {
-                    ctx.set_configuration(variable_name.clone(), default_val.clone());
-                }
-            });
-        }
-
-        Self {
-            variable_name,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            variable_name: sub_utils::pyobject_to_string(py, &variable_name)?,
             default,
-        }
+        })
     }
 
     fn __str__(&self) -> String {
@@ -72,60 +54,23 @@ impl LaunchConfiguration {
         format!("LaunchConfiguration('{}')", self.variable_name)
     }
 
-    /// Perform the substitution - extract the actual value from launch configurations
-    ///
-    /// In ROS 2, this method is called with a launch context to resolve the value.
-    /// Uses the thread-local LaunchContext which already has all configurations
-    /// with proper scope chain resolution.
-    fn perform(&self, _context: &Bound<'_, PyAny>) -> PyResult<String> {
+    /// The value now, else the default; unset with no default is
+    /// `launch`'s `SubstitutionFailure`.
+    fn perform(&self, py: Python, _context: &Bound<'_, PyAny>) -> PyResult<String> {
         use play_launch_parser::bridge::with_launch_context;
-
-        // Get value from LaunchContext (already resolves nested substitutions)
-        let result = with_launch_context(|ctx| {
-            let self_ref = format!("$(var {})", self.variable_name);
-            if let Some(value) = ctx.get_configuration(&self.variable_name) {
-                // If the context value is a circular self-reference like $(var same_name),
-                // fall through to the default instead of returning the unresolved substitution.
-                if value == self_ref {
-                    if let Some(ref default) = self.default {
-                        resolve_substitution_string(default, ctx)
-                            .unwrap_or_else(|_| default.clone())
-                    } else {
-                        value
-                    }
-                } else {
-                    value
-                }
-            } else if let Some(ref default) = self.default {
-                // Resolve nested substitutions in the default value
-                resolve_substitution_string(default, ctx).unwrap_or_else(|_| default.clone())
-            } else {
-                // Return empty string if not found (ROS 2 behavior)
-                String::new()
-            }
-        });
-
-        log::debug!(
-            "LaunchConfiguration('{}').perform() -> '{}'",
-            self.variable_name,
-            result
-        );
-
-        Ok(result)
+        if let Some(value) = with_launch_context(|ctx| ctx.get_configuration(&self.variable_name)) {
+            return Ok(value);
+        }
+        if let Some(default) = &self.default {
+            return sub_utils::pyobject_to_string(py, default);
+        }
+        Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "launch configuration '{}' does not exist",
+            self.variable_name
+        )))
     }
 }
 
-/// Mock EnvironmentVariable substitution
-///
-/// Python equivalent:
-/// ```python
-/// from launch.substitutions import EnvironmentVariable
-/// env_var = EnvironmentVariable('VAR_NAME')
-/// # or with default
-/// env_var = EnvironmentVariable('VAR_NAME', default_value='default')
-/// ```
-///
-/// Returns substitution format: `$(env VAR_NAME)` or `$(optenv VAR_NAME default)`
 #[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct EnvironmentVariable {

@@ -1,40 +1,26 @@
-//! Mock ComposableNodeContainer class for launch_ros.actions
+//! Mock `launch_ros.actions.ComposableNodeContainer`.
 
-use super::composable_node::ComposableNode;
+use super::{
+    composable_node::ComposableNode,
+    node::{Node, NodeSpec},
+};
 use play_launch_parser::{bridge::capture_container, captures::ContainerCapture};
 use pyo3::{prelude::*, types::PyDict};
 
-/// Mock ComposableNodeContainer class
-///
-/// Python equivalent:
-/// ```python
-/// from launch_ros.actions import ComposableNodeContainer
-/// from launch_ros.descriptions import ComposableNode
-///
-/// container = ComposableNodeContainer(
-///     name='my_container',
-///     namespace='/my_namespace',
-///     package='rclcpp_components',
-///     executable='component_container',
-///     composable_node_descriptions=[
-///         ComposableNode(package='pkg', plugin='Plugin', name='node'),
-///     ]
-/// )
-/// ```
+/// `ComposableNodeContainer(name, namespace, package, executable,
+/// composable_node_descriptions=None, ...)`: a `Node` whose process is the
+/// container, which then loads the descriptions whose own condition admits
+/// them (`ComposableNodeContainer.execute`), into ITSELF — by its
+/// fully-qualified name, the container's `node_name`.
 #[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct ComposableNodeContainer {
-    name: String,
-    namespace: Option<String>,
-    #[allow(dead_code)] // Keep for API compatibility but not used in container record
-    package: String,
-    #[allow(dead_code)] // Keep for API compatibility but not used in container record
-    executable: String,
-    composable_nodes: Vec<Py<ComposableNode>>,
-    ros_arguments: Vec<String>,
-    /// Which captures this constructor appended (the container AND its
-    /// composables) — see `crate::api::delay`.
-    span: crate::api::delay::CaptureSpan,
+    spec: NodeSpec,
+    composable_node_descriptions: Option<Py<PyAny>>,
+    #[pyo3(get)]
+    condition: Option<Py<PyAny>>,
+    /// The fully-qualified name once executed.
+    executed_fqn: Option<String>,
 }
 
 #[pymethods]
@@ -43,297 +29,142 @@ impl ComposableNodeContainer {
     #[pyo3(signature = (
         *,
         name,
-        namespace=None,
-        package,
-        executable,
+        namespace,
+        package=None,
+        executable=None,
         composable_node_descriptions=None,
+        parameters=None,
+        remappings=None,
         ros_arguments=None,
+        arguments=None,
+        env=None,
+        additional_env=None,
         condition=None,
         **_kwargs
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
-        py: Python,
         name: Py<PyAny>,
-        namespace: Option<Py<PyAny>>,
-        package: Py<PyAny>,
-        executable: Py<PyAny>,
-        composable_node_descriptions: Option<Vec<Py<ComposableNode>>>,
-        ros_arguments: Option<Vec<Py<PyAny>>>,
+        namespace: Py<PyAny>,
+        package: Option<Py<PyAny>>,
+        executable: Option<Py<PyAny>>,
+        composable_node_descriptions: Option<Py<PyAny>>,
+        parameters: Option<Py<PyAny>>,
+        remappings: Option<Py<PyAny>>,
+        ros_arguments: Option<Py<PyAny>>,
+        arguments: Option<Py<PyAny>>,
+        env: Option<Py<PyAny>>,
+        additional_env: Option<Py<PyAny>>,
         condition: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Self> {
-        let composable_nodes = composable_node_descriptions.unwrap_or_default();
-
-        // Convert Py<PyAny> parameters to strings (may be substitutions)
-        // For name and namespace, resolve substitutions if present
-        log::debug!("ComposableNodeContainer::new: creating container");
-
-        // Resolve name substitution
-        let name_before = Self::pyobject_to_string(py, &name)?;
-        let name_str = Self::resolve_pyobject_substitution(py, &name)?;
-        if name_before != name_str {
-            log::debug!(
-                "ComposableNodeContainer name resolved: '{}' -> '{}'",
-                name_before,
-                name_str
-            );
+    ) -> Self {
+        Self {
+            spec: NodeSpec {
+                package,
+                executable,
+                name: Some(name),
+                namespace: Some(namespace),
+                parameters,
+                remappings,
+                arguments,
+                ros_arguments,
+                env,
+                additional_env,
+            },
+            composable_node_descriptions,
+            condition,
+            executed_fqn: None,
         }
+    }
 
-        // Debug: Log if name is empty
-        if name_str.is_empty() {
-            use play_launch_parser::bridge::with_launch_context;
-            let config_keys =
-                with_launch_context(|ctx| ctx.configurations().keys().cloned().collect::<Vec<_>>());
-            log::warn!(
-                "ComposableNodeContainer has empty name! Available configs: {:?}",
-                config_keys
-            );
-        }
-
-        // Resolve namespace substitution
-        let namespace_str = namespace
-            .map(|ns| {
-                log::debug!("ComposableNodeContainer::new: processing namespace parameter");
-                Self::resolve_pyobject_substitution(py, &ns)
-            })
-            .transpose()?;
-        let package_str = Self::pyobject_to_string(py, &package)?;
-        let executable_str = Self::pyobject_to_string(py, &executable)?;
-
-        log::debug!(
-            "ComposableNodeContainer::new: name='{}', namespace={:?}, package='{}', executable='{}'",
-            name_str,
-            namespace_str,
-            package_str,
-            executable_str
-        );
-
-        let mut container = Self {
-            span: crate::api::delay::CaptureSpan::default(),
-            name: name_str.clone(),
-            namespace: namespace_str.clone(),
-            package: package_str,
-            executable: executable_str,
-            composable_nodes: composable_nodes.clone(),
-            // Issue #9 — used to fall into `**_kwargs` and vanish. Autoware's
-            // `default_adapi.launch.py` sets
-            // `ros_arguments=["--log-level", "adapi.container:=WARN"]` here.
-            ros_arguments: ros_arguments
-                .unwrap_or_default()
-                .iter()
-                .map(|obj| Self::pyobject_to_string(py, obj))
-                .collect::<PyResult<Vec<String>>>()?,
-        };
-
-        // Evaluate condition (if present) and only capture if true
-        let should_capture = if let Some(cond_obj) = &condition {
-            let result = Self::evaluate_condition(py, cond_obj).unwrap_or(true);
-            log::debug!(
-                "ComposableNodeContainer name='{}' namespace={:?}: condition evaluated to {}",
-                name_str,
-                namespace_str,
-                result
-            );
-            result
-        } else {
-            log::debug!(
-                "ComposableNodeContainer name='{}' namespace={:?}: no condition, capturing",
-                name_str,
-                namespace_str
-            );
-            true // No condition means always capture
-        };
-
-        if should_capture {
-            // Capture the container and its composables, bracketed so this
-            // object remembers WHICH captures are its own.
-            let mark = crate::api::delay::open_span();
-            Self::capture_container(&container);
-            container.span = mark.close();
-            log::debug!("Captured ComposableNodeContainer '{}'", name_str);
-        } else {
-            log::debug!(
-                "Skipping container capture due to condition: {} (namespace: {:?})",
-                name_str,
-                namespace_str
-            );
-        }
-
-        Ok(container)
+    /// `node_name`: the container's fully-qualified name once executed.
+    #[getter]
+    fn node_name(&self) -> Option<String> {
+        self.executed_fqn.clone()
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "ComposableNodeContainer(name='{}', namespace='{}')",
-            self.name,
-            self.namespace.as_deref().unwrap_or("/")
-        )
-    }
-
-    // Getter methods for LoadComposableNodes to access attributes
-    #[getter]
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    #[getter]
-    fn namespace(&self) -> Option<&str> {
-        self.namespace.as_deref()
+        "ComposableNodeContainer(...)".to_string()
     }
 }
 
 impl ComposableNodeContainer {
-    /// Resolve a Py<PyAny> substitution by calling perform() if available
-    ///
-    /// For substitutions like LaunchConfiguration, this calls perform() to get the resolved value.
-    /// For lists, recursively resolves each element.
-    /// Otherwise falls back to pyobject_to_string.
-    fn resolve_pyobject_substitution(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        use crate::api::utils::create_launch_context;
-        use pyo3::types::PyList;
-
-        let obj_ref = obj.bind(py);
-
-        // Handle lists specially - resolve each element
-        if let Ok(list) = obj_ref.cast::<PyList>() {
-            let mut result = String::new();
-            for item in list.iter() {
-                let item_resolved = Self::resolve_pyobject_substitution(py, &item.into())?;
-                result.push_str(&item_resolved);
-            }
-            log::debug!("Resolved list substitution: '{}'", result);
-            return Ok(result);
+    /// The name a `LoadComposableNodes` targets: the FQN it executed with, or
+    /// — not executed yet — what it would expand to here.
+    pub(crate) fn target_name(this: &Bound<'_, Self>, py: Python) -> PyResult<String> {
+        if let Some(fqn) = this.borrow().executed_fqn.clone() {
+            return Ok(fqn);
         }
-
-        // Try to resolve using perform() with real context
-        if obj_ref.hasattr("perform")?
-            && let Ok(context) = create_launch_context(py)
-            && let Ok(result) = obj_ref.call_method1("perform", (context,))
-            && let Ok(resolved) = result.extract::<String>()
-        {
-            log::debug!("Resolved substitution via perform(): '{}'", resolved);
-            return Ok(resolved);
-        }
-
-        // Fallback to regular conversion
-        Self::pyobject_to_string(py, obj)
+        let spec = this.borrow().spec.clone();
+        let n = spec.expand(py)?;
+        Ok(fqn_of(&n.namespace, n.name.as_deref().unwrap_or_default()))
     }
 
-    fn capture_container(container: &ComposableNodeContainer) {
-        use play_launch_parser::bridge::get_current_ros_namespace;
+    pub(crate) fn execute(this: &Bound<'_, Self>, py: Python) -> PyResult<()> {
+        let spec = this.borrow().spec.clone();
+        let label = format!("container {}", Node::label(py, &spec));
+        if !crate::api::visit::claim_execution(this.as_any(), &label) {
+            return Ok(());
+        }
+        let n = spec.expand(py)?;
+        let name = n.name.clone().unwrap_or_default();
+        let namespace = n.namespace.clone().unwrap_or_else(|| "/".to_string());
+        let fqn = fqn_of(&n.namespace, &name);
 
-        // Get current ROS namespace from the stack
-        let ros_namespace = get_current_ros_namespace();
-        log::trace!(
-            "Container capture: ros_namespace from stack: '{}'",
-            ros_namespace
-        );
-        log::trace!(
-            "Container capture: container.namespace: {:?}",
-            container.namespace
-        );
-
-        // Normalize container's namespace
-        let container_ns = container
-            .namespace
-            .as_ref()
-            .map(|ns| {
-                if ns.is_empty() {
-                    String::new()
-                } else if ns.starts_with('/') {
-                    ns.clone()
-                } else {
-                    format!("/{}", ns)
-                }
-            })
-            .unwrap_or_default();
-
-        log::trace!(
-            "Container capture: normalized container_ns: '{}'",
-            container_ns
-        );
-
-        // Combine ROS namespace with container namespace
-        let full_namespace = if ros_namespace == "/" {
-            if container_ns.is_empty() {
-                "/".to_string()
+        let mark = crate::api::visit::lens();
+        capture_container(ContainerCapture {
+            name,
+            namespace,
+            package: Some(if n.package.is_empty() {
+                play_launch_parser::actions::container::DEFAULT_CONTAINER_PACKAGE.to_string()
             } else {
-                container_ns
-            }
-        } else if container_ns.is_empty() {
-            ros_namespace.clone()
-        } else {
-            format!("{}{}", ros_namespace, container_ns)
-        };
-
-        log::trace!("Container capture: full_namespace: '{}'", full_namespace);
-
-        let capture = ContainerCapture {
-            start_delay_secs: None,
-            name: container.name.clone(),
-            namespace: full_namespace.clone(),
-            package: Some(container.package.clone()),
-            executable: Some(container.executable.clone()),
-            cmd: Vec::new(), // Will be generated in to_record()
-            ros_arguments: container.ros_arguments.clone(),
+                n.package
+            }),
+            executable: Some(if n.executable.is_empty() {
+                play_launch_parser::actions::container::DEFAULT_CONTAINER_EXECUTABLE.to_string()
+            } else {
+                n.executable
+            }),
+            cmd: Vec::new(),
+            ros_arguments: n.ros_arguments,
+            parameters: n.parameters,
+            params_files: n.params_files,
+            remappings: n.remappings,
+            arguments: n.arguments,
+            env_vars: n.env,
+            global_params: Some(n.global_params),
             scope_id: None,
-        };
-
-        log::debug!(
-            "Captured Python container: {} (namespace: {}, pkg: {}, exec: {}, ros_namespace: {})",
-            capture.name,
-            capture.namespace,
-            container.package,
-            container.executable,
-            ros_namespace
-        );
-
-        capture_container(capture);
-
-        // Capture each composable node as a load_node entry.
-        // Pass full_namespace (ros + container NS) for target_container_name building,
-        // and ros_namespace separately for node namespace resolution.
-        // ROS2 composable nodes inherit the ROS context namespace (from push-ros-namespace),
-        // NOT the container's own namespace.
-        let full_ns_opt = Some(full_namespace);
-        Python::attach(|py| {
-            for node_obj in &container.composable_nodes {
-                let node = node_obj.borrow(py);
-                node.capture_as_load_node(&container.name, &full_ns_opt, &ros_namespace);
-            }
+            start_delay_secs: None,
         });
-    }
+        crate::api::visit::stamp_delay(mark);
+        this.borrow_mut().executed_fqn = Some(fqn.clone());
 
-    /// What this container's constructor appended to the capture lists.
-    pub(crate) fn capture_span(&self) -> crate::api::delay::CaptureSpan {
-        self.span
-    }
-
-    /// Evaluate a condition object (same logic as Node)
-    fn evaluate_condition(py: Python, condition: &Py<PyAny>) -> PyResult<bool> {
-        let cond_ref = condition.bind(py);
-
-        log::debug!(
-            "Evaluating container condition, type: {:?}",
-            cond_ref.get_type().name()
-        );
-
-        // Try calling evaluate() method on the condition object
-        if let Ok(result) = cond_ref.call_method0("evaluate")
-            && let Ok(bool_val) = result.extract::<bool>()
-        {
-            log::debug!("Container condition evaluated to: {}", bool_val);
-            return Ok(bool_val);
+        let descriptions = this
+            .borrow()
+            .composable_node_descriptions
+            .as_ref()
+            .map(|d| d.clone_ref(py));
+        if let Some(descriptions) = descriptions {
+            let descriptions = descriptions.bind(py);
+            if !descriptions.is_none() {
+                for d in descriptions.try_iter()? {
+                    let d = d?;
+                    let d = d.cast::<ComposableNode>()?;
+                    let d = d.borrow();
+                    if d.admitted(py)? {
+                        d.capture_load(py, &fqn)?;
+                    }
+                }
+            }
         }
-
-        // Fallback: treat as truthy if we can't evaluate
-        log::warn!("Failed to evaluate container condition, defaulting to true");
-        Ok(true)
+        Ok(())
     }
+}
 
-    /// Convert Py<PyAny> to string (handles both strings and substitutions)
-    fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        crate::api::utils::pyobject_to_string(py, obj)
+/// `prefix_namespace(namespace, name)`, absolute.
+pub(crate) fn fqn_of(namespace: &Option<String>, name: &str) -> String {
+    match namespace.as_deref() {
+        None | Some("") | Some("/") => format!("/{name}"),
+        Some(ns) => format!("{ns}/{name}"),
     }
 }

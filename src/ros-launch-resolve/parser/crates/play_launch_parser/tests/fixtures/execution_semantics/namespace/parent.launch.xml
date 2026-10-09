@@ -1,0 +1,28 @@
+<launch>
+  <group>
+    <push-ros-namespace namespace="g1"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="in_g1"/>
+    <group>
+      <push-ros-namespace namespace="g2"/>
+      <node pkg="demo_nodes_cpp" exec="talker" name="in_g1_g2"/>
+      <node pkg="demo_nodes_cpp" exec="talker" name="abs_ns" namespace="/abs"/>
+      <node pkg="demo_nodes_cpp" exec="talker" name="rel_ns" namespace="rel"/>
+    </group>
+    <node pkg="demo_nodes_cpp" exec="talker" name="back_in_g1"/>
+  </group>
+  <group>
+    <push-ros-namespace namespace="gns"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="in_gns"/>
+  </group>
+  <!-- an unscoped include that pushes a namespace at its top level -->
+  <include file="$(dirname)/push_child.launch.xml"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="after_push_child"/>
+  <group>
+    <include file="$(dirname)/push_child.launch.py"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="after_push_py"/>
+  </group>
+  <group scoped="false">
+    <push-ros-namespace namespace="unscoped"/>
+  </group>
+  <node pkg="demo_nodes_cpp" exec="talker" name="after_unscoped_group"/>
+</launch>

@@ -1,5 +1,13 @@
 # Attributing a Python `TimerAction`'s delay
 
+> **Superseded (C ABI 7).** The mocks no longer act when constructed: the
+> Python frontend walks the returned description and executes each action in
+> order (`pyexec/src/api/visit.rs`), so a timer delays what is executed under
+> it exactly as `traverser::delay` does for `<timer>` — mark, walk, stamp —
+> and an include under a timer is delayed too. The identity-span machinery
+> below is gone. Kept for the history of why construction order was never a
+> sound basis.
+
 ## The problem
 
 `<timer period="N">` on the XML and YAML frontends is easy: the traverser

@@ -1,62 +1,37 @@
-//! Configuration management actions: SetLaunchConfiguration, RegisterEventHandler,
-//! PushEnvironment, PopEnvironment, ResetEnvironment, AppendEnvironmentVariable,
-//! PushLaunchConfigurations, PopLaunchConfigurations, ResetLaunchConfigurations,
-//! UnsetLaunchConfiguration, Shutdown
+//! Configuration and environment actions (`launch.actions`).
+//!
+//! Each records its arguments when constructed and does its work when the
+//! walk EXECUTES it (`api::visit`), as `launch` does.
 
-use pyo3::prelude::*;
+use crate::api::utils::pyobject_to_string;
+use play_launch_parser::bridge::with_launch_context;
+use pyo3::{prelude::*, types::PyDict};
 
-/// Mock SetLaunchConfiguration action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import SetLaunchConfiguration
-/// set_config = SetLaunchConfiguration(name='config_name', value='value')
-/// ```
-///
-/// Sets a launch configuration value
+/// `SetLaunchConfiguration(name, value)`.
 #[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct SetLaunchConfiguration {
-    #[allow(dead_code)] // Stored for API compatibility
     name: Py<PyAny>,
-    #[allow(dead_code)] // Stored for API compatibility
     value: Py<PyAny>,
+    #[pyo3(get)]
+    condition: Option<Py<PyAny>>,
 }
 
 #[pymethods]
 impl SetLaunchConfiguration {
     #[new]
-    #[pyo3(signature = (name, value, **_kwargs))]
+    #[pyo3(signature = (name, value, *, condition=None, **_kwargs))]
     fn new(
-        py: Python,
         name: Py<PyAny>,
         value: Py<PyAny>,
-        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
-    ) -> PyResult<Self> {
-        // Convert name to string (may be a substitution)
-        let name_str = if let Ok(s) = name.extract::<String>(py) {
-            s
-        } else if let Ok(str_result) = name.call_method0(py, "__str__") {
-            str_result.extract::<String>(py)?
-        } else {
-            name.to_string()
-        };
-
-        // Convert value to string
-        let value_str = crate::api::utils::pyobject_to_string(py, &value).unwrap_or_default();
-
-        log::debug!(
-            "Python Launch SetLaunchConfiguration: {}={}",
-            name_str,
-            value_str
-        );
-
-        // Store in thread-local LaunchContext so subsequent LaunchConfiguration lookups resolve
-        play_launch_parser::bridge::try_with_launch_context(|ctx| {
-            ctx.set_configuration(name_str, value_str);
-        });
-
-        Ok(Self { name, value })
+        condition: Option<Py<PyAny>>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> Self {
+        Self {
+            name,
+            value,
+            condition,
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -64,36 +39,78 @@ impl SetLaunchConfiguration {
     }
 }
 
-/// Mock RegisterEventHandler action
+impl SetLaunchConfiguration {
+    pub(crate) fn execute(this: &Bound<'_, Self>, py: Python) -> PyResult<()> {
+        let me = this.borrow();
+        let name = pyobject_to_string(py, &me.name)?;
+        let value = pyobject_to_string(py, &me.value)?;
+        log::debug!("Python Launch SetLaunchConfiguration: {}={}", name, value);
+        with_launch_context(|ctx| ctx.set_configuration_literal(name, value));
+        Ok(())
+    }
+}
+
+/// `UnsetLaunchConfiguration(name)`.
+#[pyclass(module = "launch.actions", from_py_object)]
+#[derive(Clone)]
+pub struct UnsetLaunchConfiguration {
+    name: Py<PyAny>,
+    #[pyo3(get)]
+    condition: Option<Py<PyAny>>,
+}
+
+#[pymethods]
+impl UnsetLaunchConfiguration {
+    #[new]
+    #[pyo3(signature = (name, *, condition=None, **_kwargs))]
+    fn new(
+        name: Py<PyAny>,
+        condition: Option<Py<PyAny>>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> Self {
+        Self { name, condition }
+    }
+
+    fn __repr__(&self) -> String {
+        "UnsetLaunchConfiguration(...)".to_string()
+    }
+}
+
+impl UnsetLaunchConfiguration {
+    pub(crate) fn execute(this: &Bound<'_, Self>, py: Python) -> PyResult<()> {
+        let name = pyobject_to_string(py, &this.borrow().name)?;
+        with_launch_context(|ctx| ctx.unset_configuration(&name));
+        Ok(())
+    }
+}
+
+/// `RegisterEventHandler(event_handler)`.
 ///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import RegisterEventHandler
-/// from launch.event_handlers import OnProcessStart
-///
-/// RegisterEventHandler(
-///     OnProcessStart(
-///         target_action=some_node,
-///         on_start=[LogInfo(msg='Started!')]
-///     )
-/// )
-/// ```
-///
-/// Event handlers allow actions to be triggered in response to events
+/// The handlers whose events a running launch produces as it comes up —
+/// `OnProcessStart`, `OnStateTransition` — run their actions in a real launch,
+/// so the walk executes them, in place. `OnProcessExit` and `OnShutdown` run
+/// only when something stops, which is not part of the system being modelled.
 #[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct RegisterEventHandler {
-    #[allow(dead_code)] // Keep for API compatibility
     event_handler: Py<PyAny>,
+    #[pyo3(get)]
+    condition: Option<Py<PyAny>>,
 }
 
 #[pymethods]
 impl RegisterEventHandler {
     #[new]
-    #[pyo3(signature = (event_handler, **_kwargs))]
-    fn new(event_handler: Py<PyAny>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
-        log::debug!("Python Launch RegisterEventHandler created (limited support)");
-        Self { event_handler }
+    #[pyo3(signature = (event_handler, *, condition=None, **_kwargs))]
+    fn new(
+        event_handler: Py<PyAny>,
+        condition: Option<Py<PyAny>>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> Self {
+        Self {
+            event_handler,
+            condition,
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -101,282 +118,108 @@ impl RegisterEventHandler {
     }
 }
 
-/// Mock PushEnvironment action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import PushEnvironment
-/// PushEnvironment()
-/// ```
-///
-/// Pushes the current environment state onto a stack.
-/// This allows temporary environment modifications that can be reverted with PopEnvironment.
-#[pyclass(module = "launch.actions", from_py_object)]
-#[derive(Clone)]
-pub struct PushEnvironment {}
-
-#[pymethods]
-impl PushEnvironment {
-    #[new]
-    #[pyo3(signature = (**_kwargs))]
-    fn new(_kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
-        log::debug!("Python Launch PushEnvironment: pushing environment state");
-        Self {}
-    }
-
-    fn __repr__(&self) -> String {
-        "PushEnvironment()".to_string()
+impl RegisterEventHandler {
+    pub(crate) fn execute(this: &Bound<'_, Self>, py: Python) -> PyResult<()> {
+        let handler = this.borrow().event_handler.clone_ref(py);
+        let entities = crate::api::event_handlers::startup_entities(py, handler.bind(py))?;
+        if let Some(entities) = entities {
+            crate::api::visit::visit_any(py, entities.bind(py))?;
+        }
+        Ok(())
     }
 }
 
-/// Mock PopEnvironment action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import PopEnvironment
-/// PopEnvironment()
-/// ```
-///
-/// Pops the most recent environment state from the stack, restoring it.
-/// Must be paired with a previous PushEnvironment.
-#[pyclass(module = "launch.actions", from_py_object)]
-#[derive(Clone)]
-pub struct PopEnvironment {}
+/// A unit action with no arguments but a condition.
+macro_rules! unit_action {
+    ($name:ident, $doc:literal, $body:expr) => {
+        #[doc = $doc]
+        #[pyclass(module = "launch.actions", from_py_object)]
+        #[derive(Clone)]
+        pub struct $name {
+            #[pyo3(get)]
+            condition: Option<Py<PyAny>>,
+        }
 
-#[pymethods]
-impl PopEnvironment {
-    #[new]
-    #[pyo3(signature = (**_kwargs))]
-    fn new(_kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
-        log::debug!("Python Launch PopEnvironment: popping environment state");
-        Self {}
-    }
-
-    fn __repr__(&self) -> String {
-        "PopEnvironment()".to_string()
-    }
-}
-
-/// Mock ResetEnvironment action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import ResetEnvironment
-/// ResetEnvironment()
-/// ```
-///
-/// Resets the environment to its initial state (before any modifications).
-#[pyclass(module = "launch.actions", from_py_object)]
-#[derive(Clone)]
-pub struct ResetEnvironment {}
-
-#[pymethods]
-impl ResetEnvironment {
-    #[new]
-    #[pyo3(signature = (**_kwargs))]
-    fn new(_kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
-        log::debug!("Python Launch ResetEnvironment: resetting environment to initial state");
-        Self {}
-    }
-
-    fn __repr__(&self) -> String {
-        "ResetEnvironment()".to_string()
-    }
-}
-
-/// Mock AppendEnvironmentVariable action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import AppendEnvironmentVariable
-/// AppendEnvironmentVariable('PATH', '/custom/path')
-/// AppendEnvironmentVariable('LD_LIBRARY_PATH', '/custom/lib', prepend=True, separator=':')
-/// AppendEnvironmentVariable(LaunchConfiguration('var_name'), '/path', separator=LaunchConfiguration('sep'))
-/// ```
-///
-/// Appends (or prepends) a value to an existing environment variable.
-#[pyclass(module = "launch.actions", from_py_object)]
-#[derive(Clone)]
-pub struct AppendEnvironmentVariable {
-    name: String,
-    value: Py<PyAny>,
-    #[allow(dead_code)]
-    prepend: bool,
-    #[allow(dead_code)]
-    separator: String,
-}
-
-#[pymethods]
-impl AppendEnvironmentVariable {
-    #[new]
-    #[pyo3(signature = (name, value, *, prepend=None, separator=None, **_kwargs))]
-    fn new(
-        py: Python,
-        name: Py<PyAny>,
-        value: Py<PyAny>,
-        prepend: Option<Py<PyAny>>,
-        separator: Option<Py<PyAny>>,
-        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
-    ) -> PyResult<Self> {
-        // Convert name to string (handles strings, substitutions, and lists)
-        let name_str = Self::pyobject_to_string(py, &name)?;
-
-        // Handle prepend (bool or substitution resolving to bool)
-        let prepend_val = if let Some(p) = prepend {
-            if let Ok(b) = p.extract::<bool>(py) {
-                b
-            } else if let Ok(s) = Self::pyobject_to_string(py, &p) {
-                // Parse string as bool (YAML rules: true, True, yes, 1, etc.)
-                matches!(s.to_lowercase().as_str(), "true" | "yes" | "1")
-            } else {
-                false
+        #[pymethods]
+        impl $name {
+            #[new]
+            #[pyo3(signature = (*, condition=None, **_kwargs))]
+            fn new(condition: Option<Py<PyAny>>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+                Self { condition }
             }
-        } else {
-            false
-        };
 
-        // Handle separator (default to ":")
-        let sep_str = if let Some(s) = separator {
-            Self::pyobject_to_string(py, &s)?
-        } else {
-            ":".to_string()
-        };
+            fn __repr__(&self) -> String {
+                concat!(stringify!($name), "()").to_string()
+            }
+        }
 
-        // Convert Py<PyAny> to string for logging
-        let value_str = if let Ok(s) = value.extract::<String>(py) {
-            s.clone()
-        } else if let Ok(str_result) = value.call_method0(py, "__str__") {
-            str_result
-                .extract::<String>(py)
-                .unwrap_or_else(|_| "<value>".to_string())
-        } else {
-            "<value>".to_string()
-        };
-
-        log::debug!(
-            "Python Launch AppendEnvironmentVariable: {}{}{}{}",
-            if prepend_val {
-                "prepending "
-            } else {
-                "appending "
-            },
-            value_str,
-            sep_str,
-            name_str
-        );
-
-        Ok(Self {
-            name: name_str,
-            value,
-            prepend: prepend_val,
-            separator: sep_str,
-        })
-    }
-
-    fn __repr__(&self, py: Python) -> String {
-        let value_str = if let Ok(s) = self.value.extract::<String>(py) {
-            s
-        } else if let Ok(str_result) = self.value.call_method0(py, "__str__") {
-            str_result
-                .extract::<String>(py)
-                .unwrap_or_else(|_| "<value>".to_string())
-        } else {
-            "<value>".to_string()
-        };
-
-        format!(
-            "AppendEnvironmentVariable('{}', '{}', prepend={}, separator='{}')",
-            self.name, value_str, self.prepend, self.separator
-        )
-    }
+        impl $name {
+            pub(crate) fn execute(_this: &Bound<'_, Self>, _py: Python) -> PyResult<()> {
+                $body
+            }
+        }
+    };
 }
 
-impl AppendEnvironmentVariable {
-    /// Convert a Py<PyAny> to a string (handles strings, substitutions, and lists)
-    /// Reuses the same pattern as SetEnvironmentVariable
-    fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        crate::api::utils::pyobject_to_string(py, obj)
+unit_action!(
+    PushEnvironment,
+    "`PushEnvironment()`: save the environment for a later `PopEnvironment`.",
+    {
+        crate::api::visit::push_environment();
+        Ok(())
     }
-}
+);
+unit_action!(
+    PopEnvironment,
+    "`PopEnvironment()`.",
+    crate::api::visit::pop_environment()
+);
+unit_action!(
+    ResetEnvironment,
+    "`ResetEnvironment()`: back to the environment the launch started with.",
+    {
+        with_launch_context(|ctx| ctx.reset_environment());
+        Ok(())
+    }
+);
+unit_action!(
+    PushLaunchConfigurations,
+    "`PushLaunchConfigurations()`: save every configuration (the namespace and \
+     the global lists with them) for a later `PopLaunchConfigurations`.",
+    {
+        crate::api::visit::push_configurations();
+        Ok(())
+    }
+);
+unit_action!(
+    PopLaunchConfigurations,
+    "`PopLaunchConfigurations()`.",
+    crate::api::visit::pop_configurations()
+);
 
-/// Mock PushLaunchConfigurations action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import PushLaunchConfigurations
-/// PushLaunchConfigurations()
-/// ```
-///
-/// Pushes the current launch configurations onto a stack.
-/// This allows temporary configuration modifications that can be reverted with PopLaunchConfigurations.
+/// `ResetLaunchConfigurations(launch_configurations=None)`: clear every
+/// configuration and set only the given ones, evaluated BEFORE the clear.
 #[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
-pub struct PushLaunchConfigurations {}
-
-#[pymethods]
-impl PushLaunchConfigurations {
-    #[new]
-    #[pyo3(signature = (**_kwargs))]
-    fn new(_kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
-        log::debug!("Python Launch PushLaunchConfigurations: pushing configuration state");
-        Self {}
-    }
-
-    fn __repr__(&self) -> String {
-        "PushLaunchConfigurations()".to_string()
-    }
+pub struct ResetLaunchConfigurations {
+    launch_configurations: Option<Py<PyAny>>,
+    #[pyo3(get)]
+    condition: Option<Py<PyAny>>,
 }
-
-/// Mock PopLaunchConfigurations action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import PopLaunchConfigurations
-/// PopLaunchConfigurations()
-/// ```
-///
-/// Pops the most recent launch configurations from the stack, restoring them.
-/// Must be paired with a previous PushLaunchConfigurations.
-#[pyclass(module = "launch.actions", from_py_object)]
-#[derive(Clone)]
-pub struct PopLaunchConfigurations {}
-
-#[pymethods]
-impl PopLaunchConfigurations {
-    #[new]
-    #[pyo3(signature = (**_kwargs))]
-    fn new(_kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
-        log::debug!("Python Launch PopLaunchConfigurations: popping configuration state");
-        Self {}
-    }
-
-    fn __repr__(&self) -> String {
-        "PopLaunchConfigurations()".to_string()
-    }
-}
-
-/// Mock ResetLaunchConfigurations action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import ResetLaunchConfigurations
-/// ResetLaunchConfigurations()
-/// ```
-///
-/// Resets all launch configurations to their initial state (clearing any modifications).
-#[pyclass(module = "launch.actions", from_py_object)]
-#[derive(Clone)]
-pub struct ResetLaunchConfigurations {}
 
 #[pymethods]
 impl ResetLaunchConfigurations {
     #[new]
-    #[pyo3(signature = (**_kwargs))]
-    fn new(_kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
-        log::debug!(
-            "Python Launch ResetLaunchConfigurations: resetting configurations to initial state"
-        );
-        Self {}
+    #[pyo3(signature = (launch_configurations=None, *, condition=None, **_kwargs))]
+    fn new(
+        launch_configurations: Option<Py<PyAny>>,
+        condition: Option<Py<PyAny>>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> Self {
+        Self {
+            launch_configurations,
+            condition,
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -384,69 +227,138 @@ impl ResetLaunchConfigurations {
     }
 }
 
-/// Mock UnsetLaunchConfiguration action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import UnsetLaunchConfiguration
-/// UnsetLaunchConfiguration('variable_name')
-/// ```
-///
-/// Removes a specific launch configuration variable.
+impl ResetLaunchConfigurations {
+    pub(crate) fn execute(this: &Bound<'_, Self>, py: Python) -> PyResult<()> {
+        let keep = evaluate_configurations(py, this.borrow().launch_configurations.as_ref())?;
+        with_launch_context(|ctx| ctx.reset_launch_configurations(keep));
+        Ok(())
+    }
+}
+
+/// Evaluate a `{name: value}` mapping of substitutions, in the current
+/// context — what `ResetLaunchConfigurations` (and so `GroupAction(
+/// forwarding=False)`) keeps.
+pub(crate) fn evaluate_configurations(
+    py: Python,
+    mapping: Option<&Py<PyAny>>,
+) -> PyResult<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    let Some(mapping) = mapping else {
+        return Ok(out);
+    };
+    let mapping = mapping.bind(py);
+    if mapping.is_none() {
+        return Ok(out);
+    }
+    let items = mapping.call_method0("items")?;
+    for item in items.try_iter()? {
+        let (k, v): (Py<PyAny>, Py<PyAny>) = item?.extract()?;
+        out.push((pyobject_to_string(py, &k)?, pyobject_to_string(py, &v)?));
+    }
+    Ok(out)
+}
+
+/// `AppendEnvironmentVariable(name, value, prepend=False, separator=os.pathsep)`.
 #[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
-pub struct UnsetLaunchConfiguration {
-    name: String,
+pub struct AppendEnvironmentVariable {
+    name: Py<PyAny>,
+    value: Py<PyAny>,
+    prepend: Option<Py<PyAny>>,
+    separator: Option<Py<PyAny>>,
+    #[pyo3(get)]
+    condition: Option<Py<PyAny>>,
 }
 
 #[pymethods]
-impl UnsetLaunchConfiguration {
+impl AppendEnvironmentVariable {
     #[new]
-    fn new(name: String) -> Self {
-        log::debug!("Python Launch UnsetLaunchConfiguration: {}", name);
-        Self { name }
+    #[pyo3(signature = (name, value, *, prepend=None, separator=None, condition=None, **_kwargs))]
+    fn new(
+        name: Py<PyAny>,
+        value: Py<PyAny>,
+        prepend: Option<Py<PyAny>>,
+        separator: Option<Py<PyAny>>,
+        condition: Option<Py<PyAny>>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> Self {
+        Self {
+            name,
+            value,
+            prepend,
+            separator,
+            condition,
+        }
     }
 
     fn __repr__(&self) -> String {
-        format!("UnsetLaunchConfiguration('{}')", self.name)
+        "AppendEnvironmentVariable(...)".to_string()
     }
 }
 
-/// Mock Shutdown action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import Shutdown
-/// Shutdown()
-/// ```
-///
-/// Triggers a shutdown of the launch system when executed.
-/// For static analysis, this is purely informational.
+impl AppendEnvironmentVariable {
+    pub(crate) fn execute(this: &Bound<'_, Self>, py: Python) -> PyResult<()> {
+        let me = this.borrow();
+        let name = pyobject_to_string(py, &me.name)?;
+        let value = pyobject_to_string(py, &me.value)?;
+        let prepend = match &me.prepend {
+            Some(p) => {
+                if let Ok(b) = p.extract::<bool>(py) {
+                    b
+                } else {
+                    matches!(
+                        pyobject_to_string(py, p)?.to_lowercase().as_str(),
+                        "true" | "1"
+                    )
+                }
+            }
+            None => false,
+        };
+        let separator = match &me.separator {
+            Some(s) => pyobject_to_string(py, s)?,
+            None => ":".to_string(),
+        };
+        let current = with_launch_context(|ctx| ctx.get_environment_variable(&name))
+            .or_else(|| std::env::var(&name).ok())
+            .unwrap_or_default();
+        let combined = if current.is_empty() {
+            value
+        } else if prepend {
+            format!("{value}{separator}{current}")
+        } else {
+            format!("{current}{separator}{value}")
+        };
+        with_launch_context(|ctx| ctx.set_environment_variable(name, combined));
+        Ok(())
+    }
+}
+
+/// `Shutdown(reason=...)`: ends a launch when it executes; nothing to model.
 #[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct Shutdown {
     #[allow(dead_code)] // Keep for future use
     reason: Option<String>,
+    #[pyo3(get)]
+    condition: Option<Py<PyAny>>,
 }
 
 #[pymethods]
 impl Shutdown {
     #[new]
-    #[pyo3(signature = (*, reason=None, **_kwargs))]
-    fn new(reason: Option<String>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
-        if let Some(ref r) = reason {
-            log::debug!("Python Launch Shutdown: reason={}", r);
-        } else {
-            log::debug!("Python Launch Shutdown");
-        }
-        Self { reason }
+    #[pyo3(signature = (*, reason=None, condition=None, **_kwargs))]
+    fn new(
+        reason: Option<String>,
+        condition: Option<Py<PyAny>>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> Self {
+        Self { reason, condition }
     }
 
     fn __repr__(&self) -> String {
-        if let Some(ref r) = self.reason {
-            format!("Shutdown(reason='{}')", r)
-        } else {
-            "Shutdown()".to_string()
+        match &self.reason {
+            Some(r) => format!("Shutdown(reason='{}')", r),
+            None => "Shutdown()".to_string(),
         }
     }
 }

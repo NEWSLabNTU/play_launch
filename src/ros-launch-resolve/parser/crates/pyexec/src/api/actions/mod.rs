@@ -20,5 +20,5 @@ pub use include::IncludeLaunchDescription;
 pub use opaque_function::OpaqueFunction;
 pub use simple_actions::{
     ExecuteLocal, ExecuteProcess, LogInfo, OpaqueCoroutine, SetEnvironmentVariable, TimerAction,
-    UnsetEnvironmentVariable,
+    UnsetEnvironmentVariable, run_timer,
 };

@@ -51,63 +51,12 @@ impl PythonLaunchDescriptionSource {
 /// Helper to resolve a path from a Py<PyAny> (handles substitutions)
 /// Shared by all LaunchDescriptionSource types
 fn resolve_path(py: Python, path_obj: &Py<PyAny>) -> PyResult<String> {
-    // Try to extract as string
-    if let Ok(s) = path_obj.extract::<String>(py) {
-        return Ok(s);
-    }
-
-    // Get context from __main__ namespace if available (created by OpaqueFunction)
-    let context = py
-        .import("__main__")
-        .ok()
-        .and_then(|m| m.dict().get_item("context").ok().flatten());
-
-    let context_obj = context.map(|c| c.unbind()).unwrap_or_else(|| py.None());
-
-    // Try to extract as list of substitutions
-    if let Ok(list) = path_obj.bind(py).cast::<pyo3::types::PyList>() {
-        let mut parts = Vec::new();
-        for item in list.iter() {
-            // Try perform() first for substitutions like FindPackageShare
-            if let Ok(result) = item.call_method1("perform", (context_obj.bind(py),)) {
-                parts.push(result.extract::<String>()?);
-            } else if let Ok(s) = item.extract::<String>() {
-                parts.push(s);
-            } else if let Ok(str_result) = item.call_method0("__str__") {
-                parts.push(str_result.extract::<String>()?);
-            }
-        }
-        return Ok(parts.join(""));
-    }
-
-    // Try calling perform() for substitutions (PathJoinSubstitution, FindPackageShare, etc.)
-    if let Ok(result) = path_obj.call_method1(py, "perform", (context_obj.bind(py),))
-        && let Ok(s) = result.extract::<String>(py)
-    {
-        return Ok(s);
-    }
-
-    // Fallback to __str__ method
-    if let Ok(str_result) = path_obj.call_method0(py, "__str__")
-        && let Ok(s) = str_result.extract::<String>(py)
-    {
-        return Ok(s);
-    }
-
-    // Last resort
-    Ok(path_obj.to_string())
+    // Performed against the context the walk is in when the include
+    // executes, as `launch` performs a source's location.
+    crate::api::utils::pyobject_to_string(py, path_obj)
+        .map(|s| crate::api::utils::resolve_tokens(&s))
 }
 
-/// Mock XMLLaunchDescriptionSource class
-///
-/// Python equivalent:
-/// ```python
-/// from launch.launch_description_sources import XMLLaunchDescriptionSource
-///
-/// source = XMLLaunchDescriptionSource('/path/to/file.launch.xml')
-/// ```
-///
-/// Represents an XML launch file source for IncludeLaunchDescription
 #[pyclass(module = "launch.launch_description_sources", from_py_object)]
 #[derive(Clone)]
 pub struct XMLLaunchDescriptionSource {

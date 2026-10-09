@@ -1,101 +1,112 @@
-//! GroupAction action
+//! `GroupAction`.
 
+use play_launch_parser::bridge::with_launch_context;
 use pyo3::prelude::*;
 
-/// Mock GroupAction
+/// `GroupAction(actions, scoped=True, forwarding=True,
+/// launch_configurations=None)`. Executed as `launch`'s `get_sub_entities`
+/// expands it:
 ///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import GroupAction
-/// group = GroupAction(
-///     actions=[action1, action2],
-///     scoped=True,
-///     forwarding=True
-/// )
-/// ```
+/// - scoped and forwarding: `PushLaunchConfigurations`, `PushEnvironment`,
+///   the actions, then both pops;
+/// - scoped, not forwarding: the same, with `ResetEnvironment` and
+///   `ResetLaunchConfigurations(launch_configurations)` after the pushes, so
+///   the body sees ONLY the given configurations — no namespace, no global
+///   parameters or remappings either, since those are configurations too;
+/// - not scoped: `SetLaunchConfiguration` for each given configuration, then
+///   the actions, with nothing popped.
 ///
-/// Groups actions together with optional scoping
+/// The mock used to do none of this: its children had run in their own
+/// constructors before it existed, so every group leaked whatever was set
+/// inside it, and `condition=` was swallowed by `**kwargs`.
 #[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct GroupAction {
     #[pyo3(get)] // Make actions directly accessible as an attribute (like LaunchDescription)
     pub actions: Vec<Py<PyAny>>,
-    #[allow(dead_code)] // Keep for API compatibility
     scoped: bool,
-    #[allow(dead_code)] // Keep for API compatibility
     forwarding: bool,
+    launch_configurations: Option<Py<PyAny>>,
+    #[pyo3(get)]
+    condition: Option<Py<PyAny>>,
 }
 
 #[pymethods]
 impl GroupAction {
     #[new]
-    #[pyo3(signature = (actions, *, scoped=true, forwarding=true, **_kwargs))]
+    #[pyo3(signature = (actions, *, scoped=true, forwarding=true, launch_configurations=None, condition=None, **_kwargs))]
     fn new(
-        py: Python,
         actions: Vec<Py<PyAny>>,
-        scoped: Option<bool>,
-        forwarding: Option<bool>,
+        scoped: bool,
+        forwarding: bool,
+        launch_configurations: Option<Py<PyAny>>,
+        condition: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
-    ) -> PyResult<Self> {
-        // CRITICAL FIX: GroupActions create a scoped namespace context.
-        // When the actions list is passed in, any PushRosNamespace actions have already
-        // been constructed and have pushed onto the LaunchContext's namespace stack. We need
-        // to pop them after the GroupAction is done being used (simulating scope exit).
-        //
-        // Since we're in dump mode (not actually executing the launch system), we simulate
-        // this by counting PushRosNamespace actions at the start and popping them immediately
-        // after GroupAction construction completes.
-        //
-        // This ensures that namespace pushes from one GroupAction don't leak into the next
-        // when multiple GroupActions are created in sequence (e.g., in a list comprehension).
-
-        // Count PushRosNamespace actions that ACTUALLY pushed a namespace.
-        // PushRosNamespace("") or PushRosNamespace("/") are no-ops in push_namespace(),
-        // so we must only pop for those that actually changed the namespace stack depth.
-        // Each PushRosNamespace stores a `did_push` field indicating whether its push was effective.
-        let mut actual_push_count = 0;
-        for action in &actions {
-            if let Ok(type_name) = action
-                .getattr(py, "__class__")
-                .and_then(|cls| cls.getattr(py, "__name__"))
-                .and_then(|name| name.extract::<String>(py))
-            {
-                if type_name == "PushRosNamespace" {
-                    // Check if this PushRosNamespace actually pushed
-                    if let Ok(did_push) = action.getattr(py, "did_push") {
-                        if did_push.extract::<bool>(py).unwrap_or(true) {
-                            actual_push_count += 1;
-                        }
-                    } else {
-                        // Fallback: assume it pushed if we can't check
-                        actual_push_count += 1;
-                    }
-                } else if type_name != "IncludeLaunchDescription" {
-                    break;
-                }
-            }
-        }
-
-        // Pop only the namespaces that were actually pushed
-        if actual_push_count > 0 {
-            use play_launch_parser::bridge::pop_ros_namespace;
-            for _ in 0..actual_push_count {
-                pop_ros_namespace();
-            }
-            log::debug!(
-                "GroupAction popped {} namespaces for scope cleanup",
-                actual_push_count
-            );
-        }
-
-        Ok(Self {
+    ) -> Self {
+        Self {
             actions,
-            scoped: scoped.unwrap_or(true),
-            forwarding: forwarding.unwrap_or(true),
-        })
+            scoped,
+            forwarding,
+            launch_configurations,
+            condition,
+        }
+    }
+
+    fn get_sub_entities(&self, py: Python) -> Vec<Py<PyAny>> {
+        self.actions.iter().map(|a| a.clone_ref(py)).collect()
     }
 
     fn __repr__(&self) -> String {
         format!("GroupAction({} actions)", self.actions.len())
+    }
+}
+
+impl GroupAction {
+    pub(crate) fn execute(this: &Bound<'_, Self>, py: Python) -> PyResult<()> {
+        let (actions, scoped, forwarding, configurations) = {
+            let me = this.borrow();
+            (
+                me.actions
+                    .iter()
+                    .map(|a| a.clone_ref(py))
+                    .collect::<Vec<_>>(),
+                me.scoped,
+                me.forwarding,
+                me.launch_configurations.as_ref().map(|c| c.clone_ref(py)),
+            )
+        };
+        // The given configurations are evaluated before anything is reset.
+        let given = super::configuration::evaluate_configurations(py, configurations.as_ref())?;
+
+        if !scoped {
+            with_launch_context(|ctx| {
+                for (k, v) in given {
+                    ctx.set_configuration_literal(k, v);
+                }
+            });
+            for action in &actions {
+                crate::api::visit::visit_any(py, action.bind(py))?;
+            }
+            return Ok(());
+        }
+
+        let saved = with_launch_context(|ctx| ctx.push_launch_configurations());
+        if forwarding {
+            with_launch_context(|ctx| {
+                for (k, v) in given {
+                    ctx.set_configuration_literal(k, v);
+                }
+            });
+        } else {
+            with_launch_context(|ctx| {
+                ctx.reset_environment();
+                ctx.reset_launch_configurations(given);
+            });
+        }
+        let result = actions
+            .iter()
+            .try_for_each(|action| crate::api::visit::visit_any(py, action.bind(py)));
+        with_launch_context(|ctx| ctx.pop_launch_configurations(saved));
+        result
     }
 }

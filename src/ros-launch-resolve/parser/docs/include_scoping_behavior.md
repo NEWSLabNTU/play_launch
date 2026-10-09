@@ -75,19 +75,37 @@ justified the isolation with no longer exists.
   `push_launch_configurations` / `pop_launch_configurations` alongside
   `save_scope` / `restore_scope`.
 
-## Known remaining divergence
+## Python launch files
 
-Python launch files. A configuration that a `.launch.py` sets
-(`SetLaunchConfiguration`, its `DeclareLaunchArgument` defaults) is written to
-the pyexec half's own context and does not cross back to the host. So:
+A `.launch.py` is the same include as any other. Since C ABI 7 the Python half
+executes a description the way `launch` does — each action when it is reached,
+in order — and an `IncludeLaunchDescription` is handed to the traverser at that
+point (`play_launch_py_exec`'s include callback), with the configurations,
+namespace, global parameters and remappings, and environment the file had
+built up. The traverser runs the target in that state and hands its own state
+back, and at the end the file's final state becomes the includer's. So, as
+with XML and YAML:
 
-- an XML/YAML file that includes a `.launch.py` does not see what the Python
-  file set;
-- an XML/YAML file included from a `.launch.py` does not see the Python
-  file's own `SetLaunchConfiguration`s.
+- an XML/YAML/Python file that includes a `.launch.py` sees what the Python
+  file set, declared, pushed or appended;
+- a file included from a `.launch.py` sees the Python file's own
+  `SetLaunchConfiguration`s and argument defaults, as of that include;
+- the `.launch.py`'s actions after an include see what the included file set.
 
-Arguments do cross in both directions, and so does sibling persistence.
-Closing the gap means carrying configurations back over the pyexec ABI.
+Before ABI 7 the Python half executed every action in its constructor and
+replayed the file's includes from a list after it had finished, with the
+file's configurations left behind in the Python half. Fixtures:
+`tests/fixtures/execution_semantics/` (`tests/execution_semantics.rs`).
+
+## Global parameters and remappings
+
+`<set_parameter>` / `SetParameter` and `<set_remap>` / `SetRemap` append to
+two lists `launch_ros` keeps INSIDE the launch configurations
+(`global_params`, `ros_remaps`). A group saves the configurations by shallow
+copy, so it pops a list only if the list did not exist before the group; an
+append to a list that did exist mutates the very list the group saved, and
+survives the group. `LaunchContext` emulates this with an arena of lists and
+saves list indices, not list contents.
 
 The `forwarding="false"` attribute of `<group>` is accepted and not
 implemented.

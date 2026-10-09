@@ -188,42 +188,38 @@ fn a_let_inside_a_scoped_yaml_group_does_not_leak() {
 
 // ---- Python on one side ----------------------------------------------------
 //
-// Known remaining divergence, asserted around rather than over: a
-// configuration a `.launch.py` sets (`SetLaunchConfiguration`, its
-// `DeclareLaunchArgument` defaults) does not cross the pyexec boundary back to
-// the host context, so the includer's `p_*` node reads `child_let` as `none`
-// where launch reads `set_by_child`, and a `.launch.py` parent's own
-// configurations are not visible to the XML/YAML files it includes.
-
-fn child_nodes(json: &serde_json::Value) -> Vec<String> {
-    node_names(json)
-        .into_iter()
-        .filter(|n| n.starts_with("c_"))
-        .collect()
-}
+// A `.launch.py` is the same include as any other (C ABI 7): its includes run
+// when it reaches them, in the configurations it has built up, and what it
+// sets — `SetLaunchConfiguration`, a `DeclareLaunchArgument` default, what a
+// file it included `<let>` — is the includer's afterwards. Before ABI 7 the
+// Python half kept its configurations to itself: the includer's `p_*` node
+// read `child_let` as `none`, and a `.launch.py` parent's own configurations
+// never reached the files it included.
 
 #[test]
-fn xml_includes_python_passes_args_and_leaks_them_to_siblings() {
+fn xml_includes_python_like_launch() {
     let _guard = python_test_guard();
-    assert_eq!(child_nodes(&resolve("xml_to_py")), ["c_py_d_P"]);
+    assert_nodes("xml_to_py", &["c_py_d_P", "p_xml_set_by_child"]);
 }
 
 #[test]
-fn yaml_includes_python_passes_args_and_leaks_them_to_siblings() {
+fn yaml_includes_python_like_launch() {
     let _guard = python_test_guard();
-    assert_eq!(child_nodes(&resolve("yaml_to_py")), ["c_py_d_P"]);
+    assert_nodes("yaml_to_py", &["c_py_d_P", "p_yaml_set_by_child"]);
 }
 
 #[test]
-fn python_includes_yaml_passes_args_and_leaks_them_to_siblings() {
+fn python_includes_yaml_like_launch() {
+    // `p_py_set_by_child`: the `.launch.py`'s own node, AFTER the include,
+    // reads what the YAML file it included `let`.
     let _guard = python_test_guard();
-    assert_eq!(child_nodes(&resolve("py_to_yaml_args")), ["c_yaml_d"]);
+    assert_nodes("py_to_yaml_args", &["c_yaml_d", "p_py_set_by_child"]);
 }
 
 #[test]
-fn python_includes_xml_passes_args_and_leaks_them_to_siblings() {
+fn python_includes_xml_like_launch() {
     // The Python→XML path also ran its target in an isolated child context,
     // so `c_xml_b` and `c_xml_default_who` appeared here too.
     let _guard = python_test_guard();
-    assert_eq!(child_nodes(&resolve("py_to_xml_args")), ["c_xml_d"]);
+    assert_nodes("py_to_xml_args", &["c_xml_d", "p_py_set_by_child"]);
 }

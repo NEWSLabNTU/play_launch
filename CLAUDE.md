@@ -43,8 +43,29 @@ The parser evaluates conditions during parsing and processes only the selected p
   scoped groups call `push_launch_configurations`/`pop_launch_configurations`.
   It used to isolate XML targets, and it dropped the arguments of YAML
   targets entirely. Fixtures and the stock-`ros2 launch` expectations:
-  `tests/include_semantics.rs` in the parser crate. Remaining gap: a
-  `.launch.py`'s own configurations do not cross the pyexec boundary.
+  `tests/include_semantics.rs` in the parser crate.
+- **A `.launch.py` EXECUTES, in order; its mocks do not act when
+  constructed** (C ABI 7). Each mock records its arguments, and
+  `pyexec/src/api/visit.rs` walks the returned description and executes
+  each action when it is reached, against the context the actions before
+  it left — conditions, scoped groups, `forwarding=False`, timers and
+  `OpaqueFunction` included. An `IncludeLaunchDescription` is run by the
+  traverser AT THAT POINT, through the `IncludeHost` callback
+  (`play_launch_parser::exchange`): the Python half sends what it produced so
+  far and its state, the traverser runs the target in that state and sends
+  its state back. An include scopes nothing, so the file's final state is
+  the includer's. The mocks used to do their work in their constructors —
+  which Python runs inside-out, so a `GroupAction`'s condition or scope
+  never reached its children — and replayed includes from a list after the
+  file had finished, with its configurations left behind in the Python
+  half. Fixtures: `tests/execution_semantics.rs`.
+- **Global parameters and remappings are positional lists with
+  `launch_ros`'s reference semantics.** A node gets the `<set_parameter>`s
+  and `<set_remap>`s executed BEFORE it, carried on its capture or record
+  (no back-filling with the final set). A scoped group saves the list INDEX
+  (`LaunchContext`'s arena), so it pops a list it created and keeps appends
+  to one that existed — `PushLaunchConfigurations` copies the dict shallowly,
+  and `ros2 launch` runs nodes with those leaked entries.
 - **Conditional substitutions** (IfElse, Equals, etc.): call `perform()` to evaluate → "true"/"false"
 - **LaunchConfiguration substitutions**: call `__str__()` to preserve as `$(var name)` for replay-time
 - **Float parameters**: always include decimal point (`0.0` not `0`) for ROS type preservation

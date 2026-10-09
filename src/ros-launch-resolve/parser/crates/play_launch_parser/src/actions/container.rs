@@ -634,7 +634,13 @@ impl ComposableNodeAction {
             node_name: name,
             namespace,
             log_level: None,
-            remaps: self.remappings.clone(),
+            // `get_composable_node_load_request` puts the global remappings
+            // (`<set_remap>`) ahead of the node's own.
+            remaps: {
+                let mut remaps = context.remappings();
+                remaps.extend(self.remappings.iter().cloned());
+                remaps
+            },
             params: merged_params,
             extra_args: self.extra_args.clone(),
             env: None,

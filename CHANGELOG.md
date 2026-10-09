@@ -27,8 +27,54 @@ allowance heavily.
     YAML frontend also honours `scoped: false` now.
 
   Wrap an include in `<group>` to keep its arguments from reaching later
-  siblings. Python launch files are unchanged: configurations a
-  `.launch.py` sets still do not leave the Python frontend.
+  siblings.
+- **Visible:** a `.launch.py` executes the way `launch` executes it: each
+  action when it is reached, in order, in the context the actions before it
+  left. The Python frontend used to do every action's work in its
+  CONSTRUCTOR, which Python runs inside-out and before anything is
+  returned, and replay the file's includes afterwards from a list. Measured
+  against stock `ros2 launch`, that is now:
+  - configurations a `.launch.py` sets (`SetLaunchConfiguration`, a
+    `DeclareLaunchArgument` default, an include's arguments) reach the XML,
+    YAML and Python files it includes, AS OF each include, and come back to
+    the file that included it. They used to stay in the Python half, so an
+    XML parent reading one failed with `Undefined variable`;
+  - an include runs where it is reached, so the actions after it see what the
+    included file declared, `<let>`, pushed or set — and a `TimerAction`
+    around it delays what it starts;
+  - `condition=` is honoured on every action — `GroupAction`,
+    `IncludeLaunchDescription`, `SetLaunchConfiguration` and the rest — not
+    only on nodes. A false condition on a group used to start its nodes
+    anyway;
+  - a scoped `GroupAction` pops configurations, the namespace and the
+    environment, and `forwarding=False` resets them to the given
+    `launch_configurations`;
+  - a `PushRosNamespace` at the top of an included `.launch.py` applies to
+    the includer's later actions, as an XML `<push-ros-namespace>` already
+    did;
+  - `SetRemap` and `SetEnvironmentVariable` apply to the nodes after them,
+    containers and composables included; `ComposableNode(extra_arguments=)`
+    reaches the LoadNode request; a container takes its own `parameters`,
+    `remappings` and `arguments`; `ExecuteProcess` starts its process;
+  - `OnProcessStart` and `OnStateTransition` actions run in place;
+    `OpaqueFunction` gets a live `context` (`launch_configurations` reads
+    and writes the launch context, `ros_namespace`, `global_params` and
+    `ros_remaps` included);
+  - `IfCondition`/`UnlessCondition` accept `true`/`1`/`false`/`0` and refuse
+    anything else, as `launch` does. `yes` and `on` used to read as true and
+    a typo as false. `LaunchConfiguration('x', default=...)` no longer SETS
+    `x`; `LoadComposableNodes` no longer drops descriptions whose own
+    condition is false (`launch_ros` only filters those in a container).
+- **Visible:** `<set_parameter>`/`SetParameter` and `<set_remap>`/`SetRemap`
+  are positional and keep `launch_ros`'s list semantics. A node declared
+  before one does not get it (every node used to get the final set), and a
+  scoped group pops one only if the list did not exist before the group; once
+  it does, an append inside a group survives the group, as it does in
+  `ros2 launch` (`PushLaunchConfigurations` copies the dict, not the list).
+  Global remappings now reach containers and composable nodes too.
+- The Python half's C ABI moves to **7**: `play_launch_py_exec` takes an
+  include callback and exchanges the launch-context state at each include
+  and at the end. A v6 pyexec object is refused by the loader by version.
 - Nodes from an included YAML launch file are attributed to that file's
   scope, not to the includer's. A self-include through YAML is now caught as
   a circular include rather than recursing until the stack overflows.

@@ -1,0 +1,22 @@
+<launch>
+  <!-- set_parameter/set_remap are positional, and a group pops them only
+       when it created the list (launch keeps them as a list inside the
+       launch configurations, which a group copies shallowly). -->
+  <node pkg="demo_nodes_cpp" exec="talker" name="before_any"/>
+  <group>
+    <set_parameter name="p_first_in_group" value="1"/>
+    <set_remap from="r_first_in_group" to="x"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="in_first_group"/>
+  </group>
+  <node pkg="demo_nodes_cpp" exec="talker" name="after_first_group"/>
+  <set_parameter name="p_top" value="2"/>
+  <set_remap from="r_top" to="y"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="after_top"/>
+  <group>
+    <set_parameter name="p_second_in_group" value="3"/>
+    <set_remap from="r_second_in_group" to="z"/>
+  </group>
+  <node pkg="demo_nodes_cpp" exec="talker" name="after_second_group"/>
+  <include file="$(dirname)/child.launch.py"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="after_py"/>
+</launch>

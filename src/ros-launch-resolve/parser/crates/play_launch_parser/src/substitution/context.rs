@@ -4,9 +4,7 @@
 //! It combines substitution resolution (scope chain) with entity capture storage.
 
 use crate::{
-    captures::{
-        ContainerCapture, DeclaredArgumentCapture, IncludeCapture, LoadNodeCapture, NodeCapture,
-    },
+    captures::{ContainerCapture, DeclaredArgumentCapture, LoadNodeCapture, NodeCapture},
     substitution::{
         parser::parse_substitutions,
         types::{Substitution, resolve_substitutions},
@@ -52,20 +50,48 @@ impl Drop for ResolutionDepthGuard {
     }
 }
 
-/// Snapshot of scoped state (namespace depth + remapping count) for save/restore.
+/// Snapshot of the namespace depth for save/restore.
 /// Used by `save_scope()` / `restore_scope()` to ensure cleanup on early returns.
 pub struct ScopeSnapshot {
     namespace_depth: usize,
-    remapping_count: usize,
 }
 
 /// What a scoped group saves on entry and puts back on exit: launch's
 /// `PushLaunchConfigurations` + `PushEnvironment`, which `GroupAction` wraps
 /// around its body when `scoped` (the default). Only the LOCAL maps are held —
 /// a parent scope is immutable, so restoring the local layer restores all of it.
+///
+/// The namespace and the two global lists are launch configurations too
+/// (`ros_namespace`, `ros_remaps`, `global_params`), so they are saved here
+/// with the rest. The lists are saved BY REFERENCE, as launch saves them: see
+/// [`SharedLists`].
 pub struct ConfigurationSnapshot {
     configurations: HashMap<String, Vec<Substitution>>,
     environment: HashMap<String, String>,
+    namespace_stack: Vec<String>,
+    remap_list: Option<usize>,
+    param_list: Option<usize>,
+}
+
+/// The two launch configurations `launch_ros` keeps as Python LISTS, held by
+/// reference: `ros_remaps` (`<set_remap>`, `SetRemap`) and `global_params`
+/// (`<set_parameter>`, `SetParameter`).
+///
+/// `PushLaunchConfigurations` saves a SHALLOW copy of the configuration dict,
+/// and `SetRemap.execute` does `remaps = configs.get('ros_remaps', [])`,
+/// `remaps.append(...)`, `configs['ros_remaps'] = remaps`. So a `<set_remap>`
+/// inside a scoped group appends to the very list the saved copy holds when
+/// one existed before the group — and survives the group's pop — but creates a
+/// fresh list, popped with the group, when none did. `ros2 launch` behaves this
+/// way on Humble and its nodes run with those remaps; restoring a count on pop,
+/// as this context used to, matched neither case.
+///
+/// Emulated with an arena: each list is an index, a group saves and restores
+/// the index, and an append writes through it.
+#[derive(Debug, Clone, Default)]
+struct SharedLists {
+    remaps: Vec<Vec<(String, String)>>,
+    params: Vec<Vec<(String, String)>>,
 }
 
 /// Metadata for a declared argument
@@ -84,8 +110,6 @@ struct ParentScope {
     configurations: HashMap<String, Vec<Substitution>>,
     environment: HashMap<String, String>,
     declared_arguments: HashMap<String, ArgumentMetadata>,
-    global_parameters: IndexMap<String, String>,
-    remappings: Vec<(String, String)>,
     /// Chain to grandparent scope
     parent: Option<Arc<ParentScope>>,
 }
@@ -108,9 +132,11 @@ pub struct LaunchContext {
     local_configurations: HashMap<String, Vec<Substitution>>,
     local_environment: HashMap<String, String>,
     local_declared_arguments: HashMap<String, ArgumentMetadata>,
-    local_global_parameters: IndexMap<String, String>,
-    /// Local topic remappings (from -> to)
-    local_remappings: Vec<(String, String)>,
+    /// Every `ros_remaps` / `global_params` list ever created, and which one
+    /// is current (`None`: the configuration is unset). See [`SharedLists`].
+    lists: SharedLists,
+    remap_list: Option<usize>,
+    param_list: Option<usize>,
 
     /// Always local (not inherited)
     current_file: Option<PathBuf>,
@@ -120,7 +146,6 @@ pub struct LaunchContext {
     captured_nodes: Vec<NodeCapture>,
     captured_containers: Vec<ContainerCapture>,
     captured_load_nodes: Vec<LoadNodeCapture>,
-    captured_includes: Vec<IncludeCapture>,
     /// `DeclareLaunchArgument`s a `.launch.py` constructed (issue 0030).
     captured_declarations: Vec<DeclaredArgumentCapture>,
     /// How many `OpaqueFunction` executions are on the stack; a declaration
@@ -138,14 +163,14 @@ impl LaunchContext {
             local_configurations: HashMap::new(),
             local_environment: HashMap::new(),
             local_declared_arguments: HashMap::new(),
-            local_global_parameters: IndexMap::new(),
-            local_remappings: Vec::new(),
+            lists: SharedLists::default(),
+            remap_list: None,
+            param_list: None,
             current_file: None,
             namespace_stack: vec!["/".to_string()], // Start with root namespace
             captured_nodes: Vec::new(),
             captured_containers: Vec::new(),
             captured_load_nodes: Vec::new(),
-            captured_includes: Vec::new(),
             unsupported_actions: Vec::new(),
             captured_declarations: Vec::new(),
             opaque_depth: 0,
@@ -161,8 +186,6 @@ impl LaunchContext {
             configurations: self.local_configurations.clone(),
             environment: self.local_environment.clone(),
             declared_arguments: self.local_declared_arguments.clone(),
-            global_parameters: self.local_global_parameters.clone(),
-            remappings: self.local_remappings.clone(),
             parent: self.parent.clone(), // Arc clone - cheap!
         };
 
@@ -171,15 +194,17 @@ impl LaunchContext {
             local_configurations: HashMap::new(), // Empty local scope
             local_environment: HashMap::new(),
             local_declared_arguments: HashMap::new(),
-            local_global_parameters: IndexMap::new(),
-            local_remappings: Vec::new(),
+            // The lists are held by reference in launch; a child sees the
+            // same ones (its own copy of them, since nothing writes back).
+            lists: self.lists.clone(),
+            remap_list: self.remap_list,
+            param_list: self.param_list,
             current_file: None,
             namespace_stack: self.namespace_stack.clone(), // Small vec, acceptable to clone
             // Captures are always local — child starts empty
             captured_nodes: Vec::new(),
             captured_containers: Vec::new(),
             captured_load_nodes: Vec::new(),
-            captured_includes: Vec::new(),
             unsupported_actions: Vec::new(),
             captured_declarations: Vec::new(),
             opaque_depth: 0,
@@ -239,6 +264,23 @@ impl LaunchContext {
                     .insert(name, vec![Substitution::Text(value)]);
             }
         }
+    }
+
+    /// Set a configuration to an already-resolved value, stored verbatim.
+    ///
+    /// `launch` stores the RESULT of performing a substitution, so a value
+    /// that happens to contain `$(` text (an escaped `\$(var x)`, an
+    /// environment variable, a command's output) is data, not a substitution
+    /// to perform again on every read. Values crossing from the Python half
+    /// are already resolved, and go through here.
+    pub fn set_configuration_literal(&mut self, name: String, value: String) {
+        self.local_configurations
+            .insert(name, vec![Substitution::Text(value)]);
+    }
+
+    /// launch's `UnsetLaunchConfiguration`.
+    pub fn unset_configuration(&mut self, name: &str) {
+        self.local_configurations.remove(name);
     }
 
     /// Get a configuration value by resolving its stored substitutions
@@ -359,6 +401,22 @@ impl LaunchContext {
         self.local_environment.remove(name);
     }
 
+    /// launch's `PushEnvironment`: what [`Self::pop_environment`] restores.
+    pub fn push_environment(&self) -> HashMap<String, String> {
+        self.local_environment.clone()
+    }
+
+    /// launch's `PopEnvironment`.
+    pub fn pop_environment(&mut self, saved: HashMap<String, String>) {
+        self.local_environment = saved;
+    }
+
+    /// launch's `ResetEnvironment`: back to the environment the launch
+    /// started with, i.e. nothing set on top of it.
+    pub fn reset_environment(&mut self) {
+        self.local_environment.clear();
+    }
+
     /// Get environment variable, walking parent chain
     pub fn get_environment_variable(&self, name: &str) -> Option<String> {
         // 1. Check local scope first
@@ -411,59 +469,40 @@ impl LaunchContext {
         result
     }
 
-    /// Add a global topic remapping to local scope
+    /// Append a global topic remapping (`<set_remap>`, `SetRemap`), the way
+    /// `SetRemap.execute` does: to the current `ros_remaps` list, creating it
+    /// if unset. See [`SharedLists`] for why that distinction matters.
     pub fn add_remapping(&mut self, from: String, to: String) {
-        self.local_remappings.push((from, to));
+        let id = match self.remap_list {
+            Some(id) => id,
+            None => {
+                self.lists.remaps.push(Vec::new());
+                let id = self.lists.remaps.len() - 1;
+                self.remap_list = Some(id);
+                id
+            }
+        };
+        self.lists.remaps[id].push((from, to));
     }
 
-    /// Get all global remappings from entire scope chain
+    /// The global remappings in effect, in the order they were set.
     pub fn remappings(&self) -> Vec<(String, String)> {
-        // Collect remappings from parent chain, then local
-        let mut result = Vec::new();
-
-        // 1. Collect all parent scopes
-        let mut scopes = Vec::new();
-        let mut current = &self.parent;
-        while let Some(parent) = current {
-            scopes.push(parent);
-            current = &parent.parent;
-        }
-
-        // 2. Apply parent remappings from root to immediate parent
-        for parent in scopes.iter().rev() {
-            result.extend_from_slice(&parent.remappings);
-        }
-
-        // 3. Apply local remappings
-        result.extend_from_slice(&self.local_remappings);
-
-        result
+        self.remap_list
+            .map(|id| self.lists.remaps[id].clone())
+            .unwrap_or_default()
     }
 
-    /// Get current count of local remappings (for scope restoration)
-    pub fn remapping_count(&self) -> usize {
-        self.local_remappings.len()
-    }
-
-    /// Restore local remappings to a specific count
-    /// Used to clean up all remappings added within a scope (e.g., group)
-    pub fn restore_remapping_count(&mut self, count: usize) {
-        self.local_remappings.truncate(count);
-    }
-
-    /// Save the current scope state (namespace depth + remapping count).
+    /// Save the current namespace depth.
     /// Use with `restore_scope()` to ensure cleanup even on early returns.
     pub fn save_scope(&self) -> ScopeSnapshot {
         ScopeSnapshot {
             namespace_depth: self.namespace_depth(),
-            remapping_count: self.remapping_count(),
         }
     }
 
-    /// Restore scope state from a previously saved snapshot.
+    /// Restore the namespace depth from a previously saved snapshot.
     pub fn restore_scope(&mut self, snapshot: ScopeSnapshot) {
         self.restore_namespace_depth(snapshot.namespace_depth);
-        self.restore_remapping_count(snapshot.remapping_count);
     }
 
     /// Save the launch configurations and environment, as launch's
@@ -480,6 +519,24 @@ impl LaunchContext {
         ConfigurationSnapshot {
             configurations: self.local_configurations.clone(),
             environment: self.local_environment.clone(),
+            namespace_stack: self.namespace_stack.clone(),
+            remap_list: self.remap_list,
+            param_list: self.param_list,
+        }
+    }
+
+    /// launch's `ResetLaunchConfigurations`: every configuration is cleared —
+    /// the namespace and both global lists with them, since they are
+    /// configurations too — and only `keep` is set again. `GroupAction`
+    /// emits it inside its push/pop when `forwarding=False`.
+    pub fn reset_launch_configurations(&mut self, keep: Vec<(String, String)>) {
+        self.local_configurations.clear();
+        self.parent = None;
+        self.namespace_stack = vec!["/".to_string()];
+        self.remap_list = None;
+        self.param_list = None;
+        for (k, v) in keep {
+            self.set_configuration_literal(k, v);
         }
     }
 
@@ -510,6 +567,9 @@ impl LaunchContext {
     pub fn pop_launch_configurations(&mut self, snapshot: ConfigurationSnapshot) {
         self.local_configurations = snapshot.configurations;
         self.local_environment = snapshot.environment;
+        self.namespace_stack = snapshot.namespace_stack;
+        self.remap_list = snapshot.remap_list;
+        self.param_list = snapshot.param_list;
     }
 
     /// Declare argument in local scope only
@@ -570,61 +630,131 @@ impl LaunchContext {
         result
     }
 
-    /// Set global parameter in local scope only
+    /// Append a global parameter (`<set_parameter>`, `SetParameter`) to the
+    /// current `global_params` list, creating it if unset — see
+    /// [`SharedLists`].
     pub fn set_global_parameter(&mut self, name: String, value: String) {
-        self.local_global_parameters.insert(name, value);
-    }
-
-    /// Get global parameter, walking parent chain
-    pub fn get_global_parameter(&self, name: &str) -> Option<String> {
-        // 1. Check local scope first
-        if let Some(value) = self.local_global_parameters.get(name) {
-            return Some(value.clone());
-        }
-
-        // 2. Walk parent chain
-        let mut current = &self.parent;
-        while let Some(parent) = current {
-            if let Some(value) = parent.global_parameters.get(name) {
-                return Some(value.clone());
+        let id = match self.param_list {
+            Some(id) => id,
+            None => {
+                self.lists.params.push(Vec::new());
+                let id = self.lists.params.len() - 1;
+                self.param_list = Some(id);
+                id
             }
-            current = &parent.parent;
-        }
-
-        None
+        };
+        self.lists.params[id].push((name, value));
     }
 
-    /// Get all global parameters from entire scope chain
-    pub fn global_parameters(&self) -> IndexMap<String, String> {
-        // Walk from root to local, so local values override parent values
-        let mut result = IndexMap::new();
-
-        // 1. Collect all parent scopes
-        let mut scopes = Vec::new();
-        let mut current = &self.parent;
-        while let Some(parent) = current {
-            scopes.push(parent);
-            current = &parent.parent;
-        }
-
-        // 2. Apply parent scopes from root to immediate parent
-        for parent in scopes.iter().rev() {
-            result.extend(
-                parent
-                    .global_parameters
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone())),
-            );
-        }
-
-        // 3. Apply local scope (overrides parent)
-        result.extend(
-            self.local_global_parameters
+    /// The value a global parameter has now: the last one set.
+    pub fn get_global_parameter(&self, name: &str) -> Option<String> {
+        self.param_list.and_then(|id| {
+            self.lists.params[id]
                 .iter()
-                .map(|(k, v)| (k.clone(), v.clone())),
-        );
+                .rev()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.clone())
+        })
+    }
 
+    /// The global parameters in effect: first-set order, last value wins.
+    pub fn global_parameters(&self) -> IndexMap<String, String> {
+        let mut result = IndexMap::new();
+        if let Some(id) = self.param_list {
+            for (k, v) in &self.lists.params[id] {
+                result.insert(k.clone(), v.clone());
+            }
+        }
         result
+    }
+
+    // ========== The state a `.launch.py` exchanges (C ABI 7) ==========
+
+    /// Which global lists are current, as a reference point for the next
+    /// [`Self::export_state`] / [`Self::import_state`] — see
+    /// [`crate::exchange::SharedListState::same`].
+    pub fn list_sync(&self) -> crate::exchange::ListSync {
+        crate::exchange::ListSync {
+            remap: self.remap_list,
+            param: self.param_list,
+        }
+    }
+
+    /// The state a `.launch.py` reads and writes, for sending across the
+    /// Python boundary. `since` is this side's reference point for whether a
+    /// global list is the same one the other side last saw.
+    pub fn export_state(&self, since: &crate::exchange::ListSync) -> crate::exchange::ContextState {
+        use crate::exchange::SharedListState;
+        let list =
+            |current: Option<usize>, synced: Option<usize>, lists: &[Vec<(String, String)>]| {
+                current.map(|id| SharedListState {
+                    items: lists[id].clone(),
+                    same: synced == Some(id),
+                })
+            };
+        crate::exchange::ContextState {
+            configurations: self.configurations().into_iter().collect(),
+            namespace_stack: self.namespace_stack.clone(),
+            remaps: list(self.remap_list, since.remap, &self.lists.remaps),
+            global_parameters: list(self.param_list, since.param, &self.lists.params),
+            environment: self.environment().into_iter().collect(),
+            current_file: self
+                .current_file
+                .as_ref()
+                .and_then(|p| p.to_str().map(String::from)),
+        }
+    }
+
+    /// Take over a state the other side sent. An include scopes nothing, so
+    /// what arrives replaces what is here: every configuration, the namespace,
+    /// the environment and both global lists. `since` is this side's
+    /// reference point from when it last sent its state; a list the sender
+    /// marks `same` is written through the list that was current then (and
+    /// that a group's snapshot may still hold), anything else starts a new one.
+    /// Returns the new reference point.
+    pub fn import_state(
+        &mut self,
+        state: &crate::exchange::ContextState,
+        since: &crate::exchange::ListSync,
+    ) -> crate::exchange::ListSync {
+        fn adopt(
+            lists: &mut Vec<Vec<(String, String)>>,
+            incoming: &Option<crate::exchange::SharedListState>,
+            synced: Option<usize>,
+        ) -> Option<usize> {
+            let incoming = incoming.as_ref()?;
+            match synced {
+                Some(id) if incoming.same => {
+                    lists[id] = incoming.items.clone();
+                    Some(id)
+                }
+                _ => {
+                    lists.push(incoming.items.clone());
+                    Some(lists.len() - 1)
+                }
+            }
+        }
+        self.parent = None;
+        self.local_configurations.clear();
+        for (k, v) in &state.configurations {
+            self.set_configuration_literal(k.clone(), v.clone());
+        }
+        self.namespace_stack = if state.namespace_stack.is_empty() {
+            vec!["/".to_string()]
+        } else {
+            state.namespace_stack.clone()
+        };
+        self.remap_list = adopt(&mut self.lists.remaps, &state.remaps, since.remap);
+        self.param_list = adopt(
+            &mut self.lists.params,
+            &state.global_parameters,
+            since.param,
+        );
+        self.local_environment = state.environment.clone().into_iter().collect();
+        if let Some(f) = &state.current_file {
+            self.current_file = Some(PathBuf::from(f));
+        }
+        self.list_sync()
     }
 
     /// Push a namespace onto the stack
@@ -739,11 +869,6 @@ impl LaunchContext {
         self.captured_load_nodes.push(load_node);
     }
 
-    /// Capture an include operation
-    pub fn capture_include(&mut self, include: IncludeCapture) {
-        self.captured_includes.push(include);
-    }
-
     /// Get captured nodes
     pub fn captured_nodes(&self) -> &[NodeCapture] {
         &self.captured_nodes
@@ -757,11 +882,6 @@ impl LaunchContext {
     /// Get captured load nodes
     pub fn captured_load_nodes(&self) -> &[LoadNodeCapture] {
         &self.captured_load_nodes
-    }
-
-    /// Get captured includes
-    pub fn captured_includes(&self) -> &[IncludeCapture] {
-        &self.captured_includes
     }
 
     /// Get mutable reference to captured nodes
@@ -779,7 +899,6 @@ impl LaunchContext {
         &mut self.captured_load_nodes
     }
 
-    /// Get mutable reference to captured includes
     pub fn capture_declaration(&mut self, declaration: DeclaredArgumentCapture) {
         self.captured_declarations.push(declaration);
     }
@@ -802,10 +921,6 @@ impl LaunchContext {
 
     pub fn in_opaque_function(&self) -> bool {
         self.opaque_depth > 0
-    }
-
-    pub fn captured_includes_mut(&mut self) -> &mut Vec<IncludeCapture> {
-        &mut self.captured_includes
     }
 }
 
@@ -1141,6 +1256,7 @@ mod tests {
             ros_arguments: Vec::new(),
             env_vars: Vec::new(),
             scope_id: None,
+            ..Default::default()
         };
 
         context.capture_node(node);
@@ -1166,6 +1282,7 @@ mod tests {
             ros_arguments: Vec::new(),
             env_vars: Vec::new(),
             scope_id: None,
+            ..Default::default()
         });
 
         context.capture_node(NodeCapture {
@@ -1182,6 +1299,7 @@ mod tests {
             ros_arguments: Vec::new(),
             env_vars: Vec::new(),
             scope_id: None,
+            ..Default::default()
         });
 
         assert_eq!(context.captured_nodes().len(), 2);
@@ -1200,6 +1318,7 @@ mod tests {
             cmd: Vec::new(),
             ros_arguments: Vec::new(),
             scope_id: None,
+            ..Default::default()
         });
 
         assert_eq!(context.captured_containers().len(), 1);
@@ -1221,27 +1340,11 @@ mod tests {
             remappings: Vec::new(),
             extra_args: Default::default(),
             scope_id: None,
+            ..Default::default()
         });
 
         assert_eq!(context.captured_load_nodes().len(), 1);
         assert_eq!(context.captured_load_nodes()[0].node_name, "my_node");
-    }
-
-    #[test]
-    fn test_capture_include() {
-        let mut context = LaunchContext::new();
-
-        context.capture_include(IncludeCapture {
-            file_path: "/path/to/file.launch.xml".to_string(),
-            args: vec![("arg1".to_string(), "val1".to_string())],
-            ros_namespace: "/ns".to_string(),
-        });
-
-        assert_eq!(context.captured_includes().len(), 1);
-        assert_eq!(
-            context.captured_includes()[0].file_path,
-            "/path/to/file.launch.xml"
-        );
     }
 
     #[test]
@@ -1263,6 +1366,7 @@ mod tests {
             ros_arguments: Vec::new(),
             env_vars: Vec::new(),
             scope_id: None,
+            ..Default::default()
         });
         assert_eq!(context.captured_nodes().len(), 1);
 
@@ -1271,30 +1375,8 @@ mod tests {
         assert_eq!(child.captured_nodes().len(), 0);
         assert_eq!(child.captured_containers().len(), 0);
         assert_eq!(child.captured_load_nodes().len(), 0);
-        assert_eq!(child.captured_includes().len(), 0);
 
         // Parent captures still exist
         assert_eq!(context.captured_nodes().len(), 1);
-    }
-
-    #[test]
-    fn test_captured_includes_mut_clear() {
-        let mut context = LaunchContext::new();
-
-        context.capture_include(IncludeCapture {
-            file_path: "file1.xml".to_string(),
-            args: Vec::new(),
-            ros_namespace: String::new(),
-        });
-        context.capture_include(IncludeCapture {
-            file_path: "file2.xml".to_string(),
-            args: Vec::new(),
-            ros_namespace: String::new(),
-        });
-        assert_eq!(context.captured_includes().len(), 2);
-
-        // Clear includes (used after processing)
-        context.captured_includes_mut().clear();
-        assert_eq!(context.captured_includes().len(), 0);
     }
 }

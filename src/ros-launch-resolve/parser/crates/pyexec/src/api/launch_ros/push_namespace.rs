@@ -1,51 +1,32 @@
-//! Mock PushRosNamespace and PopRosNamespace actions for launch_ros.actions
+//! Mock `PushRosNamespace` / `PopRosNamespace`.
+//!
+//! `ros_namespace` is a launch configuration in `launch_ros`, so a scoped
+//! group pops it and an include does NOT: a `PushRosNamespace` at the top
+//! level of an included `.launch.py` applies to the includer's later actions.
 
 use pyo3::prelude::*;
 
-/// Mock PushRosNamespace action
-///
-/// Python equivalent:
-/// ```python
-/// from launch_ros.actions import PushRosNamespace
-/// PushRosNamespace('my_namespace')
-/// ```
-///
-/// Pushes a namespace onto the namespace stack
 #[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct PushRosNamespace {
-    #[allow(dead_code)] // Stored for API compatibility
     namespace: Py<PyAny>,
-    /// Whether this PushRosNamespace actually pushed a namespace onto the stack.
-    /// Empty or root ("/") namespaces are no-ops in push_namespace(), so
-    /// GroupAction must know whether to pop for each PushRosNamespace action.
     #[pyo3(get)]
-    did_push: bool,
+    condition: Option<Py<PyAny>>,
 }
 
 #[pymethods]
 impl PushRosNamespace {
     #[new]
-    fn new(py: Python, namespace: Py<PyAny>) -> PyResult<Self> {
-        // Convert namespace to string
-        let namespace_str = if let Ok(s) = namespace.extract::<String>(py) {
-            s
-        } else if let Ok(str_result) = namespace.call_method0(py, "__str__") {
-            str_result.extract::<String>(py)?
-        } else {
-            namespace.bind(py).str()?.to_string()
-        };
-
-        log::debug!("Python Launch PushRosNamespace: '{}'", namespace_str);
-
-        // Push onto the namespace stack and track whether it actually pushed
-        use play_launch_parser::bridge::push_ros_namespace;
-        let did_push = push_ros_namespace(namespace_str);
-
-        Ok(Self {
+    #[pyo3(signature = (namespace, *, condition=None, **_kwargs))]
+    fn new(
+        namespace: Py<PyAny>,
+        condition: Option<Py<PyAny>>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> Self {
+        Self {
             namespace,
-            did_push,
-        })
+            condition,
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -53,33 +34,37 @@ impl PushRosNamespace {
     }
 }
 
-/// Mock PopRosNamespace action
-///
-/// Python equivalent:
-/// ```python
-/// from launch_ros.actions import PopRosNamespace
-/// PopRosNamespace()
-/// ```
-///
-/// Pops a namespace from the namespace stack
+impl PushRosNamespace {
+    pub(crate) fn execute(this: &Bound<'_, Self>, py: Python) -> PyResult<()> {
+        let ns = crate::api::utils::pyobject_to_string(py, &this.borrow().namespace)?;
+        play_launch_parser::bridge::push_ros_namespace(ns);
+        Ok(())
+    }
+}
+
 #[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
-pub struct PopRosNamespace {}
+pub struct PopRosNamespace {
+    #[pyo3(get)]
+    condition: Option<Py<PyAny>>,
+}
 
 #[pymethods]
 impl PopRosNamespace {
     #[new]
-    fn new() -> Self {
-        log::debug!("Python Launch PopRosNamespace");
-
-        // Pop from the namespace stack
-        use play_launch_parser::bridge::pop_ros_namespace;
-        pop_ros_namespace();
-
-        Self {}
+    #[pyo3(signature = (*, condition=None, **_kwargs))]
+    fn new(condition: Option<Py<PyAny>>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
+        Self { condition }
     }
 
     fn __repr__(&self) -> String {
         "PopRosNamespace()".to_string()
+    }
+}
+
+impl PopRosNamespace {
+    pub(crate) fn execute(_this: &Bound<'_, Self>, _py: Python) -> PyResult<()> {
+        play_launch_parser::bridge::pop_ros_namespace();
+        Ok(())
     }
 }

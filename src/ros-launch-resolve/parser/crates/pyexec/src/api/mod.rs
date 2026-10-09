@@ -2,7 +2,6 @@
 
 pub mod actions;
 pub mod conditions;
-pub mod delay;
 pub mod event_handlers;
 pub mod launch;
 pub mod launch_description_sources;
@@ -12,6 +11,7 @@ pub mod some_substitutions_type;
 pub mod substitutions;
 pub mod utilities;
 pub mod utils;
+pub mod visit;
 
 use pyo3::{PyTypeInfo, prelude::*};
 

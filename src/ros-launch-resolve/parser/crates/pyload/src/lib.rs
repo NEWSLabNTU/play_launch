@@ -166,7 +166,7 @@ impl std::error::Error for LoadError {}
 /// with the object's own context. A v5 object reports none and `check` then
 /// passes a launch file whose delays were silently discarded — the same
 /// serde-defaulted-field trap ABI 3 was bumped for.
-const ABI_VERSION: u32 = 6;
+const ABI_VERSION: u32 = 7;
 
 /// What `sysconfig` says about an interpreter.
 #[derive(Debug, Clone)]
@@ -293,11 +293,53 @@ type AbiFn = unsafe extern "C" fn() -> u32;
 /// What `exec_file` reads off the caller's launch context and sends across
 /// the loader boundary: configurations, the namespace stack, and (ABI 4) the
 /// global parameters — in that order.
-type ExecContextFacts = (
-    std::collections::BTreeMap<String, String>,
-    Vec<String>,
-    Vec<(String, String)>,
-);
+type ExecFn = unsafe extern "C" fn(
+    *const std::ffi::c_char,
+    IncludeCallback,
+    FreeCallback,
+    *mut std::ffi::c_void,
+) -> *mut std::ffi::c_char;
+type IncludeCallback =
+    unsafe extern "C" fn(*mut std::ffi::c_void, *const std::ffi::c_char) -> *mut std::ffi::c_char;
+type FreeCallback = unsafe extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_char);
+
+/// The traverser, as the Python half's include callback reaches it: a
+/// `&mut dyn IncludeHost` behind the `data` pointer.
+struct HostSlot<'a> {
+    host: &'a mut dyn play_launch_parser::exchange::IncludeHost,
+}
+
+/// `play_launch_py_exec`'s include callback: run the include on the
+/// traverser, answer with its state. Never unwinds into C.
+unsafe extern "C" fn include_trampoline(
+    data: *mut std::ffi::c_void,
+    request: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
+    use std::ffi::{CStr, CString};
+    let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: `data` is the `HostSlot` `exec_file` passed for the
+        // duration of the call this callback runs inside.
+        let slot = unsafe { &mut *(data as *mut HostSlot<'_>) };
+        let text = unsafe { CStr::from_ptr(request) }.to_string_lossy();
+        let request: play_launch_parser::exchange::IncludeRequest = serde_json::from_str(&text)
+            .map_err(|e| format!("malformed include request from the Python half: {e}"))?;
+        slot.host.include(request)
+    }));
+    let value = match answer {
+        Ok(Ok(state)) => serde_json::json!({"ok": true, "state": state}),
+        Ok(Err(error)) => serde_json::json!({"ok": false, "error": error}),
+        Err(_) => serde_json::json!({"ok": false, "error": "the include panicked"}),
+    };
+    CString::new(value.to_string())
+        .unwrap_or_else(|_| CString::new(r#"{"ok":false,"error":"NUL in answer"}"#).unwrap())
+        .into_raw()
+}
+
+unsafe extern "C" fn free_answer(_data: *mut std::ffi::c_void, p: *mut std::ffi::c_char) {
+    if !p.is_null() {
+        drop(unsafe { std::ffi::CString::from_raw(p) });
+    }
+}
 
 impl Loaded {
     /// `dlopen` a `libpython`, then the Python half against it.
@@ -368,40 +410,15 @@ impl Loaded {
     /// `configs` rides along because the object cannot read the caller's —
     /// nano-ros issue 0935. Returns the whole response so `exec_file` can take
     /// its captures out of it.
-    fn call(
-        &self,
-        op: &str,
-        arg: &str,
-        configs: std::collections::BTreeMap<String, String>,
-        namespace_stack: Vec<String>,
-        global_parameters: Vec<(String, String)>,
-    ) -> Result<serde_json::Value, String> {
-        use std::ffi::{CStr, CString};
-        let req = serde_json::json!({
-            "op": op,
-            "arg": arg,
-            "configs": configs,
-            "namespace_stack": namespace_stack,
-            "global_parameters": global_parameters,
-        })
-        .to_string();
-        let req = CString::new(req).map_err(|e| format!("request contains a NUL byte: {e}"))?;
-
-        let raw = unsafe {
-            let call: libloading::Symbol<CallFn> = self
-                .pyexec
-                .get(b"play_launch_py_call\0")
-                .map_err(|e| format!("`play_launch_py_call` is missing: {e}"))?;
-            call(req.as_ptr())
-        };
+    /// Read a response this library owns and release it.
+    fn take_response(&self, raw: *mut std::ffi::c_char) -> Result<serde_json::Value, String> {
+        use std::ffi::CStr;
         if raw.is_null() {
             return Err("the Python half returned null, which its contract forbids".into());
         }
         let out = unsafe { CStr::from_ptr(raw) }
             .to_string_lossy()
             .into_owned();
-        // Hand it straight back: the memory is the library's, and its
-        // allocator is frequently not ourss.
         unsafe {
             let free: libloading::Symbol<FreeFn> = self
                 .pyexec
@@ -409,7 +426,6 @@ impl Loaded {
                 .map_err(|e| format!("`play_launch_py_free` is missing: {e}"))?;
             free(raw);
         }
-
         let v: serde_json::Value =
             serde_json::from_str(&out).map_err(|e| format!("malformed response: {e}"))?;
         if v["ok"].as_bool().unwrap_or(false) {
@@ -420,6 +436,20 @@ impl Loaded {
                 .unwrap_or("unspecified error")
                 .to_string())
         }
+    }
+
+    fn call(&self, op: &str, arg: &str) -> Result<serde_json::Value, String> {
+        use std::ffi::CString;
+        let req = serde_json::json!({ "op": op, "arg": arg }).to_string();
+        let req = CString::new(req).map_err(|e| format!("request contains a NUL byte: {e}"))?;
+        let raw = unsafe {
+            let call: libloading::Symbol<CallFn> = self
+                .pyexec
+                .get(b"play_launch_py_call\0")
+                .map_err(|e| format!("`play_launch_py_call` is missing: {e}"))?;
+            call(req.as_ptr())
+        };
+        self.take_response(raw)
     }
 }
 
@@ -432,57 +462,42 @@ impl play_launch_parser::python_backend::PythonBackend for Loaded {
     /// sent back and merged here. Before this, `exec_file` executed the file
     /// perfectly and then dropped everything it produced, and any Python API
     /// call that needed the context aborted the process.
-    fn exec_file(&self, path: &str) -> Result<(), String> {
-        use play_launch_parser::bridge::{ExecCaptures, with_launch_context};
-
-        // Configurations, the namespace stack, and (ABI 4) the global
-        // parameters: three things a `.launch.py` reads from the context it
-        // runs in, and this object's context is not the caller's.
-        let (configs, namespace_stack, global_parameters): ExecContextFacts =
-            with_launch_context(|ctx| {
-                (
-                    ctx.configurations().into_iter().collect(),
-                    ctx.namespace_stack(),
-                    ctx.global_parameters().into_iter().collect(),
-                )
-            });
-
-        let response = self.call(
-            "exec_file",
-            path,
-            configs,
-            namespace_stack,
-            global_parameters,
-        )?;
-
-        // Absent `captures` means the object predates this contract. The ABI
-        // version already refuses that pairing at load; this is the belt to
-        // that braces, because the failure it prevents — a launch file that
-        // resolves to nothing, quietly — is indistinguishable from an empty
-        // launch file.
-        let Some(raw) = response.get("captures") else {
-            return Err("the Python half returned no captures: it speaks an older \
-                        contract than this loader (expected ABI 2)"
-                .into());
+    fn exec_file(
+        &self,
+        path: &str,
+        state: play_launch_parser::exchange::ContextState,
+        host: &mut dyn play_launch_parser::exchange::IncludeHost,
+    ) -> Result<play_launch_parser::exchange::ExecResult, String> {
+        use std::ffi::CString;
+        // The state crosses as JSON, and every include the file reaches comes
+        // BACK through `include_trampoline` to `host` while the call is still
+        // running — the traverser runs it there and then (C ABI 7).
+        let req = serde_json::json!({ "path": path, "state": state }).to_string();
+        let req = CString::new(req).map_err(|e| format!("request contains a NUL byte: {e}"))?;
+        let mut slot = HostSlot { host };
+        let raw = unsafe {
+            let exec: libloading::Symbol<ExecFn> = self
+                .pyexec
+                .get(b"play_launch_py_exec\0")
+                .map_err(|e| format!("`play_launch_py_exec` is missing: {e}"))?;
+            exec(
+                req.as_ptr(),
+                include_trampoline,
+                free_answer,
+                &mut slot as *mut HostSlot<'_> as *mut std::ffi::c_void,
+            )
         };
-        let captures: ExecCaptures = serde_json::from_value(raw.clone())
-            .map_err(|e| format!("malformed captures from the Python half: {e}"))?;
-        with_launch_context(|ctx| captures.merge_into(ctx));
-        Ok(())
+        let v = self.take_response(raw)?;
+        serde_json::from_value(v["result"].clone())
+            .map_err(|e| format!("malformed result from the Python half: {e}"))
     }
 
     fn eval_expr(&self, expr: &str) -> Result<String, String> {
         // Self-contained: the expression is the whole input, the string is the
         // whole output. This is why `$(eval …)` kept working while `exec_file`
         // did not.
-        self.call(
-            "eval_expr",
-            expr,
-            Default::default(),
-            Vec::new(),
-            Vec::new(),
-        )
-        .map(|v| v["value"].as_str().unwrap_or_default().to_string())
+        self.call("eval_expr", expr)
+            .map(|v| v["value"].as_str().unwrap_or_default().to_string())
     }
 }
 

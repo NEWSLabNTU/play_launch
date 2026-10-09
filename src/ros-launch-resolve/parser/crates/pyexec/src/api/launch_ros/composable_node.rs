@@ -1,39 +1,34 @@
-//! Mock ComposableNode class for launch_ros.descriptions
+//! Mock `launch_ros.descriptions.ComposableNode`.
+//!
+//! A description, not an action: it is performed when the container or
+//! `LoadComposableNodes` that holds it executes, the way
+//! `get_composable_node_load_request` builds the LoadNode request.
 
 use super::{
     helpers::{is_yaml_file, load_yaml_params_for_node},
-    node::Node,
+    node::{
+        make_namespace_absolute, parse_parameter_item, prefix_namespace, remappings, ros_namespace,
+    },
 };
-use play_launch_parser::{bridge::capture_load_node, captures::LoadNodeCapture};
-use pyo3::{
-    prelude::*,
-    types::{PyDict, PyList},
+use crate::api::utils::pyobject_to_string;
+use play_launch_parser::{
+    bridge::{capture_load_node, with_launch_context},
+    captures::LoadNodeCapture,
 };
+use pyo3::{prelude::*, types::PyDict};
 
-/// Mock ComposableNode class (for descriptions module)
-///
-/// Python equivalent:
-/// ```python
-/// from launch_ros.descriptions import ComposableNode
-///
-/// node = ComposableNode(
-///     package='my_package',
-///     plugin='my_package::MyPlugin',
-///     name='my_node',
-///     namespace='/my_namespace',
-///     parameters=[...],
-///     remappings=[...],
-/// )
-/// ```
 #[pyclass(module = "launch_ros.descriptions", from_py_object)]
 #[derive(Clone)]
 pub struct ComposableNode {
-    package: String,
-    plugin: String,
-    name: String,
-    namespace: Option<String>,
-    parameters: Vec<Py<PyAny>>,
-    remappings: Vec<Py<PyAny>>,
+    package: Py<PyAny>,
+    plugin: Py<PyAny>,
+    name: Option<Py<PyAny>>,
+    namespace: Option<Py<PyAny>>,
+    parameters: Option<Py<PyAny>>,
+    remappings: Option<Py<PyAny>>,
+    extra_arguments: Option<Py<PyAny>>,
+    #[pyo3(get)]
+    condition: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -43,354 +38,162 @@ impl ComposableNode {
         *,
         package,
         plugin,
-        name,
+        name=None,
         namespace=None,
         parameters=None,
         remappings=None,
+        extra_arguments=None,
+        condition=None,
         **_kwargs
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
-        py: Python,
         package: Py<PyAny>,
         plugin: Py<PyAny>,
-        name: Py<PyAny>,
+        name: Option<Py<PyAny>>,
         namespace: Option<Py<PyAny>>,
-        parameters: Option<Vec<Py<PyAny>>>,
-        remappings: Option<Vec<Py<PyAny>>>,
+        parameters: Option<Py<PyAny>>,
+        remappings: Option<Py<PyAny>>,
+        extra_arguments: Option<Py<PyAny>>,
+        condition: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Self> {
-        // Convert PyObjects to strings (handles both strings and substitutions/lists)
-        log::debug!("ComposableNode::new: creating composable node");
-        let package_str = Self::pyobject_to_string(py, &package)?;
-        let plugin_str = Self::pyobject_to_string(py, &plugin)?;
-        let name_str = Self::pyobject_to_string(py, &name)?;
+    ) -> Self {
+        Self {
+            package,
+            plugin,
+            name,
+            namespace,
+            parameters,
+            remappings,
+            extra_arguments,
+            condition,
+        }
+    }
 
-        let namespace_str = namespace
-            .map(|ns| {
-                log::debug!("ComposableNode::new: processing namespace parameter");
-                Self::pyobject_to_string(py, &ns)
-            })
-            .transpose()?;
+    #[getter]
+    fn package(&self, py: Python) -> Py<PyAny> {
+        self.package.clone_ref(py)
+    }
 
-        log::debug!(
-            "ComposableNode::new: package='{}', plugin='{}', name='{}', namespace={:?}",
-            package_str,
-            plugin_str,
-            name_str,
-            namespace_str
-        );
-        Ok(Self {
-            package: package_str,
-            plugin: plugin_str,
-            name: name_str,
-            namespace: namespace_str,
-            parameters: parameters.unwrap_or_default(),
-            remappings: remappings.unwrap_or_default(),
-        })
+    #[getter]
+    fn node_plugin(&self, py: Python) -> Py<PyAny> {
+        self.plugin.clone_ref(py)
+    }
+
+    #[getter]
+    fn node_name(&self, py: Python) -> Option<Py<PyAny>> {
+        self.name.as_ref().map(|n| n.clone_ref(py))
+    }
+
+    #[getter]
+    fn node_namespace(&self, py: Python) -> Option<Py<PyAny>> {
+        self.namespace.as_ref().map(|n| n.clone_ref(py))
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "ComposableNode(package='{}', plugin='{}', name='{}')",
-            self.package, self.plugin, self.name
-        )
-    }
-
-    // Getter methods for LoadComposableNodes to access attributes
-    #[getter]
-    fn package(&self) -> &str {
-        &self.package
-    }
-
-    #[getter]
-    fn plugin(&self) -> &str {
-        &self.plugin
-    }
-
-    #[getter]
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    #[getter]
-    fn namespace(&self) -> Option<&str> {
-        self.namespace.as_deref()
-    }
-
-    #[getter]
-    fn parameters(&self) -> Vec<Py<PyAny>> {
-        self.parameters.clone()
-    }
-
-    #[getter]
-    fn remappings(&self) -> Vec<Py<PyAny>> {
-        self.remappings.clone()
+        "ComposableNode(...)".to_string()
     }
 }
 
 impl ComposableNode {
-    /// Convert a Py<PyAny> to a string (handles both strings and substitutions)
-    fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        crate::api::utils::pyobject_to_string(py, obj)
-    }
-
-    pub(super) fn capture_as_load_node(
-        &self,
-        container_name: &str,
-        container_namespace: &Option<String>,
-        ros_namespace: &str,
-    ) {
-        // Resolve node namespace using ROS context namespace (from push-ros-namespace).
-        // This matches ROS2's get_composable_node_load_request() behavior:
-        // - If the node has an explicit namespace: resolve relative to ROS context
-        // - If no namespace: inherit the ROS context namespace
-        let normalized_namespace = if let Some(ns) = &self.namespace {
-            if ns.is_empty() {
-                ros_namespace.to_string()
-            } else if ns.starts_with('/') {
-                // Absolute namespace — use as-is
-                ns.clone()
-            } else {
-                // Relative namespace — combine with ROS context namespace
-                if ros_namespace == "/" {
-                    format!("/{}", ns)
-                } else {
-                    format!("{}/{}", ros_namespace, ns)
-                }
-            }
-        } else {
-            // No explicit namespace — use the ROS context namespace
-            ros_namespace.to_string()
-        };
-
-        // Fully-qualified node name (no leading slash) — used to filter
-        // per-node sections of any shared params file, matching launch_ros
-        // `to_parameters_list`. Must be resolved BEFORE parsing parameters.
-        let node_fqn = Self::normalize_namespace_path(&normalized_namespace, &self.name)
-            .trim_start_matches('/')
-            .to_string();
-
-        // Parse parameters and remappings from Python objects
-        let parameters =
-            Python::attach(|py| self.parse_parameters(py, &node_fqn).unwrap_or_default());
-        let remappings = Python::attach(|py| self.parse_remappings(py).unwrap_or_default());
-
-        // Build full target container name: namespace + name
-        // Normalize to ensure consistent path format with leading slash
-        let target_container_name = if let Some(ns) = container_namespace {
-            Self::normalize_namespace_path(ns, container_name)
-        } else {
-            // If no namespace, assume root and add leading slash
-            if container_name.starts_with('/') {
-                container_name.to_string()
-            } else {
-                format!("/{}", container_name)
-            }
-        };
-
-        let capture = LoadNodeCapture {
-            start_delay_secs: None,
-            package: self.package.clone(),
-            plugin: self.plugin.clone(),
-            target_container_name,
-            node_name: self.name.clone(),
-            namespace: normalized_namespace,
-            parameters,
-            remappings,
-            extra_args: Default::default(),
-            scope_id: None,
-        };
-
-        log::debug!(
-            "Captured Python composable node: {} / {} (container: {})",
-            capture.package,
-            capture.plugin,
-            capture.target_container_name
-        );
-
-        capture_load_node(capture);
-    }
-
-    /// Normalize namespace + name into a proper path
-    fn normalize_namespace_path(namespace: &str, name: &str) -> String {
-        // Handle empty name - just return namespace
-        if name.is_empty() {
-            return if namespace.is_empty() || namespace == "/" {
-                "/".to_string()
-            } else if namespace.starts_with('/') {
-                namespace.to_string()
-            } else {
-                format!("/{}", namespace)
-            };
+    /// Whether this description's own `condition=` admits it — what
+    /// `ComposableNodeContainer.execute` filters on.
+    pub(crate) fn admitted(&self, py: Python) -> PyResult<bool> {
+        match &self.condition {
+            Some(c) if !c.is_none(py) => crate::api::conditions::evaluate(py, c.bind(py)),
+            _ => Ok(true),
         }
-
-        // Handle empty namespace
-        if namespace.is_empty() {
-            return if name.starts_with('/') {
-                name.to_string()
-            } else {
-                format!("/{}", name)
-            };
-        }
-
-        let ns = if namespace == "/" {
-            ""
-        } else if namespace.starts_with('/') {
-            namespace
-        } else {
-            return format!("/{}/{}", namespace, name);
-        };
-
-        format!("{}/{}", ns, name)
     }
 
-    /// Parse Python parameters to string tuples (same logic as Node).
-    ///
-    /// `node_fqn` is the composable node's fully-qualified name (no leading
-    /// slash), used to filter per-node sections of any shared params file to
-    /// only those that apply to THIS node (matches launch_ros
-    /// `to_parameters_list`).
-    fn parse_parameters(&self, py: Python, node_fqn: &str) -> PyResult<Vec<(String, String)>> {
-        let mut parsed_params = Vec::new();
+    /// Capture the LoadNode request this description makes, into the
+    /// container named `target`, performed in the context the walk is in now.
+    pub(crate) fn capture_load(&self, py: Python, target: &str) -> PyResult<()> {
+        let package = pyobject_to_string(py, &self.package)?;
+        let plugin = pyobject_to_string(py, &self.plugin)?;
+        let node_name = self
+            .name
+            .as_ref()
+            .map(|n| pyobject_to_string(py, n))
+            .transpose()?
+            .unwrap_or_default();
+        let own_ns = self
+            .namespace
+            .as_ref()
+            .map(|n| pyobject_to_string(py, n))
+            .transpose()?;
+        let base = ros_namespace();
+        let namespace =
+            make_namespace_absolute(prefix_namespace(base.as_deref(), own_ns.as_deref()))
+                .unwrap_or_else(|| "/".to_string());
 
-        for param_obj in &self.parameters {
-            let param_any = param_obj.bind(py);
+        let fqn = if namespace == "/" {
+            format!("/{node_name}")
+        } else {
+            format!("{namespace}/{node_name}")
+        };
 
-            // String (parameter file path or literal value)
-            if let Ok(path) = param_any.extract::<String>() {
-                // Check if it's a YAML parameter file
-                if is_yaml_file(&path) {
-                    // Load and expand YAML parameter file
-                    match load_yaml_params_for_node(&path, node_fqn) {
-                        Ok(yaml_params) => {
-                            log::debug!("Loaded {} parameters from {}", yaml_params.len(), path);
-                            parsed_params.extend(yaml_params);
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to load parameter file {}: {}", path, e);
-                            // Fallback: store as __param_file for backward compatibility
-                            parsed_params.push(("__param_file".to_string(), path));
+        // Parameters: files are loaded here, for this node, because a LoadNode
+        // request carries values, not files.
+        let mut parameters = Vec::new();
+        if let Some(params) = &self.parameters {
+            let params = params.bind(py);
+            if !params.is_none() {
+                for item in params.try_iter()? {
+                    for (key, value) in parse_parameter_item(&item?)? {
+                        if key == "__param_file" && is_yaml_file(&value) {
+                            match load_yaml_params_for_node(&value, &fqn) {
+                                Ok(loaded) => parameters.extend(loaded),
+                                Err(e) => {
+                                    log::warn!("Failed to load parameter file {value}: {e}");
+                                    parameters.push((key, value));
+                                }
+                            }
+                        } else {
+                            parameters.push((key, value));
                         }
                     }
-                } else if path.contains('/') {
-                    // Looks like a file path but not YAML - store as reference
-                    parsed_params.push(("__param_file".to_string(), path));
-                } else {
-                    // Treat as a literal parameter value
-                    parsed_params.push(("value".to_string(), path));
                 }
-                continue;
             }
+        }
 
-            // Dict (single parameter dict or nested dict)
-            if let Ok(dict) = param_any.cast::<PyDict>() {
-                Node::parse_dict_params(dict, "", &mut parsed_params)?;
-                continue;
-            }
+        // `ros_remaps` first, then the node's own.
+        let mut remaps = with_launch_context(|ctx| ctx.remappings());
+        remaps.extend(remappings(py, self.remappings.as_ref())?);
 
-            // List (list of parameter dicts)
-            if let Ok(list) = param_any.cast::<PyList>() {
-                for item in list.iter() {
+        let mut extra_args = std::collections::HashMap::new();
+        if let Some(extra) = &self.extra_arguments {
+            let extra = extra.bind(py);
+            if !extra.is_none() {
+                for item in extra.try_iter()? {
+                    let item = item?;
                     if let Ok(dict) = item.cast::<PyDict>() {
-                        Node::parse_dict_params(dict, "", &mut parsed_params)?;
+                        let mut pairs = Vec::new();
+                        super::node::Node::parse_dict_params(dict, "", &mut pairs)?;
+                        extra_args.extend(pairs);
                     }
-                }
-                continue;
-            }
-
-            // ParameterFile object — load YAML and expand inline
-            let type_name = param_any
-                .get_type()
-                .name()
-                .map(|n| n.to_string())
-                .unwrap_or_default();
-            if type_name.contains("ParameterFile") {
-                if let Ok(str_val) = param_any.call_method0("__str__")
-                    && let Ok(path) = str_val.extract::<String>()
-                {
-                    if is_yaml_file(&path) {
-                        match load_yaml_params_for_node(&path, node_fqn) {
-                            Ok(yaml_params) => {
-                                log::debug!(
-                                    "Loaded {} parameters from ParameterFile {}",
-                                    yaml_params.len(),
-                                    path
-                                );
-                                parsed_params.extend(yaml_params);
-                            }
-                            Err(e) => {
-                                log::warn!("Failed to load ParameterFile {}: {}", path, e);
-                                parsed_params.push(("__param_file".to_string(), path));
-                            }
-                        }
-                    } else {
-                        parsed_params.push(("__param_file".to_string(), path));
-                    }
-                }
-                continue;
-            }
-
-            // Try calling __str__ on the object (for substitutions)
-            if let Ok(str_val) = param_any.call_method0("__str__")
-                && let Ok(s) = str_val.extract::<String>()
-            {
-                if is_yaml_file(&s) {
-                    match load_yaml_params_for_node(&s, node_fqn) {
-                        Ok(yaml_params) => parsed_params.extend(yaml_params),
-                        Err(_) => parsed_params.push(("substitution".to_string(), s)),
-                    }
-                } else {
-                    parsed_params.push(("substitution".to_string(), s));
                 }
             }
         }
 
-        Ok(parsed_params)
-    }
-
-    /// Parse Python remappings to string tuples (same logic as Node)
-    ///
-    /// Handles:
-    /// - Tuple pairs: `[('old_topic', 'new_topic')]` -> `[("old_topic", "new_topic")]`
-    /// - LaunchConfiguration objects in tuples: `[('topic', LaunchConfiguration('name'))]`
-    /// - Substitutions that need string conversion
-    fn parse_remappings(&self, py: Python) -> PyResult<Vec<(String, String)>> {
-        let mut parsed_remaps = Vec::new();
-
-        for remap_obj in &self.remappings {
-            let remap_any = remap_obj.bind(py);
-
-            // Remappings should be tuples of (from, to)
-            if let Ok(remap_tuple) = remap_any.cast::<pyo3::types::PyTuple>()
-                && remap_tuple.len() == 2
-            {
-                // Extract both elements and convert to strings
-                // This handles both plain strings and LaunchConfiguration objects
-                let from_obj = remap_tuple.get_item(0)?;
-                let to_obj = remap_tuple.get_item(1)?;
-
-                // Convert to strings (handles LaunchConfiguration via __str__)
-                let from = if let Ok(s) = from_obj.extract::<String>() {
-                    s
-                } else if let Ok(str_result) = from_obj.call_method0("__str__") {
-                    str_result.extract::<String>()?
-                } else {
-                    from_obj.str()?.to_string()
-                };
-
-                let to = if let Ok(s) = to_obj.extract::<String>() {
-                    s
-                } else if let Ok(str_result) = to_obj.call_method0("__str__") {
-                    str_result.extract::<String>()?
-                } else {
-                    to_obj.str()?.to_string()
-                };
-
-                parsed_remaps.push((from, to));
-            }
-        }
-
-        Ok(parsed_remaps)
+        let mark = crate::api::visit::lens();
+        capture_load_node(LoadNodeCapture {
+            package,
+            plugin,
+            target_container_name: target.to_string(),
+            node_name,
+            namespace,
+            parameters,
+            remappings: remaps,
+            extra_args,
+            global_params: Some(
+                with_launch_context(|ctx| ctx.global_parameters())
+                    .into_iter()
+                    .collect(),
+            ),
+            scope_id: None,
+            start_delay_secs: None,
+        });
+        crate::api::visit::stamp_delay(mark);
+        Ok(())
     }
 }

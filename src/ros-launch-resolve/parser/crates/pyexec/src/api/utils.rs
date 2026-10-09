@@ -10,68 +10,248 @@ use pyo3::{
     types::{PyDict, PyList, PyTuple},
 };
 
-/// Create a LaunchContext-like Python object with access to launch configurations
-/// This allows substitutions to resolve LaunchConfiguration values during perform()
-pub fn create_launch_context(py: Python) -> PyResult<Py<PyAny>> {
-    use play_launch_parser::bridge::with_launch_context;
-
-    // Get resolved configurations and global parameters from the thread-local LaunchContext
-    let configs = with_launch_context(|ctx| ctx.configurations());
-    let global_params = with_launch_context(|ctx| ctx.global_parameters());
-
-    // Create a simple context object that has a launch_configurations dict
-    let context_class = py.eval(
-        c"type('Context', (), {
-            'launch_configurations': None,
-            '__init__': lambda self, configs: setattr(self, 'launch_configurations', configs)
-        })",
-        None,
-        None,
-    )?;
-
-    // Create a Python dict from our configurations
-    let py_configs = PyDict::new(py);
-    for (key, value) in &configs {
-        py_configs.set_item(key, value)?;
-    }
-
-    // Include global parameters (from SetParameter actions) as 'global_params'
-    // This matches real ROS 2 behavior: SetParameter.execute() stores parameters
-    // as context.launch_configurations['global_params'] = [(name, value), ...]
-    // Autoware code accesses them as: dict(context.launch_configurations.get("global_params", {}))
-    if !global_params.is_empty() {
-        let gp_list = PyList::empty(py);
-        for (name, value_str) in &global_params {
-            // Convert string values back to typed Python values (float/int/str)
-            // so arithmetic in Python launch files works correctly
-            let py_value: Py<PyAny> = if let Ok(f) = value_str.parse::<f64>() {
-                // Check if it could be an integer (no decimal point in original)
-                if !value_str.contains('.') {
-                    if let Ok(i) = value_str.parse::<i64>() {
-                        i.into_py_any(py)?
-                    } else {
-                        f.into_py_any(py)?
-                    }
-                } else {
-                    f.into_py_any(py)?
-                }
-            } else if value_str == "True" || value_str == "true" {
-                true.into_py_any(py)?
-            } else if value_str == "False" || value_str == "false" {
-                false.into_py_any(py)?
+/// A global parameter's value as `launch_ros` holds it: typed the way the
+/// stored string reads (`1` an int, `1.0` a float, `true` a bool).
+fn typed_parameter(py: Python, value_str: &str) -> PyResult<Py<PyAny>> {
+    Ok(if let Ok(f) = value_str.parse::<f64>() {
+        if !value_str.contains('.') {
+            if let Ok(i) = value_str.parse::<i64>() {
+                i.into_py_any(py)?
             } else {
-                value_str.as_str().into_py_any(py)?
-            };
-            let tuple = PyTuple::new(py, [name.as_str().into_py_any(py)?, py_value])?;
-            gp_list.append(&tuple)?;
+                f.into_py_any(py)?
+            }
+        } else {
+            f.into_py_any(py)?
         }
-        py_configs.set_item("global_params", gp_list)?;
+    } else if value_str == "True" || value_str == "true" {
+        true.into_py_any(py)?
+    } else if value_str == "False" || value_str == "false" {
+        false.into_py_any(py)?
+    } else {
+        value_str.into_py_any(py)?
+    })
+}
+
+/// The value `context.launch_configurations[name]` has in `launch`: a string
+/// for an ordinary configuration, and the launch_ros entries that are not
+/// strings — `ros_namespace` (the namespace pushed so far), `global_params`
+/// and `ros_remaps` (lists of tuples) — read from where this context keeps
+/// them.
+fn configuration_value(py: Python, name: &str) -> PyResult<Option<Py<PyAny>>> {
+    use play_launch_parser::bridge::with_launch_context;
+    match name {
+        "ros_namespace" => {
+            let ns = with_launch_context(|ctx| ctx.current_namespace());
+            Ok((ns != "/").then(|| ns.into_py_any(py)).transpose()?)
+        }
+        "global_params" => {
+            let gp = with_launch_context(|ctx| ctx.global_parameters());
+            if gp.is_empty() {
+                return Ok(None);
+            }
+            let list = PyList::empty(py);
+            for (k, v) in &gp {
+                list.append(PyTuple::new(
+                    py,
+                    [k.into_py_any(py)?, typed_parameter(py, v)?],
+                )?)?;
+            }
+            Ok(Some(list.into_any().unbind()))
+        }
+        "ros_remaps" => {
+            let remaps = with_launch_context(|ctx| ctx.remappings());
+            if remaps.is_empty() {
+                return Ok(None);
+            }
+            let list = PyList::empty(py);
+            for (a, b) in &remaps {
+                list.append(PyTuple::new(py, [a, b])?)?;
+            }
+            Ok(Some(list.into_any().unbind()))
+        }
+        _ => with_launch_context(|ctx| ctx.get_configuration(name))
+            .map(|v| v.into_py_any(py))
+            .transpose(),
+    }
+}
+
+fn configuration_names() -> Vec<String> {
+    use play_launch_parser::bridge::with_launch_context;
+    with_launch_context(|ctx| {
+        let mut names: Vec<String> = ctx.configurations().into_keys().collect();
+        if ctx.current_namespace() != "/" {
+            names.push("ros_namespace".into());
+        }
+        if !ctx.global_parameters().is_empty() {
+            names.push("global_params".into());
+        }
+        if !ctx.remappings().is_empty() {
+            names.push("ros_remaps".into());
+        }
+        names.sort();
+        names
+    })
+}
+
+/// `context.launch_configurations`: a LIVE mapping over the launch context the
+/// walk is executing in. An `OpaqueFunction` reads what the actions before it
+/// set and may write what the actions after it read, as in `launch`; the mock
+/// used to hand it a snapshot dict, and writes into it were lost.
+#[pyclass(module = "launch.launch_context", mapping)]
+pub struct LaunchConfigurations;
+
+#[pymethods]
+impl LaunchConfigurations {
+    fn __getitem__(&self, py: Python, key: &str) -> PyResult<Py<PyAny>> {
+        configuration_value(py, key)?
+            .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(key.to_string()))
     }
 
-    // Instantiate the context with our configs
-    let context = context_class.call1((py_configs,))?;
+    fn __setitem__(&self, py: Python, key: &str, value: Py<PyAny>) -> PyResult<()> {
+        use play_launch_parser::bridge::with_launch_context;
+        let text = pyobject_to_string(py, &value)?;
+        with_launch_context(|ctx| ctx.set_configuration_literal(key.to_string(), text));
+        Ok(())
+    }
 
-    Ok(context.into())
+    fn __delitem__(&self, key: &str) {
+        use play_launch_parser::bridge::with_launch_context;
+        with_launch_context(|ctx| ctx.unset_configuration(key));
+    }
+
+    fn __contains__(&self, py: Python, key: &str) -> PyResult<bool> {
+        Ok(configuration_value(py, key)?.is_some())
+    }
+
+    fn __len__(&self) -> usize {
+        configuration_names().len()
+    }
+
+    fn __iter__(&self, py: Python) -> PyResult<Py<PyAny>> {
+        Ok(PyList::new(py, configuration_names())?
+            .into_any()
+            .try_iter()?
+            .into_any()
+            .unbind())
+    }
+
+    #[pyo3(signature = (key, default = None))]
+    fn get(&self, py: Python, key: &str, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+        Ok(configuration_value(py, key)?.unwrap_or_else(|| default.unwrap_or_else(|| py.None())))
+    }
+
+    fn keys(&self) -> Vec<String> {
+        configuration_names()
+    }
+
+    fn values(&self, py: Python) -> PyResult<Vec<Py<PyAny>>> {
+        configuration_names()
+            .iter()
+            .map(|k| configuration_value(py, k).map(|v| v.unwrap_or_else(|| py.None())))
+            .collect()
+    }
+
+    fn items(&self, py: Python) -> PyResult<Vec<(String, Py<PyAny>)>> {
+        configuration_names()
+            .into_iter()
+            .map(|k| {
+                let v = configuration_value(py, &k)?.unwrap_or_else(|| py.None());
+                Ok((k, v))
+            })
+            .collect()
+    }
+
+    /// A plain dict snapshot, as `dict.copy()` would give.
+    fn copy(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let d = PyDict::new(py);
+        for (k, v) in self.items(py)? {
+            d.set_item(k, v)?;
+        }
+        Ok(d.into_any().unbind())
+    }
+
+    #[pyo3(signature = (key, default = None))]
+    fn setdefault(&self, py: Python, key: &str, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+        if let Some(v) = configuration_value(py, key)? {
+            return Ok(v);
+        }
+        let default = default.unwrap_or_else(|| py.None());
+        self.__setitem__(py, key, default.clone_ref(py))?;
+        Ok(default)
+    }
+
+    fn update(&self, py: Python, other: &Bound<'_, PyDict>) -> PyResult<()> {
+        for (k, v) in other.iter() {
+            self.__setitem__(py, &k.extract::<String>()?, v.unbind())?;
+        }
+        Ok(())
+    }
+}
+
+/// The `context` an `OpaqueFunction` and every `perform(context)` receive: a
+/// view onto the launch context the walk is executing in.
+#[pyclass(module = "launch.launch_context")]
+pub struct LaunchContextView;
+
+#[pymethods]
+impl LaunchContextView {
+    #[getter]
+    fn launch_configurations(&self, py: Python) -> PyResult<Py<LaunchConfigurations>> {
+        Py::new(py, LaunchConfigurations)
+    }
+
+    /// `context.environment`: the process environment as the launch sees it
+    /// so far — `os.environ` plus whatever `SetEnvironmentVariable` set.
+    #[getter]
+    fn environment(&self, py: Python) -> PyResult<Py<PyAny>> {
+        use play_launch_parser::bridge::with_launch_context;
+        let d = PyDict::new(py);
+        for (k, v) in std::env::vars() {
+            d.set_item(k, v)?;
+        }
+        for (k, v) in with_launch_context(|ctx| ctx.environment()) {
+            d.set_item(k, v)?;
+        }
+        Ok(d.into_any().unbind())
+    }
+
+    /// `context.locals`: nothing this frontend models lives there.
+    #[getter]
+    fn locals(&self, py: Python) -> PyResult<Py<PyAny>> {
+        Ok(py
+            .import("types")?
+            .getattr("SimpleNamespace")?
+            .call0()?
+            .unbind())
+    }
+
+    fn perform_substitution(slf: &Bound<'_, Self>, sub: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        Ok(sub.call_method1("perform", (slf,))?.unbind())
+    }
+}
+
+/// Resolve any `$(...)` tokens left in `s` — the string form some mock
+/// substitutions use — against the context the walk is in. Text that does not
+/// parse or resolve is returned unchanged.
+pub fn resolve_tokens(s: &str) -> String {
+    if !s.contains("$(") {
+        return s.to_string();
+    }
+    use play_launch_parser::{
+        bridge::try_with_launch_context,
+        substitution::{parse_substitutions, resolve_substitutions},
+    };
+    let Ok(subs) = parse_substitutions(s) else {
+        return s.to_string();
+    };
+    try_with_launch_context(|ctx| resolve_substitutions(&subs, ctx).ok())
+        .flatten()
+        .unwrap_or_else(|| s.to_string())
+}
+
+/// The `context` object handed to `perform()` and to an `OpaqueFunction`.
+pub fn create_launch_context(py: Python) -> PyResult<Py<PyAny>> {
+    Ok(Py::new(py, LaunchContextView)?.into_any())
 }
 
 /// Convert a Py<PyAny> to String, handling ROS 2's SomeSubstitutionsType pattern.
@@ -167,94 +347,52 @@ pub fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
         return Ok(result);
     }
 
-    // Check if this is a substitution that needs to be evaluated during parsing
-    // These substitutions need to call perform() to resolve their content/logic
-    if is_evaluating_substitution(obj_ref)? {
-        // Create a real launch context with access to LaunchContext
-        let context = create_launch_context(py)?;
+    // A LaunchConfiguration: its value now, else its default, else (unset,
+    // which `launch` would refuse) its `$(var name)` spelling.
+    if obj_ref
+        .get_type()
+        .name()
+        .map(|n| n.to_string())
+        .unwrap_or_default()
+        == "LaunchConfiguration"
+        && let Ok(name) = obj_ref.getattr("variable_name")
+        && let Ok(name) = name.extract::<String>()
+    {
+        if let Some(value) =
+            play_launch_parser::bridge::try_with_launch_context(|ctx| ctx.get_configuration(&name))
+                .flatten()
+        {
+            return Ok(value);
+        }
+        if let Ok(default) = obj_ref.getattr("default")
+            && !default.is_none()
+        {
+            return pyobject_to_string(py, &default.unbind());
+        }
+        return Ok(format!("$(var {name})"));
+    }
 
-        // Call perform() to evaluate the condition
+    // Any other substitution is PERFORMED now, in the context the walk is in —
+    // which is when `launch` performs it.
+    if obj_ref.hasattr("perform")? {
+        let context = create_launch_context(py)?;
         if let Ok(result) = obj_ref.call_method1("perform", (context,))
             && let Ok(s) = result.extract::<String>()
         {
-            return Ok(s);
+            return Ok(resolve_tokens(&s));
         }
     }
 
-    // Check if this is a LaunchConfiguration — try resolving from thread-local context
-    // Some LaunchConfigurations (e.g., container_executable) are set via SetLaunchConfiguration
-    // and should be resolved at parse time rather than preserved as $(var name)
-    {
-        let type_name = obj_ref
-            .get_type()
-            .name()
-            .map(|n| n.to_string())
-            .unwrap_or_default();
-        if type_name == "LaunchConfiguration"
-            && let Ok(str_result) = obj_ref.call_method0("__str__")
-            && let Ok(s) = str_result.extract::<String>()
-        {
-            // s is "$(var name)" — extract 'name' and look up in context
-            if let Some(var_name) = s.strip_prefix("$(var ").and_then(|s| s.strip_suffix(')'))
-                && let Some(value) = play_launch_parser::bridge::try_with_launch_context(|ctx| {
-                    ctx.get_configuration(var_name)
-                })
-                .flatten()
-            {
-                return Ok(value);
-            }
-            // Not in context — preserve as $(var name) for runtime resolution
-            return Ok(s);
-        }
-    }
-
-    // For other substitution objects, use __str__()
-    // This preserves substitutions in the record.json output
-    // The substitutions will be resolved later during actual launch execution
+    // Mocks that spell themselves as a `$(...)` token are resolved by the
+    // substitution engine, against the same context.
     if let Ok(str_result) = obj_ref.call_method0("__str__")
         && let Ok(s) = str_result.extract::<String>()
     {
-        return Ok(s);
+        return Ok(resolve_tokens(&s));
     }
 
     // Fallback to Python repr
     Ok(obj_ref.str()?.to_string())
-}
-
-/// Check if a Py<PyAny> is a substitution that needs evaluation during parsing.
-///
-/// Substitutions that need evaluation include:
-/// - **Conditional substitutions**: EqualsSubstitution, NotEqualsSubstitution, IfElseSubstitution,
-///   AndSubstitution, OrSubstitution, NotSubstitution (evaluate to "true"/"false")
-/// - **Content substitutions**: FileContent (reads file and resolves nested substitutions),
-///   PathJoinSubstitution (joins paths and resolves nested substitutions)
-/// - **Expression substitutions**: PythonExpression (evaluates Python code)
-///
-/// These need to call perform() with real context during parsing to:
-/// - Evaluate conditional logic (for conditionals)
-/// - Resolve nested substitutions (for FileContent, PathJoinSubstitution)
-/// - Read external content (for FileContent)
-/// - Execute Python expressions (for PythonExpression)
-///
-/// LaunchConfiguration is NOT in this list - it should be preserved as "$(var name)"
-/// for replay-time resolution.
-fn is_evaluating_substitution(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
-    let type_name = obj.get_type().name()?.to_string();
-    Ok(matches!(
-        type_name.as_str(),
-        // Conditional substitutions
-        "EqualsSubstitution"
-            | "NotEqualsSubstitution"
-            | "IfElseSubstitution"
-            | "AndSubstitution"
-            | "OrSubstitution"
-            | "NotSubstitution"
-            // Content substitutions that need evaluation
-            | "FileContent"
-            | "PathJoinSubstitution"
-            // Expression substitutions
-            | "PythonExpression"
-    ))
 }
 
 /// Try `perform(context)` on a Py<PyAny>, then fall back to string conversion.

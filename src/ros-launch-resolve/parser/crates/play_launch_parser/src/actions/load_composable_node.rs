@@ -107,6 +107,11 @@ impl LoadComposableNodeAction {
                     context.current_namespace()
                 };
 
+                // `get_composable_node_load_request` puts the global
+                // remappings (`ros_remaps`) ahead of the node's own, and the
+                // global parameters in effect HERE ahead of its parameters.
+                let mut remappings = context.remappings();
+                remappings.extend(node.remappings.iter().cloned());
                 LoadNodeCapture {
                     package,
                     plugin,
@@ -114,8 +119,9 @@ impl LoadComposableNodeAction {
                     node_name,
                     namespace,
                     parameters: node.parameters.clone(),
-                    remappings: node.remappings.clone(),
+                    remappings,
                     extra_args: node.extra_args.clone(),
+                    global_params: Some(context.global_parameters().into_iter().collect()),
                     scope_id: None,
                     start_delay_secs: None,
                 }

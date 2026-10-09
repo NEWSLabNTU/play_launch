@@ -1,391 +1,315 @@
-//! Simple action types: LogInfo, SetEnvironmentVariable, UnsetEnvironmentVariable,
-//! ExecuteProcess, ExecuteLocal, TimerAction, OpaqueCoroutine
+//! Simple actions (`launch.actions`).
 
-use pyo3::prelude::*;
+use crate::api::utils::pyobject_to_string;
+use play_launch_parser::bridge::with_launch_context;
+use pyo3::{prelude::*, types::PyDict};
 
-/// Mock LogInfo action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import LogInfo
-/// log_action = LogInfo(msg='Information message')
-/// log_action = LogInfo(msg=['Prefix: ', LaunchConfiguration('var'), ' suffix'])
-/// ```
-///
-/// Logs an information message when the action is executed
+/// `LogInfo(msg=...)`: logged when executed; nothing to model.
 #[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct LogInfo {
-    msg: String,
+    msg: Py<PyAny>,
+    #[pyo3(get)]
+    condition: Option<Py<PyAny>>,
 }
 
 #[pymethods]
 impl LogInfo {
     #[new]
-    #[pyo3(signature = (*, msg, **_kwargs))]
+    #[pyo3(signature = (*, msg, condition=None, **_kwargs))]
     fn new(
-        py: Python,
         msg: Py<PyAny>,
-        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
-    ) -> PyResult<Self> {
-        // Convert msg to string (handles strings, lists, LaunchConfiguration, etc.)
-        let msg_str = Self::pyobject_to_string(py, &msg)?;
-
-        // Log the message immediately
-        log::info!("Python Launch LogInfo: {}", msg_str);
-        Ok(Self { msg: msg_str })
+        condition: Option<Py<PyAny>>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> Self {
+        Self { msg, condition }
     }
 
     fn __repr__(&self) -> String {
-        format!("LogInfo(msg='{}')", self.msg)
+        "LogInfo(...)".to_string()
     }
 }
 
 impl LogInfo {
-    /// Convert a Py<PyAny> to a string (handles both strings and substitutions)
-    /// Same logic as Node::pyobject_to_string
-    fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        crate::api::utils::pyobject_to_string(py, obj)
+    pub(crate) fn execute(this: &Bound<'_, Self>, py: Python) -> PyResult<()> {
+        let msg = pyobject_to_string(py, &this.borrow().msg)?;
+        log::debug!("Python Launch LogInfo: {}", msg);
+        Ok(())
     }
 }
 
-/// Mock SetEnvironmentVariable action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import SetEnvironmentVariable
-/// set_env = SetEnvironmentVariable('VAR_NAME', 'value')
-/// set_env = SetEnvironmentVariable('VAR_NAME', LaunchConfiguration('var'))
-/// set_env = SetEnvironmentVariable('VAR_NAME', [LaunchConfiguration('prefix'), '/suffix'])
-/// ```
-///
-/// Sets an environment variable
+/// `SetEnvironmentVariable(name, value)`: every process started after it
+/// inherits the variable, until a scoped group around it ends.
 #[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct SetEnvironmentVariable {
-    name: String,
-    value: String,
+    name: Py<PyAny>,
+    value: Py<PyAny>,
+    #[pyo3(get)]
+    condition: Option<Py<PyAny>>,
 }
 
 #[pymethods]
 impl SetEnvironmentVariable {
     #[new]
-    fn new(py: Python, name: Py<PyAny>, value: Py<PyAny>) -> PyResult<Self> {
-        // Convert PyObjects to strings (handles strings, substitutions, and lists)
-        let name_str = Self::pyobject_to_string(py, &name)?;
-        let value_str = Self::pyobject_to_string(py, &value)?;
-
-        log::debug!(
-            "Python Launch SetEnvironmentVariable: {}={}",
-            name_str,
-            value_str
-        );
-        Ok(Self {
-            name: name_str,
-            value: value_str,
-        })
+    #[pyo3(signature = (name, value, *, condition=None, **_kwargs))]
+    fn new(
+        name: Py<PyAny>,
+        value: Py<PyAny>,
+        condition: Option<Py<PyAny>>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> Self {
+        Self {
+            name,
+            value,
+            condition,
+        }
     }
 
     fn __repr__(&self) -> String {
-        format!("SetEnvironmentVariable('{}', '{}')", self.name, self.value)
+        "SetEnvironmentVariable(...)".to_string()
     }
 }
 
 impl SetEnvironmentVariable {
-    /// Convert a Py<PyAny> to a string (handles strings, substitutions, and lists)
-    /// Reuses the same pattern as LogInfo
-    fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        crate::api::utils::pyobject_to_string(py, obj)
+    pub(crate) fn execute(this: &Bound<'_, Self>, py: Python) -> PyResult<()> {
+        let me = this.borrow();
+        let name = pyobject_to_string(py, &me.name)?;
+        let value = pyobject_to_string(py, &me.value)?;
+        with_launch_context(|ctx| ctx.set_environment_variable(name, value));
+        Ok(())
     }
 }
 
-/// Mock UnsetEnvironmentVariable action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import UnsetEnvironmentVariable
-/// unset_env = UnsetEnvironmentVariable('VAR_NAME')
-/// ```
-///
-/// Unsets an environment variable
+/// `UnsetEnvironmentVariable(name)`.
 #[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct UnsetEnvironmentVariable {
-    name: String,
+    name: Py<PyAny>,
+    #[pyo3(get)]
+    condition: Option<Py<PyAny>>,
 }
 
 #[pymethods]
 impl UnsetEnvironmentVariable {
     #[new]
-    fn new(name: String) -> Self {
-        log::debug!("Python Launch UnsetEnvironmentVariable: {}", name);
-        Self { name }
+    #[pyo3(signature = (name, *, condition=None, **_kwargs))]
+    fn new(
+        name: Py<PyAny>,
+        condition: Option<Py<PyAny>>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> Self {
+        Self { name, condition }
     }
 
     fn __repr__(&self) -> String {
-        format!("UnsetEnvironmentVariable('{}')", self.name)
+        "UnsetEnvironmentVariable(...)".to_string()
     }
 }
 
-/// Mock ExecuteProcess action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import ExecuteProcess
-/// proc = ExecuteProcess(
-///     cmd=['command', 'arg1', 'arg2'],
-///     cwd='/path/to/dir',
-///     name='process_name',
-///     output='screen'
-/// )
-/// # With substitutions:
-/// proc = ExecuteProcess(
-///     cmd=['ros2', 'run', LaunchConfiguration('package'), 'node'],
-///     cwd=[FindPackageShare('my_pkg'), '/dir']
-/// )
-/// ```
-///
-/// Executes a non-ROS process
+impl UnsetEnvironmentVariable {
+    pub(crate) fn execute(this: &Bound<'_, Self>, py: Python) -> PyResult<()> {
+        let name = pyobject_to_string(py, &this.borrow().name)?;
+        with_launch_context(|ctx| ctx.unset_environment_variable(&name));
+        Ok(())
+    }
+}
+
+/// `ExecuteProcess(cmd=[...], name=None, additional_env=None)`: a process
+/// that is not a ROS node, started with the environment in effect.
 #[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct ExecuteProcess {
-    cmd: Vec<String>,
-    #[allow(dead_code)] // Keep for future use
-    cwd: Option<String>,
-    #[allow(dead_code)] // Keep for future use
-    name: Option<String>,
-    #[allow(dead_code)] // Keep for future use
-    output: String,
+    cmd: Py<PyAny>,
+    name: Option<Py<PyAny>>,
+    additional_env: Option<Py<PyAny>>,
+    #[pyo3(get)]
+    condition: Option<Py<PyAny>>,
 }
 
 #[pymethods]
 impl ExecuteProcess {
     #[new]
-    #[pyo3(signature = (*, cmd, cwd=None, name=None, output=None, **_kwargs))]
+    #[pyo3(signature = (*, cmd, name=None, additional_env=None, condition=None, **_kwargs))]
     fn new(
-        py: Python,
-        cmd: Vec<Py<PyAny>>,
-        cwd: Option<Py<PyAny>>,
+        cmd: Py<PyAny>,
         name: Option<Py<PyAny>>,
-        output: Option<String>,
-        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
-    ) -> PyResult<Self> {
-        // Convert cmd elements to strings
-        let cmd_strs: Result<Vec<String>, _> = cmd
-            .iter()
-            .map(|obj| Self::pyobject_to_string(py, obj))
-            .collect();
-        let cmd_vec = cmd_strs?;
-
-        let cwd_str = cwd
-            .map(|obj| Self::pyobject_to_string(py, &obj))
-            .transpose()?;
-
-        let name_str = name
-            .map(|obj| Self::pyobject_to_string(py, &obj))
-            .transpose()?;
-
-        log::debug!("Python Launch ExecuteProcess: {:?}", cmd_vec);
-
-        Ok(Self {
-            cmd: cmd_vec,
-            cwd: cwd_str,
-            name: name_str,
-            output: output.unwrap_or_else(|| "screen".to_string()),
-        })
+        additional_env: Option<Py<PyAny>>,
+        condition: Option<Py<PyAny>>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> Self {
+        Self {
+            cmd,
+            name,
+            additional_env,
+            condition,
+        }
     }
 
     fn __repr__(&self) -> String {
-        format!("ExecuteProcess(cmd={:?})", self.cmd)
+        "ExecuteProcess(...)".to_string()
     }
 }
 
 impl ExecuteProcess {
-    /// Convert a Py<PyAny> to a string (handles strings, substitutions, and lists)
-    /// Reuses the same pattern as SetEnvironmentVariable
-    fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        crate::api::utils::pyobject_to_string(py, obj)
+    pub(crate) fn execute(this: &Bound<'_, Self>, py: Python) -> PyResult<()> {
+        if !crate::api::visit::claim_execution(this.as_any(), "ExecuteProcess") {
+            return Ok(());
+        }
+        let me = this.borrow();
+        // Each `cmd` element is one argument after substitution.
+        let mut parts = Vec::new();
+        for item in me.cmd.bind(py).try_iter()? {
+            parts.push(pyobject_to_string(py, &item?.unbind())?);
+        }
+        if parts.is_empty() {
+            return Ok(());
+        }
+        let name = me
+            .name
+            .as_ref()
+            .map(|n| pyobject_to_string(py, n))
+            .transpose()?;
+        let mut env: Vec<(String, String)> =
+            with_launch_context(|ctx| ctx.environment().into_iter().collect());
+        if let Some(extra) = &me.additional_env {
+            for item in extra.bind(py).call_method0("items")?.try_iter()? {
+                let (k, v): (Py<PyAny>, Py<PyAny>) = item?.extract()?;
+                env.push((pyobject_to_string(py, &k)?, pyobject_to_string(py, &v)?));
+            }
+        }
+        let mark = crate::api::visit::lens();
+        play_launch_parser::bridge::capture_node(play_launch_parser::captures::NodeCapture {
+            executable: parts[0].clone(),
+            arguments: parts[1..].to_vec(),
+            name,
+            env_vars: env,
+            ..Default::default()
+        });
+        crate::api::visit::stamp_delay(mark);
+        Ok(())
     }
 }
 
-/// Mock ExecuteLocal action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import ExecuteLocal
-/// ExecuteLocal(
-///     process_description=Executable(cmd=['ls', '-la']),
-///     output='screen'
-/// )
-/// ```
-///
-/// Executes a process on the local system with more control than ExecuteProcess
+/// `ExecuteLocal(process_description=...)`.
 #[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct ExecuteLocal {
     #[allow(dead_code)] // Keep for future use
     process_description: Option<Py<PyAny>>,
-    #[allow(dead_code)] // Keep for future use
-    cmd: Option<Vec<String>>,
-    #[allow(dead_code)] // Keep for future use
-    cwd: Option<String>,
-    #[allow(dead_code)] // Keep for future use
-    output: String,
 }
 
 #[pymethods]
 impl ExecuteLocal {
     #[new]
-    #[pyo3(signature = (*, process_description=None, cmd=None, cwd=None, output=None, shell=None, **_kwargs))]
-    fn new(
-        process_description: Option<Py<PyAny>>,
-        cmd: Option<Vec<String>>,
-        cwd: Option<String>,
-        output: Option<String>,
-        shell: Option<bool>,
-        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
-    ) -> Self {
-        // Log what we're executing
-        if let Some(ref c) = cmd {
-            log::debug!("Python Launch ExecuteLocal: cmd={:?}", c);
-        } else {
-            log::debug!("Python Launch ExecuteLocal: process_description provided");
-        }
-
-        if let Some(s) = shell {
-            log::debug!("  shell={}", s);
-        }
-
+    #[pyo3(signature = (*, process_description=None, **_kwargs))]
+    fn new(process_description: Option<Py<PyAny>>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
         Self {
             process_description,
-            cmd,
-            cwd,
-            output: output.unwrap_or_else(|| "log".to_string()),
         }
     }
 
     fn __repr__(&self) -> String {
-        if let Some(ref cmd) = self.cmd {
-            format!("ExecuteLocal(cmd={:?})", cmd)
-        } else {
-            "ExecuteLocal(process_description=...)".to_string()
-        }
+        "ExecuteLocal(...)".to_string()
     }
 }
 
-/// Mock TimerAction
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import TimerAction
-/// timer = TimerAction(period=10.0, actions=[action1, action2])
-/// ```
-///
-/// Executes actions after a delay.
-///
-/// Python evaluates `actions=[Node(...)]` before this constructor runs, so
-/// the children are already in the capture lists by the time the timer exists
-/// — which is why the delay used to be discarded here, with only a diagnostic
-/// left behind. It is attributed now, by OBJECT IDENTITY rather than by
-/// capture order: each capturing mock records the span of capture indices its
-/// own constructor appended, and this walks `actions` and stamps exactly
-/// those. See `crate::api::delay` for what remains unattributable and how it
-/// is reported.
+/// `TimerAction(period, actions)`: its actions execute when it fires, which
+/// for the model means they start `period` seconds after the launch — timers
+/// nested in it add. The period is performed when the timer executes.
 #[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct TimerAction {
-    pub(crate) actions: Vec<Py<PyAny>>,
-    /// This timer's identity in the per-run registry.
-    pub(crate) seq: u64,
-    /// The captures this timer's children produced — an ENCLOSING timer
-    /// takes these whole, which is how nested periods add.
-    pub(crate) owned: Vec<crate::api::delay::CaptureRef>,
-    /// This timer and every timer nested inside it. A capture already owned
-    /// by one of them is this timer's own; one owned by anything else is the
-    /// genuinely shared case.
-    pub(crate) family: std::collections::HashSet<u64>,
-    /// Whether an `OpaqueFunction` under this timer still owes its nodes.
-    pub(crate) has_deferred: bool,
-    /// The period, if it resolved to a number while reading the file.
-    pub(crate) period_secs: Option<f64>,
+    pub(crate) actions: Py<PyAny>,
+    pub(crate) period: Py<PyAny>,
+    #[pyo3(get)]
+    condition: Option<Py<PyAny>>,
 }
 
 #[pymethods]
 impl TimerAction {
     #[new]
-    #[pyo3(signature = (*, period, actions, **_kwargs))]
+    #[pyo3(signature = (*, period, actions, condition=None, **_kwargs))]
     fn new(
-        py: Python,
         period: Py<PyAny>,
-        actions: Vec<Py<PyAny>>,
-        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+        actions: Py<PyAny>,
+        condition: Option<Py<PyAny>>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> Self {
-        let applied = crate::api::delay::apply_timer(py, "TimerAction", &period, &actions);
-        let period_secs = crate::api::delay::resolve_period(py, &period);
-        log::debug!(
-            "Python Launch TimerAction: period={:?}s over {} action(s)",
-            period_secs,
-            actions.len()
-        );
         Self {
             actions,
-            seq: applied.seq,
-            owned: applied.owned,
-            family: applied.family,
-            has_deferred: applied.has_deferred,
-            period_secs,
+            period,
+            condition,
         }
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "TimerAction(period={:?}, {} actions)",
-            self.period_secs,
-            self.actions.len()
-        )
+        "TimerAction(...)".to_string()
     }
 }
 
-/// Mock OpaqueCoroutine action
-///
-/// Python equivalent:
-/// ```python
-/// from launch.actions import OpaqueCoroutine
-/// async def my_coroutine(context):
-///     # async operations
-///     pass
-/// OpaqueCoroutine(coroutine=my_coroutine)
-/// ```
-///
-/// Adds a Python coroutine function to the launch run loop.
-/// For static analysis, we just capture that it was called.
+impl TimerAction {
+    pub(crate) fn execute(this: &Bound<'_, Self>, py: Python) -> PyResult<()> {
+        let (period, actions) = {
+            let me = this.borrow();
+            (me.period.clone_ref(py), me.actions.clone_ref(py))
+        };
+        run_timer(py, "TimerAction", &period, &actions)
+    }
+}
+
+/// Execute a timer's actions under its delay. A period that is not a number
+/// when the timer executes leaves them undelayed, and is reported with what
+/// it would have delayed named.
+pub fn run_timer(py: Python, class: &str, period: &Py<PyAny>, actions: &Py<PyAny>) -> PyResult<()> {
+    use crate::api::visit;
+    let secs = if let Ok(v) = period.extract::<f64>(py) {
+        Some(v)
+    } else {
+        pyobject_to_string(py, period)
+            .ok()
+            .and_then(|t| t.trim().parse::<f64>().ok())
+    };
+    let mark = visit::lens();
+    visit::with_delay(secs, || visit::visit_any(py, actions.bind(py)))?;
+    if secs.is_none() {
+        let repr = period
+            .bind(py)
+            .repr()
+            .and_then(|r| r.extract::<String>())
+            .unwrap_or_else(|_| "?".to_string());
+        let what = visit::describe_since(mark);
+        if !what.is_empty() {
+            play_launch_parser::bridge::note_unsupported_action(
+                "timer",
+                Some(format!(
+                    "{class}(period={repr}) in a Python launch file: the period is not a \
+                     number this parser can resolve, so these start immediately in the \
+                     model: {}. Give the timer a literal period, or express the delay in \
+                     XML/YAML `<timer period=…>`.",
+                    what.join(", ")
+                )),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `OpaqueCoroutine(coroutine=...)`: runs asynchronously in a live launch;
+/// nothing to model.
 #[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct OpaqueCoroutine {
     #[allow(dead_code)] // Keep for future use
     coroutine: Py<PyAny>,
-    #[allow(dead_code)] // Keep for future use
-    args: Vec<Py<PyAny>>,
-    #[allow(dead_code)] // Keep for future use
-    func_kwargs: Option<Py<PyAny>>,
 }
 
 #[pymethods]
 impl OpaqueCoroutine {
     #[new]
-    #[pyo3(signature = (*, coroutine, args=None, kwargs=None, **_extra_kwargs))]
-    fn new(
-        coroutine: Py<PyAny>,
-        args: Option<Vec<Py<PyAny>>>,
-        kwargs: Option<Py<PyAny>>,
-        _extra_kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
-    ) -> Self {
-        log::debug!("Python Launch OpaqueCoroutine: coroutine provided");
-        Self {
-            coroutine,
-            args: args.unwrap_or_default(),
-            func_kwargs: kwargs,
-        }
+    #[pyo3(signature = (*, coroutine, **_kwargs))]
+    fn new(coroutine: Py<PyAny>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+        Self { coroutine }
     }
 
     fn __repr__(&self) -> String {

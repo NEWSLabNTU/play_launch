@@ -145,6 +145,7 @@ impl ExecutableAction {
             // block to put anything in.
             ros_arguments: Vec::new(),
             env_vars: self.environment.clone(),
+            global_params: None,
             scope_id: None,
             start_delay_secs: None,
         })

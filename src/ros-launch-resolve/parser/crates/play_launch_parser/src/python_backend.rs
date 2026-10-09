@@ -35,13 +35,23 @@ use std::sync::OnceLock;
 /// Executes the Python that ROS 2's launch format requires.
 ///
 /// Implemented by the `pyo3`-linking half. Two methods rather than one because
-/// the two call sites are genuinely different: one runs a file for its side
-/// effects (captures land in the thread-local launch context), the other
-/// evaluates an expression to a string.
+/// the two call sites are genuinely different: one runs a file, exchanging
+/// state with the traverser at each include (see [`crate::exchange`]), the
+/// other evaluates an expression to a string.
 pub trait PythonBackend: Send + Sync {
-    /// Run a `.launch.py` file. Captures are written through `bridge`'s
-    /// thread-local context, which the caller has already published.
-    fn exec_file(&self, path: &str) -> Result<(), String>;
+    /// Run a `.launch.py` file in `state`, the includer's launch-context
+    /// state. Each `IncludeLaunchDescription` the file reaches is handed to
+    /// `host` WHEN it is reached, and the file continues in the state `host`
+    /// hands back — the included file's configurations, namespace and global
+    /// lists visible to every entity after it, as in `launch` (C ABI 7).
+    /// Returns what the file produced after its last include, and the state
+    /// it finished in.
+    fn exec_file(
+        &self,
+        path: &str,
+        state: crate::exchange::ContextState,
+        host: &mut dyn crate::exchange::IncludeHost,
+    ) -> Result<crate::exchange::ExecResult, String>;
 
     /// Evaluate a `$(eval …)` expression to its string result.
     fn eval_expr(&self, expr: &str) -> Result<String, String>;

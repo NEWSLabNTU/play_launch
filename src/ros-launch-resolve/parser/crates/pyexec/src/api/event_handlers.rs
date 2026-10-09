@@ -24,8 +24,7 @@ use pyo3::prelude::*;
 pub struct OnProcessStart {
     #[allow(dead_code)] // Keep for API compatibility
     target_action: Option<Py<PyAny>>,
-    #[allow(dead_code)] // Keep for API compatibility
-    on_start: Option<Vec<Py<PyAny>>>,
+    on_start: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -34,14 +33,9 @@ impl OnProcessStart {
     #[pyo3(signature = (*, target_action=None, on_start=None, **_kwargs))]
     fn new(
         target_action: Option<Py<PyAny>>,
-        on_start: Option<Vec<Py<PyAny>>>,
+        on_start: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
-        let action_count = on_start.as_ref().map_or(0, |v| v.len());
-        log::debug!(
-            "Python Launch OnProcessStart created with {} actions (limited support)",
-            action_count
-        );
         Self {
             target_action,
             on_start,
@@ -49,10 +43,7 @@ impl OnProcessStart {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "OnProcessStart({} actions)",
-            self.on_start.as_ref().map_or(0, |v| v.len())
-        )
+        "OnProcessStart(...)".to_string()
     }
 }
 
@@ -132,8 +123,7 @@ pub struct OnStateTransition {
     target_lifecycle_node: Option<Py<PyAny>>,
     #[allow(dead_code)] // Keep for API compatibility
     goal_state: Option<String>,
-    #[allow(dead_code)] // Keep for API compatibility
-    entities: Option<Vec<Py<PyAny>>>,
+    entities: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -143,15 +133,9 @@ impl OnStateTransition {
     fn new(
         target_lifecycle_node: Option<Py<PyAny>>,
         goal_state: Option<String>,
-        entities: Option<Vec<Py<PyAny>>>,
+        entities: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
-        let entity_count = entities.as_ref().map_or(0, |v| v.len());
-        log::debug!(
-            "Python Launch OnStateTransition created for state '{:?}' with {} entities (limited support)",
-            goal_state,
-            entity_count
-        );
         Self {
             target_lifecycle_node,
             goal_state,
@@ -160,11 +144,7 @@ impl OnStateTransition {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "OnStateTransition(goal_state={:?}, {} entities)",
-            self.goal_state,
-            self.entities.as_ref().map_or(0, |v| v.len())
-        )
+        format!("OnStateTransition(goal_state={:?})", self.goal_state)
     }
 }
 
@@ -211,4 +191,23 @@ impl OnShutdown {
             self.on_shutdown.as_ref().map_or(0, |v| v.len())
         )
     }
+}
+
+/// The actions a handler runs as the launch COMES UP, which a real launch
+/// executes and so the walk does too: `OnProcessStart`'s `on_start` and
+/// `OnStateTransition`'s `entities`. A callable `on_start` needs the start
+/// event, which a static walk does not have, so it is skipped. Handlers for
+/// things stopping (`OnProcessExit`, `OnShutdown`) contribute nothing.
+pub(crate) fn startup_entities(
+    py: Python,
+    handler: &Bound<'_, PyAny>,
+) -> PyResult<Option<Py<PyAny>>> {
+    let entities = if let Ok(h) = handler.cast::<OnProcessStart>() {
+        h.borrow().on_start.as_ref().map(|e| e.clone_ref(py))
+    } else if let Ok(h) = handler.cast::<OnStateTransition>() {
+        h.borrow().entities.as_ref().map(|e| e.clone_ref(py))
+    } else {
+        None
+    };
+    Ok(entities.filter(|e| !e.bind(py).is_callable()))
 }

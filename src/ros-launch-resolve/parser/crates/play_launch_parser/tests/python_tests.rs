@@ -2543,10 +2543,27 @@ def generate_launch_description():
     let record = result.unwrap();
     let json = serde_json::to_value(&record).unwrap();
 
-    // Verify node was captured
-    assert!(json["node"].is_array());
+    // The ROS node, and both processes — `ExecuteProcess` starts a process
+    // in `launch`, so it is part of the system, with its substitutions
+    // performed.
     let nodes = json["node"].as_array().unwrap();
-    assert_eq!(nodes.len(), 1, "Should have 1 node");
+    let ros: Vec<_> = nodes.iter().filter(|n| !n["package"].is_null()).collect();
+    assert_eq!(ros.len(), 1, "Should have 1 ROS node: {nodes:?}");
+    let cmds: Vec<Vec<String>> = nodes
+        .iter()
+        .filter(|n| n["package"].is_null())
+        .map(|n| serde_json::from_value(n["cmd"].clone()).unwrap())
+        .collect();
+    assert_eq!(
+        cmds,
+        vec![
+            vec!["echo".to_string(), "hello".to_string()],
+            ["ros2", "run", "demo_nodes_cpp", "talker"]
+                .map(String::from)
+                .to_vec(),
+        ],
+        "{nodes:?}"
+    );
 }
 
 #[test]
@@ -2701,9 +2718,14 @@ def generate_launch_description():
     let record = result.unwrap();
     let json = serde_json::to_value(&record).unwrap();
 
-    // Verify node was captured
-    assert!(json["node"].is_array());
-    let nodes = json["node"].as_array().unwrap();
+    // The ROS node; the `ExecuteProcess` beside it is a process, not a node.
+    let nodes: Vec<_> = json["node"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|n| !n["package"].is_null())
+        .cloned()
+        .collect();
     assert_eq!(nodes.len(), 1, "Should have 1 node");
 
     let node = &nodes[0];
@@ -3490,11 +3512,13 @@ def generate_launch_description():
     );
 }
 
-/// A child this parser cannot see into is named, rather than passed over. An
-/// `IncludeLaunchDescription` under a timer is replayed by the traverser from
-/// its own context, outside any timer, so its nodes do not get the delay.
+/// An `IncludeLaunchDescription` under a timer delays what the included file
+/// starts, as `<timer>` around an `<include>` does: the include runs when the
+/// walk reaches it, inside the timer (C ABI 7). It used to be replayed from a
+/// list after the file had finished, outside any timer, so the delay could
+/// only be reported as lost.
 #[test]
-fn a_timer_over_an_include_says_what_it_could_not_delay() {
+fn a_timer_over_an_include_delays_what_it_includes() {
     let _guard = python_test_guard();
     let dir = tempfile::tempdir().unwrap();
     let inner = dir.path().join("inner.launch.py");
@@ -3535,12 +3559,12 @@ def generate_launch_description():
     .unwrap();
 
     let record = parse_launch_file(&outer, HashMap::new()).expect("parse should succeed");
-    let drops = timer_drops(&record);
-    let detail = drops
-        .iter()
-        .find(|d| d.contains("IncludeLaunchDescription"))
-        .unwrap_or_else(|| panic!("an unattributable child must be named: {drops:?}"));
-    assert!(detail.contains('8'), "and the delay it lost: {detail}");
+    assert_eq!(start_delay(&record, "included_node"), Some(8.0));
+    assert!(
+        timer_drops(&record).is_empty(),
+        "{:?}",
+        timer_drops(&record)
+    );
 }
 
 /// `launch_ros`'s `RosTimer` is the ROS-clock spelling of the same action. It

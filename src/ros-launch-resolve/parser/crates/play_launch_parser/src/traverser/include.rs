@@ -26,17 +26,80 @@ pub(crate) fn validate_include_path(path: &Path, original: &str) -> Result<()> {
     }
 }
 
+/// An include's arguments: as the XML/YAML frontends parse them (resolved
+/// here, in order), or already resolved by the Python half.
+#[derive(Clone, Copy)]
+pub(crate) enum IncludeArgs<'a> {
+    Subs(&'a [(String, Vec<Substitution>)]),
+    Resolved(&'a [(String, String)]),
+}
+
+impl IncludeArgs<'_> {
+    fn names(&self) -> Vec<String> {
+        match self {
+            Self::Subs(a) => a.iter().map(|(n, _)| n.clone()).collect(),
+            Self::Resolved(a) => a.iter().map(|(n, _)| n.clone()).collect(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::Subs(a) => a.is_empty(),
+            Self::Resolved(a) => a.is_empty(),
+        }
+    }
+}
+
 impl LaunchTraverser {
     pub(crate) fn process_include(&mut self, include: &IncludeAction) -> Result<()> {
-        // Resolve the file path
+        // `IncludeLaunchDescription.execute` resolves the file BEFORE it sets
+        // any argument.
         let file_path_str = resolve_substitutions(&include.file, &self.context)
             .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-        let file_path = Path::new(&file_path_str);
+        self.process_include_target(&file_path_str, IncludeArgs::Subs(&include.args))
+    }
+
+    /// Set the include's arguments in the CURRENT context, in order — launch
+    /// returns them as `SetLaunchConfiguration` actions ahead of the
+    /// description, so a later one can read an earlier one, and they persist
+    /// afterwards. Returns them resolved.
+    fn set_include_args(&mut self, args: IncludeArgs) -> Result<Vec<(String, String)>> {
+        let mut out = Vec::new();
+        match args {
+            IncludeArgs::Subs(args) => {
+                for (key, value_subs) in args {
+                    let value = resolve_substitutions(value_subs, &self.context)
+                        .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+                    log::trace!("  Include arg: {} = {}", key, value);
+                    self.context
+                        .set_configuration_literal(key.clone(), value.clone());
+                    out.push((key.clone(), value));
+                }
+            }
+            IncludeArgs::Resolved(args) => {
+                for (key, value) in args {
+                    self.context
+                        .set_configuration_literal(key.clone(), value.clone());
+                    out.push((key.clone(), value.clone()));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Include the launch file at `file_path_str` (already resolved), passing
+    /// it `args`. The one path every frontend's include takes.
+    pub(crate) fn process_include_target(
+        &mut self,
+        file_path_str: &str,
+        args: IncludeArgs,
+    ) -> Result<()> {
+        let file_path = Path::new(file_path_str);
 
         log::trace!("Processing include: {}", file_path_str);
 
         // Validate the include path has a launch file extension
-        validate_include_path(file_path, &file_path_str)?;
+        validate_include_path(file_path, file_path_str)?;
 
         // Resolve relative paths relative to the current launch file
         let resolved_path = if file_path.is_relative() {
@@ -91,71 +154,55 @@ impl LaunchTraverser {
         }
 
         log::debug!("Including launch file: {}", resolved_path.display());
-
-        // Log include arguments being passed
-        if !include.args.is_empty() {
-            let arg_names: Vec<&str> = include.args.iter().map(|(k, _)| k.as_str()).collect();
-            log::trace!("Include args: {:?}", arg_names);
+        if !args.is_empty() {
+            log::trace!("Include args: {:?}", args.names());
         }
 
-        // A `.launch.py` target is executed by the Python frontend, which
-        // carries its own argument and capture plumbing.
+        let given = args.names();
+
+        // A `.launch.py` target is executed by the Python frontend, in this
+        // same context (an include scopes nothing).
         if resolved_path.extension().and_then(|s| s.to_str()) == Some("py") {
             log::debug!("Including Python launch file: {}", resolved_path.display());
 
-            // Create args for the Python file (include args override current context)
-            let mut python_args = self.context.configurations();
-            for (key, value_subs) in &include.args {
-                let resolved_value = resolve_substitutions(value_subs, &self.context)
-                    .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                log::trace!("  Include arg: {} = {}", key, resolved_value);
-                python_args.insert(key.clone(), resolved_value);
-            }
+            self.set_include_args(args)?;
 
-            // Push scope for this Python include
             let py_file_name = resolved_path
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("unknown")
                 .to_string();
-            let py_pkg = extract_package_from_path(&resolved_path);
-            let py_path = canonicalize_path(&resolved_path);
-            let py_ns = self.context.current_namespace();
             let child_scope_id = self.scope_table.push(
-                py_pkg,
+                extract_package_from_path(&resolved_path),
                 py_file_name,
-                py_path,
-                py_ns,
-                python_args.clone(),
+                canonicalize_path(&resolved_path),
+                self.context.current_namespace(),
+                self.context.configurations(),
                 Some(self.current_scope_id),
             );
-            let prev_scope_id = self.current_scope_id;
-            self.current_scope_id = child_scope_id;
-
+            let prev_scope_id = std::mem::replace(&mut self.current_scope_id, child_scope_id);
             let mark = self.delay_mark();
+            self.include_chain.push(canonical_path);
 
-            // Issue 0030: the file's own declarations are what the
-            // include has to have passed; they come back with the
-            // execution, so the check follows it.
+            // Issue 0030: the file's own declarations are what the include has
+            // to have passed; they come back with the execution, so the check
+            // follows it.
             let result = self
-                .execute_python_file(&resolved_path, &python_args)
+                .execute_python_file(&resolved_path)
                 .and_then(|declared| {
                     check_required_include_args(
                         &py_required_args(&declared),
-                        &given_names(&include.args),
+                        &given,
                         &resolved_path,
                     )
                 });
 
-            // Records from an XML/YAML file the `.launch.py` included
-            // already carry that include's scope; only the rest are
-            // this file's.
+            self.include_chain.pop();
+            // Records from a file the `.launch.py` included already carry
+            // that include's scope; only the rest are this file's.
             self.stamp_scope_since(mark, child_scope_id);
-
-            // Update scope args with all resolved configurations
             let final_args = self.context.configurations();
             self.scope_table.update_args(child_scope_id, final_args);
-
             self.current_scope_id = prev_scope_id;
             return result;
         }
@@ -174,11 +221,6 @@ impl LaunchTraverser {
         //   persists into a later sibling that does not pass one;
         // - whatever the included file declares or `<let>`s stays visible to
         //   the includer afterwards.
-        //
-        // This was previously split by frontend: an XML target ran in an
-        // isolated child context, and a YAML target ran in the includer's
-        // context but never received the include's arguments at all, so every
-        // YAML file included with `<arg>`s silently took its own defaults.
         let is_yaml = matches!(
             resolved_path.extension().and_then(|s| s.to_str()),
             Some("yaml" | "yml")
@@ -200,7 +242,8 @@ impl LaunchTraverser {
         // argument the included file declares without a default, outside any
         // condition and outside any nested include, must be named among THIS
         // include's own arguments. The scope does not count, which is why
-        // this is checked against `include.args` and not the context.
+        // this is checked against the include's own arguments and not the
+        // context.
         let required = match &xml_doc {
             Some(doc) => xml_required_args(&xml::XmlEntity::new(doc.root_element())),
             None => {
@@ -208,14 +251,9 @@ impl LaunchTraverser {
                 yaml_required_args(&resolved_path)?
             }
         };
-        check_required_include_args(&required, &given_names(&include.args), &resolved_path)?;
+        check_required_include_args(&required, &given, &resolved_path)?;
 
-        for (key, value_subs) in &include.args {
-            let resolved_value = resolve_substitutions(value_subs, &self.context)
-                .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-            log::debug!("[RUST] Setting include arg: {} = {}", key, resolved_value);
-            self.context.set_configuration(key.clone(), resolved_value);
-        }
+        self.set_include_args(args)?;
 
         // Push a new scope for this include
         let include_file_name = resolved_path
@@ -430,9 +468,4 @@ pub(crate) fn check_required_include_args(
         }
     }
     Ok(())
-}
-
-/// The include's own argument names, from a substitution-typed arg list.
-pub(crate) fn given_names(args: &[(String, Vec<Substitution>)]) -> Vec<String> {
-    args.iter().map(|(n, _)| n.clone()).collect()
 }

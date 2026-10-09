@@ -2,7 +2,7 @@
 
 use crate::{
     actions::container::{DEFAULT_CONTAINER_EXECUTABLE, DEFAULT_CONTAINER_PACKAGE},
-    captures::{ContainerCapture, IncludeCapture, LoadNodeCapture, NodeCapture},
+    captures::{ContainerCapture, LoadNodeCapture, NodeCapture},
     error::Result,
     record::{ComposableNodeContainerRecord, LoadNodeRecord, NodeRecord},
     substitution::LaunchContext,
@@ -15,6 +15,34 @@ impl NodeCapture {
     /// # Arguments
     /// * `global_params` - Global ROS parameters from SetParameter actions (passed from context)
     pub fn to_record(&self, global_params: &Option<Vec<(String, String)>>) -> Result<NodeRecord> {
+        // A capture with no package is a process that is not a ROS node
+        // (`ExecuteProcess`, `<executable>`): its command is the executable
+        // and its arguments, and nothing ROS-specific applies to it.
+        if self.package.is_empty() {
+            let mut cmd = vec![self.executable.clone()];
+            cmd.extend(self.arguments.iter().cloned());
+            return Ok(NodeRecord {
+                on_exit_shutdown: None,
+                args: (!self.arguments.is_empty()).then(|| self.arguments.clone()),
+                cmd,
+                env: (!self.env_vars.is_empty()).then(|| self.env_vars.clone()),
+                exec_name: self.name.clone().or_else(|| Some(self.executable.clone())),
+                executable: self.executable.clone(),
+                global_params: None,
+                name: self.name.clone().or_else(|| Some(self.executable.clone())),
+                namespace: None,
+                package: None,
+                params: Vec::new(),
+                params_files: Vec::new(),
+                param_sources: Vec::new(),
+                remaps: Vec::new(),
+                respawn: None,
+                respawn_delay: None,
+                start_delay_secs: self.start_delay_secs,
+                ros_args: None,
+                scope: None,
+            });
+        }
         // Generate ROS command line (now includes global params)
         let cmd = self.generate_command(global_params);
 
@@ -178,10 +206,10 @@ impl ContainerCapture {
                 Some(self.name.as_str()),
                 ns_ref,
                 gp,
-                &[],
-                &[],
-                &[],
-                &[],
+                &self.parameters,
+                &self.params_files,
+                &self.remappings,
+                &self.arguments,
                 &self.ros_arguments,
             )
         } else {
@@ -189,19 +217,23 @@ impl ContainerCapture {
         };
 
         Ok(ComposableNodeContainerRecord {
-            args: None,
+            args: (!self.arguments.is_empty()).then(|| self.arguments.clone()),
             cmd,
-            env: None,
+            env: (!self.env_vars.is_empty()).then(|| self.env_vars.clone()),
             exec_name: Some(self.name.clone()),
             executable,
             global_params: global_params.clone(),
             name: self.name.clone(),
             namespace: self.namespace.clone(),
             package,
-            params: Vec::new(),
-            params_files: Vec::new(),
+            params: self.parameters.clone(),
+            params_files: self
+                .params_files
+                .iter()
+                .map(|path| std::fs::read_to_string(path).unwrap_or_else(|_| path.clone()))
+                .collect(),
             param_sources: Vec::new(),
-            remaps: Vec::new(),
+            remaps: self.remappings.clone(),
             respawn: Some(false),
             respawn_delay: None,
             start_delay_secs: self.start_delay_secs,
@@ -332,116 +364,49 @@ fn get_current_launch_context() -> Option<*mut LaunchContext> {
     CURRENT_LAUNCH_CONTEXT.with(|cell| *cell.borrow())
 }
 
-/// Clear the current LaunchContext for this thread
-fn clear_current_launch_context() {
-    CURRENT_LAUNCH_CONTEXT.with(|cell| {
-        *cell.borrow_mut() = None;
-    });
+/// RAII guard that publishes a LaunchContext on creation and puts back
+/// whatever was published before it on drop.
+///
+/// Restoring rather than clearing is what lets executions NEST: a `.launch.py`
+/// reaching an `IncludeLaunchDescription` hands control to the traverser,
+/// which may run another `.launch.py` with its own context, and the outer file
+/// must find its own context again when that returns (C ABI 7).
+pub struct LaunchContextGuard {
+    previous: Option<*mut LaunchContext>,
 }
-
-/// RAII guard that sets the thread-local LaunchContext on creation and clears it on drop.
-/// This ensures the context is always cleared even if the code between set and clear panics
-/// or returns early.
-pub struct LaunchContextGuard;
 
 impl LaunchContextGuard {
     /// Set the thread-local LaunchContext for the duration of this guard's lifetime.
     ///
     /// SAFETY: The caller must ensure the LaunchContext outlives this guard.
     pub fn new(ctx: &mut LaunchContext) -> Self {
+        let previous = get_current_launch_context();
         set_current_launch_context(ctx);
-        Self
+        Self { previous }
     }
 }
 
 impl Drop for LaunchContextGuard {
     fn drop(&mut self) {
-        clear_current_launch_context();
+        CURRENT_LAUNCH_CONTEXT.with(|cell| {
+            *cell.borrow_mut() = self.previous;
+        });
     }
 }
 
-/// Everything `exec_file` must carry ACROSS the process boundary.
+/// Take what a Python execution has produced so far out of `ctx`.
 ///
-/// nano-ros issue 0935. The Python half used to communicate through this
-/// module's thread-local `LaunchContext`, on the assumption that the executor
-/// and the traverser share one. They do not: since issue 0897 split the Python
-/// half into a `dlopen`ed object, BOTH sides statically link this crate, so
-/// each has its OWN `CURRENT_LAUNCH_CONTEXT`. The binary set one; Python ran
-/// inside the object and read the other, found `None`, and aborted — every
-/// `.launch.py` did, including one that imports nothing.
-///
-/// `$(eval …)` never noticed because its request carries the expression and its
-/// response carries the result. That is the shape this gives `exec_file`.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct ExecCaptures {
-    pub nodes: Vec<crate::captures::NodeCapture>,
-    pub containers: Vec<crate::captures::ContainerCapture>,
-    pub load_nodes: Vec<crate::captures::LoadNodeCapture>,
-    /// `SetParameter` at launch scope, which Python writes straight to the
-    /// context and would otherwise be lost with it.
-    pub global_parameters: Vec<(String, String)>,
-    /// `IncludeLaunchDescription` — the traverser replays these AFTER the
-    /// file, from its own context, so they have to come back to it.
-    ///
-    /// Missing until ABI 3. On Autoware's `component_state_monitor.launch.py`
-    /// that dropped eleven composables: the file returns one container and
-    /// eleven includes of `load_topic_state_monitor.launch.xml`, and the
-    /// includes died with the object's context. The parity gate caught it as
-    /// `composable: Rust=59 Python=70`.
-    #[serde(default)]
-    pub includes: Vec<crate::captures::IncludeCapture>,
-    /// Every `DeclareLaunchArgument` the file constructed (ABI 5, issue 0030),
-    /// so the traverser can hold an include to launch's required-argument
-    /// rule. A v4 object reports none, and the rule is then satisfied by
-    /// silence — the version is what refuses that pairing.
-    #[serde(default)]
-    pub declared_arguments: Vec<crate::captures::DeclaredArgumentCapture>,
-    /// Actions the Python half recognised but could not model, as
-    /// `(action, detail)` — ABI 6. `TimerAction` is the one that motivated
-    /// it: the nodes inside it are captured (Python constructs them before
-    /// the timer sees them) but the DELAY has nowhere to go, and without
-    /// this the fact died with the object's context and `check` reported
-    /// the file clean.
-    #[serde(default)]
-    pub unsupported: Vec<(String, Option<String>)>,
-}
-
-impl ExecCaptures {
-    /// Read what a Python execution left in `ctx`.
-    #[must_use]
-    pub fn drain_from(ctx: &mut crate::substitution::context::LaunchContext) -> Self {
-        Self {
-            nodes: ctx.captured_nodes().to_vec(),
-            containers: ctx.captured_containers().to_vec(),
-            load_nodes: ctx.captured_load_nodes().to_vec(),
-            global_parameters: ctx
-                .global_parameters()
-                .into_iter()
-                .collect::<Vec<(String, String)>>(),
-            includes: ctx.captured_includes().to_vec(),
-            declared_arguments: ctx.captured_declarations().to_vec(),
-            unsupported: ctx.take_unsupported_actions(),
-        }
-    }
-
-    /// Append them to the caller's context.
-    ///
-    /// APPEND, not replace: the traverser may already hold captures from XML
-    /// siblings or an earlier include, and a `.launch.py` adds to that tree
-    /// rather than becoming it.
-    pub fn merge_into(self, ctx: &mut crate::substitution::context::LaunchContext) {
-        ctx.captured_nodes_mut().extend(self.nodes);
-        ctx.captured_containers_mut().extend(self.containers);
-        ctx.captured_load_nodes_mut().extend(self.load_nodes);
-        for (k, v) in self.global_parameters {
-            ctx.set_global_parameter(k, v);
-        }
-        ctx.captured_includes_mut().extend(self.includes);
-        ctx.captured_declarations_mut()
-            .extend(self.declared_arguments);
-        for (action, detail) in self.unsupported {
-            ctx.note_unsupported_action(action, detail);
-        }
+/// The Python half has its own `LaunchContext` — both halves statically link
+/// this crate, so each has its own thread-local (nano-ros issue 0935) — and
+/// what it produced has to travel back through the exchange instead.
+#[must_use]
+pub fn drain_produced(ctx: &mut LaunchContext) -> crate::exchange::Produced {
+    crate::exchange::Produced {
+        nodes: std::mem::take(ctx.captured_nodes_mut()),
+        containers: std::mem::take(ctx.captured_containers_mut()),
+        load_nodes: std::mem::take(ctx.captured_load_nodes_mut()),
+        declared_arguments: std::mem::take(ctx.captured_declarations_mut()),
+        unsupported: ctx.take_unsupported_actions(),
     }
 }
 
@@ -488,12 +453,6 @@ pub fn get_captured_containers() -> Vec<ContainerCapture> {
 /// Panics if no context is set
 pub fn get_captured_load_nodes() -> Vec<LoadNodeCapture> {
     with_launch_context(|ctx| ctx.captured_load_nodes().to_vec())
-}
-
-/// Get a clone of all captured includes from LaunchContext
-/// Panics if no context is set
-pub fn get_captured_includes() -> Vec<IncludeCapture> {
-    with_launch_context(|ctx| ctx.captured_includes().to_vec())
 }
 
 /// Update captured nodes in LaunchContext by applying a mutation function
@@ -607,17 +566,12 @@ pub fn note_unsupported_action(action: &str, detail: Option<String>) {
     with_launch_context(|ctx| ctx.note_unsupported_action(action.to_string(), detail));
 }
 
-/// Capture an include to LaunchContext
-pub fn capture_include(include: IncludeCapture) {
-    with_launch_context(|ctx| ctx.capture_include(include));
-}
-
 /// Record a `DeclareLaunchArgument` (issue 0030), stamped with whether an
 /// `OpaqueFunction` is executing right now — the one fact the executor knows
 /// and the stand-in does not.
 pub fn capture_declaration(mut declaration: crate::captures::DeclaredArgumentCapture) {
     with_launch_context(|ctx| {
-        declaration.opaque = ctx.in_opaque_function();
+        declaration.opaque |= ctx.in_opaque_function();
         ctx.capture_declaration(declaration);
     });
 }

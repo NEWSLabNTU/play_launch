@@ -27,7 +27,7 @@ All YAML action types below are supported by the official ROS 2 YAML frontend vi
 | `if`/`unless`          | attrs T U           | `condition=` T     | keys T                      | T         |
 | `OpaqueFunction`       | —                   | `OpaqueFunc` T     | —                           | T         |
 | **Substitutions**      | all 10 types T U    | all types T        | via XML engine              | T U       |
-| **Scoping**            | group/include T     | include unscoped ² | group/include T             | T         |
+| **Scoping**            | group/include T     | group/include T ²  | group/include T             | T         |
 
 ### Additional YAML actions in official ROS 2 (not yet implemented)
 
@@ -60,19 +60,21 @@ appended, and the timer walks its `actions` and stamps exactly those, through
 `OpaqueFunction`. `launch_ros`'s `RosTimer` is handled the same way; it used
 to discard its period with no diagnostic at all.
 
-² **The Python frontend passes include arguments, and they persist into later
-siblings as in `ros2 launch`, but a configuration the `.launch.py` sets itself**
-(`SetLaunchConfiguration`, a `DeclareLaunchArgument` default) does not cross
-back from the Python half. A file it includes does not see that value, and
-neither does a file that includes it.
+² **A `.launch.py` executes as `launch` executes it** (C ABI 7): each action
+when it is reached, in order, against the context the actions before it left.
+Its includes run when they are reached, in the state it has built up, and what
+it sets, declares, pushes or appends is the includer's afterwards. Fixtures and
+stock expectations: `tests/execution_semantics.rs` in the parser crate.
 
-Four shapes still cannot be attributed, and each is reported by name in
-`dropped_actions` (so `check` refuses) rather than guessed at: the same action
-object in two unrelated timers, or both in a timer and started directly
-(`ros2 launch` starts it twice, the model holds it once); a `period` that is
-not a number when the file is read; and a child this parser cannot see into,
-such as an `IncludeLaunchDescription`. See
-`docs/design/python-timer-delay-attribution.md`.
+A Python `TimerAction` delays what is executed under it, by walking it — nodes,
+containers, composables, an `OpaqueFunction`'s result, and what an include
+under it starts.
+
+Two shapes are reported by name in `dropped_actions` (so `check` refuses)
+rather than guessed at: the same action object executed twice — in two timers,
+or in a timer and directly (`ros2 launch` refuses to execute an action twice;
+the model keeps the first) — and a `period` that is not a number when the timer
+executes. See `docs/design/python-timer-delay-attribution.md` for the history.
 
 A timer's delay reaches the SystemModel as
 `structure.nodes.<fqn>.start_delay_secs` (seconds before the FIRST start,
@@ -143,7 +145,11 @@ Handles the full ROS 2 XML launch specification. All elements support `if=` and 
 
 **Entry point**: `execute_python_file()` in `src/traverser/python_exec.rs`
 
-Executes Python launch files via PyO3. Uses a capture-on-construction pattern: Python objects register themselves with global state, which is collected after execution and propagated through the include chain.
+Executes Python launch files via PyO3, against mock `launch`/`launch_ros`
+modules. The mocks record their arguments when constructed; the description
+`generate_launch_description()` returns is then walked and each action executed
+in order, as `launch` does (`pyexec/src/api/visit.rs`). Includes are handed to
+the traverser as they are reached (`play_launch_parser::exchange`).
 
 ### Supported APIs
 
@@ -155,9 +161,11 @@ Executes Python launch files via PyO3. Uses a capture-on-construction pattern: P
 
 ### Scoping
 
-- Python launch files create an isolated execution context
-- Captures (nodes, containers, includes) are merged into the parent traverser after execution
-- `SetLaunchConfiguration` in Python writes to the child context; propagated back via capture merge
+- An include of a `.launch.py` is not scoped: the file runs in the includer's
+  state and leaves its state there
+- A scoped `GroupAction` pushes and pops configurations, namespace,
+  global lists and environment; `forwarding=False` resets them
+- `condition=` is evaluated when the action executes, on every action
 
 ## YAML Parser
 

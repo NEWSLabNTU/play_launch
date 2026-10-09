@@ -2,64 +2,6 @@
 
 use pyo3::PyResult;
 
-/// Load and expand YAML parameter file into key-value pairs
-///
-/// This matches the Python parser's behavior of loading parameter files
-/// and extracting all parameters as individual key-value pairs.
-pub(crate) fn load_yaml_params(path: &str) -> PyResult<Vec<(String, String)>> {
-    use serde_yaml_ng::Value;
-
-    // Read YAML file
-    let contents = std::fs::read_to_string(path).map_err(|e| {
-        pyo3::exceptions::PyIOError::new_err(format!(
-            "Failed to read parameter file {}: {}",
-            path, e
-        ))
-    })?;
-
-    // Parse YAML
-    let yaml: Value = serde_yaml_ng::from_str(&contents).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!(
-            "Failed to parse YAML file {}: {}",
-            path, e
-        ))
-    })?;
-
-    // Strip ROS 2 parameter file wrappers (/**:  and ros__parameters:)
-    // Iterate ALL matching top-level keys (YAML files like default_adapi.param.yaml
-    // have multiple node-specific sections: /adapi/node/autoware_state, /adapi/node/motion)
-    let mut params = Vec::new();
-
-    if let Value::Mapping(top_map) = &yaml {
-        let mut found_node_keys = false;
-        for (k, v) in top_map {
-            if let Value::String(key) = k
-                && (key == "/**" || key.starts_with('/'))
-            {
-                found_node_keys = true;
-                // Found a node matcher, look for ros__parameters
-                if let Value::Mapping(node_map) = v {
-                    let params_value = node_map
-                        .get(Value::String("ros__parameters".to_string()))
-                        .unwrap_or(v);
-                    flatten_yaml(params_value, "", &mut params);
-                } else {
-                    flatten_yaml(v, "", &mut params);
-                }
-            }
-        }
-
-        if !found_node_keys {
-            // No node-specific keys found, flatten the whole YAML
-            flatten_yaml(&yaml, "", &mut params);
-        }
-    } else {
-        flatten_yaml(&yaml, "", &mut params);
-    }
-
-    Ok(params)
-}
-
 /// Load a YAML parameter file, keeping only the sections that apply to the
 /// node identified by `node_fqn` (the node's fully-qualified path WITHOUT a
 /// leading slash, e.g. `"adapi/node/autoware_state"`).
@@ -75,7 +17,7 @@ pub(crate) fn load_yaml_params(path: &str) -> PyResult<Vec<(String, String)>> {
 /// `/adapi/node/*` composables).
 ///
 /// A file with NO node-key sections (a plain flat param mapping) is flattened
-/// whole, exactly like [`load_yaml_params`].
+/// whole.
 pub(crate) fn load_yaml_params_for_node(
     path: &str,
     node_fqn: &str,

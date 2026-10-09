@@ -27,44 +27,6 @@ use crate::api::utils as sub_utils;
 // Helper Functions for Context Management
 // ============================================================================
 
-/// Parse and resolve substitution string with micro-optimization
-///
-/// Parses a string that may contain substitution syntax like `$(var name)` or
-/// `$(find-pkg-share pkg)/path` and resolves it using the provided context.
-/// Includes micro-optimization to skip parsing if no substitution syntax present.
-///
-/// # Arguments
-/// * `value` - String that may contain substitution syntax
-/// * `context` - LaunchContext with variable bindings
-///
-/// # Returns
-/// * `Result<String, SubstitutionError>` - Resolved string or error
-///
-/// # Example
-/// ```ignore
-/// let ctx = LaunchContext::new();
-/// ctx.set_configuration("pkg", "my_package");
-/// let result = resolve_substitution_string("$(var pkg)/config", &ctx)?;
-/// // result == "my_package/config"
-/// ```
-pub(crate) fn resolve_substitution_string(
-    value: &str,
-    context: &play_launch_parser::substitution::context::LaunchContext,
-) -> Result<String, String> {
-    use play_launch_parser::substitution::{
-        parser::parse_substitutions, types::resolve_substitutions,
-    };
-
-    // Micro-optimization: skip parsing if no substitution syntax
-    if !value.contains("$(") {
-        return Ok(value.to_string());
-    }
-
-    // Parse and resolve
-    let subs = parse_substitutions(value).map_err(|e| format!("Parse error: {}", e))?;
-    resolve_substitutions(&subs, context).map_err(|e| format!("Resolution error: {}", e))
-}
-
 // ============================================================================
 // Mock Substitution Classes (kept in mod.rs)
 // ============================================================================

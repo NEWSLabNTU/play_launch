@@ -276,17 +276,101 @@ fn a_global_parameter_set_by_the_host_reaches_the_next_file_across_the_boundary(
     use play_launch_parser::python_backend::PythonBackend;
     let mut ctx = play_launch_parser::substitution::context::LaunchContext::new();
     ctx.set_global_parameter("rear_overhang".to_string(), "0.821".to_string());
-    let names: Vec<String> = {
-        let _guard = play_launch_parser::bridge::LaunchContextGuard::new(&mut ctx);
-        loaded
-            .exec_file(file.to_str().unwrap())
-            .expect("the reader must find the global parameter the host holds");
-        play_launch_parser::bridge::with_launch_context(|c| {
-            c.captured_nodes()
-                .iter()
-                .filter_map(|n| n.name.clone())
-                .collect()
-        })
-    };
+    let state = ctx.export_state(&Default::default());
+    let result = loaded
+        .exec_file(file.to_str().unwrap(), state, &mut NoIncludes)
+        .expect("the reader must find the global parameter the host holds");
+    let names: Vec<String> = result
+        .produced
+        .nodes
+        .iter()
+        .filter_map(|n| n.name.clone())
+        .collect();
     assert_eq!(names, vec!["ro_821".to_string()]);
+}
+
+/// An include host for files that include nothing.
+struct NoIncludes;
+
+impl play_launch_parser::exchange::IncludeHost for NoIncludes {
+    fn include(
+        &mut self,
+        request: play_launch_parser::exchange::IncludeRequest,
+    ) -> Result<play_launch_parser::exchange::ContextState, String> {
+        Err(format!("unexpected include of {}", request.file_path))
+    }
+}
+
+/// ABI 7: an include the file reaches is handed to the host through the
+/// real object's callback, mid-run, and the file continues in the state the
+/// host answers with.
+#[test]
+fn an_include_comes_back_through_the_real_callback() {
+    let Some(pyexec) = build_pyexec() else {
+        eprintln!("could not build the Python half; skipping the load test");
+        return;
+    };
+    let interpreter = match play_launch_parser_pyload::find_interpreter() {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("no usable interpreter here: {e}");
+            return;
+        }
+    };
+    let loaded = play_launch_parser_pyload::Loaded::open(interpreter, &pyexec)
+        .expect("the Python half should load against a discovered interpreter");
+
+    let dir = std::env::temp_dir().join("pyload_abi_7_include");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("includer.launch.py");
+    std::fs::write(
+        &file,
+        "from launch import LaunchDescription\n\
+         from launch.actions import IncludeLaunchDescription, SetLaunchConfiguration\n\
+         from launch.substitutions import LaunchConfiguration\n\
+         from launch_ros.actions import Node\n\
+         def generate_launch_description():\n\
+         \x20   return LaunchDescription([\n\
+         \x20       SetLaunchConfiguration('sent', 'by_python'),\n\
+         \x20       IncludeLaunchDescription('/nowhere/child.launch.xml'),\n\
+         \x20       Node(package='p', executable='e', name=LaunchConfiguration('answered'))])\n",
+    )
+    .unwrap();
+
+    struct Answering {
+        seen: Vec<String>,
+    }
+    impl play_launch_parser::exchange::IncludeHost for Answering {
+        fn include(
+            &mut self,
+            request: play_launch_parser::exchange::IncludeRequest,
+        ) -> Result<play_launch_parser::exchange::ContextState, String> {
+            self.seen.push(request.file_path.clone());
+            assert_eq!(
+                request.state.configurations.get("sent").map(String::as_str),
+                Some("by_python")
+            );
+            let mut state = request.state;
+            state
+                .configurations
+                .insert("answered".into(), "by_the_host".into());
+            Ok(state)
+        }
+    }
+
+    use play_launch_parser::python_backend::PythonBackend;
+    let mut host = Answering { seen: Vec::new() };
+    let result = loaded
+        .exec_file(file.to_str().unwrap(), Default::default(), &mut host)
+        .expect("the include must come back and the file finish");
+    assert_eq!(host.seen, vec!["/nowhere/child.launch.xml".to_string()]);
+    assert_eq!(
+        result.produced.nodes[0].name.as_deref(),
+        Some("by_the_host")
+    );
+    assert_eq!(
+        result.state.configurations.get("sent").map(String::as_str),
+        Some("by_python"),
+        "what the file set comes back in its final state"
+    );
 }

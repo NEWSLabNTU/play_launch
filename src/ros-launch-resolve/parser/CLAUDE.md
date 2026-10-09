@@ -380,7 +380,12 @@ For detailed information, see:
 - Substitution system uses recursive `Vec<Substitution>` for nesting
 - Parser uses character-by-character parsing with depth counting
 - Include arguments use `Vec` (not `HashMap`) to preserve order
-- Python API uses capture-on-construction pattern
+- Python API: the mocks RECORD their arguments when constructed and do their
+  work when the walk in `pyexec/src/api/visit.rs` executes them, in order —
+  `launch`'s semantics. Includes are run by the traverser mid-walk through the
+  `IncludeHost` callback (`exchange.rs`, C ABI 7). Do not reintroduce work in
+  a constructor: Python builds `GroupAction([Node(...)], condition=...)`
+  inside-out, so a constructor runs before the condition or group exists
 - Python extension crate (`crates/python/`) is excluded from workspace — PyO3 `extension-module` vs `auto-initialize` conflict
 - The extension crate's venv must use system Python (same version PyO3 links against in the parser crate)
 
