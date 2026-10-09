@@ -750,10 +750,21 @@ async fn run_direct(
                                 info!("Shutting down gracefully (SIGTERM)...");
                                 info!("Press Ctrl-C again to force terminate");
                                 self_initiated_shutdown = true;
-                                if pgid != 0 {
-                                    kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
-                                }
-                                let _ = shutdown_tx.send(true);
+                                // All three levers, through the one function
+                                // that pulls them together (issue #0061).
+                                // This used to signal the group and the
+                                // run-level channel and never call
+                                // `member_handle.shutdown()`: the node exited,
+                                // its actor sat in `Stopped` waiting on the
+                                // actors' OWN channel, the runner never
+                                // completed, and `run` hung until SIGKILL —
+                                // #0033's shape, in the one caller that had
+                                // its own copy of the loop.
+                                super::signal_handler::initiate_shutdown(
+                                    pgid,
+                                    &shutdown_tx,
+                                    &member_handle,
+                                );
                                 // Continue looping to handle more signals
                             }
                             2 => {
@@ -779,6 +790,12 @@ async fn run_direct(
                 Some(result) = background_tasks.next() => {
                     // A background task finished (usually means error or shutdown)
                     match result {
+                        // After a shutdown we asked for, the anchor task
+                        // ending is the request being honoured, not news —
+                        // it printed a WARN on every Ctrl-C.
+                        Ok(Ok(())) if self_initiated_shutdown => {
+                            debug!("Background task finished after shutdown request");
+                        }
                         Ok(Ok(())) => {
                             warn!("Background task finished early (clean exit)");
                         }
@@ -830,9 +847,14 @@ async fn run_direct(
         }
     }
 
-    // Trigger shutdown for any remaining tasks
+    // Trigger shutdown for any remaining tasks. The actors too: the loop above
+    // also ends when a background task finishes on its own (the web server
+    // erroring, say), and the drain below waits on the runner, which only
+    // completes once every actor has — so without this the drain is the hang
+    // #0061 removed from the signal path.
     debug!("Triggering shutdown for remaining tasks...");
     let _ = shutdown_tx.send(true);
+    let _ = member_handle.shutdown();
 
     // Drain remaining background tasks (exits immediately if already empty)
     // With async component loader, all tasks should complete quickly on shutdown

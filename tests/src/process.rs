@@ -41,6 +41,16 @@ impl ManagedProcess {
         self.child.id()
     }
 
+    /// The exit status if the child has exited, without waiting or killing.
+    ///
+    /// For a test that delivers its own signal and must observe the exit
+    /// itself: `wait_with_timeout` and `Drop` both escalate to SIGKILL, which
+    /// makes a process that ignores SIGTERM indistinguishable from one that
+    /// honoured it (issue #0061).
+    pub fn try_wait(&mut self) -> Option<ExitStatus> {
+        self.child.try_wait().expect("error polling child")
+    }
+
     /// Block until the child exits or `timeout` elapses.
     ///
     /// On timeout the process group is killed and a panic is raised (which

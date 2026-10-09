@@ -24,6 +24,14 @@ check is for.
 
 ## Resolved
 
+**#0061** -- `play_launch run` never exited on SIGTERM or SIGINT. Its
+private copy of the signal loop signalled the process group and the task
+channel but never `member_handle.shutdown()`, so the node's actor sat in
+`Stopped` and the runner never completed -- #0033's omission in the one
+caller not using `initiate_shutdown`. Every `run` test missed it because
+`ManagedProcess` escalates to SIGKILL after two seconds, which also leaked
+the node. See `0061-*`.
+
 **#0060** -- phase 78's acceptance list still claimed no `min_rate_hz` read
 remained in any scheduling path, and named a `git grep` nothing ever ran.
 Issue #0056 had restored one read deliberately (the widened copy

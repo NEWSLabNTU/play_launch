@@ -615,6 +615,30 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-09**: **`play_launch run` exits on a signal (#0061), and `just
+  check` reports what failed.** `run` kept its own copy of the signal loop.
+  It signalled the process group and the task channel but never called
+  `member_handle.shutdown()`, so after SIGTERM the node's actor sat in
+  `Stopped` (alive on purpose, so the web UI can restart it), the runner
+  never completed, and `run` hung until SIGKILL. That is #0033's omission,
+  in the one caller not using `signal_handler::initiate_shutdown`; it now
+  does. **No test could see it**: `ManagedProcess` sends SIGTERM, waits two
+  seconds and SIGKILLs, so a hang and a clean exit look the same, and the
+  SIGKILL leaked the node, which lives in `run`'s anchor group and not the
+  test's. `tests/tests/run_signal.rs` signals `run` alone, watches the exit
+  through the new non-escalating `ManagedProcess::try_wait`, and asserts the
+  node is gone. A test that delivers its own signal must not go through an
+  escalating cleanup to observe it.
+  Separately, `just check` no longer aborts at the first failing step.
+  Every step runs, its output is kept in `tmp/check/<step>.log`, and the
+  final report gives each failure's reproduce command and the decisive log
+  tail, with cargo's ambient `[[patch.unused]]` noise and ANSI colour
+  stripped. A tool that is not installed is reported as NOT RUN, which is
+  neither a pass nor a failure. Set up this way, the gates surfaced
+  `ament_clang_format` as never having been installed at all, and `tests/`
+  is now formatted and clippy-gated with `+nightly`. The root
+  `rustfmt.toml` uses nightly-only options that stable ignores.
+
 - **2026-10-07**: **Three items the campaign left unfiled, and a stale binary
   that had been answering for the resolver.** (#0059) `load_manifests` drops
   every per-manifest `dangling-entity` diagnostic because the cross-scope index
@@ -809,9 +833,9 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   join, OOM bias, the container's control fd) names itself in the node's
   `err` file with one allocation-free `writev` rendered before the fork,
   which the parent reads back into `Unable to start: … — pre_exec:
-  setpgid(0, N) failed: EPERM (errno 1)`. Still open, same family: `run`
-  hangs on SIGTERM because nothing in `run.rs` signals the coordinator's
-  own shutdown. Issues: `docs/issues/archived/0023-*`, `archived/0024-*`.
+  setpgid(0, N) failed: EPERM (errno 1)`. The `run` SIGTERM hang once named
+  here as still open was fixed 2026-10-09 as #0061. Issues:
+  `docs/issues/archived/0023-*`, `archived/0024-*`.
 
 - **2026-09-08**: Phase 76 — **the topic graph the launch file already
   states.** Found while reviewing R6: the Autoware model resolved to 119
