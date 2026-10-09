@@ -1081,18 +1081,68 @@ check:
     source install/setup.bash
 
     failed=()
+    failed_cmd=()
+    failed_log=()
     missing=()
 
-    # Run a step, record it, keep going.
+    # Per-step output lands in `tmp/check/` (gitignored) so the final report can
+    # REPRODUCE the failure instead of naming it. Naming it was not enough: the
+    # summary printed a label and the actual diagnostic was a few hundred lines
+    # back up a stream whose bulk is ambient `[[patch.unused]]` warnings from
+    # the colcon-generated `.cargo/config.toml`. On a long check that is not a
+    # report, it is a pointer to a scrollback you may no longer have.
+    log_dir="tmp/check"
+    rm -rf "$log_dir"
+    mkdir -p "$log_dir"
+
+    # Drop the ambient noise from a REPORT excerpt — never from the log on disk.
+    # Cargo's config walk ignores workspace boundaries, so every cargo
+    # invocation in this tree prints one `was not used in the crate graph` line
+    # per ROS message crate (dozens) plus a four-line `help:` block. CLAUDE.md's
+    # standing ruling is that this churn is ambient and discardable; carrying it
+    # into the excerpt buries the one line that matters.
+    # The ANSI strip is not cosmetic: rustfmt and cargo colour their output even
+    # when it is piped, so an un-stripped excerpt arrives as `[31m-fn foo(`,
+    # which is exactly the line you most need to read.
+    denoise() {
+        sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b(B//g' "$1" |
+            grep -vE 'was not used in the crate graph|^(help|      )' |
+            grep -vE '^\s*(Compiling|Checking|Finished|Downloading|Updating|Fresh) ' |
+            grep -v '^$'
+    }
+
+    # Run a step, capture its output, record it, keep going.
+    #
+    # Output is TEE'd rather than swallowed: a silent twenty-minute check is its
+    # own problem, and `install/setup.bash` having already been sourced means a
+    # step's own progress reporting is the only sign it is alive.
     step() {
         local label="$1"; shift
+        local slug log
+        slug=$(printf '%s' "$label" | tr -cs 'A-Za-z0-9' '-' | tr 'A-Z' 'a-z' | sed 's/^-//; s/-$//')
+        log="$log_dir/$slug.log"
         echo ""
         echo "=== $label ==="
-        if "$@"; then
+        # A pipe under `set -o pipefail`, not `> >(tee ...)`: process
+        # substitution leaves tee still writing when the command returns, so
+        # the report could read a log the step had not finished producing.
+        # With the pipe, tee has exited by the time this `if` is evaluated, and
+        # pipefail keeps the step's status rather than tee's.
+        if "$@" 2>&1 | tee "$log"; then
             return 0
         fi
         echo "  FAILED: $label"
         failed+=("$label")
+        # Most steps are `bash -c '<script>'`, and `printf %q` on that whole
+        # argv produces `bash -c cd\ tests\ \&\&\ cargo\ ...` — pasteable and
+        # unreadable. The inner script is what a human wants, and it is
+        # pasteable as-is from the repository root.
+        if [ "$1" = bash ] && [ "$2" = "-c" ]; then
+            failed_cmd+=("$3")
+        else
+            failed_cmd+=("$*")
+        fi
+        failed_log+=("$log")
         return 0
     }
 
@@ -1100,19 +1150,14 @@ check:
     # ABSENCE is not a failure; its verdict is.
     step_tool() {
         local label="$1" tool="$2"; shift 2
-        echo ""
-        echo "=== $label ==="
         if ! command -v "$tool" >/dev/null 2>&1; then
+            echo ""
+            echo "=== $label ==="
             echo "  SKIPPED: $tool is not installed (see \`just install-deps\`)"
             missing+=("$label ($tool)")
             return 0
         fi
-        if "$@"; then
-            return 0
-        fi
-        echo "  FAILED: $label"
-        failed+=("$label")
-        return 0
+        step "$label" "$@"
     }
 
     step "play_launch (clippy)" \
@@ -1159,18 +1204,43 @@ check:
     step "phase 78: a promise is not a period (issue #0056)" just check-sched-rates
 
     echo ""
+    echo "──────────────────────────────────────────────────────────────────────"
+    echo "check report"
+    echo "──────────────────────────────────────────────────────────────────────"
+
     if [ ${#missing[@]} -ne 0 ]; then
-        echo "Not run — tool not installed (${#missing[@]}):"
+        echo ""
+        echo "NOT RUN — tool not installed (${#missing[@]}):"
         printf '  - %s\n' "${missing[@]}"
         echo '  These are NOT counted as passing. `just install-deps` installs them;'
         echo '  ament_clang_format ships in the ros-<distro>-ament-clang-format package.'
-        echo ""
     fi
+
     if [ ${#failed[@]} -ne 0 ]; then
-        echo "FAILED (${#failed[@]}):"
-        printf '  - %s\n' "${failed[@]}"
+        echo ""
+        echo "FAILED (${#failed[@]} of the steps that ran):"
+        for i in "${!failed[@]}"; do
+            echo ""
+            echo "  [$((i + 1))/${#failed[@]}] ${failed[$i]}"
+            echo "       reproduce: ${failed_cmd[$i]}"
+            echo "       full log:  ${failed_log[$i]}"
+            echo ""
+            # The excerpt is the tail, because a linter prints its verdict last
+            # and a compiler prints the first error first — the tail holds the
+            # summary line either way ("N warnings emitted", "Diff in ... at
+            # line N"). The log is named above for the rest.
+            local_lines=$(denoise "${failed_log[$i]}" | wc -l)
+            denoise "${failed_log[$i]}" | tail -25 | sed 's/^/       │ /'
+            if [ "$local_lines" -gt 25 ]; then
+                echo "       └ $((local_lines - 25)) earlier line(s) in ${failed_log[$i]}"
+            fi
+        done
+        echo ""
+        echo "Every step ran; the list above is complete, not the first failure."
         exit 1
     fi
+
+    echo ""
     if [ ${#missing[@]} -ne 0 ]; then
         echo "All checks that could run passed (${#missing[@]} not run)."
     else
