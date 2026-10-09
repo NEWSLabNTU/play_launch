@@ -6,12 +6,16 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.14.0 - 2026-10-10
 
 Phase 85, the structural items (`docs/roadmap/phase-85-what-the-island-left-open.md`).
 ros-launch-manifest moves from v0.1.48 to v0.1.49 (an on-demand
 publisher, a timer's release jitter, the `rlm:` grammar header; its crates
-are now 0.1.8).
+are now 0.1.8). Upgrading from 0.13.1: a contract that declares
+`max_transport` on a guard edge now sees its routes grow by it (read
+"Visible" below before moving a CI pin); a reader of `--export-graph`
+must accept schema version 2; a `rlm:` header newer than this release is
+refused (exit 3).
 
 - **Visible:** a hazard's reaction route charges the guard edge's link
   (`max_transport` on the detecting subscriber, else its topic's), once,
@@ -31,6 +35,18 @@ are now 0.1.8).
   detectors, path triggers and safe states, hazards, functions and modes;
   a node path's `input` is its effective trigger's inputs (I6). A reader
   that required `version == 1` must accept 2.
+
+- A contract declaring an action with a client and no server anywhere is
+  an error again: the cross-scope `dangling-entity` loop covered topics
+  and services and dropped the per-manifest action check it replaced
+  (#0059); phase 78's gate now runs for real (#0060).
+
+### Run
+
+- `play_launch run` exits on SIGTERM or Ctrl-C instead of hanging until
+  SIGKILL: the first signal pulls every shutdown lever (`initiate_shutdown`,
+  as `up` does) and the actors are shut down after the loop (#0061). Under
+  systemd a run no longer waits out `TimeoutStopSec`.
 
 ### A crashed composable can be reloaded (`--composable-respawn`)
 
