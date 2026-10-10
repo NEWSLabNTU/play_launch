@@ -298,6 +298,7 @@ impl NodeAction {
             global_params: None,
             scope_id: None,
             start_delay_secs: None,
+            on_exit_shutdown: None,
         })
     }
 }

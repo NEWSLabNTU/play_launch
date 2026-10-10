@@ -215,6 +215,14 @@ impl NodeSpec {
 
     /// Capture this node as executed now.
     pub(crate) fn capture(&self, py: Python) -> PyResult<ExpandedNode> {
+        self.capture_with(py, None)
+    }
+
+    pub(crate) fn capture_with(
+        &self,
+        py: Python,
+        on_exit_shutdown: Option<bool>,
+    ) -> PyResult<ExpandedNode> {
         let n = self.expand(py)?;
         let mark = crate::api::visit::lens();
         play_launch_parser::bridge::capture_node(NodeCapture {
@@ -232,6 +240,7 @@ impl NodeSpec {
             global_params: Some(n.global_params.clone()),
             scope_id: None,
             start_delay_secs: None,
+            on_exit_shutdown,
         });
         crate::api::visit::stamp_delay(mark);
         Ok(n)
@@ -290,6 +299,8 @@ pub(crate) fn parse_parameter_item(item: &Bound<'_, PyAny>) -> PyResult<Vec<(Str
 #[derive(Clone)]
 pub struct Node {
     pub(crate) spec: NodeSpec,
+    /// `on_exit=` shuts the launch down (see [`on_exit_shuts_down`]).
+    on_exit_shutdown: Option<bool>,
     #[pyo3(get)]
     condition: Option<Py<PyAny>>,
     /// The fully-qualified name once executed (`Node.node_name`).
@@ -332,7 +343,9 @@ impl Node {
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> Self {
         let _ = exec_name;
+        let on_exit_shutdown = on_exit_kwarg_shuts_down(_kwargs);
         Self {
+            on_exit_shutdown,
             spec: NodeSpec {
                 package,
                 executable,
@@ -368,7 +381,7 @@ impl Node {
         if !crate::api::visit::claim_execution(this.as_any(), &label) {
             return Ok(());
         }
-        let n = spec.capture(py)?;
+        let n = spec.capture_with(py, this.borrow().on_exit_shutdown)?;
         this.borrow_mut().executed_fqn = n.name.as_ref().map(|name| {
             let ns = n.namespace.clone().unwrap_or_default();
             if ns.is_empty() || ns == "/" {
@@ -527,4 +540,39 @@ impl Node {
 /// A native Python scalar as parameter text.
 pub(crate) fn node_value(value: &Bound<'_, PyAny>) -> PyResult<String> {
     Node::extract_param_value(value)
+}
+
+/// Does `on_exit=` shut the launch down, as `ros2 launch` would?
+///
+/// `on_exit` takes one action or a list of them. Shutdown is
+/// `launch.actions.Shutdown`, or any `EmitEvent` whose event is
+/// `launch.events.Shutdown` -- SSv2's `ShutdownOnce` is one. Other handlers
+/// are not modelled (`Some(false)`), and no `on_exit` at all is `None`.
+pub(crate) fn on_exit_shuts_down(on_exit: &Bound<'_, PyAny>) -> bool {
+    let one = |a: &Bound<'_, PyAny>| {
+        a.is_instance_of::<crate::api::actions::Shutdown>()
+            || a.getattr("event")
+                .ok()
+                .filter(|e| !e.is_none())
+                .is_some_and(|e| e.hasattr("_play_launch_shutdown").unwrap_or(false))
+    };
+    if on_exit.is_instance_of::<pyo3::types::PyList>()
+        || on_exit.is_instance_of::<pyo3::types::PyTuple>()
+    {
+        on_exit
+            .try_iter()
+            .map(|it| it.flatten().any(|a| one(&a)))
+            .unwrap_or(false)
+    } else {
+        one(on_exit)
+    }
+}
+
+/// [`on_exit_shuts_down`] for a constructor's `**kwargs`.
+pub(crate) fn on_exit_kwarg_shuts_down(kwargs: Option<&Bound<'_, PyDict>>) -> Option<bool> {
+    let on_exit = kwargs?.get_item("on_exit").ok()??;
+    if on_exit.is_none() {
+        return None;
+    }
+    Some(on_exit_shuts_down(&on_exit))
 }

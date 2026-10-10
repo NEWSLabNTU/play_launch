@@ -121,6 +121,7 @@ impl UnsetEnvironmentVariable {
 #[derive(Clone)]
 pub struct ExecuteProcess {
     cmd: Py<PyAny>,
+    on_exit_shutdown: Option<bool>,
     name: Option<Py<PyAny>>,
     additional_env: Option<Py<PyAny>>,
     #[pyo3(get)]
@@ -140,6 +141,7 @@ impl ExecuteProcess {
     ) -> Self {
         Self {
             cmd,
+            on_exit_shutdown: crate::api::launch_ros::on_exit_kwarg_shuts_down(_kwargs),
             name,
             additional_env,
             condition,
@@ -184,6 +186,7 @@ impl ExecuteProcess {
             arguments: parts[1..].to_vec(),
             name,
             env_vars: env,
+            on_exit_shutdown: me.on_exit_shutdown,
             ..Default::default()
         });
         crate::api::visit::stamp_delay(mark);

@@ -106,11 +106,14 @@ pub fn register_modules(py: Python) -> PyResult<()> {
         c"
 class EmitEvent:
     def __init__(self, *, event=None, **kwargs):
-        pass
+        # Kept so a node's on_exit=EmitEvent(event=Shutdown()) -- or a
+        # subclass such as SSv2's ShutdownOnce -- reads as 'shut down'.
+        self.event = event
     def __repr__(self):
         return 'EmitEvent(...)'
 
 class _ShutdownEvent:
+    _play_launch_shutdown = True
     def __init__(self, *args, **kwargs):
         pass
     def __repr__(self):

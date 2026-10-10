@@ -101,6 +101,10 @@ path = "tests/contract_capture.rs"
 name = "start_delay"
 path = "tests/start_delay.rs"
 
+[[test]]
+name = "on_exit_shutdown"
+path = "tests/on_exit_shutdown.rs"
+
 [dependencies]
 libc = "0.2"
 # `testdata` exposes `fixture_dir()`. `manifest_check.rs` drives the CLI

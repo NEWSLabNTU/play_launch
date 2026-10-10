@@ -41,6 +41,11 @@ pub struct NodeCapture {
     /// timer body has been walked — see `traverser::delay`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_delay_secs: Option<f64>,
+    /// `on_exit=Shutdown()` (or an `EmitEvent` of `launch.events.Shutdown`,
+    /// e.g. SSv2's `ShutdownOnce`): this process is required, and its exit
+    /// ends the launch. `None` when the frontend did not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_exit_shutdown: Option<bool>,
 }
 
 /// Captured container data from Python or XML parsing
