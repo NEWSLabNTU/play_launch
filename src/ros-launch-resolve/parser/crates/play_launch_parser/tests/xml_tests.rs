@@ -1285,22 +1285,20 @@ fn test_xml_include_yaml_preset_then_use() {
 /// Test $(command ...) substitution with an unquoted command
 #[test]
 fn test_command_substitution_unquoted() {
+    // `$(command echo hello)` is TWO arguments to `command` — the command
+    // `echo` and `on_stderr='hello'` — which `launch` refuses ("expected
+    // 'on_stderr' to be one of ..."). A command with arguments is quoted.
     let xml = r#"<launch>
-    <let name="val" value="$(command echo hello)"/>
-    <node pkg="demo_nodes_cpp" exec="talker" name="$(var val)"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="$(command echo hello)"/>
 </launch>"#;
 
     let mut file = NamedTempFile::new().unwrap();
     file.write_all(xml.as_bytes()).unwrap();
     file.flush().unwrap();
 
-    let result = parse_launch_file(file.path(), HashMap::new());
-    assert!(result.is_ok(), "Should parse: {:?}", result.err());
-
-    let json = serde_json::to_value(result.unwrap()).unwrap();
-    let nodes = json["node"].as_array().unwrap();
-    assert_eq!(nodes.len(), 1);
-    assert_eq!(nodes[0]["name"].as_str().unwrap(), "hello");
+    let err = parse_launch_file(file.path(), HashMap::new())
+        .expect_err("an unquoted command with arguments is refused, as in launch");
+    assert!(err.to_string().contains("on_stderr"), "{err}");
 }
 
 /// Test $(command '...') with single-quoted command argument.
@@ -1309,7 +1307,7 @@ fn test_command_substitution_unquoted() {
 #[test]
 fn test_command_substitution_single_quoted() {
     let xml = r#"<launch>
-    <node pkg="demo_nodes_cpp" exec="talker" name="$(command 'echo hello_sq')"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="$(command 'echo -n hello_sq')"/>
 </launch>"#;
 
     let mut file = NamedTempFile::new().unwrap();
@@ -1330,7 +1328,7 @@ fn test_command_substitution_single_quoted() {
 fn test_command_substitution_double_quoted() {
     // XML attribute uses single-quote delimiters so double quotes are literal inside
     let xml = r#"<launch>
-    <node pkg="demo_nodes_cpp" exec="talker" name='$(command "echo hello_dq")'/>
+    <node pkg="demo_nodes_cpp" exec="talker" name='$(command "echo -n hello_dq")'/>
 </launch>"#;
 
     let mut file = NamedTempFile::new().unwrap();
@@ -1350,7 +1348,7 @@ fn test_command_substitution_double_quoted() {
 #[test]
 fn test_command_substitution_quoted_with_error_mode() {
     let xml = r#"<launch>
-    <node pkg="demo_nodes_cpp" exec="talker" name="$(command 'echo warn_test' 'warn')"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="$(command 'echo -n warn_test' 'warn')"/>
 </launch>"#;
 
     let mut file = NamedTempFile::new().unwrap();
@@ -1369,7 +1367,7 @@ fn test_command_substitution_quoted_with_error_mode() {
 #[test]
 fn test_command_substitution_with_args() {
     let xml = r#"<launch>
-    <node pkg="demo_nodes_cpp" exec="talker" name="$(command echo -n hello_args)"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="$(command 'echo -n hello_args')"/>
 </launch>"#;
 
     let mut file = NamedTempFile::new().unwrap();
@@ -1404,7 +1402,7 @@ fn test_command_substitution_failure() {
 #[test]
 fn test_command_substitution_concatenated() {
     let xml = r#"<launch>
-    <node pkg="demo_nodes_cpp" exec="talker" name="prefix_$(command echo middle)_suffix"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="prefix_$(command 'echo -n middle')_suffix"/>
 </launch>"#;
 
     let mut file = NamedTempFile::new().unwrap();
@@ -1424,7 +1422,7 @@ fn test_command_substitution_concatenated() {
 #[test]
 fn test_command_substitution_in_let_and_node() {
     let xml = r#"<launch>
-    <let name="config" value="$(command echo /opt/config)"/>
+    <let name="config" value="$(command 'echo -n /opt/config')"/>
     <node pkg="demo_nodes_cpp" exec="talker" name="$(var config)"/>
 </launch>"#;
 

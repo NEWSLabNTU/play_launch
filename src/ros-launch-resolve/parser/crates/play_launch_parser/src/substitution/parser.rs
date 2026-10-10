@@ -53,326 +53,405 @@ pub fn parse_substitutions(input: &str) -> Result<Vec<Substitution>> {
     })
 }
 
-/// Internal recursive parser that handles nested substitutions
+/// The substitution grammar of `launch`'s frontends
+/// (`launch/frontend/grammar.lark`, Humble), parsed by hand.
+///
+/// ```text
+/// template   := (substitution | text)*         -- top level; text runs to the next `$(`
+/// subst      := "$(" IDENT (" " arguments)? ")"
+/// arguments  := value (" " value)*
+/// value      := (subst | rstring)+  |  'quoted template'  |  "quoted template"
+/// quoted(q)  := q (subst_q | text up to q)* q  -- inside, nested substitutions'
+///                                                 arguments may not contain q
+/// ```
+///
+/// `\x` is `x` in every piece of text, at the top level as well
+/// (`replace_escaped_characters`), so `\$(var a)` is the literal `$(var a)`.
+/// A quoted argument loses its quotes HERE, at parse time: `$(eval "'a' +
+/// '$(var b)'")` hands Python `'a' + '<b>'` whatever `<b>` contains. The parser
+/// this replaces split arguments per substitution by hand and left quotes for
+/// `$(eval)` to guess at after substituting, so a value containing a quote
+/// (Autoware's `launch_module_list_end` is `""]`) broke the expression.
 fn parse_substitutions_recursive(input: &str) -> Result<Vec<Substitution>> {
-    let mut result = Vec::new();
-    let mut chars = input.char_indices().peekable();
-    let mut last_pos = 0;
-
-    while let Some((i, ch)) = chars.next() {
-        if ch == '$'
-            && let Some((_, '(')) = chars.peek()
-        {
-            // Found start of substitution
-            // Add any text before this substitution
-            if i > last_pos {
-                let text = &input[last_pos..i];
-                if !text.is_empty() {
-                    result.push(Substitution::Text(text.to_string()));
-                }
-            }
-
-            // Skip the '('
-            chars.next();
-
-            // Find matching ')' by counting parentheses
-            let sub_start = i + 2; // Position after "$("
-            let mut depth = 1;
-            let mut sub_end = sub_start;
-
-            for (pos, c) in chars.by_ref() {
-                if c == '(' {
-                    depth += 1;
-                } else if c == ')' {
-                    depth -= 1;
-                    if depth == 0 {
-                        sub_end = pos;
-                        break;
-                    }
-                }
-            }
-
-            if depth != 0 {
-                return Err(ParseError::InvalidSubstitution(
-                    "Unmatched parentheses in substitution".to_string(),
-                ));
-            }
-
-            // Extract the content inside $()
-            let content = &input[sub_start..sub_end];
-
-            // Parse the substitution (which may contain nested substitutions)
-            let substitution = parse_substitution_content(content)?;
-            result.push(substitution);
-
-            last_pos = sub_end + 1;
-        }
+    if input.is_empty() {
+        return Ok(vec![Substitution::Text(String::new())]);
     }
-
-    // Add any remaining text
-    if last_pos < input.len() {
-        let text = &input[last_pos..];
-        if !text.is_empty() {
-            result.push(Substitution::Text(text.to_string()));
-        }
-    }
-
-    // If no substitutions found, treat entire input as text
+    let chars: Vec<char> = input.chars().collect();
+    let mut p = Parser {
+        chars: &chars,
+        pos: 0,
+    };
+    let result = p.template()?;
     if result.is_empty() {
-        result.push(Substitution::Text(input.to_string()));
+        return Ok(vec![Substitution::Text(String::new())]);
     }
-
     Ok(result)
 }
 
-/// Extract the first quoted argument from a string like "'cmd' 'warn'"
-/// Returns the content of the first quoted string without the quotes,
-/// matching ROS 2's Lark grammar which strips quotes at the argument level.
-/// If there are TWO quoted strings, returns only the first one (unquoted).
-/// If there is only ONE quoted string, returns its content (unquoted).
-/// If unquoted text, returns everything as-is.
-fn extract_first_quoted_arg(input: &str) -> &str {
-    let trimmed = input.trim();
-
-    // Check for single or double quotes at the start
-    if let Some(quote) = trimmed.chars().next()
-        && (quote == '\'' || quote == '"')
-    {
-        // Find the matching closing quote
-        if let Some(end_idx) = trimmed[1..].find(quote) {
-            let first_quoted_content = &trimmed[1..end_idx + 1];
-
-            // Check if there's a second quoted string after this one
-            let after_first = &trimmed[end_idx + 2..].trim_start();
-            if !after_first.is_empty()
-                && (after_first.starts_with('\'') || after_first.starts_with('"'))
-            {
-                // There's a second quoted argument, so only return the first
-                return first_quoted_content;
-            }
-            // Single quoted arg — return content without quotes
-            return first_quoted_content;
-        }
-    }
-
-    // Return the full string (handles unquoted args)
-    trimmed
+struct Parser<'a> {
+    chars: &'a [char],
+    pos: usize,
 }
 
-/// Extract the second quoted argument from a string like "'cmd' 'warn'"
-/// Returns the content of the second quoted string without the quotes.
-/// Returns None if there is no second argument.
-fn extract_second_quoted_arg(input: &str) -> Option<&str> {
-    let trimmed = input.trim();
-
-    // Check for single or double quotes at the start
-    if let Some(quote) = trimmed.chars().next()
-        && (quote == '\'' || quote == '"')
-    {
-        // Find the matching closing quote for the first arg
-        if let Some(end_idx) = trimmed[1..].find(quote) {
-            // Look for the second quoted string after the first
-            let after_first = trimmed[end_idx + 2..].trim_start();
-
-            if let Some(quote2) = after_first.chars().next()
-                && (quote2 == '\'' || quote2 == '"')
-            {
-                // Find the matching closing quote for the second arg
-                if let Some(end_idx2) = after_first[1..].find(quote2) {
-                    return Some(&after_first[1..end_idx2 + 1]);
-                }
-            }
-        }
-    }
-
-    None
+/// Where a piece of text ends.
+#[derive(Clone, Copy, PartialEq)]
+enum Ctx {
+    /// The top-level template: only `$(` ends text.
+    Top,
+    /// Inside a quoted template delimited by this quote.
+    Quoted(char),
 }
 
-/// Parse the content inside a substitution $(...)
-/// This handles recursion: "var $(env X)" should parse inner $(env X) first
-fn parse_substitution_content(content: &str) -> Result<Substitution> {
-    // Find the substitution type (first word)
-    let trimmed = content.trim();
-    let parts: Vec<&str> = trimmed.splitn(2, ' ').collect();
+fn err(msg: impl Into<String>) -> ParseError {
+    ParseError::InvalidSubstitution(msg.into())
+}
 
-    if parts.is_empty() {
-        return Err(ParseError::InvalidSubstitution(
-            "Empty substitution".to_string(),
-        ));
+/// Append text, merging with a preceding text piece.
+fn push_text(out: &mut Vec<Substitution>, text: String) {
+    if text.is_empty() {
+        return;
     }
-
-    let sub_type = parts[0];
-    let args = if parts.len() > 1 {
-        Some(parts[1])
+    if let Some(Substitution::Text(prev)) = out.last_mut() {
+        prev.push_str(&text);
     } else {
-        None
-    };
-
-    parse_single_substitution(sub_type, args)
+        out.push(Substitution::Text(text));
+    }
 }
 
-/// Split arguments respecting nested substitutions
-/// For "env X default" or "optenv X default", split into (name, default)
-/// But if X contains nested substitutions with spaces, don't split inside them
-fn split_env_args(args: &str) -> (&str, Option<&str>) {
-    let args = args.trim();
+impl Parser<'_> {
+    fn peek(&self) -> Option<char> {
+        self.chars.get(self.pos).copied()
+    }
 
-    // If args starts with $(, we need to find the matching ) to know where the name ends
-    if args.starts_with("$(") {
-        let mut depth = 0;
-        let mut name_end = args.len();
+    fn peek_at(&self, n: usize) -> Option<char> {
+        self.chars.get(self.pos + n).copied()
+    }
 
-        for (i, ch) in args.char_indices() {
-            if ch == '(' {
-                depth += 1;
-            } else if ch == ')' {
-                depth -= 1;
-                if depth == 0 {
-                    // Found the end of the nested substitution
-                    // Check if there's more content after this
-                    name_end = i + 1;
-                    // Skip any non-space chars that are part of the name (like "_suffix")
-                    while name_end < args.len() {
-                        let ch = args.chars().nth(name_end).unwrap();
-                        if ch.is_whitespace() {
-                            break;
-                        }
-                        name_end += 1;
+    fn at_subst(&self) -> bool {
+        self.peek() == Some('$') && self.peek_at(1) == Some('(')
+    }
+
+    /// The top-level template.
+    fn template(&mut self) -> Result<Vec<Substitution>> {
+        let mut out = Vec::new();
+        while self.pos < self.chars.len() {
+            if self.at_subst() {
+                let s = self.substitution(None)?;
+                out.push(s);
+            } else {
+                let t = self.text(Ctx::Top);
+                push_text(&mut out, t);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Text up to the next substitution (or, quoted, the closing quote),
+    /// with `\x` read as `x`.
+    fn text(&mut self, ctx: Ctx) -> String {
+        let mut out = String::new();
+        while let Some(c) = self.peek() {
+            if self.at_subst() {
+                break;
+            }
+            if let Ctx::Quoted(q) = ctx
+                && c == q
+            {
+                break;
+            }
+            if c == '\\' {
+                match self.peek_at(1) {
+                    Some(next) => {
+                        out.push(next);
+                        self.pos += 2;
                     }
+                    None => {
+                        out.push('\\');
+                        self.pos += 1;
+                    }
+                }
+                continue;
+            }
+            out.push(c);
+            self.pos += 1;
+        }
+        out
+    }
+
+    /// `$(IDENT args...)`. `quote` is the quote of the template this sits in,
+    /// which its unquoted arguments may not contain.
+    fn substitution(&mut self, quote: Option<char>) -> Result<Substitution> {
+        let start = self.pos;
+        self.pos += 2; // "$("
+        let ident_start = self.pos;
+        while let Some(c) = self.peek() {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                self.pos += 1;
+            } else {
+                break;
+            }
+        }
+        let ident: String = self.chars[ident_start..self.pos].iter().collect();
+        if ident.is_empty() {
+            return Err(err(format!(
+                "expected a substitution name after `$(` at position {start}"
+            )));
+        }
+        let mut args = Vec::new();
+        loop {
+            match self.peek() {
+                Some(')') => {
+                    self.pos += 1;
                     break;
                 }
+                Some(' ') => {
+                    while self.peek() == Some(' ') {
+                        self.pos += 1;
+                    }
+                    if self.peek() == Some(')') {
+                        continue;
+                    }
+                    args.push(self.value(quote)?);
+                }
+                Some(c) => {
+                    return Err(err(format!(
+                        "unexpected '{c}' in `$({ident} ...)`: arguments are separated by spaces"
+                    )));
+                }
+                None => {
+                    return Err(err(format!(
+                        "Unmatched parentheses in substitution `$({ident} ...`"
+                    )));
+                }
             }
         }
+        build(&ident, args)
+    }
 
-        // Everything up to name_end is the name
-        let name = args[..name_end].trim();
-        // Everything after (if any) is the default
-        let default = if name_end < args.len() {
-            Some(args[name_end..].trim())
-        } else {
-            None
-        };
+    /// One argument.
+    fn value(&mut self, quote: Option<char>) -> Result<Vec<Substitution>> {
+        if quote.is_none()
+            && let Some(q @ ('\'' | '"')) = self.peek()
+        {
+            return self.quoted(q);
+        }
+        let mut out = Vec::new();
+        loop {
+            match self.peek() {
+                None | Some(' ') | Some(')') => break,
+                Some(c) if Some(c) == quote => {
+                    return Err(err(format!(
+                        "a substitution argument inside a {c}-quoted string cannot contain {c}"
+                    )));
+                }
+                Some('(') => {
+                    return Err(err(
+                        "unescaped '(' in a substitution argument (write \\( or quote it)",
+                    ));
+                }
+                Some('\'' | '"') if quote.is_none() => {
+                    return Err(err(
+                        "a quote in the middle of a substitution argument (quote the whole argument)",
+                    ));
+                }
+                _ => {}
+            }
+            if self.at_subst() {
+                let s = self.substitution(quote)?;
+                out.push(s);
+                continue;
+            }
+            // An rstring: up to a space, a paren, a quote or a substitution.
+            let mut t = String::new();
+            while let Some(c) = self.peek() {
+                if self.at_subst() || c == ' ' || c == '(' || c == ')' {
+                    break;
+                }
+                if (c == '\'' || c == '"') && (quote.is_none() || Some(c) == quote) {
+                    break;
+                }
+                if c == '\\' {
+                    match self.peek_at(1) {
+                        Some(next) => {
+                            t.push(next);
+                            self.pos += 2;
+                        }
+                        None => {
+                            t.push('\\');
+                            self.pos += 1;
+                        }
+                    }
+                    continue;
+                }
+                t.push(c);
+                self.pos += 1;
+            }
+            push_text(&mut out, t);
+        }
+        if out.is_empty() {
+            return Err(err("empty substitution argument"));
+        }
+        Ok(out)
+    }
 
-        (name, default)
-    } else {
-        // No nested substitution, just split on first space
-        let parts: Vec<&str> = args.splitn(2, ' ').collect();
-        let name = parts[0].trim();
-        let default = parts.get(1).map(|s| s.trim());
-        (name, default)
+    /// A quoted template argument, quotes consumed.
+    fn quoted(&mut self, q: char) -> Result<Vec<Substitution>> {
+        self.pos += 1; // opening quote
+        let mut out = Vec::new();
+        loop {
+            match self.peek() {
+                None => {
+                    return Err(err(format!(
+                        "unterminated {q}-quoted substitution argument"
+                    )));
+                }
+                Some(c) if c == q => {
+                    self.pos += 1;
+                    break;
+                }
+                _ => {}
+            }
+            if self.at_subst() {
+                let s = self.substitution(Some(q))?;
+                out.push(s);
+            } else {
+                let t = self.text(Ctx::Quoted(q));
+                push_text(&mut out, t);
+            }
+        }
+        if out.is_empty() {
+            out.push(Substitution::Text(String::new()));
+        }
+        Ok(out)
     }
 }
 
-fn parse_single_substitution(sub_type: &str, args: Option<&str>) -> Result<Substitution> {
-    match sub_type {
+/// Build a substitution from its name and arguments, with `launch`'s arity
+/// rules for each.
+fn build(ident: &str, mut args: Vec<Vec<Substitution>>) -> Result<Substitution> {
+    let n = args.len();
+    let arity = |lo: usize, hi: usize| -> Result<()> {
+        if n < lo || n > hi {
+            Err(err(if lo == hi {
+                format!("{ident} substitution expects {lo} argument(s), got {n}")
+            } else {
+                format!("{ident} substitution expects {lo} to {hi} arguments, got {n}")
+            }))
+        } else {
+            Ok(())
+        }
+    };
+    let mut take = || args.remove(0);
+    Ok(match ident {
         "var" => {
-            let args_str = args
-                .ok_or_else(|| {
-                    ParseError::InvalidSubstitution("var requires an argument".to_string())
-                })?
-                .trim();
-            // Parse the argument which may contain nested substitutions
-            let name_subs = parse_substitutions_recursive(args_str)?;
-            Ok(Substitution::LaunchConfiguration(name_subs))
-        }
-        "env" => {
-            let args_str = args.ok_or_else(|| {
-                ParseError::InvalidSubstitution("env requires an argument".to_string())
-            })?;
-            let (name_str, default_str) = split_env_args(args_str);
-            let name_subs = parse_substitutions_recursive(name_str)?;
-            let default = if let Some(def) = default_str {
-                Some(parse_substitutions_recursive(def)?)
-            } else {
-                None
-            };
-            Ok(Substitution::EnvironmentVariable {
-                name: name_subs,
-                default,
-            })
-        }
-        "optenv" => {
-            let args_str = args.ok_or_else(|| {
-                ParseError::InvalidSubstitution("optenv requires an argument".to_string())
-            })?;
-            let (name_str, default_str) = split_env_args(args_str);
-            let name_subs = parse_substitutions_recursive(name_str)?;
-            let default = if let Some(def) = default_str {
-                Some(parse_substitutions_recursive(def)?)
-            } else {
-                None
-            };
-            Ok(Substitution::OptionalEnvironmentVariable {
-                name: name_subs,
-                default,
-            })
-        }
-        "command" => {
-            let cmd_str = args.ok_or_else(|| {
-                ParseError::InvalidSubstitution("command requires an argument".to_string())
-            })?;
-
-            // ROS 2 command substitution supports two arguments:
-            // $(command 'cmd' 'error_mode')
-            // where error_mode is 'warn', 'ignore', or 'strict' (default: strict)
-            let first_arg = extract_first_quoted_arg(cmd_str);
-            let cmd_subs = parse_substitutions_recursive(first_arg)?;
-
-            // Extract optional second argument for error mode
-            let error_mode = if let Some(mode_str) = extract_second_quoted_arg(cmd_str) {
-                match mode_str {
-                    "warn" => CommandErrorMode::Warn,
-                    "ignore" => CommandErrorMode::Ignore,
-                    "strict" => CommandErrorMode::Strict,
-                    _ => CommandErrorMode::Strict, // Default to strict for unknown modes
+            arity(1, 2)?;
+            let name = take();
+            if n == 2 {
+                Substitution::Call {
+                    name: "var".into(),
+                    args: vec![name, take()],
                 }
             } else {
-                CommandErrorMode::Strict // Default when no second argument
+                Substitution::LaunchConfiguration(name)
+            }
+        }
+        "env" | "optenv" => {
+            arity(1, 2)?;
+            let name = take();
+            let default = (n == 2).then(&mut take);
+            if ident == "env" {
+                Substitution::EnvironmentVariable { name, default }
+            } else {
+                Substitution::OptionalEnvironmentVariable { name, default }
+            }
+        }
+        "command" => {
+            arity(1, 2)?;
+            let cmd = take();
+            let error_mode = if n == 2 {
+                match take().as_slice() {
+                    [Substitution::Text(t)] => match t.as_str() {
+                        "fail" | "strict" => CommandErrorMode::Strict,
+                        "warn" => CommandErrorMode::Warn,
+                        "ignore" => CommandErrorMode::Ignore,
+                        "capture" => CommandErrorMode::Capture,
+                        other => {
+                            return Err(err(format!(
+                                "expected 'on_stderr' to be one of: 'fail', 'ignore', 'warn' or \
+                                 'capture', got '{other}'"
+                            )));
+                        }
+                    },
+                    _ => {
+                        return Err(err(
+                            "the command substitution's on_stderr must be literal text",
+                        ));
+                    }
+                }
+            } else {
+                CommandErrorMode::Strict
             };
-
-            Ok(Substitution::Command {
-                cmd: cmd_subs,
-                error_mode,
-            })
+            Substitution::Command { cmd, error_mode }
         }
         "find-pkg-share" => {
-            let package_str = args
-                .ok_or_else(|| {
-                    ParseError::InvalidSubstitution(
-                        "find-pkg-share requires an argument".to_string(),
-                    )
-                })?
-                .trim();
-            let package_subs = parse_substitutions_recursive(package_str)?;
-            Ok(Substitution::FindPackageShare(package_subs))
+            arity(1, 1)?;
+            Substitution::FindPackageShare(take())
         }
-        "dirname" => Ok(Substitution::Dirname),
-        "filename" => Ok(Substitution::Filename),
+        "dirname" => {
+            arity(0, 0)?;
+            Substitution::Dirname
+        }
+        "filename" => {
+            arity(0, 0)?;
+            Substitution::Filename
+        }
         "anon" => {
-            let name_str = args
-                .ok_or_else(|| {
-                    ParseError::InvalidSubstitution("anon requires a name argument".to_string())
-                })?
-                .trim();
-            let name_subs = parse_substitutions_recursive(name_str)?;
-            Ok(Substitution::Anon(name_subs))
+            arity(1, 1)?;
+            Substitution::Anon(take())
         }
         "eval" => {
-            let expr_str = args
-                .ok_or_else(|| {
-                    ParseError::InvalidSubstitution(
-                        "eval requires an expression argument".to_string(),
-                    )
-                })?
-                .trim();
-            let expr_subs = parse_substitutions_recursive(expr_str)?;
-            Ok(Substitution::Eval(expr_subs))
+            arity(1, 1)?;
+            Substitution::Eval(take())
         }
-        _ => Err(ParseError::InvalidSubstitution(format!(
-            "Unknown substitution type: {}",
-            sub_type
-        ))),
-    }
+        "find-pkg-prefix" | "find-exec" | "file-content" | "not" | "param" => {
+            arity(1, 1)?;
+            Substitution::Call {
+                name: ident.into(),
+                args,
+            }
+        }
+        "exec-in-pkg" | "equals" | "not-equals" | "and" | "or" => {
+            arity(2, 2)?;
+            Substitution::Call {
+                name: ident.into(),
+                args,
+            }
+        }
+        "if" => {
+            arity(2, 3)?;
+            Substitution::Call {
+                name: ident.into(),
+                args,
+            }
+        }
+        "any" | "all" => Substitution::Call {
+            name: ident.into(),
+            args,
+        },
+        "launch_log_dir" | "log_dir" => {
+            arity(0, 0)?;
+            Substitution::Call {
+                name: "launch_log_dir".into(),
+                args,
+            }
+        }
+        _ => {
+            return Err(ParseError::InvalidSubstitution(format!(
+                "Unknown substitution type: {}",
+                ident
+            )));
+        }
+    })
 }
 
 #[cfg(test)]
@@ -542,7 +621,7 @@ mod tests {
 
     #[test]
     fn test_parse_command() {
-        let subs = parse_substitutions("$(command echo hello)").unwrap();
+        let subs = parse_substitutions("$(command 'echo hello')").unwrap();
         assert_eq!(subs.len(), 1);
         assert_eq!(
             subs[0],
@@ -555,7 +634,7 @@ mod tests {
 
     #[test]
     fn test_parse_command_with_args() {
-        let subs = parse_substitutions("$(command ls -la)").unwrap();
+        let subs = parse_substitutions("$(command 'ls -la')").unwrap();
         assert_eq!(subs.len(), 1);
         assert_eq!(
             subs[0],
@@ -568,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_parse_command_in_string() {
-        let subs = parse_substitutions("Version: $(command cat /etc/os-release)").unwrap();
+        let subs = parse_substitutions("Version: $(command 'cat /etc/os-release')").unwrap();
         assert_eq!(subs.len(), 2);
         assert_eq!(subs[0], Substitution::Text("Version: ".to_string()));
         assert_eq!(
@@ -582,7 +661,7 @@ mod tests {
 
     #[test]
     fn test_parse_command_with_pipe() {
-        let subs = parse_substitutions("$(command echo test | tr a-z A-Z)").unwrap();
+        let subs = parse_substitutions("$(command 'echo test | tr a-z A-Z')").unwrap();
         assert_eq!(subs.len(), 1);
         assert_eq!(
             subs[0],
@@ -666,7 +745,7 @@ mod tests {
 
     #[test]
     fn test_parse_nested_var_in_command() {
-        let subs = parse_substitutions("$(command echo $(var value))").unwrap();
+        let subs = parse_substitutions("$(command 'echo $(var value)')").unwrap();
         assert_eq!(subs.len(), 1);
 
         if let Substitution::Command { cmd, error_mode } = &subs[0] {
@@ -801,14 +880,14 @@ mod tests {
     // Eval tests
     #[test]
     fn test_parse_eval_simple() {
-        let subs = parse_substitutions("$(eval 1 + 2)").unwrap();
+        let subs = parse_substitutions("$(eval '1 + 2')").unwrap();
         assert_eq!(subs.len(), 1);
         assert!(matches!(subs[0], Substitution::Eval(_)));
     }
 
     #[test]
     fn test_parse_eval_with_var() {
-        let subs = parse_substitutions("$(eval $(var x) + 5)").unwrap();
+        let subs = parse_substitutions("$(eval '$(var x) + 5')").unwrap();
         assert_eq!(subs.len(), 1);
 
         if let Substitution::Eval(expr) = &subs[0] {
@@ -821,7 +900,7 @@ mod tests {
 
     #[test]
     fn test_parse_eval_in_string() {
-        let subs = parse_substitutions("value is $(eval 10 * 5)").unwrap();
+        let subs = parse_substitutions("value is $(eval '10 * 5')").unwrap();
         assert_eq!(subs.len(), 2);
         assert_eq!(subs[0], Substitution::Text("value is ".to_string()));
         assert!(matches!(subs[1], Substitution::Eval(_)));
@@ -829,7 +908,7 @@ mod tests {
 
     #[test]
     fn test_parse_eval_complex() {
-        let subs = parse_substitutions("$(eval (3 + 4) * 2)").unwrap();
+        let subs = parse_substitutions("$(eval '(3 + 4) * 2')").unwrap();
         assert_eq!(subs.len(), 1);
         assert!(matches!(subs[0], Substitution::Eval(_)));
     }

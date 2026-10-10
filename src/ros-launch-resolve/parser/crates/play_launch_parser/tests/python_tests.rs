@@ -2948,7 +2948,7 @@ def generate_launch_description():
         Node(
             package='demo_nodes_cpp',
             executable='talker',
-            name=Command(['echo py_cmd_result']),
+            name=Command(['echo -n py_cmd_result']),
         ),
     ])
 "#;

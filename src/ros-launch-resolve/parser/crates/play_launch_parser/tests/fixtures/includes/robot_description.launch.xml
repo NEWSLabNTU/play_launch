@@ -3,9 +3,10 @@
   <arg name="robot_name" default="default_robot" />
   <arg name="use_sim_time" default="false" />
 
-  <!-- Let variables for paths -->
-  <let name="urdf_path" value="$(find-pkg-share robot_description)/urdf/robot.urdf" />
-  <let name="config_path" value="$(find-pkg-share robot_description)/config" />
+  <!-- Let variables for paths. A package that is not installed would be an
+       error here, as in `ros2 launch`, so these are relative to this file. -->
+  <let name="urdf_path" value="$(dirname)/../urdf/robot.urdf" />
+  <let name="config_path" value="$(dirname)/../config" />
 
   <!-- Robot state publisher -->
   <node pkg="robot_state_publisher" exec="robot_state_publisher" name="robot_state_publisher" namespace="/$(var robot_name)">

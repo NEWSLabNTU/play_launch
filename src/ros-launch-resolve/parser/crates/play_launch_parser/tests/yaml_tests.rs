@@ -1862,7 +1862,7 @@ fn test_yaml_command_substitution() {
         r#"launch:
 - let:
     name: cmd_val
-    value: "$(command echo yaml_cmd_result)"
+    value: "$(command 'echo -n yaml_cmd_result')"
 - node:
     pkg: demo_nodes_cpp
     exec: talker
@@ -1887,7 +1887,7 @@ fn test_yaml_command_substitution_multi_args() {
 - node:
     pkg: demo_nodes_cpp
     exec: talker
-    name: "$(command printf '%s_%s' foo bar)"
+    name: "$(command 'printf %s_%s foo bar')"
 "#,
     );
 
@@ -1907,7 +1907,7 @@ fn test_yaml_command_substitution_concat() {
 - node:
     pkg: demo_nodes_cpp
     exec: talker
-    name: "pre_$(command echo mid)_post"
+    name: "pre_$(command 'echo -n mid')_post"
 "#,
     );
 

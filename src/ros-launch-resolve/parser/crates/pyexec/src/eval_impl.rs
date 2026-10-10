@@ -69,6 +69,11 @@ pub(crate) fn eval_expr_pyo3(
             "hex",
             "oct",
             "bin",
+            "sum",
+            "any",
+            "all",
+            "pow",
+            "divmod",
         ] {
             if let Ok(builtin) = py.import("builtins").and_then(|b| b.getattr(name)) {
                 let _ = restricted_builtins.set_item(name, builtin);
@@ -76,13 +81,21 @@ pub(crate) fn eval_expr_pyo3(
         }
         let globals = PyDict::new(py);
         let _ = globals.set_item("__builtins__", restricted_builtins);
+        // `PythonExpression.perform` evaluates with `math.__dict__` as the
+        // locals, so `pi`, `sqrt(...)` and the rest are in scope.
+        let locals = py
+            .import("math")
+            .and_then(|m| m.dict().copy())
+            .unwrap_or_else(|_| PyDict::new(py));
 
-        let result = py.eval(&expr_cstr, Some(&globals), None).map_err(|e| {
-            play_launch_parser::error::SubstitutionError::InvalidSubstitution(format!(
-                "Failed to evaluate expression '{}': {}",
-                expr, e
-            ))
-        })?;
+        let result = py
+            .eval(&expr_cstr, Some(&globals), Some(&locals))
+            .map_err(|e| {
+                play_launch_parser::error::SubstitutionError::InvalidSubstitution(format!(
+                    "Failed to evaluate expression '{}': {}",
+                    expr, e
+                ))
+            })?;
 
         // Convert Python result to string
         let s = result.str().map_err(|e| {
@@ -98,13 +111,9 @@ pub(crate) fn eval_expr_pyo3(
             ))
         })?;
 
-        // Normalize Python booleans to lowercase for ROS compatibility
-        let normalized = match value {
-            "True" => "true".to_string(),
-            "False" => "false".to_string(),
-            other => other.to_string(),
-        };
-
-        Ok(normalized)
+        // `str(eval(...))`, verbatim: `True`, not `true`. Lower-casing it
+        // changed what a later `$(eval '$(var x)' == 'True')` compared, and
+        // what a name or a text value built from it read.
+        Ok(value.to_string())
     })
 }

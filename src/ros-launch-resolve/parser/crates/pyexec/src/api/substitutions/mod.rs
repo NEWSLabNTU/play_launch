@@ -107,38 +107,48 @@ impl PythonExpression {
 #[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct Command {
-    command: Vec<Py<PyAny>>,
+    command: Py<PyAny>,
+    on_stderr: Option<Py<PyAny>>,
 }
 
 #[pymethods]
 impl Command {
     #[new]
-    fn new(command: Vec<Py<PyAny>>) -> Self {
-        Self { command }
+    #[pyo3(signature = (command, on_stderr=None))]
+    fn new(command: Py<PyAny>, on_stderr: Option<Py<PyAny>>) -> Self {
+        Self { command, on_stderr }
     }
 
-    fn __str__(&self, py: Python) -> PyResult<String> {
-        // Convert command parts to strings
-        let cmd_parts: Result<Vec<String>, _> = self
-            .command
-            .iter()
-            .map(|obj| {
-                if let Ok(s) = obj.extract::<String>(py) {
-                    Ok(s)
-                } else if let Ok(str_result) = obj.call_method0(py, "__str__") {
-                    str_result.extract::<String>(py)
-                } else {
-                    Ok(obj.to_string())
+    /// `Command.perform`: the command, performed and CONCATENATED (a list is
+    /// one string, as everywhere in `launch`), split with `shlex` and run;
+    /// stdout as is.
+    fn perform(&self, py: Python, _context: &Bound<'_, PyAny>) -> PyResult<String> {
+        use play_launch_parser::substitution::types::{CommandErrorMode, Substitution};
+        let cmd = sub_utils::pyobject_to_string(py, &self.command)?;
+        let error_mode = match &self.on_stderr {
+            Some(o) => match sub_utils::pyobject_to_string(py, o)?.as_str() {
+                "fail" => CommandErrorMode::Strict,
+                "warn" => CommandErrorMode::Warn,
+                "ignore" => CommandErrorMode::Ignore,
+                "capture" => CommandErrorMode::Capture,
+                other => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "expected 'on_stderr' to be one of: 'fail', 'ignore', 'warn' or \
+                         'capture', got '{other}'"
+                    )));
                 }
-            })
-            .collect();
-
-        let parts = cmd_parts?;
-        // Return as substitution format
-        Ok(format!("$(command {})", parts.join(" ")))
+            },
+            None => CommandErrorMode::Strict,
+        };
+        let sub = Substitution::Command {
+            cmd: vec![Substitution::Text(cmd)],
+            error_mode,
+        };
+        play_launch_parser::bridge::with_launch_context(|ctx| sub.resolve(ctx))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
     fn __repr__(&self) -> String {
-        format!("Command({} parts)", self.command.len())
+        "Command(...)".to_string()
     }
 }

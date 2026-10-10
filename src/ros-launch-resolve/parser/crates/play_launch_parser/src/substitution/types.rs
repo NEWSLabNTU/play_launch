@@ -1,6 +1,5 @@
 //! Substitution types
 
-use super::eval::evaluate_expression;
 use crate::{error::SubstitutionError, substitution::context::LaunchContext};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
@@ -29,8 +28,10 @@ pub enum CommandErrorMode {
     Strict,
     /// Log stderr as warning but continue (return stdout)
     Warn,
-    /// Ignore all errors (return stdout regardless)
+    /// Ignore stderr output
     Ignore,
+    /// Return stderr together with stdout
+    Capture,
 }
 
 /// Substitution enum representing different types of substitutions
@@ -74,6 +75,14 @@ pub enum Substitution {
     Anon(Vec<Substitution>),
     /// $(eval expr) - Evaluate simple expression
     Eval(Vec<Substitution>),
+    /// Every other substitution `launch`'s frontends expose, by name, with
+    /// its arguments: `var` with a default, `find-pkg-prefix`, `find-exec`,
+    /// `exec-in-pkg`, `file-content`, `if`, `equals`, `not-equals`, `not`,
+    /// `and`, `or`, `any`, `all`, `param`, `launch_log_dir`.
+    Call {
+        name: String,
+        args: Vec<Vec<Substitution>>,
+    },
 }
 
 impl Substitution {
@@ -145,23 +154,30 @@ impl Substitution {
                     )
                 }),
             Substitution::Anon(name_subs) => {
-                // Generate a unique anonymous name
-                // Format: name_<timestamp>_<random>
+                // `AnonName`: `<name>_<host>_<pid>_<random>` with `.`, `-` and
+                // `:` made `_`, computed ONCE per name for the launch —
+                // `$(anon x)` twice is the same name twice.
                 let name = resolve_substitutions(name_subs, context)?;
-                use std::time::{SystemTime, UNIX_EPOCH};
-                let timestamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_micros();
-                let random: u32 = rand::random();
-                Ok(format!("{}_{:x}_{:x}", name, timestamp, random))
+                let mut names = ANON_NAMES.lock().unwrap_or_else(|e| e.into_inner());
+                Ok(names
+                    .entry(name.clone())
+                    .or_insert_with(|| {
+                        let host = std::fs::read_to_string("/proc/sys/kernel/hostname")
+                            .map(|h| h.trim().to_string())
+                            .unwrap_or_else(|_| "localhost".to_string());
+                        let random: u64 = rand::random::<u64>() >> 1;
+                        format!("{name}_{host}_{}_{random}", std::process::id())
+                            .replace(['.', '-', ':'], "_")
+                    })
+                    .clone())
             }
             Substitution::Eval(expr_subs) => {
-                // Resolve the expression string first
+                // The argument's quotes were consumed by the grammar; what is
+                // left is exactly the Python `launch` evaluates.
                 let expr = resolve_substitutions(expr_subs, context)?;
-                // Evaluate the expression
-                evaluate_expression(&expr)
+                super::eval::evaluate_python(&expr)
             }
+            Substitution::Call { name, args } => resolve_call(name, args, context),
         }
     }
 }
@@ -174,6 +190,10 @@ pub const KNOWN_ROS_DISTROS: &[&str] = &["jazzy", "iron", "humble", "galactic", 
 /// Thread-safe, lock-free reads, bounded by actual ROS packages.
 /// Expected size: ~50 packages × ~200 bytes/entry = ~10KB total.
 static PACKAGE_CACHE: Lazy<DashMap<String, String>> = Lazy::new(DashMap::new);
+
+/// `$(anon name)` values already computed, by name.
+static ANON_NAMES: Lazy<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+    Lazy::new(Default::default);
 
 /// Find ROS 2 package share directory with caching
 pub fn find_package_share(package_name: &str) -> Option<String> {
@@ -272,14 +292,37 @@ fn execute_command(cmd: &str, error_mode: &CommandErrorMode) -> Result<String, S
     // `timeout` handles cleanup: SIGTERM after COMMAND_TIMEOUT_SECS, SIGKILL after
     // COMMAND_KILL_AFTER_SECS grace period. Exit code 124 = timed out.
     // `output()` drains pipes correctly, avoiding deadlocks.
-    let output = Command::new("timeout")
+    let mut command = Command::new("timeout");
+    command
         .arg(format!("--kill-after={}", COMMAND_KILL_AFTER_SECS))
         .arg(COMMAND_TIMEOUT_SECS.to_string())
-        .args(&args)
-        .output()
-        .map_err(|e| {
-            SubstitutionError::CommandFailed(format!("Failed to execute '{}': {}", cmd, e))
-        })?;
+        .args(&args);
+    let spawn_err = |e: std::io::Error| {
+        SubstitutionError::CommandFailed(format!("Failed to execute '{}': {}", cmd, e))
+    };
+    let output = if *error_mode == CommandErrorMode::Capture {
+        // `stderr=subprocess.STDOUT`: one stream, interleaved as written.
+        use std::io::Read;
+        let (mut reader, writer) = std::io::pipe().map_err(spawn_err)?;
+        let mut child = command
+            .stdout(writer.try_clone().map_err(spawn_err)?)
+            .stderr(writer)
+            .spawn()
+            .map_err(spawn_err)?;
+        // The command's own copies of the write end must be the only ones
+        // left, or the read below never sees EOF.
+        drop(command);
+        let mut merged = Vec::new();
+        reader.read_to_end(&mut merged).map_err(spawn_err)?;
+        let status = child.wait().map_err(spawn_err)?;
+        std::process::Output {
+            status,
+            stdout: merged,
+            stderr: Vec::new(),
+        }
+    } else {
+        command.output().map_err(spawn_err)?
+    };
 
     // Exit code 124 = timeout killed the command
     if output.status.code() == Some(124) {
@@ -289,42 +332,183 @@ fn execute_command(cmd: &str, error_mode: &CommandErrorMode) -> Result<String, S
         )));
     }
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let error_msg = if stderr.trim().is_empty() {
-            format!(
-                "Command '{}' failed with exit code {}",
-                cmd,
-                output.status.code().unwrap_or(-1)
-            )
-        } else {
-            format!(
-                "Command '{}' failed with exit code {}: {}",
-                cmd,
-                output.status.code().unwrap_or(-1),
-                stderr.trim()
-            )
-        };
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
 
-        // Handle error based on error mode
+    // `Command.perform`: a non-zero exit is always a failure; stderr output
+    // from a successful command is a failure, a warning, ignored or kept,
+    // per `on_stderr`. The output is returned AS IS — trailing newline
+    // included — which is what `launch` substitutes.
+    if !output.status.success() {
+        let mut msg = format!("executed command failed. Command: {cmd}");
+        if !stderr.is_empty() {
+            msg.push_str(&format!("\nCaptured stderr output: {stderr}"));
+        }
+        return Err(SubstitutionError::CommandFailed(msg));
+    }
+    if !stderr.is_empty() {
+        let msg = format!(
+            "executed command showed stderr output. Command: {cmd}\nCaptured stderr output:\n{stderr}"
+        );
         match error_mode {
-            CommandErrorMode::Strict => {
-                // Fail on error
-                return Err(SubstitutionError::CommandFailed(error_msg));
-            }
-            CommandErrorMode::Warn => {
-                // Log warning but continue with stdout
-                log::warn!("Command failed: {}", error_msg);
-            }
-            CommandErrorMode::Ignore => {
-                // Silently ignore errors
-            }
+            CommandErrorMode::Strict => return Err(SubstitutionError::CommandFailed(msg)),
+            CommandErrorMode::Warn => log::warn!("{msg}"),
+            CommandErrorMode::Ignore => {}
+            CommandErrorMode::Capture => return Ok(format!("{stdout}{stderr}")),
         }
     }
+    Ok(stdout)
+}
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Trim whitespace from output as per ROS 2 behavior
-    Ok(stdout.trim().to_string())
+/// `launch`'s boolean coercion for `if`, `not`, `and`, `or`, `any`, `all`.
+fn to_bool(name: &str, value: &str) -> Result<bool, SubstitutionError> {
+    match value.trim().to_lowercase().as_str() {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => Err(SubstitutionError::InvalidSubstitution(format!(
+            "{name}: '{value}' is not a boolean"
+        ))),
+    }
+}
+
+fn bool_str(b: bool) -> String {
+    if b { "true" } else { "false" }.to_string()
+}
+
+/// The package's install prefix, the way `ament_index` finds it.
+pub fn find_package_prefix(package: &str) -> Option<String> {
+    let share = find_package_share(package)?;
+    std::path::Path::new(&share)
+        .parent()?
+        .parent()
+        .and_then(|p| p.to_str().map(String::from))
+}
+
+fn resolve_call(
+    name: &str,
+    args: &[Vec<Substitution>],
+    context: &LaunchContext,
+) -> Result<String, SubstitutionError> {
+    let arg = |i: usize| resolve_substitutions(&args[i], context);
+    match name {
+        // `$(var name default)`: the default when the configuration is unset.
+        "var" => {
+            let var = arg(0)?;
+            match context.get_configuration_lenient(&var) {
+                Some(v) => Ok(v),
+                None => arg(1),
+            }
+        }
+        "find-pkg-prefix" => {
+            let pkg = arg(0)?;
+            find_package_prefix(&pkg).ok_or(SubstitutionError::PackageNotFound(pkg))
+        }
+        // `FindExecutable`: the first match on `PATH`.
+        "find-exec" => {
+            let exe = arg(0)?;
+            std::env::var_os("PATH")
+                .and_then(|paths| {
+                    std::env::split_paths(&paths)
+                        .map(|dir| dir.join(&exe))
+                        .find(|p| p.is_file())
+                })
+                .and_then(|p| p.to_str().map(String::from))
+                .ok_or_else(|| {
+                    SubstitutionError::InvalidSubstitution(format!(
+                        "executable '{exe}' not found on the PATH"
+                    ))
+                })
+        }
+        // `ExecutableInPackage(executable, package)`: `<prefix>/lib/<package>/<executable>`.
+        "exec-in-pkg" => {
+            let exe = arg(0)?;
+            let pkg = arg(1)?;
+            let prefix =
+                find_package_prefix(&pkg).ok_or(SubstitutionError::PackageNotFound(pkg.clone()))?;
+            let path = std::path::Path::new(&prefix)
+                .join("lib")
+                .join(&pkg)
+                .join(&exe);
+            if path.is_file() {
+                Ok(path.to_string_lossy().into_owned())
+            } else {
+                Err(SubstitutionError::InvalidSubstitution(format!(
+                    "executable '{exe}' not found in package '{pkg}' ({})",
+                    path.display()
+                )))
+            }
+        }
+        "file-content" => {
+            let path = arg(0)?;
+            std::fs::read_to_string(&path).map_err(|e| {
+                SubstitutionError::InvalidSubstitution(format!("file-content: {path}: {e}"))
+            })
+        }
+        // `EqualsSubstitution`: booleans and floats compare by value.
+        "equals" | "not-equals" => {
+            let left = arg(0)?;
+            let right = arg(1)?;
+            let is_bool =
+                |s: &str| matches!(s.to_lowercase().as_str(), "true" | "false" | "1" | "0");
+            let truthy = |s: &str| matches!(s.to_lowercase().as_str(), "true" | "1");
+            let equal = if is_bool(&left) && is_bool(&right) {
+                truthy(&left) == truthy(&right)
+            } else if let (Ok(l), Ok(r)) = (left.trim().parse::<f64>(), right.trim().parse::<f64>())
+            {
+                (l - r).abs() <= 1e-9 * l.abs().max(r.abs())
+            } else {
+                left == right
+            };
+            Ok(bool_str(if name == "equals" { equal } else { !equal }))
+        }
+        "not" => Ok(bool_str(!to_bool(name, &arg(0)?)?)),
+        "and" => Ok(bool_str(
+            to_bool(name, &arg(0)?)? && to_bool(name, &arg(1)?)?,
+        )),
+        "or" => Ok(bool_str(
+            to_bool(name, &arg(0)?)? || to_bool(name, &arg(1)?)?,
+        )),
+        "any" | "all" => {
+            let mut values = Vec::new();
+            for i in 0..args.len() {
+                values.push(to_bool(name, &arg(i)?)?);
+            }
+            Ok(bool_str(if name == "any" {
+                values.iter().any(|b| *b)
+            } else {
+                values.iter().all(|b| *b)
+            }))
+        }
+        "if" => {
+            if to_bool(name, &arg(0)?)? {
+                arg(1)
+            } else if args.len() == 3 {
+                arg(2)
+            } else {
+                Ok(String::new())
+            }
+        }
+        // `launch_ros`'s `Parameter`: a global parameter set by `SetParameter`.
+        "param" => {
+            let param = arg(0)?;
+            context.get_global_parameter(&param).ok_or_else(|| {
+                SubstitutionError::InvalidSubstitution(format!(
+                    "parameter '{param}' not found (only parameters set with set_parameter \
+                     are visible to $(param))"
+                ))
+            })
+        }
+        // The launch's log directory: `ROS_LOG_DIR`, else `~/.ros/log`.
+        "launch_log_dir" => Ok(std::env::var("ROS_LOG_DIR").unwrap_or_else(|_| {
+            format!(
+                "{}/.ros/log",
+                std::env::var("HOME").unwrap_or_else(|_| "~".to_string())
+            )
+        })),
+        other => Err(SubstitutionError::InvalidSubstitution(format!(
+            "Unknown substitution type: {other}"
+        ))),
+    }
 }
 
 /// Resolve list of substitutions to single string

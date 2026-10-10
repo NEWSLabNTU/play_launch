@@ -278,6 +278,12 @@ impl LaunchContext {
             .insert(name, vec![Substitution::Text(value)]);
     }
 
+    /// Whether the configuration is set at all — present, whatever it
+    /// resolves to.
+    pub fn has_configuration(&self, name: &str) -> bool {
+        self.get_configuration_raw(name).is_some()
+    }
+
     /// launch's `UnsetLaunchConfiguration`.
     pub fn unset_configuration(&mut self, name: &str) {
         self.local_configurations.remove(name);
@@ -963,7 +969,8 @@ fn reconstruct_substitution_string(subs: &[Substitution]) -> String {
                     result.push_str(match error_mode {
                         crate::substitution::types::CommandErrorMode::Warn => "warn",
                         crate::substitution::types::CommandErrorMode::Ignore => "ignore",
-                        crate::substitution::types::CommandErrorMode::Strict => "strict",
+                        crate::substitution::types::CommandErrorMode::Strict => "fail",
+                        crate::substitution::types::CommandErrorMode::Capture => "capture",
                     });
                     result.push('\'');
                 }
@@ -984,6 +991,15 @@ fn reconstruct_substitution_string(subs: &[Substitution]) -> String {
             Substitution::Eval(expr) => {
                 result.push_str("$(eval ");
                 result.push_str(&reconstruct_substitution_string(expr));
+                result.push(')');
+            }
+            Substitution::Call { name, args } => {
+                result.push_str("$(");
+                result.push_str(name);
+                for arg in args {
+                    result.push(' ');
+                    result.push_str(&reconstruct_substitution_string(arg));
+                }
                 result.push(')');
             }
         }

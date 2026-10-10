@@ -24,28 +24,27 @@ mod escape_tests {
 
     /// The form that broke the golf cart's main launch file. The BOOLEAN VALUES
     /// were measured against real `ros2 launch` first, both branches of each
-    /// comparison, so these pin conformance rather than our preference. The
-    /// lowercase spelling is ours: `$(eval)` results feeding `if=`/`unless=`
-    /// are normalized to "true"/"false" (see CLAUDE.md).
+    /// comparison, so these pin conformance rather than our preference.
+    /// `$(eval)` is `str(eval(...))`, so a boolean result is `True`/`False`.
     #[test]
     fn escaped_quotes_inside_a_quoted_template_are_content() {
         backend();
         assert_eq!(
             evaluate_expression(r"'\'ndt\' == \'aruco\''").unwrap(),
-            "false"
+            "False"
         );
         assert_eq!(
             evaluate_expression(r"'\'aruco\' == \'aruco\''").unwrap(),
-            "true"
+            "True"
         );
         // The `not in [...]` variant from the same file.
         assert_eq!(
             evaluate_expression(r"'\'ndt\' not in [\'cuda_ndt\', \'aruco\']'").unwrap(),
-            "true"
+            "True"
         );
         assert_eq!(
             evaluate_expression(r"'\'aruco\' not in [\'cuda_ndt\', \'aruco\']'").unwrap(),
-            "false"
+            "False"
         );
     }
 
@@ -56,11 +55,11 @@ mod escape_tests {
         backend();
         assert_eq!(
             evaluate_expression("\"'ndt' == 'cuda_ndt'\"").unwrap(),
-            "false"
+            "False"
         );
         assert_eq!(
             evaluate_expression("\"'cuda_ndt' == 'cuda_ndt'\"").unwrap(),
-            "true"
+            "True"
         );
     }
 
@@ -70,7 +69,7 @@ mod escape_tests {
     fn python_string_literals_are_not_treated_as_delimiters() {
         backend();
         assert_eq!(evaluate_expression("'foo' + 'bar'").unwrap(), "foobar");
-        assert_eq!(evaluate_expression("'a' == 'a'").unwrap(), "true");
+        assert_eq!(evaluate_expression("'a' == 'a'").unwrap(), "True");
     }
 
     #[test]
@@ -199,16 +198,18 @@ mod escape_tests {
 
     #[test]
     fn test_anon_uniqueness() {
+        // `AnonName` computes a name once per id for the launch: the same id
+        // is the same name everywhere it is used (a node name and a remap
+        // that refers to it agree), a different id a different name.
         backend();
-        let sub1 = Substitution::Anon(vec![Substitution::Text("node".to_string())]);
-        let sub2 = Substitution::Anon(vec![Substitution::Text("node".to_string())]);
-        let context = LaunchContext::new();
-
-        let result1 = sub1.resolve(&context).unwrap();
-        let result2 = sub2.resolve(&context).unwrap();
-
-        // Should generate different names
-        assert_ne!(result1, result2);
+        let anon = |id: &str| {
+            Substitution::Anon(vec![Substitution::Text(id.to_string())])
+                .resolve(&LaunchContext::new())
+                .unwrap()
+        };
+        assert_eq!(anon("node"), anon("node"));
+        assert_ne!(anon("node"), anon("other_node"));
+        assert!(anon("node").starts_with("node_"), "{}", anon("node"));
     }
 
     #[test]
@@ -280,7 +281,8 @@ mod escape_tests {
         };
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "hello");
+        // `Command.perform` returns stdout as is, newline included.
+        assert_eq!(result, "hello\n");
     }
 
     #[test]
@@ -293,8 +295,8 @@ mod escape_tests {
         };
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
-        // Output should be trimmed
-        assert_eq!(result, "spaces");
+        // Not trimmed: `launch` substitutes stdout as is.
+        assert_eq!(result, "  spaces  \n");
     }
 
     #[test]
@@ -308,7 +310,7 @@ mod escape_tests {
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
         // Trailing newline should be trimmed
-        assert_eq!(result, "line1\nline2");
+        assert_eq!(result, "line1\nline2\n");
     }
 
     #[test]
@@ -334,7 +336,7 @@ mod escape_tests {
         };
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "foo bar");
+        assert_eq!(result, "foo bar\n");
     }
 
     #[test]
@@ -366,7 +368,7 @@ mod escape_tests {
         };
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "test_value");
+        assert_eq!(result, "test_value\n");
     }
 
     // Nested substitution resolution tests
@@ -444,7 +446,8 @@ mod escape_tests {
         context.set_configuration("greeting".to_string(), "hello".to_string());
 
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "hello");
+        // `Command.perform` returns stdout as is, newline included.
+        assert_eq!(result, "hello\n");
     }
 
     #[test]
@@ -556,7 +559,7 @@ mod escape_tests {
 
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "testuser");
+        assert_eq!(result, "testuser\n");
     }
 
     // Eval tests
@@ -712,7 +715,7 @@ mod escape_tests {
         )]);
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "true");
+        assert_eq!(result, "True");
     }
 
     #[test]
@@ -721,7 +724,7 @@ mod escape_tests {
         let sub = Substitution::Eval(vec![Substitution::Text("'foo' == 'bar'".to_string())]);
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "false");
+        assert_eq!(result, "False");
     }
 
     #[test]
@@ -730,7 +733,7 @@ mod escape_tests {
         let sub = Substitution::Eval(vec![Substitution::Text("'foo' != 'bar'".to_string())]);
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "true");
+        assert_eq!(result, "True");
     }
 
     #[test]
@@ -739,19 +742,22 @@ mod escape_tests {
         let sub = Substitution::Eval(vec![Substitution::Text("'foo' != 'foo'".to_string())]);
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "false");
+        assert_eq!(result, "False");
     }
 
     #[test]
     fn test_eval_string_with_outer_quotes() {
         backend();
-        // Expression wrapped in double quotes (from XML attribute)
-        let sub = Substitution::Eval(vec![Substitution::Text(
-            "\"'elastic_band' == 'elastic_band'\"".to_string(),
-        )]);
+        // Expression wrapped in double quotes in the attribute: the grammar
+        // consumes them as a quoted template.
+        let subs = play_launch_parser::substitution::parse_substitutions(
+            "$(eval \"'elastic_band' == 'elastic_band'\")",
+        )
+        .unwrap();
         let context = LaunchContext::new();
-        let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "true");
+        let result =
+            play_launch_parser::substitution::resolve_substitutions(&subs, &context).unwrap();
+        assert_eq!(result, "True");
     }
 
     #[test]
@@ -760,7 +766,7 @@ mod escape_tests {
         let sub = Substitution::Eval(vec![Substitution::Text("\"foo\" == \"foo\"".to_string())]);
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "true");
+        assert_eq!(result, "True");
     }
 
     // Command error mode execution tests
@@ -778,42 +784,48 @@ mod escape_tests {
         assert!(result.is_err());
     }
 
+    /// `on_stderr` governs stderr output of a command that SUCCEEDED. A
+    /// non-zero exit fails in every mode, as `Command.perform` does.
     #[test]
-    fn test_command_warn_mode_continues_on_error() {
+    fn a_failing_command_fails_whatever_on_stderr_says() {
         backend();
         block_command_substitution(false);
-        // Use bash -c to test shell constructs that produce stdout then fail.
-        // Direct exec doesn't support && — we explicitly invoke bash here.
-        let sub = Substitution::Command {
-            cmd: vec![Substitution::Text(
-                "bash -c 'echo output && exit 1'".to_string(),
-            )],
-            error_mode: CommandErrorMode::Warn,
-        };
-        let context = LaunchContext::new();
-        let result = sub.resolve(&context);
-        // Should succeed with Warn mode even though command failed
-        assert!(result.is_ok());
-        // Should return stdout (output)
-        assert_eq!(result.unwrap(), "output");
+        for error_mode in [
+            CommandErrorMode::Strict,
+            CommandErrorMode::Warn,
+            CommandErrorMode::Ignore,
+            CommandErrorMode::Capture,
+        ] {
+            let sub = Substitution::Command {
+                cmd: vec![Substitution::Text(
+                    "bash -c 'echo output && exit 1'".to_string(),
+                )],
+                error_mode,
+            };
+            let result = sub.resolve(&LaunchContext::new());
+            assert!(result.is_err(), "{result:?}");
+        }
     }
 
+    /// stderr from a command that succeeded: `fail` refuses, `warn` and
+    /// `ignore` return stdout, `capture` returns both.
     #[test]
-    fn test_command_ignore_mode_continues_on_error() {
+    fn on_stderr_decides_what_stderr_from_a_successful_command_does() {
         backend();
         block_command_substitution(false);
-        let sub = Substitution::Command {
-            cmd: vec![Substitution::Text(
-                "bash -c 'echo output && exit 1'".to_string(),
-            )],
-            error_mode: CommandErrorMode::Ignore,
+        let run = |error_mode| {
+            Substitution::Command {
+                cmd: vec![Substitution::Text(
+                    "bash -c 'echo err >&2; echo out'".to_string(),
+                )],
+                error_mode,
+            }
+            .resolve(&LaunchContext::new())
         };
-        let context = LaunchContext::new();
-        let result = sub.resolve(&context);
-        // Should succeed with Ignore mode even though command failed
-        assert!(result.is_ok());
-        // Should return stdout (output)
-        assert_eq!(result.unwrap(), "output");
+        assert!(run(CommandErrorMode::Strict).is_err());
+        assert_eq!(run(CommandErrorMode::Warn).unwrap(), "out\n");
+        assert_eq!(run(CommandErrorMode::Ignore).unwrap(), "out\n");
+        assert_eq!(run(CommandErrorMode::Capture).unwrap(), "err\nout\n");
     }
 
     #[test]
@@ -833,7 +845,7 @@ mod escape_tests {
             let context = LaunchContext::new();
             let result = sub.resolve(&context);
             assert!(result.is_ok());
-            assert_eq!(result.unwrap(), "success");
+            assert_eq!(result.unwrap(), "success\n");
         }
     }
 
@@ -850,7 +862,7 @@ mod escape_tests {
         };
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "shlex_result");
+        assert_eq!(result, "shlex_result\n");
     }
 
     #[test]
@@ -864,7 +876,7 @@ mod escape_tests {
         };
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "hello world");
+        assert_eq!(result, "hello world\n");
     }
 
     #[test]
@@ -878,7 +890,7 @@ mod escape_tests {
         };
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, r#"say "hi""#);
+        assert_eq!(result, "say \"hi\"\n");
     }
 
     #[test]
@@ -892,7 +904,7 @@ mod escape_tests {
         };
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "hello world");
+        assert_eq!(result, "hello world\n");
     }
 
     #[test]

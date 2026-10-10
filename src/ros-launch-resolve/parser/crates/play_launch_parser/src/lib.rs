@@ -99,7 +99,7 @@ impl LaunchTraverser {
         let mut context = LaunchContext::new();
         // Apply CLI args to LaunchContext for substitution resolution
         for (k, v) in &cli_args {
-            context.set_configuration(k.clone(), v.clone());
+            context.set_configuration_literal(k.clone(), v.clone());
         }
 
         Self {
@@ -953,7 +953,7 @@ test_node:
     #[test]
     fn test_command_simple() {
         let xml = r#"<launch>
-            <node pkg="demo_nodes_cpp" exec="talker" name="$(command echo test_node)" />
+            <node pkg="demo_nodes_cpp" exec="talker" name="$(command 'echo -n test_node')" />
         </launch>"#;
 
         let mut file = NamedTempFile::new().unwrap();
@@ -967,7 +967,7 @@ test_node:
     #[test]
     fn test_command_with_args() {
         let xml = r#"<launch>
-            <node pkg="demo_nodes_cpp" exec="talker" name="$(command echo foo bar)" />
+            <node pkg="demo_nodes_cpp" exec="talker" name="$(command 'echo -n foo bar')" />
         </launch>"#;
 
         let mut file = NamedTempFile::new().unwrap();
@@ -979,18 +979,23 @@ test_node:
     }
 
     #[test]
-    fn test_command_output_trimming() {
+    fn test_command_output_is_not_trimmed() {
+        // `Command.perform` returns stdout as is; the trailing newline is
+        // part of the value (`launch` validates node NAMES, which is why
+        // nothing builds a name from `echo`).
         let xml = r#"<launch>
-            <node pkg="demo_nodes_cpp" exec="talker" name="$(command printf '  test  \n')" />
+            <let name="out" value="$(command 'echo test')" />
+            <node pkg="demo_nodes_cpp" exec="talker" name="n" args="$(var out)" />
         </launch>"#;
 
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(xml.as_bytes()).unwrap();
 
         let record = parse_launch_file(file.path(), HashMap::new()).unwrap();
-        assert_eq!(record.node.len(), 1);
-        // Output should be trimmed
-        assert_eq!(record.node[0].name, Some("test".to_string()));
+        assert_eq!(
+            record.variables.get("out").map(String::as_str),
+            Some("test\n")
+        );
     }
 
     #[test]
@@ -1021,7 +1026,7 @@ test_node:
         // Pipes require a shell — use bash -c explicitly, matching how
         // ROS 2 users would write this (shlex::split doesn't interpret |).
         let xml = r#"<launch>
-            <node pkg="demo_nodes_cpp" exec="talker" name="$(command bash -c 'echo test | tr a-z A-Z')" />
+            <node pkg="demo_nodes_cpp" exec="talker" name="$(command &quot;bash -c 'echo -n test | tr a-z A-Z'&quot;)" />
         </launch>"#;
 
         let mut file = NamedTempFile::new().unwrap();

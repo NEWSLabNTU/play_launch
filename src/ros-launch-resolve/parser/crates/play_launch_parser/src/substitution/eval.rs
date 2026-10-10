@@ -41,6 +41,13 @@ pub fn evaluate_expression(expr: &str) -> Result<String, SubstitutionError> {
     python_eval_fallback(expr.trim())
 }
 
+/// Evaluate a `$(eval …)` expression exactly as `PythonExpression.perform`
+/// does: the expression the grammar left after consuming the argument's
+/// quotes, handed to Python as is.
+pub fn evaluate_python(expr: &str) -> Result<String, SubstitutionError> {
+    python_eval_fallback(expr.trim())
+}
+
 /// Undo the frontend's escaping: a backslash escapes whatever follows it.
 ///
 /// Matches launch's `replace_escaped_characters`, which is
