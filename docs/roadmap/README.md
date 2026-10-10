@@ -44,7 +44,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 34 | [Manifest Format Redesign (v1 → topic-name format, cross-scope merge)](./phase-34-manifest_redesign.md) | ✅ 34.1–34.8 | — |
 | 35 | [Graph-Aware Budget Checking (critical path over the merged dataflow graph)](./phase-35-graph_aware_budget.md) | ✅ 35.1–35.8 | — |
 | 36 | Runtime Enforcement | ✅ 36.1–36.8 | 2026-05-11 |
-| 37 | Crate Split + Boundary Cleanup | 📋 Planned (37.1–37.7 not started) | — |
+| 37 | Crate Split by Dependency Class | 📋 Planned (redesigned 2026-10-10; W0–W6 not started) | — |
 | 38 | Linux RT Scheduling Apply-Layer | ✅ 38.1–38.10 | 2026-07-15 |
 | 39 | RT Example Workspace | ✅ 39.1–39.4 | 2026-07-15 |
 | 40 | Contract Shipping (sidecar + overlay) | ✅ 40.1–40.7 | 2026-07-15 |
@@ -109,9 +109,9 @@ Closes the static → runtime contract loop. Extends Phase 29 LD_PRELOAD interce
 
 See [phase-36-runtime_enforcement.md](./phase-36-runtime_enforcement.md).
 
-### Phase 37: Crate Split + Boundary Cleanup (planned)
+### Phase 37: Crate Split by Dependency Class (planned)
 
-Refactor monolithic `play_launch` (~19k LOC) into 6 focused crates with sharp interfaces between executor, checker, enforcement, and parser. Driven by [`docs/design/architecture-review.md`](../design/architecture-review.md). Seven sub-phases: 37.1 `play_launch_interception_types`, 37.2 `play_launch_record_format`, 37.3 trait-ify ManifestIndex, 37.4 per-subcommand CLI args, 37.5 `play_launch_manifest_index` + `play_launch_enforcement`, 37.6 `play_launch_executor`, 37.7 `play_launch_web`.
+Split the ROS-free parts of `play_launch` (~14k of its 43.6k lines) into neutrally named, `MIT OR Apache-2.0` crates that build without a ROS workspace, so they can be reused or published (`rcl-interception-event`, `linux-sched-attr`, `cgroup-delegate`, `process-group-supervisor`, `ros2-container-control`, `ros-launch-manifest-monitor`): the interception event layout (removing the duplicated `EventKind`), Linux scheduling (`sched_setattr`, `SCHED_DEADLINE`, cpuset probe), cgroup v2 delegation, process supervision, and the container control protocol; then the contract-aware enforcement engine. W0 first removes the module back-edges (mostly `cli::config` imported downward) and adds a `check-crate-layers` gate. Redesigned 2026-10-10: the 2026-05 plan split by feature, so its executor crate would have needed ROS anyway, and two of its seven parts were made obsolete or done by phases 47 and 55.
 
 See [phase-37-crate_split.md](./phase-37-crate_split.md).
 

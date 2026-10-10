@@ -1,294 +1,327 @@
-# Phase 37 — Crate Split + Boundary Cleanup
+# Phase 37 — Crate Split by Dependency Class
 
-Refactor `play_launch` from a 19k-LOC monolith into 6 focused crates
-with sharp interfaces between executor, checker, enforcement, and
-parser. Driven by the boundary review in
-[`docs/design/architecture-review.md`](../design/architecture-review.md).
+**Status:** 📋 planned, redesigned 2026-10-10. The original plan (2026-05-13,
+seven sub-phases, none started) is in git history at `61074ca3`; §Review
+below says what happened to each of its parts.
 
-No behavioural change. Every step keeps the binary working and the
-test suite green; no flag day.
+## Goal
 
-## Goals
+Split the `play_launch` crate so that the parts with no business depending on
+ROS stop depending on it, and so that those parts can be reused, or published,
+on their own.
 
-1. Single source of truth for each cross-crate type:
-   - `InterceptionEvent` / `EventKind` (today: mirrored in producer + consumer)
-   - `record.json` schema (today: mirrored in parser + executor)
-2. Sharpen the parser / executor / checker / enforcement boundaries:
-   each becomes a standalone crate with explicit deps.
-3. Per-subcommand CLI argument groups; remove the 30-field
-   `LaunchArgs` god-struct.
-4. Faster incremental builds — touching the web UI shouldn't recompile
-   the rule engine.
+The motivating question is not "how big is this crate" but **"what does a
+consumer of this code have to install to build it?"** Today the answer for
+every line of `play_launch` is: a sourced ROS 2 workspace, colcon-generated
+message crates, libpython and z3. That is true of the `sched_setattr(2)`
+wrapper, the cgroup v2 delegation probe and the process-group supervisor, none
+of which call into ROS.
+
+No behavioural change. Every wave keeps the binary working and the suite
+green.
 
 ## Non-goals
 
-- Not changing the public CLI surface.
-- Not changing `record.json` format on disk.
-- Not changing the SPSC event byte layout.
-- Not rewriting the manifest static checker (already well-factored
-  in `ros-launch-manifest`).
-- Not breaking the parser submodule's standalone publishability.
+- **Faster incremental builds.** The original plan's fourth goal. Measured
+  2026-10-10: a one-line edit in `web/` rebuilds in 5 s, one in
+  `runtime_enforcement/` in 4 s. Not a reason to split.
+- **A line-count target.** The old "~3k lines left in `play_launch`" was sized
+  against 19k lines; the crate is now 43.6k. The success criterion is the
+  dependency class of each crate, not its size.
+- Changing the CLI, the on-disk artifacts, the SPSC event layout or the
+  container control protocol's wire format.
+- Actually publishing anything to crates.io. This phase makes crates
+  *publishable* (`cargo publish --dry-run` passes) and stops there; when and
+  under what names to publish is a separate decision.
 
-## Target crate layout
+## Review of the 2026-05-13 plan
 
-```
-play_launch_record_format         ← record.json types only
-play_launch_interception_types    ← EventKind, InterceptionEvent, chunk codec
-play_launch_manifest_index        ← ManifestIndex + graph (replaces play_launch::ros::manifest_*)
-play_launch_enforcement           ← RuleEngine (replaces play_launch::runtime_enforcement)
-play_launch_executor              ← execution + member_actor + monitoring + process
-play_launch_web                   ← web + diagnostics
-play_launch                       ← cli/, commands/, main.rs (thin glue)
-```
+| Old | What it was | Now |
+|----:|-------------|-----|
+| 37.1 | `play_launch_record_format` | **Obsolete.** `record.json` was retired in phase 47. The one leftover duplicate, `ScopeEntry`, is defined twice *inside* layer 2 (`parser/.../record/types.rs`, `resolve/src/ros/launch_dump.rs`) and is a small cleanup there, not a crate. |
+| 37.2 | `play_launch_interception_types` | **Kept, as W1.** `EventKind` is still defined in both `src/play_launch/src/interception/mod.rs:33` and `src/play_launch_interception/src/event.rs:10`, held together by a comment. The coordination risk the plan named (the parser submodule) is gone since phase 55. |
+| 37.3 | `play_launch_manifest_index` | **Done elsewhere.** The manifest index lives in `ros-launch-resolve` (layer 2); `play_launch::ros` holds no manifest code. |
+| 37.4 | Per-verb CLI arg structs | **Mostly done.** `LaunchArgs` has 7 public fields, not 30. What remains is the reverse problem: `cli::config` is imported by six lower modules (see W0). |
+| 37.5 | `play_launch_enforcement` | **Kept, as W5**, reframed: it is ROS-free today, but depends on the `ros-launch-manifest` git dependency. |
+| 37.6 | `play_launch_executor` | **Rejected as framed.** It bundled `execution/` (ROS-free) with `member_actor/` (the most ROS-bound code in the tree) into one crate, so the new crate would have needed ROS exactly as the old one does. The ROS-free parts are extracted instead (W2–W4). |
+| 37.7 | `play_launch_web` | **Deferred** (W6). Axum only, no ROS, but its data model is `member_actor`'s, and nobody has asked to reuse it. |
 
-Dep graph (read top-to-bottom):
+The old plan also proposed a `play_launch::compat` re-export module for the
+transition. Not needed: nothing outside this repository links the
+`play_launch` library (the integration tests drive the binary as a
+subprocess), so each move can update its importers in the same commit.
 
-```
-                play_launch_record_format
-                          │
-       ┌──────────────────┼──────────────────┐
-       ▼                  ▼                  ▼
-  play_launch_      play_launch_     play_launch_
-  parser            executor         manifest_index
-  (submodule)             │                  │
-                          │                  ▼
-                          │          play_launch_
-                          │          enforcement
-                          │                  │
-       play_launch_       │                  │
-       interception_      └──────┬───────────┘
-       types                     ▼
-            │             play_launch_web
-            ▼                    │
-       (play_launch_             ▼
-        interception              play_launch
-        cdylib uses               (CLI glue)
-        same crate)
-```
+## The axis: dependency class
 
-## Sub-phases
+The old plan split by *feature* (executor, web, enforcement). The split that
+serves reuse is by *what a crate drags in*:
 
-### 37.1 `play_launch_interception_types` crate
+| Class | Depends on | Can go to crates.io |
+|-------|-----------|---------------------|
+| **A — Linux runtime** | `libc`, `serde`, crates.io only | yes |
+| **B — contract-aware** | `ros-launch-manifest` (a git dependency) | not until that repo publishes |
+| **C — ROS-bound** | `rclrs`, colcon-generated message crates, `pyo3` | never; ships via colcon and the wheel |
 
-**Scope.** Extract `EventKind`, `InterceptionEvent`,
-`TopicNameDeclared` / `TypeNameDeclared` chunk codec, and the
-24-byte payload constants into a new tiny crate. Both
-`play_launch_interception` (.so producer) and
-`play_launch::interception` (consumer) depend on it. The
-hand-mirrored copy in `src/play_launch/src/interception/mod.rs:25-58`
-deletes; events come from the shared crate.
+Measured from source (references per module to `rclrs`, `composition_interfaces`,
+`play_launch_msgs`, `rcl_interfaces`, `diagnostic_msgs`, `lifecycle_msgs`):
 
-**Files touched.**
-- New: `src/play_launch_interception_types/{Cargo.toml,src/lib.rs}`.
-- Edit: `src/play_launch_interception/src/event.rs` becomes a re-export.
-- Edit: `src/play_launch/src/interception/mod.rs` drops the mirror.
-- Edit: both Cargo.toml files add the new dep.
+| Module | Lines | ROS refs | Class today, by content |
+|--------|------:|---------:|-------------------------|
+| `member_actor/` | 9,892 | 51 | C |
+| `execution/` | 7,693 | 2 (`startup_order.rs`) + `pyo3` (`node_cmdline.rs:228`) | mostly A, with a C seam |
+| `commands/` | 6,397 | 8 | C (orchestration) |
+| `runtime_enforcement/` | 3,306 | 0 | B |
+| `cli/` | 2,745 | 0 | C (it configures everything) |
+| `interception/` | 2,419 | 0 | A (consumer) + B (`measure.rs`) |
+| `web/` | 2,033 | 0 | A by deps, C by data model |
+| `monitoring/` | 1,972 | 0 | A |
+| `ros/` | 1,708 | 49 | C |
+| `sched.rs` | 1,627 | 0 | A |
+| `diagnostics/` | 1,277 | 2 | C |
+| `ipc/` | 908 | 5 (`container_protocol.rs`: a `From<rcl_interfaces::Parameter>`) | A with a C feature |
+| `process/` | 291 | 0 | A |
 
-**Risk.** Low. ~200 LOC mechanical move. Byte layout fixed by
-`#[repr(C)]` + `const _: () = assert!(size_of::<…>() == 40)`.
+Roughly 14k lines are class A by content and live in a crate that is class C.
 
-**Acceptance.** Existing interception unit tests + 5 runtime
-enforcement smoke tests pass. Autoware end-to-end produces zero
-violations as before.
+The privileged helpers make this concrete. `play_launch_rt_helper`
+(`CAP_SYS_NICE`) and `play_launch_io_helper` (`CAP_SYS_PTRACE`) are `[[bin]]`
+targets of the `play_launch` package. The linker already discards what they do
+not use (their `NEEDED` lists are libc only), but the *source* dependency set
+a reviewer has to trust for a capability-carrying binary is the whole
+package: axum, pyo3, rclrs, 30-odd crates. After W2 (rt helper) and W6 (io
+helper), each builds from a crate whose dependencies are `libc`, `serde` and
+one class-A library.
 
-### 37.2 `play_launch_record_format` crate
-
-**Scope.** Extract `record.json` types (ScopeEntry, ScopeTable,
-NodeRecord, ContainerRecord, LoadNodeRecord, etc.) from the parser
-submodule's `record/types.rs` and the executor-side
-`play_launch::ros::launch_dump`. Single crate, both sides depend on
-it. Parser writes; executor reads.
-
-**Files touched.**
-- New: `src/play_launch_record_format/{Cargo.toml,src/lib.rs}`.
-- Edit (submodule): `src/play_launch_parser/.../record/types.rs`
-  becomes a thin re-export. Parser Cargo.toml adds the dep.
-- Edit: `src/play_launch/src/ros/launch_dump.rs` deletes its
-  duplicate; uses the new crate.
-- Coordinated commit + push across both repos.
-
-**Risk.** Medium. Touches the parser submodule, so coordinated push
-needed. Schema serialization must be byte-identical (serde derive
-should preserve this; verify with a round-trip test against an
-existing record.json from the autoware fixture).
-
-**Acceptance.** `record.json` files written before the refactor
-deserialize identically after. Parser unit tests (~370) pass.
-Executor `launch` and `replay` work on existing record.json
-files.
-
-### 37.3 Trait-ify `ManifestIndex` in enforcement
-
-**Scope.** Introduce `trait ManifestIndexLike` in
-`runtime_enforcement` that names just the methods the rule engine
-calls (`topic_lookup`, `external_lookup`, `manifests_for_node`,
-etc.). Rule engine accepts `&dyn ManifestIndexLike`. Implements the
-trait for `ros_launch_manifest_types::ManifestIndex`.
-
-**Files touched.**
-- New small file: `src/play_launch/src/runtime_enforcement/index_trait.rs`.
-- Edit: `RuleEngine` constructor signature.
-
-**Risk.** Very low. ~50 LOC, additive.
-
-**Acceptance.** Existing tests pass. Add at least one new unit test
-that exercises `RuleEngine` with a hand-rolled mock impl (no
-manifest loader needed).
-
-### 37.4 Per-subcommand CLI arg structs
-
-**Scope.** Split `cli::options::LaunchArgs` into composable groups
-via clap's `#[clap(flatten)]`:
-
-- `InterceptionArgs` (— `--enforce-rules`, `--block-unauthorized-…`)
-- `MonitoringArgs` (`--disable-monitoring`, `--enable-cpu-profiling`)
-- `WebArgs` (`--web-addr`, `--disable-web-ui`)
-- `ContainerArgs` (`--container-mode`)
-- `ManifestArgs` (`--manifest-dir`)
-- `ConfigArgs` (`--config`)
-- `LaunchSpecificArgs` (the launch-only knobs)
-
-Subcommands compose what they need. `replay` doesn't carry
-launch-time-only fields.
-
-**Risk.** Low. Mechanical clap refactor.
-
-**Acceptance.** Argument parsing produces the same effective state.
-Help text grouping improves; no regressions in CLI test fixtures.
-
-### 37.5 `play_launch_manifest_index` + `play_launch_enforcement`
-
-**Scope.** Two new crates.
-
-- `play_launch_manifest_index`:
-  - moves `play_launch::ros::manifest_loader`
-  - moves `play_launch::ros::manifest_graph`
-  - depends on `play_launch_record_format`, `ros-launch-manifest-types`
-- `play_launch_enforcement`:
-  - moves `play_launch::runtime_enforcement::*`
-  - depends on `play_launch_manifest_index`,
-    `play_launch_interception_types`, optionally `rclrs`
-    (feature-gated for lifecycle subscriber)
-  - tokio integration kept behind a thin wrapper module so the core
-    `RuleEngine::observe()` stays sync + deterministic
-
-**Files touched.**
-- New: 2 crates, total ~3k LOC moved.
-- Edit: `play_launch` re-exports paths for back-compat (just for the
-  transition); old `play_launch::runtime_enforcement::RuleEngine`
-  becomes a `pub use play_launch_enforcement::RuleEngine`.
-
-**Risk.** Medium. Needs careful disentangling of imports. Smoke
-tests must keep passing.
-
-**Acceptance.** `play_launch_enforcement` tests pass standalone
-(`cargo test -p play_launch_enforcement`). End-to-end smoke
-unchanged.
-
-### 37.6 `play_launch_executor` crate
-
-**Scope.** Largest move. Extracts `execution/`, `member_actor/`,
-`monitoring/`, `process/` from `play_launch`. The executor's
-public API is a single `Executor::run(record, config) -> Result<()>`.
-
-`play_launch::commands::launch` collapses to a glue function:
-
-```rust
-let record = play_launch_parser::parse_launch_file(...)?;
-let config = build_config(args);
-play_launch_executor::Executor::new(record, config).run().await
-```
-
-**Risk.** Medium-high. ~8k LOC move. Lots of internal crossings
-between member_actor and monitoring (process stats, csv writer,
-io_helper IPC). Plan to keep `ipc/` co-located with executor since
-it's executor-internal.
-
-**Acceptance.** All integration tests pass (parser unit + scope +
-integration + runtime_enforcement smoke). Autoware end-to-end
-produces zero violations.
-
-### 37.7 `play_launch_web` crate
-
-**Scope.** Moves `web/` + `diagnostics/`. Depends on
-`play_launch_executor` (member handles, snapshot APIs) and
-`play_launch_enforcement` (live violation stream).
-
-**Risk.** Low after 37.5 + 37.6 land. Web layer already talks to
-executor through narrow handle interfaces (SSE + REST).
-
-**Acceptance.** Web UI works as before. Browser smoke (launch + open
-http://127.0.0.1:8080) shows nodes, topics, violations.
-
-## Order
+## Target layout
 
 ```
-37.1 (interception_types)  ─┐
-37.2 (record_format)        ├─→ 37.3 (trait) ─→ 37.4 (CLI) ─→ 37.5 (manifest+enforce) ─→ 37.6 (executor) ─→ 37.7 (web)
-                            │
-                            └─ both pre-reqs for 37.6
+class A  (crates.io-ready; no ROS, no Python)
+  spsc_shm                        exists; SPSC ring over memfd + eventfd
+  rcl-interception-event      W1  #[repr(C)] event, EventKind, topic chunk codec
+  linux-sched-attr            W2  sched_setattr, SCHED_DEADLINE, uclamp, TID sweep,
+                                  cpuset partition probe
+  cgroup-delegate             W3  delegation probe, per-group limits, join-at-birth,
+                                  memory.events
+  process-group-supervisor    W3  process groups, anchor, pdeathsig, pre_exec step
+                                  reporting, MemAvailable spawn admission
+  ros2-container-control      W4  play_launch_container framing + messages
+                                  (feature `ros`: rcl_interfaces conversions)
+  proc-sampler                W6  /proc + NVML sampling, CSV writer (optional)
+
+class A, not published (play_launch's own privileged binaries)
+  play_launch_rt_helper       W2  CAP_SYS_NICE helper + its wire protocol
+  play_launch_io_helper       W6  CAP_SYS_PTRACE helper + its wire protocol
+
+class B
+  ros-launch-manifest-monitor W5  RuleEngine + ContractView over interception events
+
+class C
+  play_launch                     member_actor, ros, diagnostics, commands, cli,
+                                  launch-semantic parts of execution, web
 ```
 
-37.1 and 37.2 are independent and can be done in either order.
-37.3 and 37.4 are independent of each other after 37.1; can be
-parallel. 37.5 needs 37.1, 37.2, 37.3. 37.6 needs 37.2, 37.5.
-37.7 needs 37.6.
+## Naming and licensing (decided 2026-10-10)
 
-## Status
+**Names are neutral**: they say what the crate does, not which project it
+came from, because the strongest candidates (W2, W3) are useful to anyone
+doing Linux process or RT work in Rust and that is what such a user searches
+for. Every name above was unregistered on crates.io on 2026-10-10 (each
+checked against the API, with `serde` and `procfs` as a positive control).
+Unregistered is not reserved: re-check before the first real publish.
 
-| Sub-phase | Status | Notes |
-|----------:|--------|-------|
-| 37.1 | not started | lowest-risk; recommended starting point |
-| 37.2 | not started | coordinated parser-submodule push |
-| 37.3 | not started | enables enforcement unit tests |
-| 37.4 | not started | mechanical clap refactor |
-| 37.5 | not started | requires 37.1–37.3 |
-| 37.6 | not started | largest move, requires 37.2 + 37.5 |
-| 37.7 | not started | requires 37.6 |
+- Crate names are hyphenated (the crates.io convention); directories under
+  `src/` use the same spelling. Code imports them with underscores, as cargo
+  maps one to the other.
+- `spsc_shm` keeps its name. It is already neutral, it is unregistered too, and
+  renaming it buys nothing.
+- `ros-launch-manifest-monitor` joins the `ros-launch-manifest-*` family
+  because it is a consumer of that schema, and would be published alongside
+  it.
+- The two helpers keep `play_launch_` names: they are this project's
+  privileged binaries, not libraries, and are never published. They are
+  class A by dependencies so that a reviewer of a capability-carrying binary
+  reads a small crate.
 
-## Success criteria (Phase 37 overall)
+**Every crate this phase creates is `MIT OR Apache-2.0`**, the crates.io
+convention, so a downstream user can take either. Each crate carries its own
+`LICENSE-MIT` and `LICENSE-APACHE` (cargo packages only the crate directory,
+so a repository-level file does not travel) and
+`license = "MIT OR Apache-2.0"` in its manifest. `spsc_shm` was relicensed
+from `Apache-2.0` this way on 2026-10-10, and `cargo publish --dry-run`
+passes for it with both files in the package.
 
-After all 7 sub-phases:
+This does not relicense `play_launch` itself (BSD-3-Clause),
+`play_launch_interception` or `play_launch_parser` (Apache-2.0). Code moving
+from `play_launch` (BSD-3-Clause) into a new dual-licensed crate is
+relicensed by its author as part of the move. That is fine for code written by
+the project's own authors. Check `git log` per moved file for outside
+contributors before each wave.
 
-- [ ] `wc -l src/play_launch/src/**/*.rs` drops to ~3k (from ~19k).
-- [ ] `cargo build -p play_launch_enforcement` succeeds standalone.
-- [ ] `cargo build -p play_launch_executor` succeeds standalone.
-- [ ] No type duplication grep hits:
-  - [ ] `EventKind` defined in exactly one crate.
-  - [ ] `ScopeEntry` defined in exactly one crate.
-- [ ] All existing tests pass: 120 unit + 28 interception + 5 smoke +
-  371 parser + 42 integration + 42 IR.
-- [ ] Autoware end-to-end under `--enforce-rules=warn` produces zero
-  violations.
+**Where they live.** A crate used only by `play_launch` becomes a member of the
+root workspace under `src/`. A crate also used by the standalone interception
+cdylib (W1's event crate) follows `spsc_shm`'s pattern instead: its own
+`[workspace]`, listed in the root manifest's `exclude`, with a `/target/`
+`.gitignore` (CLAUDE.md, Building & Testing). A path dependency that is a
+member of one workspace cannot be built from another. colcon ignores all of
+these, as it already ignores `spsc_shm`: no `package.xml`, reached as path
+dependencies through `cargo-ament-build`.
 
-## Out of scope
+## Waves
 
-- Splitting `python/` bridge into its own crate (low value; small).
-- Splitting `ipc/` from executor (it's executor-internal).
-- Rewriting `commands/*` to be pure thin glue (will happen
-  naturally as side-effect of 37.6).
+### W0 — Untangle the back-edges (no new crates)
+
+A crate boundary cannot cross a cycle. The module graph today (references
+counted from `crate::<mod>` paths) has these edges pointing the wrong way:
+
+| Edge | Refs | Cause | Fix |
+|------|-----:|-------|-----|
+| `util` → `cli` | 14 | `logging::is_verbose()` matches on the parsed `Options` | Set a flag once at startup; `util` stops knowing the CLI |
+| `execution`, `interception`, `diagnostics`, `member_actor` → `cli::config` | 10 | Each module's settings struct is defined in `cli/config.rs` | Each settings struct moves to the module that consumes it; `cli/config.rs` composes them |
+| `cli` → `execution` | 4 | `SchedApplyMode`, `StartupLimits` | Falls out of the row above |
+| `cli` → `commands` | 1 | `MeasureArgs` defined in `commands/measure.rs` | Move the args struct to `cli` |
+| `execution` → `member_actor` | 4 | `startup_order.rs` drives `MemberHandle` | `startup_order` is orchestration: move it to `commands/` (or a `runtime` module) |
+| `monitoring` → `web` | 2 | The resource monitor pushes to `SystemMetricsBroadcaster` | Monitor publishes on a channel; the web layer subscribes |
+| `monitoring` → `commands` | 1 | `io_helper_client` calls `cap_status::diagnose` | Move `cap_status` down beside the helpers it diagnoses |
+| `monitoring` → `execution` | 1 | `CgroupTree::memory_current_for_pid` | Fine once cgroup is its own crate (W3): a downward edge |
+| `ros` → `execution` | 1 | `parameter_conversion` calls `node_cmdline::eval_python_str` | Move the Python `$(eval)` fallback out of `node_cmdline`, into a small module class C owns |
+| `interception` → `runtime_enforcement` | 3 | The consumer loop owns and ticks the `RuleEngine` | Consumer takes a sink trait (`on_event`, `tick`); the engine implements it |
+| `runtime_enforcement` → `cli` | 1 | `EnforceMode` | Moves with the engine |
+
+`ipc` → `sched` and `member_actor` → `execution` point downward and stay.
+
+**Gate.** A `just check-crate-layers` recipe, added to `just check`, written in
+the style of `check-layer2-isolation`: for every class-A crate,
+`cargo tree -e normal` contains no `rclrs`, no `*_msgs`/`*_interfaces`, no
+`pyo3`, no `ros-launch-manifest-*`; for class B, no ROS and no `pyo3`. Until
+the crates exist (W0 itself), the gate runs over a module allowlist instead,
+failing on any of the edges above reappearing. It fails in both directions: an
+allowlisted edge that no longer exists is an error too, so the licence cannot
+outlive the edge (the `check-sched-rates` pattern).
+
+**Acceptance.** The edges above are gone, the gate is in `just check`, and
+`just test` and `just check` are green.
+
+### W1 — Interception event crate
+
+`InterceptionEvent`, `EventKind`, the topic-name chunk codec and the layout
+tests, from both copies, into `rcl-interception-event`: one `#![no_std]` crate
+with no dependencies. Despite the name it links nothing from rcl. It describes
+the record that the rcl hooks write, and that is all.
+`play_launch_interception` (cdylib) and `play_launch::interception` both
+depend on it. The consumer, aggregation, `trace` and `measure` stay where they
+are.
+
+**Acceptance.** One definition of `EventKind` in the tree (a grep in the
+gate). A size/offset test pins the 56-byte layout, so the two sides cannot
+drift again. The interception integration tests pass against the rebuilt
+`.so`.
+
+### W2 — Linux scheduling crate
+
+`linux-sched-attr`: `sched.rs` (the `sched_setattr(2)` declaration that `libc`
+lacks, the 56-byte `sched_attr` layout and its offset test, `SCHED_DEADLINE`,
+uclamp, the TID sweep) and `execution/cpuset.rs` (partition probe with
+readback). `play_launch_rt_helper` becomes its own unpublished crate holding
+the binary and `ipc/sched_protocol.rs`, depending on `linux-sched-attr` and
+`serde` only. The helper protocol is play_launch's, so it stays out of the
+published crate.
+
+This is the best reuse candidate in the tree: `sched_setattr` with
+`SCHED_DEADLINE` and uclamp is something anyone doing Linux RT in Rust has to
+write by hand today, and the partition readback (`root` succeeding and reading
+back `root invalid`) is non-obvious knowledge that belongs with the call.
+
+**Acceptance.** The helper builds with the new crate's dependencies only.
+`cargo publish --dry-run` passes. `just setcap` still finds the helper at the
+same install path. The sched integration tests pass.
+
+### W3 — Process supervision and cgroup crates
+
+Two crates, because they are independently useful:
+
+- `cgroup-delegate`, from `execution/cgroup.rs`: the delegation probe (attempt `mkdir`, because the
+  controller list cannot tell a login shell from a delegated scope),
+  `subtree_control` one level at a time, limits written before the fork,
+  join-at-birth by writing `"0"`, zero-charge-is-absent, `memory.events`.
+- `process-group-supervisor`, from `process/`, the `pre_exec` step machinery and allocation-free failure
+  reporting from `node_cmdline.rs`, `start_delay.rs`, and the `MemAvailable`
+  admission in `startup_governor.rs`.
+
+`node_cmdline.rs`'s rendering of a ROS command line from the model stays in
+`play_launch`: that is launch semantics, not process supervision.
+
+**Acceptance.** As W2. The anchor-PGID tests, the #0024 spawn-race tests and
+`run_signal.rs` (#0061) pass unchanged.
+
+### W4 — Container control protocol crate
+
+`ros2-container-control`, from `ipc/container_protocol.rs`, the protocol of record with
+`play_launch_container`, with the `rcl_interfaces::Parameter` conversions
+behind a `ros` feature. That lets a different supervisor talk to
+`play_launch_container` without play_launch, which is the reuse case. It also
+gives the C++ side's JSON codec one Rust file to be checked against.
+
+**Acceptance.** Default features have no ROS crates in `cargo tree`.
+`just test-cpp` and the `load_policy` and control-channel tests pass.
+
+### W5 — Enforcement crate (class B)
+
+`ros-launch-manifest-monitor`, from `runtime_enforcement/` (the `RuleEngine`
+and `ContractView`), depending on W1
+and the manifest crates. Its unit tests run with `cargo test` and no sourced
+ROS environment, which is not true today, because they live in a crate that
+needs one.
+
+Open on placement: this workspace, or `ros-launch-resolve` so nano-ros can run
+the same observer. The recommendation is this workspace until nano-ros asks.
+It consumes play_launch's interception events, not anything layer 2 produces.
+
+**Acceptance.** `cargo test -p ros-launch-manifest-monitor` passes in a shell with no ROS
+sourced. `just fault` still reports live equal to post-hoc.
+
+### W6 — Optional: monitoring and web
+
+`monitoring/` becomes `proc-sampler` cheaply after W0 (NVML behind a
+feature), and `play_launch_io_helper` moves out with `ipc/protocol.rs` the way
+the rt helper does in W2. `web/` needs its own view types, with an adapter from
+`member_actor`'s, before it can move. Do this only if someone wants either
+piece separately; maintainability alone does not justify the adapter.
+
+## Success criteria
+
+- [ ] `just check-crate-layers` is in `just check` and green.
+- [ ] Every class-A crate passes `cargo publish --dry-run` and has no ROS, no
+  `pyo3` and no git dependency in `cargo tree`.
+- [ ] Every new crate is `MIT OR Apache-2.0` and ships both licence files (the
+  gate checks the manifest field and the files).
+- [ ] `EventKind` is defined exactly once.
+- [ ] Both privileged helpers build from class-A crates only.
+- [ ] `just test-all` and `just check` are green after every wave, and the
+  wheel (`just build-wheel`) installs and runs `play_launch launch` unchanged.
+
+## Open questions
+
+Names and licences are decided (above).
+
+1. **Versioning.** Path dependencies need a `version` to publish. One
+   lockstep version for all class-A crates, or independent versions?
 
 ## Risks
 
-- **Parser submodule coordination (37.2).** Push order matters: push
-  parser changes first, then play_launch submodule-pointer update.
-  Otherwise main repo CI fetches a parser SHA not yet on the parser
-  repo's main.
-- **API drift during 37.5 + 37.6.** While the play_launch crate's
-  internal modules move into new crates, types they expose need
-  stable names. Use a `play_launch::compat` re-export module during
-  the transition; remove after one release cycle.
-- **Rclrs feature flags.** `rclrs` brings async lifecycle subscriber
-  into `runtime_enforcement`. When extracted, the new
-  `play_launch_enforcement` crate should feature-gate this so the
-  core engine compiles in environments without ROS deps (useful for
-  fuzz + property tests).
-
-## Comparison with prior factoring
-
-- Phase 31 (manifest crate split into types + check) — same idea,
-  different layer. Successful prior art for "split a feature into
-  its own crate".
-- Phase 22 (Launch IR feature-gated) — uses `--features ir` for
-  optional types in the parser. Pattern transferable to
-  `rclrs`-dependent enforcement code.
+- **The colcon build.** `cargo-ament-build` resolves path dependencies, as it
+  does for `spsc_shm` today, but every new crate is another place for the
+  `[[patch.unused]]` churn and the `.cargo/config.toml` walk to reach. Run
+  `just build` (not just `cargo build`) after each wave, and check the wheel.
+- **Moving tests with code.** Several modules carry long `#[cfg(test)]`
+  blocks whose fixtures reach into `cli::config`. W0 has to move those
+  fixtures with the settings structs, or the test modules become the back-edge.
+- **Lockfiles carry the colcon patch list.** `spsc_shm`'s committed
+  `Cargo.lock` already holds `[[patch.unused]]` entries for ROS message crates,
+  picked up from the colcon `.cargo/config.toml` that cargo's config walk
+  reaches from inside the repository. A published library's lockfile is
+  ignored by consumers, so this is noise, not breakage. But run
+  `cargo publish --dry-run` from a clean clone (or with `--config` pointing
+  away from that file) before trusting it.
+- **A `pub` surface by accident.** Today everything is `pub` because one crate
+  is one privacy domain. A new crate's API is whatever is `pub` at the moment
+  of the move. Review each crate's public items before calling it publishable.

@@ -3,7 +3,9 @@ name = "spsc_shm"
 version = "0.1.0"
 edition = "2024"
 description = "Zero-copy SPSC ring buffer over shared memory (memfd + eventfd)"
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/NEWSLabNTU/play_launch"
+readme = false
 
 # Standalone crate — not part of any workspace.
 [workspace]
