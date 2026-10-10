@@ -6,7 +6,28 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.15.0
+
+Defaults now behave as `ros2 launch` does.
+
+- **Visible:** `--container-mode observable` is the default. A container's
+  composables run in its one process, as under `ros2 launch`; the old default,
+  `isolated` (a process per composable), stays available for crash containment,
+  per-node OOM, kill and cgroups. `--composable-respawn on-crash` and crash
+  detection of composables are per process and need `--container-mode isolated`.
+
+- **Visible:** interception runs only when there is something to enforce: a
+  contract resolved, or `--enforce-rules` given explicitly. A plain launch has
+  no LD_PRELOAD layer. The default `warn` used to intercept every launch, and
+  each message was logged at debug into `play_launch.log`: a plain Autoware
+  launch wrote 40 GB in five minutes. The per-message line is now trace.
+
+- **Fix:** `$(find-pkg-share)`, `$(find-pkg-prefix)` and node executables
+  resolve to the first prefix on `AMENT_PREFIX_PATH` that registers the package
+  in its ament index, as `ament_index` does. `/opt/ros/<distro>` used to be
+  searched first, so the ROS install shadowed every overlay (Autoware 1.5.0's
+  binary got an older apt package's param file). `/opt/ros` is only guessed
+  when no environment is sourced.
 
 - **New:** `just test-stock-parity` checks `play_launch resolve` against
   stock `ros2 launch` itself, not against our own Python parser. It runs a
