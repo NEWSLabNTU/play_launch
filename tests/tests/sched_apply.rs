@@ -278,15 +278,14 @@ fn composable_scheduling_engages_on_isolated_container() {
     let sched_path = write_sched_toml(tmp.path());
 
     let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
-    let (_proc, stdout_path, stderr_path) =
-        spawn_sched_launch_in_mode(
-            &env,
-            work_tmp.path(),
-            &sched_path,
-            &launch,
-            "warn",
-            Some("isolated"),
-        );
+    let (_proc, stdout_path, stderr_path) = spawn_sched_launch_in_mode(
+        &env,
+        work_tmp.path(),
+        &sched_path,
+        &launch,
+        "warn",
+        Some("isolated"),
+    );
 
     // Wait for both composables to report LOADED before inspecting the
     // apply-layer evidence — the ComponentEvent (and thus the apply_tier
