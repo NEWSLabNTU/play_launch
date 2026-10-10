@@ -6,6 +6,14 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## 0.15.1
+
+- **Fix:** the Rust parser honours `on_exit=Shutdown()` in a `.launch.py`, as
+  `ros2 launch` does: when that process exits, the launch ends. `Shutdown`, an
+  `EmitEvent` of `launch.events.Shutdown` (or a subclass, e.g. SSv2's
+  `ShutdownOnce`), or a list holding either. It used to record no `on_exit` at
+  all, so a stack outlived its required process.
+
 ## 0.15.0
 
 Defaults now behave as `ros2 launch` does.
