@@ -1,0 +1,4 @@
+<launch>
+  <arg name="tag"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="c_$(var tag)"/>
+</launch>

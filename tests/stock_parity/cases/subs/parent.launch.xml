@@ -1,0 +1,22 @@
+<launch>
+  <arg name="which" default="inner"/>
+  <arg name="inner" default="nested_ok"/>
+  <arg name="num" default="3"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="subs">
+    <param name="p_var" value="$(var which)"/>
+    <param name="p_nested" value="$(var $(var which))"/>
+    <param name="p_env" value="$(env PL_PARITY_SET)"/>
+    <param name="p_env_default" value="$(env PL_PARITY_UNSET fallback)"/>
+    <param name="p_eval" value="$(eval '$(var num) * 2')"/>
+    <param name="p_eval_str" value="$(eval '&quot;$(var which)&quot; == &quot;inner&quot;')"/>
+    <param name="p_share" value="$(find-pkg-share demo_nodes_cpp)"/>
+    <param name="p_prefix" value="$(find-pkg-prefix demo_nodes_cpp)"/>
+    <param name="p_dirname" value="$(dirname)"/>
+    <param name="p_filename" value="$(filename)"/>
+    <param name="p_command" value="$(command 'echo hello world')"/>
+    <param name="p_command_nested" value="$(command 'echo $(var which)')"/>
+    <param name="p_mixed" value="pre-$(var num)-$(env PL_PARITY_SET)-post"/>
+    <param name="p_escape" value="dollar \$(var num)"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="listener" name="$(anon anonymous_listener)"/>
+</launch>

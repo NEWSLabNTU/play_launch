@@ -1,0 +1,4 @@
+# launch-prefix is not carried in the SystemModel (warned at resolve time).
+DIFF /top/prefixed args:
+EXTRA in play_launch:   exec:echo one two three
+MISSING in play_launch: exec:nice -n 5 echo one two three

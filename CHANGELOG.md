@@ -8,6 +8,15 @@ allowance heavily.
 
 ## Unreleased
 
+- **New:** `just test-stock-parity` checks `play_launch resolve` against
+  stock `ros2 launch` itself, not against our own Python parser. It runs a
+  real `LaunchService` with process spawning recorded instead of performed,
+  so nothing is started. It compares node sets, parameters with their types,
+  remaps, arguments, environment and conditions, over 18 small cases in
+  `tests/stock_parity/cases/`. Each known difference is listed with its
+  reason. `--file <launch> [args]` checks any launch file, and `test-all`
+  runs it. See `tests/stock_parity/README.md`.
+
 - **Visible:** an `<include>` no longer scopes launch configurations, in any
   frontend; a scoped `<group>` does. This is what `ros2 launch` does
   (`IncludeLaunchDescription` sets its arguments in the includer's context

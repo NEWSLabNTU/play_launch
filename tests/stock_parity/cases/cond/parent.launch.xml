@@ -1,0 +1,28 @@
+<launch>
+  <arg name="t" default="true"/>
+  <arg name="f" default="false"/>
+  <group if="$(var f)">
+    <node pkg="demo_nodes_cpp" exec="talker" name="g_if_false"/>
+  </group>
+  <group unless="$(var f)">
+    <node pkg="demo_nodes_cpp" exec="talker" name="g_unless_false"/>
+  </group>
+  <include file="$(dirname)/child.launch.xml" if="$(var f)">
+    <arg name="tag" value="inc_if_false"/>
+  </include>
+  <include file="$(dirname)/child.launch.xml" unless="$(var f)">
+    <arg name="tag" value="inc_unless_false"/>
+  </include>
+  <include file="$(dirname)/child.launch.py" if="$(var f)">
+    <arg name="tag" value="py_if_false"/>
+  </include>
+  <include file="$(dirname)/child.launch.py" if="$(var t)">
+    <arg name="tag" value="py_if_true"/>
+  </include>
+  <node pkg="demo_nodes_cpp" exec="talker" name="n_eval" if="$(eval '1 == 1')"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="n_True" if="True"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="n_one" if="1"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="n_zero" if="0"/>
+  <let name="tag" value="let_if_false" if="$(var f)"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="last_$(var tag)"/>
+</launch>

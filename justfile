@@ -640,6 +640,9 @@ test-all:
     just test-parity 2>&1 | tee "$ptlog"
     parity=${PIPESTATUS[0]}
     echo ""
+    stock=0
+    just test-stock-parity || stock=$?
+    echo ""
     suites=0
     just _run-suites all || suites=$?
     # Parity runs FIRST, so its skips have scrolled past by the time the
@@ -654,7 +657,11 @@ test-all:
         echo ""
         echo "Cross-parser parity FAILED — see the 'parity/' section above." >&2
     fi
-    exit $(( parity != 0 || suites != 0 ))
+    if [ "$stock" -ne 0 ]; then
+        echo ""
+        echo "Stock parity FAILED — see 'stock parity:' above." >&2
+    fi
+    exit $(( parity != 0 || stock != 0 || suites != 0 ))
 
 # Internal: run every test suite ONCE, and derive both the console output and
 # the skipped-test report from that single pass. `mode` is `fast` or `all`.
@@ -881,6 +888,15 @@ bump-manifest tag:
     echo "Commit the manifests AND the lockfiles together:"
     echo "  git add -- '*Cargo.toml' '*Cargo.lock' && git commit"
     echo "(A clean clone builds from the lock, and --locked fails against the old revision.)"
+
+# Stock parity: does `play_launch resolve` start what stock `ros2 launch`
+# would? Unlike test-parity (Rust parser vs our Python parser), the oracle
+# here is ROS's own `launch`/`launch_ros`, run with process spawning recorded
+# instead of performed, so nothing is ever started. Known differences are
+# listed per case in EXPECTED_DIFFS. `just test-stock-parity --file <launch>
+# [args]` checks one arbitrary launch file. See tests/stock_parity/README.md.
+test-stock-parity *ARGS:
+    tests/stock_parity/run.sh {{ ARGS }}
 
 # Cross-parser parity gates: does the Rust parser produce the same SystemModel
 # as the Python one, on real launch trees?

@@ -1,0 +1,22 @@
+<launch>
+  <!-- arg then let then a re-declared arg with another default -->
+  <arg name="a" default="a1"/>
+  <let name="a" value="a_let"/>
+  <arg name="a" default="a2"/>
+  <!-- let first, then the arg: the arg's default must not override -->
+  <let name="b" value="b_let"/>
+  <arg name="b" default="b_arg"/>
+  <!-- re-declared arg, both defaults -->
+  <arg name="c" default="c1"/>
+  <arg name="c" default="c2"/>
+  <!-- overridden from the command line -->
+  <arg name="d" default="d_default"/>
+  <let name="d" value="d_let"/>
+  <!-- conditional args -->
+  <arg name="e" default="e_if_false" if="false"/>
+  <arg name="e" default="e_unless_false" unless="false"/>
+  <!-- a let that reads itself -->
+  <let name="f" value="f0"/>
+  <let name="f" value="$(var f)_f1"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="n_$(var a)_$(var b)_$(var c)_$(var d)_$(var e)_$(var f)"/>
+</launch>

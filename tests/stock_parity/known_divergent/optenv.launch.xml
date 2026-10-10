@@ -1,0 +1,3 @@
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="a_$(optenv PL_X d)"/>
+</launch>

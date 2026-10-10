@@ -1,0 +1,5 @@
+/**:
+  ros__parameters:
+    x: from_a
+    y: from_a
+    only_a: 1

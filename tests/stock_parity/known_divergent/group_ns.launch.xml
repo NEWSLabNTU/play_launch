@@ -1,0 +1,3 @@
+<launch>
+  <group ns="gns"><node pkg="demo_nodes_cpp" exec="talker" name="a"/></group>
+</launch>

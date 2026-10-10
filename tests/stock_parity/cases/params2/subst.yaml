@@ -1,0 +1,4 @@
+/**:
+  ros__parameters:
+    from_var: $(var v)
+    plain: 3

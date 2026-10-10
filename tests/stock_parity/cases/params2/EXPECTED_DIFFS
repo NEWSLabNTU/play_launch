@@ -1,0 +1,2 @@
+# type="str" on a list-shaped value: the model has no string-vs-array distinction.
+DIFF /params_order param s_list:

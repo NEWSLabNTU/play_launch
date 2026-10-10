@@ -1,0 +1,6 @@
+<launch>
+  <set_parameter name="global_from_child" value="c"/>
+  <set_remap from="child_from" to="child_to"/>
+  <set_env name="PL_CHILD" value="child"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="in_child"/>
+</launch>

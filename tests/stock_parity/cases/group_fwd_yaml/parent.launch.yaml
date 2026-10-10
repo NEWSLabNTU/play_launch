@@ -1,0 +1,23 @@
+launch:
+- arg: {name: outer, default: o}
+- let: {name: drop, value: d}
+- set_env: {name: PL_OUTER_ENV, value: outer}
+- group:
+    forwarding: false
+    keep:
+    - {name: kept, value: "$(var outer)_k"}
+    children:
+    - node:
+        pkg: demo_nodes_cpp
+        exec: talker
+        name: fwd_off
+        param:
+        - {name: kept, value: "$(var kept)"}
+        - {name: drop, value: "$(var drop missing)"}
+        - {name: envv, value: "$(env PL_OUTER_ENV none)"}
+- node:
+    pkg: demo_nodes_cpp
+    exec: talker
+    name: after
+    param:
+    - {name: drop, value: "$(var drop)"}

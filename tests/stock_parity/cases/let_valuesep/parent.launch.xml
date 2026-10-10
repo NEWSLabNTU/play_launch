@@ -1,0 +1,4 @@
+<launch>
+  <let name="x" value="a;b" value-sep=";"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="n_$(var x)"/>
+</launch>

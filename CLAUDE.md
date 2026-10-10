@@ -627,6 +627,7 @@ the artifact looks right and behaves wrong.
 just test              # Parser unit (371) + scope (9) + fast integration (6), ~3s
 just test-all          # Everything: unit + all integration + cross-parser parity
 just test-parity       # Cross-parser parity gates alone (Rust vs Python SystemModel)
+just test-stock-parity # Against stock `ros2 launch` itself, spawning nothing (tests/stock_parity/)
 just test-unit         # Parser unit tests only
 just test-cpp          # Container C++ unit tests (control-channel JSON codec)
 just test-integration  # All integration tests (simple + Autoware)

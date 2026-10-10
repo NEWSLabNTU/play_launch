@@ -1,0 +1,4 @@
+<launch>
+  <arg name="tag" default="none"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="pc_$(var tag)_$(var mode 'nomode')"/>
+</launch>

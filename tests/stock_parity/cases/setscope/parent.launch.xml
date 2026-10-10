@@ -1,0 +1,28 @@
+<launch>
+  <set_parameter name="global_top" value="1"/>
+  <set_remap from="top_from" to="top_to"/>
+  <set_env name="PL_TOP" value="top"/>
+  <group>
+    <set_parameter name="global_in_group" value="g"/>
+    <set_remap from="grp_from" to="grp_to"/>
+    <set_env name="PL_GRP" value="grp"/>
+    <unset_env name="PL_PARITY_SET"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="in_group">
+      <param name="own" value="o"/>
+      <param name="global_top" value="overridden_by_node"/>
+      <remap from="own_from" to="own_to"/>
+    </node>
+  </group>
+  <node pkg="demo_nodes_cpp" exec="talker" name="after_group"/>
+  <include file="$(dirname)/child.launch.xml"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="after_include"/>
+  <executable cmd="echo hello" name="echo_exec">
+    <env name="PL_EXEC_ENV" value="e"/>
+  </executable>
+  <node_container pkg="rclcpp_components" exec="component_container" name="cont" namespace="cns">
+    <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Talker" name="comp_in">
+      <param name="cp" value="1"/>
+      <remap from="cfrom" to="cto"/>
+    </composable_node>
+  </node_container>
+</launch>

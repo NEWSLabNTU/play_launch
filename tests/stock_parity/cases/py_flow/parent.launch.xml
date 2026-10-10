@@ -1,0 +1,9 @@
+<launch>
+  <!-- An XML parent includes a .launch.py. The .py declares, sets, and includes
+       XML and YAML children; what it sets must reach those children (in order)
+       and come back to this file afterwards. -->
+  <include file="$(dirname)/mid.launch.py">
+    <arg name="passed" value="from_parent"/>
+  </include>
+  <node pkg="demo_nodes_cpp" exec="talker" name="after_$(var py_set)_$(var py_declared)_$(var passed)_$(var xml_child_let)"/>
+</launch>

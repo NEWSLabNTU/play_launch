@@ -1,0 +1,26 @@
+<launch>
+  <arg name="cname" default="my_container"/>
+  <push-ros-namespace namespace="top"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="quoted" args="a 'b c' &quot;d e&quot; f\ g" ros_args="--log-level debug"/>
+  <executable cmd="echo 'one two' three" name="ex" cwd="/tmp" launch-prefix="nice -n 5"/>
+  <executable cmd="$(find-exec ls) -la" name="ex2"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="prefixed" launch-prefix="nice"/>
+  <node_container pkg="rclcpp_components" exec="component_container_mt" name="$(var cname)" namespace="cns" args="--extra">
+    <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Talker" name="c_default_ns"/>
+    <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Listener" name="c_own_ns" namespace="own">
+      <extra_arg name="use_intra_process_comms" value="true"/>
+    </composable_node>
+  </node_container>
+  <group>
+    <push-ros-namespace namespace="lg"/>
+    <load_composable_node target="/top/cns/$(var cname)">
+      <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Talker" name="loaded_abs_target">
+        <param name="lp" value="1"/>
+      </composable_node>
+    </load_composable_node>
+    <load_composable_node target="$(var cname)">
+      <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Talker" name="loaded_rel_target"/>
+    </load_composable_node>
+  </group>
+  <node pkg="demo_nodes_cpp" exec="talker"/>
+</launch>

@@ -1,0 +1,4 @@
+<launch>
+  <let name="xml_child_let" value="xl"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="cx_$(var py_set)_$(var py_declared)_$(var passed)"/>
+</launch>

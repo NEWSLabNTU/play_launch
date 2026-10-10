@@ -1,0 +1,4 @@
+<launch>
+  <push-ros-namespace namespace="pushed_by_child"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="in_child"/>
+</launch>

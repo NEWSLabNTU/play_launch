@@ -1,0 +1,4 @@
+<launch>
+  <set_parameter name="gl" value="1;2" value-sep=";"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="n"/>
+</launch>
