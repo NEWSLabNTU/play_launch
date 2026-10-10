@@ -491,13 +491,24 @@ impl InterceptionDecision {
 
 impl InterceptionSettings {
     /// Decide whether this run intercepts, from the explicit setting (if
-    /// any) and the enforcement mode. The mode alone decides: a run with
-    /// no contract still intercepts under the default `warn`, so that
-    /// adding a contract later changes what is checked, not what is
-    /// observed.
-    pub fn decide(&self, enforce: crate::cli::options::EnforceMode) -> InterceptionDecision {
+    /// any), the enforcement mode, and whether any contract resolved.
+    ///
+    /// Enforcement implies interception only when there is something to
+    /// enforce. A launch with no contract -- every plain ROS launch -- runs
+    /// as `ros2 launch` would, with no LD_PRELOAD layer and nothing written
+    /// per message: under the default `warn` it used to intercept anyway,
+    /// and an Autoware stack logged 40 GB in five minutes doing so
+    /// (2026-10-10). A launch whose contract resolves is still enforced by
+    /// default (#0031). `--interception on` records with no contract.
+    pub fn decide(
+        &self,
+        enforce: crate::cli::options::EnforceMode,
+        has_contracts: bool,
+    ) -> InterceptionDecision {
+        // `has_contracts`: a contract resolved, or the mode was given
+        // explicitly -- either way there is something the user wants enforced.
         use crate::cli::options::EnforceMode;
-        let wanted = !matches!(enforce, EnforceMode::Off);
+        let wanted = has_contracts && !matches!(enforce, EnforceMode::Off);
         match (self.enabled, wanted) {
             (Some(true), _) => InterceptionDecision::Configured,
             (Some(false), true) => InterceptionDecision::RefusedByConfig(enforce),
@@ -1041,24 +1052,31 @@ mod tests {
             ..InterceptionSettings::default()
         };
 
-        // The default invocation now intercepts, and says why.
-        assert_eq!(unset.decide(M::Warn), ImpliedByEnforcement(M::Warn));
-        assert_eq!(unset.decide(M::Strict), ImpliedByEnforcement(M::Strict));
+        // With a contract, the default invocation intercepts, and says why.
+        assert_eq!(unset.decide(M::Warn, true), ImpliedByEnforcement(M::Warn));
         assert_eq!(
-            unset.decide(M::RecordOnly),
+            unset.decide(M::Strict, true),
+            ImpliedByEnforcement(M::Strict)
+        );
+        assert_eq!(
+            unset.decide(M::RecordOnly, true),
             ImpliedByEnforcement(M::RecordOnly)
         );
-        // Only `off` declines.
-        assert_eq!(unset.decide(M::Off), Off);
+        // Without one there is nothing to enforce: no layer, as `ros2 launch`.
+        assert_eq!(unset.decide(M::Warn, false), Off);
+        assert_eq!(unset.decide(M::Strict, false), Off);
+        // Only `off` declines when a contract resolved.
+        assert_eq!(unset.decide(M::Off, true), Off);
         // An explicit `false` is honoured, and named as the reason no rule
         // can fire when enforcement would have wanted the events.
-        assert_eq!(off.decide(M::Warn), RefusedByConfig(M::Warn));
-        assert_eq!(off.decide(M::Strict), RefusedByConfig(M::Strict));
-        assert_eq!(off.decide(M::Off), Off);
-        // An explicit `true` intercepts even under `off` (`measure` wants
-        // the events with no rule run at all).
-        assert_eq!(on.decide(M::Off), Configured);
-        assert_eq!(on.decide(M::Warn), Configured);
+        assert_eq!(off.decide(M::Warn, true), RefusedByConfig(M::Warn));
+        assert_eq!(off.decide(M::Strict, true), RefusedByConfig(M::Strict));
+        assert_eq!(off.decide(M::Warn, false), Off);
+        assert_eq!(off.decide(M::Off, true), Off);
+        // An explicit `true` intercepts even under `off` or with no contract
+        // (`measure` wants the events with no rule run at all).
+        assert_eq!(on.decide(M::Off, false), Configured);
+        assert_eq!(on.decide(M::Warn, true), Configured);
 
         assert!(ImpliedByEnforcement(M::Warn).enabled());
         assert!(Configured.enabled());

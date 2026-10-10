@@ -180,19 +180,14 @@ interception:
     );
 }
 
-/// An empty config leaves interception ON, because `--enforce-rules` defaults
-/// to `warn` and a non-`off` mode implies an event source (phase 79 W1, issue
-/// #0031 — before that the default mode enforced nothing and said so nowhere).
-///
-/// This test asserted the opposite until 2026-09-25, and was one of the
-/// defect-pinning tests `docs/roadmap/phase-81-the-docs-describe-the-code.md`
-/// names: it encoded "the default records nothing" as a requirement, which is
-/// exactly what #0031 was. The interception-off case is covered by
-/// `test_interception_disabled` above, which sets `enabled: false` explicitly
-/// — the difference between absent and explicitly off is the whole of W1's
-/// precedence rule.
+/// An empty config and no contract leave interception OFF: `--enforce-rules`
+/// defaults to `warn`, which implies an event source only when a contract
+/// resolves (issue #0031 covers that half, in `runtime_enforcement.rs`). With
+/// nothing to enforce the run matches `ros2 launch` -- no LD_PRELOAD layer,
+/// nothing written per message. Intercepting here anyway once logged 40 GB
+/// in five minutes for an Autoware stack.
 #[test]
-fn test_interception_default_on_under_default_enforce_mode() {
+fn test_interception_off_without_contract_under_default_enforce_mode() {
     let config = "# empty config\n";
 
     let work_dir = run_with_config(config, Duration::from_secs(3));
@@ -200,9 +195,8 @@ fn test_interception_default_on_under_default_enforce_mode() {
 
     let interception_dir = play_log.join("interception");
     assert!(
-        interception_dir.exists(),
-        "an empty config must still record: `--enforce-rules` defaults to \
-         `warn`, which implies interception (#0031). Expected {}",
+        !interception_dir.exists(),
+        "no contract resolved, so the default run must not intercept; found {}",
         interception_dir.display()
     );
 }

@@ -838,9 +838,11 @@ pub struct ContractOptions {
     /// `interception/events.jsonl`.
     ///
     /// PRECONDITION: the engine's only event source is LD_PRELOAD
-    /// interception, so any mode but `off` turns `--interception` ON unless
-    /// you switch it off explicitly (phase 79 W1, issue #0031 — it used to
-    /// enforce nothing by default and say so nowhere). Turning it off under
+    /// interception, so any mode but `off` turns `--interception` ON when a
+    /// contract resolves, unless you switch it off explicitly (phase 79 W1,
+    /// issue #0031 — it used to enforce nothing by default and say so
+    /// nowhere). With no contract there is nothing to enforce and the run has
+    /// no interception layer, as under `ros2 launch`. Turning it off under
     /// a non-`off` mode warns; under `strict` it is an error before the
     /// first spawn, because a gate with no event source is green for the
     /// wrong reason.
@@ -1539,5 +1541,21 @@ mod flag_ordering_tests {
         let opts = parse(&["replay", "system_model.yaml"])
             .expect("`replay` must still PARSE so it can be redirected");
         assert!(matches!(opts.command, Command::Replay(_)));
+    }
+}
+
+/// Did the user type `--enforce-rules` for the running subcommand, or is
+/// the mode clap's default? An explicit mode always wants its event source;
+/// the default `warn` wants one only when a contract resolved (see
+/// `InterceptionSettings::decide`). Asked of clap, as `run` does, so a flag
+/// meant for a node after `--` is never mistaken for play_launch's.
+pub fn enforce_rules_given_explicitly() -> bool {
+    use clap::{CommandFactory, parser::ValueSource};
+    match Options::command().try_get_matches_from(std::env::args_os()) {
+        Ok(matches) => matches
+            .subcommand()
+            .and_then(|(_, m)| m.try_get_raw("enforce_rules").ok().flatten().and(m.value_source("enforce_rules")))
+            .is_some_and(|source| source != ValueSource::DefaultValue),
+        Err(_) => false,
     }
 }

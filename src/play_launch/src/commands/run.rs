@@ -244,7 +244,7 @@ async fn run_direct(
     // the name of an engine that is not built.
     let interception_decision = runtime_config
         .interception
-        .decide(cli::options::EnforceMode::Off);
+        .decide(cli::options::EnforceMode::Off, false);
     match interception_decision {
         crate::cli::config::InterceptionDecision::Configured => info!(
             "Interception: enabled ({})",

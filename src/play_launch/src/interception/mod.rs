@@ -19,7 +19,7 @@ use std::{
     os::fd::RawFd,
     path::{Path, PathBuf},
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 // ---------------------------------------------------------------------------
 // InterceptionEvent — must match the #[repr(C)] layout in the .so
@@ -589,7 +589,9 @@ pub async fn run_interception_task(
                 for (child_idx, child) in consumers.iter_mut().enumerate() {
                     while let Some(event) = child.consumer.pop() {
                         total_events += 1;
-                        debug!(
+                        // trace, not debug: one line per message, and the run log
+                        // records debug -- at debug this wrote ~8 GB a minute.
+                        trace!(
                             "Interception event: kind={:?} topic_hash={:#x} stamp={}.{} handle={:#x} mono={}",
                             event.kind, event.topic_hash, event.stamp_sec, event.stamp_nanosec, event.handle, event.monotonic_ns
                         );

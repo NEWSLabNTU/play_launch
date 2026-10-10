@@ -301,7 +301,10 @@ pub(crate) async fn play(
     // input decided.
     let interception_decision = runtime_config
         .interception
-        .decide(common.contract_opts.enforce_rules);
+        .decide(
+            common.contract_opts.enforce_rules,
+            !contract_view.is_empty() || crate::cli::options::enforce_rules_given_explicitly(),
+        );
     {
         use crate::cli::{config::InterceptionDecision, options::EnforceMode};
         match interception_decision {
@@ -341,7 +344,10 @@ pub(crate) async fn play(
                     "interception.enabled: false in --config"
                 }
             ),
-            InterceptionDecision::Off => debug!("Interception: off (nothing asked for it)"),
+            InterceptionDecision::Off => info!(
+                "Interception: off (no contract to enforce and none asked for; \
+                 `--interception on` records anyway)"
+            ),
         }
 
         // The same ruling, one step further along: interception can be
