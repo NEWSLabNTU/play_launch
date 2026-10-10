@@ -299,13 +299,11 @@ pub(crate) async fn play(
     // --config YAML, so the default `--enforce-rules warn` enforced nothing
     // and said so nowhere. Decide it here, from the mode, and say which
     // input decided.
-    let interception_decision = runtime_config
-        .interception
-        .decide(
-            common.contract_opts.enforce_rules,
-            crate::runtime_enforcement::ContractView::model_has_contracts(&system_model)
-                || crate::cli::options::enforce_rules_given_explicitly(),
-        );
+    let interception_decision = runtime_config.interception.decide(
+        common.contract_opts.enforce_rules,
+        crate::runtime_enforcement::ContractView::model_has_contracts(&system_model)
+            || crate::cli::options::enforce_rules_given_explicitly(),
+    );
     {
         use crate::cli::{config::InterceptionDecision, options::EnforceMode};
         match interception_decision {

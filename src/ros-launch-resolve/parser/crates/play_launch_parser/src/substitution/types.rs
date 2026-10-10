@@ -576,7 +576,10 @@ mod ament_lookup_tests {
         std::fs::create_dir_all(stray.path().join("share/pkg")).unwrap();
         register(real.path(), "pkg");
         let path = format!("{}::{}", stray.path().display(), real.path().display());
-        assert_eq!(ament_package_prefix(&path, "pkg").as_deref(), real.path().to_str());
+        assert_eq!(
+            ament_package_prefix(&path, "pkg").as_deref(),
+            real.path().to_str()
+        );
         assert_eq!(ament_package_prefix(&path, "absent"), None);
     }
 }

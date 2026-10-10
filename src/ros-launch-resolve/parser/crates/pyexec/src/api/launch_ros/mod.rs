@@ -11,12 +11,11 @@ mod node;
 mod push_namespace;
 
 pub use composable_node::ComposableNode;
-pub(crate) use node::on_exit_kwarg_shuts_down;
 pub use container::ComposableNodeContainer;
 pub use lifecycle_node::{LifecycleNode, LifecycleTransition};
 pub use load_composable::LoadComposableNodes;
 pub use node::Node;
-pub(crate) use node::node_value;
+pub(crate) use node::{node_value, on_exit_kwarg_shuts_down};
 pub use push_namespace::{PopRosNamespace, PushRosNamespace};
 
 use crate::api::utils::pyobject_to_string;

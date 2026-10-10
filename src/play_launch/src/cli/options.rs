@@ -1093,6 +1093,27 @@ impl CommonOptions {
     }
 }
 
+/// Did the user type `--enforce-rules` for the running subcommand, or is
+/// the mode clap's default? An explicit mode always wants its event source;
+/// the default `warn` wants one only when a contract resolved (see
+/// `InterceptionSettings::decide`). Asked of clap, as `run` does, so a flag
+/// meant for a node after `--` is never mistaken for play_launch's.
+pub fn enforce_rules_given_explicitly() -> bool {
+    use clap::{CommandFactory, parser::ValueSource};
+    match Options::command().try_get_matches_from(std::env::args_os()) {
+        Ok(matches) => matches
+            .subcommand()
+            .and_then(|(_, m)| {
+                m.try_get_raw("enforce_rules")
+                    .ok()
+                    .flatten()
+                    .and(m.value_source("enforce_rules"))
+            })
+            .is_some_and(|source| source != ValueSource::DefaultValue),
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod flag_ordering_tests {
     //! 47.A1/47.A3: `launch_arguments` (`KEY:=VALUE`) used to be declared
@@ -1543,21 +1564,5 @@ mod flag_ordering_tests {
         let opts = parse(&["replay", "system_model.yaml"])
             .expect("`replay` must still PARSE so it can be redirected");
         assert!(matches!(opts.command, Command::Replay(_)));
-    }
-}
-
-/// Did the user type `--enforce-rules` for the running subcommand, or is
-/// the mode clap's default? An explicit mode always wants its event source;
-/// the default `warn` wants one only when a contract resolved (see
-/// `InterceptionSettings::decide`). Asked of clap, as `run` does, so a flag
-/// meant for a node after `--` is never mistaken for play_launch's.
-pub fn enforce_rules_given_explicitly() -> bool {
-    use clap::{CommandFactory, parser::ValueSource};
-    match Options::command().try_get_matches_from(std::env::args_os()) {
-        Ok(matches) => matches
-            .subcommand()
-            .and_then(|(_, m)| m.try_get_raw("enforce_rules").ok().flatten().and(m.value_source("enforce_rules")))
-            .is_some_and(|source| source != ValueSource::DefaultValue),
-        Err(_) => false,
     }
 }
