@@ -299,6 +299,27 @@ impl ContractView {
         view
     }
 
+    /// Does the model carry any contract at all? Not the same as a non-empty
+    /// view: the view lists every topic of the launch graph, contract or not,
+    /// so it is never empty for a real launch. The contracts section is, when
+    /// no contract resolved (it serializes to nothing), and that is what
+    /// decides whether the default enforcement mode has anything to enforce.
+    pub fn model_has_contracts(m: &model::SystemModel) -> bool {
+        fn empty(v: &serde_json::Value) -> bool {
+            match v {
+                serde_json::Value::Null => true,
+                serde_json::Value::Array(a) => a.is_empty(),
+                serde_json::Value::Object(o) => o.values().all(empty),
+                _ => false,
+            }
+        }
+        match serde_json::to_value(&m.contracts) {
+            Ok(v) => !empty(&v),
+            // Cannot tell: err toward enforcing, the pre-0.15 behaviour.
+            Err(_) => true,
+        }
+    }
+
     /// Phase 43.2 source: the checked SystemModel (replay `--model`).
     /// Model keys are already launch-side FQNs (reconciled at resolve
     /// time), so no bare-name fallback is needed here.

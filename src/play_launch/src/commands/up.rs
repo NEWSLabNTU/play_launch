@@ -303,7 +303,8 @@ pub(crate) async fn play(
         .interception
         .decide(
             common.contract_opts.enforce_rules,
-            !contract_view.is_empty() || crate::cli::options::enforce_rules_given_explicitly(),
+            crate::runtime_enforcement::ContractView::model_has_contracts(&system_model)
+                || crate::cli::options::enforce_rules_given_explicitly(),
         );
     {
         use crate::cli::{config::InterceptionDecision, options::EnforceMode};
