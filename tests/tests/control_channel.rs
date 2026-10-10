@@ -104,7 +104,7 @@ fn launch_file_with(launch_path: &str, extra_args: &[&str]) -> Run {
     }
 }
 
-/// The default path: our own isolated container, loaded over the socket, with
+/// The isolated path: our own isolated container, loaded over the socket, with
 /// the LoadNode service untouched.
 #[test]
 fn test_isolated_loads_over_the_control_channel() {

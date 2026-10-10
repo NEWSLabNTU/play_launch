@@ -126,14 +126,14 @@ play_launch launch <package> <launch_file> --disable-all
 
 ### Container Mode
 
-Control how composable nodes are managed (default: `isolated`):
+Control how composable nodes are managed (default: `observable`):
 
 ```bash
-# Isolated: fork+exec per-node process isolation (default)
-play_launch launch <pkg> <file> --container-mode isolated
-
-# Observable: ComponentEvent publishing, shared process
+# Observable: ComponentEvent publishing, shared process -- as `ros2 launch` runs it (default)
 play_launch launch <pkg> <file> --container-mode observable
+
+# Isolated: fork+exec per-node process isolation (a crash takes down one node)
+play_launch launch <pkg> <file> --container-mode isolated
 
 # Stock: use original container from launch file, no override
 play_launch launch <pkg> <file> --container-mode stock

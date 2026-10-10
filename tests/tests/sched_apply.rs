@@ -250,8 +250,8 @@ fn sched_apply_strict_aborts_before_spawn_when_unprivileged() {
 }
 
 /// Phase 38.9: composable-node processes (not just top-level nodes/containers)
-/// must go through the RT apply path. `container_events` (`--container-mode`
-/// defaults to `isolated`) launches 1 container + 2 composable nodes
+/// must go through the RT apply path. `container_events` under
+/// `--container-mode isolated` launches 1 container + 2 composable nodes
 /// (Talker, Listener); each composable is its own fork+exec'd process with
 /// its own pid, delivered via `ComponentEvent::LOADED`. On LOADED, the
 /// container actor (`container_actor/component_events.rs`) looks up the
@@ -279,7 +279,14 @@ fn composable_scheduling_engages_on_isolated_container() {
 
     let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let (_proc, stdout_path, stderr_path) =
-        spawn_sched_launch_for(&env, work_tmp.path(), &sched_path, &launch, "warn");
+        spawn_sched_launch_in_mode(
+            &env,
+            work_tmp.path(),
+            &sched_path,
+            &launch,
+            "warn",
+            Some("isolated"),
+        );
 
     // Wait for both composables to report LOADED before inspecting the
     // apply-layer evidence — the ComponentEvent (and thus the apply_tier

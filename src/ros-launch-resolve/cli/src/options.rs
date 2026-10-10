@@ -380,10 +380,11 @@ pub struct ContainerOptions {
     pub disable_respawn: bool,
 
     /// Container mode: which container binary to use for composable nodes.
-    /// - observable: use play_launch_container with ComponentEvent publishing
-    /// - isolated: use play_launch_container with clone(CLONE_VM) per-node isolation (default)
+    /// - observable: use play_launch_container with ComponentEvent publishing (default;
+    ///   composables share their container's process, as under `ros2 launch`)
+    /// - isolated: use play_launch_container with clone(CLONE_VM) per-node isolation
     /// - stock: use the original container from the launch file (no override)
-    #[arg(long, value_enum, default_value = "isolated")]
+    #[arg(long, value_enum, default_value = "observable")]
     pub container_mode: ContainerMode,
 
     /// Phase 52: per-composable total LoadNode budget in SECONDS while a

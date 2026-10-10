@@ -11,13 +11,16 @@ Everything here was measured on a 12-core AGX Orin bringing up a 44-node /
 
 ## The one decision that dominates everything else
 
-`--container-mode isolated` is the default, and on a small machine carrying
-many composable nodes it costs more than every other setting on this page
-combined. Whether you should change it is **not** a performance question.
+`--container-mode` decides it. The default is `observable` -- every
+composable in its container's one process, as `ros2 launch` runs it.
+`isolated` (one process per composable) was the default until 2026-10; on a
+small machine carrying many composable nodes it costs more than every other
+setting on this page combined. Whether you should turn it on is **not** a
+performance question.
 
 ### What it costs
 
-| | `isolated` (default) | `observable` |
+| | `isolated` | `observable` (default) |
 |---|---|---|
 | processes | 144 | 60 |
 | spawn → startup complete | 10.7 s | **8.4 s** |
@@ -421,7 +424,7 @@ something waits on a driver being up early would break.
 
 ## Composable loading
 
-Under the default `--container-mode isolated`, loads do not use the ROS
+Under `--container-mode isolated`, loads do not use the ROS
 `LoadNode` service at all (phase 64). play_launch hands its own container one
 end of a socketpair before forking it and sends load requests down that; the
 container answers with the id it pre-assigned, a liveness line every 15 s while

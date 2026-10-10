@@ -27,9 +27,10 @@ impl From<ParserBackend> for ros_launch_resolve::verbs::ParserBackend {
 /// Container mode selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ContainerMode {
-    /// Use play_launch_container with ComponentEvent publishing
+    /// Use play_launch_container with ComponentEvent publishing (default):
+    /// every composable in its container's one process, as `ros2 launch` runs it
     Observable,
-    /// Use play_launch_container with fork+exec per-node isolation (default)
+    /// Use play_launch_container with fork+exec per-node isolation
     Isolated,
     /// Use the original container from the launch file (no override)
     Stock,
@@ -774,10 +775,11 @@ pub struct ContainerOptions {
     pub composable_respawn: Option<crate::cli::config::ComposableRespawn>,
 
     /// Container mode: which container binary to use for composable nodes.
-    /// - observable: use play_launch_container with ComponentEvent publishing
-    /// - isolated: use play_launch_container with fork+exec per-node isolation (default)
+    /// - observable: use play_launch_container with ComponentEvent publishing (default;
+    ///   composables share their container's process, as under `ros2 launch`)
+    /// - isolated: use play_launch_container with fork+exec per-node isolation
     /// - stock: use the original container from the launch file (no override)
-    #[arg(long, value_enum, default_value = "isolated")]
+    #[arg(long, value_enum, default_value = "observable")]
     pub container_mode: ContainerMode,
 
     /// Phase 52: per-composable total LoadNode budget in SECONDS while a
@@ -979,7 +981,7 @@ impl Default for ContainerOptions {
             load_orphan_composable_nodes: false,
             disable_respawn: false,
             composable_respawn: None,
-            container_mode: ContainerMode::Isolated,
+            container_mode: ContainerMode::Observable,
             load_total_budget: None,
             load_node_timeout: None,
             on_startup_failure: OnStartupFailure::Continue,

@@ -347,7 +347,7 @@ All features **enabled by default**: monitoring, diagnostics, web UI (http://127
 
 Key flags: `--config <PATH>`, `--disable-monitoring`, `--disable-diagnostics`, `--disable-web-ui`, `--disable-all`, `--web-addr <IP:PORT>`, `--disable-respawn`, `--composable-respawn <off|inherit|on-crash>`, `--enable <FEATURE>`, `--container-mode <MODE>`.
 
-**Container mode** (`--container-mode`, default `isolated`):
+**Container mode** (`--container-mode`, default `observable`, matching `ros2 launch`'s one process per container):
 - `observable` — override all containers to use `play_launch_container` with `ComponentEvent` publishing
 - `isolated` — use `play_launch_container` with `--isolated` (fork+exec per-node process isolation)
 - `stock` — use the original container binary from the launch file (no override, no `ComponentEvent` subscription)

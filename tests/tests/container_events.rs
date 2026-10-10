@@ -101,6 +101,9 @@ fn test_launch_container_events() {
     cmd.current_dir(work_dir);
     cmd.args([
         "launch",
+        // Composable crash handling is per process: isolated only.
+        "--container-mode",
+        "isolated",
         "--disable-web-ui",
         "--disable-monitoring",
         "--disable-diagnostics",
@@ -231,6 +234,9 @@ fn test_crash_detection() {
     cmd.current_dir(work_dir);
     cmd.args([
         "launch",
+        // Composable crash handling is per process: isolated only.
+        "--container-mode",
+        "isolated",
         "--disable-web-ui",
         "--disable-monitoring",
         "--disable-diagnostics",
@@ -352,6 +358,11 @@ impl CrashRun {
         let mut cmd = fixtures::play_launch_cmd(&env);
         cmd.current_dir(work_dir);
         cmd.args(["launch", "--disable-monitoring", "--disable-diagnostics"]);
+        // Composable crash handling is per process: isolated only, and no
+        // longer the default.
+        if !args.contains(&"--container-mode") {
+            cmd.args(["--container-mode", "isolated"]);
+        }
         if !args.contains(&"--web-addr") {
             cmd.arg("--disable-web-ui");
         }
@@ -618,6 +629,9 @@ fn test_isolated_data_delivery() {
     cmd.current_dir(work_dir);
     cmd.args([
         "launch",
+        // Composable crash handling is per process: isolated only.
+        "--container-mode",
+        "isolated",
         "--disable-web-ui",
         "--disable-monitoring",
         "--disable-diagnostics",
@@ -709,6 +723,9 @@ fn test_isolated_external_subscriber() {
     cmd.current_dir(work_dir);
     cmd.args([
         "launch",
+        // Composable crash handling is per process: isolated only.
+        "--container-mode",
+        "isolated",
         "--disable-web-ui",
         "--disable-monitoring",
         "--disable-diagnostics",
