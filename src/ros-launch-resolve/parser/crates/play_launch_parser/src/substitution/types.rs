@@ -213,35 +213,54 @@ pub fn find_package_share(package_name: &str) -> Option<String> {
     Some(result)
 }
 
-/// Find ROS 2 package share directory (uncached implementation)
+/// Find ROS 2 package share directory (uncached implementation).
+///
+/// The way `ament_index_python.get_package_share_directory` -- and so
+/// `ros2 launch` -- finds it: the FIRST prefix on `AMENT_PREFIX_PATH`, in
+/// order, that registers the package in its ament resource index. Overlays
+/// come first there, so an overlay's copy of a package wins over the
+/// underlay's. This used to try `/opt/ros/<distro>` before
+/// `AMENT_PREFIX_PATH`, which made the ROS install shadow every overlay: with
+/// Autoware 1.5.0 under /opt/autoware and an older apt copy of
+/// `autoware_vehicle_velocity_converter` under /opt/ros/humble, a launch got
+/// the apt param file (no `frame_id`) beside the 1.5.0 binary, and the node
+/// aborted (2026-10-10).
+///
+/// Only an unsourced environment (no `AMENT_PREFIX_PATH`) falls back to
+/// guessing `/opt/ros/<distro>`.
 fn find_package_share_uncached(package_name: &str) -> Option<String> {
-    // Try ROS_DISTRO environment variable first
-    if let Ok(distro) = std::env::var("ROS_DISTRO") {
-        let share_path = format!("/opt/ros/{}/share/{}", distro, package_name);
-        if std::path::Path::new(&share_path).exists() {
-            return Some(share_path);
-        }
-    }
-
-    // Fallback: Try common ROS 2 distributions
-    for distro in KNOWN_ROS_DISTROS {
-        let share_path = format!("/opt/ros/{}/share/{}", distro, package_name);
-        if std::path::Path::new(&share_path).exists() {
-            return Some(share_path);
-        }
-    }
-
-    // Try AMENT_PREFIX_PATH
     if let Ok(prefix_path) = std::env::var("AMENT_PREFIX_PATH") {
-        for prefix in prefix_path.split(':') {
-            let share_path = format!("{}/share/{}", prefix, package_name);
-            if std::path::Path::new(&share_path).exists() {
-                return Some(share_path);
-            }
+        return ament_package_prefix(&prefix_path, package_name)
+            .map(|prefix| format!("{}/share/{}", prefix, package_name));
+    }
+
+    // Unsourced: try ROS_DISTRO, then the common distributions.
+    let distros = std::env::var("ROS_DISTRO")
+        .into_iter()
+        .chain(KNOWN_ROS_DISTROS.iter().map(|d| d.to_string()));
+    for distro in distros {
+        let share_path = format!("/opt/ros/{}/share/{}", distro, package_name);
+        if std::path::Path::new(&share_path).exists() {
+            return Some(share_path);
         }
     }
 
     None
+}
+
+/// The first prefix on `prefix_path` (an `AMENT_PREFIX_PATH` value) whose
+/// ament resource index registers `package_name`, as `ament_index` decides it.
+pub fn ament_package_prefix(prefix_path: &str, package_name: &str) -> Option<String> {
+    prefix_path
+        .split(':')
+        .filter(|p| !p.is_empty())
+        .find(|prefix| {
+            std::path::Path::new(prefix)
+                .join("share/ament_index/resource_index/packages")
+                .join(package_name)
+                .exists()
+        })
+        .map(String::from)
 }
 
 /// Execute shell command and capture output.
@@ -521,4 +540,43 @@ pub fn resolve_substitutions(
         result.push_str(&sub.resolve(context)?);
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod ament_lookup_tests {
+    use super::ament_package_prefix;
+
+    fn register(prefix: &std::path::Path, package: &str) {
+        let marker = prefix.join("share/ament_index/resource_index/packages");
+        std::fs::create_dir_all(&marker).unwrap();
+        std::fs::write(marker.join(package), "").unwrap();
+        std::fs::create_dir_all(prefix.join("share").join(package)).unwrap();
+    }
+
+    /// `ros2 launch` takes the first prefix on AMENT_PREFIX_PATH that
+    /// registers the package: the overlay, listed first, wins.
+    #[test]
+    fn first_registering_prefix_wins() {
+        let overlay = tempfile::tempdir().unwrap();
+        let underlay = tempfile::tempdir().unwrap();
+        register(overlay.path(), "pkg");
+        register(underlay.path(), "pkg");
+        let path = format!("{}:{}", overlay.path().display(), underlay.path().display());
+        assert_eq!(
+            ament_package_prefix(&path, "pkg").as_deref(),
+            overlay.path().to_str()
+        );
+    }
+
+    /// A share directory with no index marker is not a package to ament.
+    #[test]
+    fn unregistered_share_dir_is_skipped() {
+        let stray = tempfile::tempdir().unwrap();
+        let real = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(stray.path().join("share/pkg")).unwrap();
+        register(real.path(), "pkg");
+        let path = format!("{}::{}", stray.path().display(), real.path().display());
+        assert_eq!(ament_package_prefix(&path, "pkg").as_deref(), real.path().to_str());
+        assert_eq!(ament_package_prefix(&path, "absent"), None);
+    }
 }

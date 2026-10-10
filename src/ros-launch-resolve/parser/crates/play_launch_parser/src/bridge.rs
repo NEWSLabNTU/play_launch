@@ -493,42 +493,44 @@ where
 
 // ========== Helper Functions ==========
 
-/// Find ROS 2 package executable path
+/// Find a ROS 2 executable: `<package prefix>/lib/<package>/<executable>`.
 ///
-/// Searches for the executable in the ROS 2 package lib directory.
-/// Returns the full path to the executable if found.
-///
-/// Search order:
-/// 1. `{AMENT_PREFIX_PATH}/{package}/lib/{package}/{executable}`
-/// 2. `/opt/ros/{ROS_DISTRO}/lib/{package}/{executable}`
-/// 3. Common ROS 2 distributions (jazzy, iron, humble, galactic, foxy)
+/// As `ros2 launch`'s `ExecutableInPackage` does it: the package's prefix is
+/// the one `ament_index` reports (the first on `AMENT_PREFIX_PATH` that
+/// registers it), and the executable must be in that prefix -- an executable
+/// of the same name in an underlay does not stand in for a missing one, or a
+/// binary and its share files could come from different installs. Only an
+/// unsourced environment falls back to `/opt/ros/<distro>`.
 pub fn find_package_executable(package_name: &str, executable: &str) -> Option<String> {
-    // Try AMENT_PREFIX_PATH first (for local installs)
+    let in_prefix = |prefix: &str| {
+        let exec_path = format!("{}/lib/{}/{}", prefix, package_name, executable);
+        std::path::Path::new(&exec_path).exists().then(|| {
+            log::debug!("Resolved executable: {} -> {}", executable, exec_path);
+            exec_path
+        })
+    };
+
     if let Ok(prefix_path) = std::env::var("AMENT_PREFIX_PATH") {
-        for prefix in prefix_path.split(':') {
-            let exec_path = format!("{}/lib/{}/{}", prefix, package_name, executable);
-            if std::path::Path::new(&exec_path).exists() {
-                log::debug!("Resolved executable: {} -> {}", executable, exec_path);
-                return Some(exec_path);
-            }
+        let found = crate::substitution::types::ament_package_prefix(&prefix_path, package_name)
+            .and_then(|prefix| in_prefix(&prefix));
+        if found.is_none() {
+            log::debug!(
+                "Could not resolve executable path for {}/{}",
+                package_name,
+                executable
+            );
         }
+        return found;
     }
 
-    // Try ROS_DISTRO environment variable
-    if let Ok(distro) = std::env::var("ROS_DISTRO") {
-        let exec_path = format!("/opt/ros/{}/lib/{}/{}", distro, package_name, executable);
-        if std::path::Path::new(&exec_path).exists() {
-            log::debug!("Resolved executable: {} -> {}", executable, exec_path);
-            return Some(exec_path);
-        }
-    }
-
-    // Fallback: Try common ROS 2 distributions
-    for distro in crate::substitution::types::KNOWN_ROS_DISTROS {
-        let exec_path = format!("/opt/ros/{}/lib/{}/{}", distro, package_name, executable);
-        if std::path::Path::new(&exec_path).exists() {
-            log::debug!("Resolved executable: {} -> {}", executable, exec_path);
-            return Some(exec_path);
+    let distros = std::env::var("ROS_DISTRO").into_iter().chain(
+        crate::substitution::types::KNOWN_ROS_DISTROS
+            .iter()
+            .map(|d| d.to_string()),
+    );
+    for distro in distros {
+        if let Some(found) = in_prefix(&format!("/opt/ros/{}", distro)) {
+            return Some(found);
         }
     }
 
