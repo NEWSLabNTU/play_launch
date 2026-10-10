@@ -68,7 +68,11 @@ The parser evaluates conditions during parsing and processes only the selected p
   and `ros2 launch` runs nodes with those leaked entries.
 - **Conditional substitutions** (IfElse, Equals, etc.): call `perform()` to evaluate → "true"/"false"
 - **LaunchConfiguration substitutions**: call `__str__()` to preserve as `$(var name)` for replay-time
-- **Float parameters**: always include decimal point (`0.0` not `0`) for ROS type preservation
+- **Parameter values are TEXT typed by YAML 1.1** (`param_value.rs`). A float
+  keeps a dot and a signed exponent (`0.0`, `1.0e-6`); a string that would
+  re-type as something else is YAML single-quoted (`'1.0'`, `'true'`), and
+  the model (`lower_scalar`) and spawner (`str_to_yaml`) unquote it. A `Str`
+  shaped `[...]` is passed through unquoted because the model has no arrays.
 - **`<let>` statements**: sequential parse-time resolution — values resolved immediately, stored in record.json
 - **Runtime fallback**: unresolved `$(var ...)` in executable names resolved at replay time (`src/execution/node_cmdline.rs`)
 - **YAML params**: substitutions in YAML files resolved and typed before passing to nodes (`src/params.rs::load_and_resolve_param_file()`)

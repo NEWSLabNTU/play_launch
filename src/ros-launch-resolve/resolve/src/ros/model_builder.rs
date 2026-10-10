@@ -583,9 +583,16 @@ pub fn build_system_model(
     /// `lower_params` does. Shared so the ordered list and the legacy map
     /// cannot disagree about a value's type.
     fn lower_scalar(v: &str) -> model::ParamValue {
+        // A YAML single-quoted value is a STRING that would otherwise
+        // re-type (`'5'`, `type="str"`); the parser quotes exactly those
+        // (`play_launch_parser::param_value`). `True`/`False` is how the
+        // parser spells a boolean.
+        if let Some(s) = play_launch_parser::param_value::unquote(v) {
+            return model::ParamValue::Str(s);
+        }
         match v {
-            "true" => model::ParamValue::Bool(true),
-            "false" => model::ParamValue::Bool(false),
+            "true" | "True" => model::ParamValue::Bool(true),
+            "false" | "False" => model::ParamValue::Bool(false),
             s => {
                 if let Ok(i) = s.parse::<i64>() {
                     model::ParamValue::Int(i)

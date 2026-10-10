@@ -127,7 +127,37 @@ Handles the full ROS 2 XML launch specification. All elements support `if=` and 
 | `$(filename)`            | Path of current launch file      |
 | `$(anon name)`           | Anonymous unique name            |
 | `$(eval 'expr')`         | Python expression evaluation     |
-| `$(command 'cmd')`       | Shell command output             |
+| `$(command 'cmd' [on_stderr])` | Command output (no shell)  |
+| `$(var name default)`, `$(find-exec x)`, `$(exec-in-pkg x pkg)`, `$(file-content f)`, `$(equals a b)`, `$(not-equals a b)`, `$(not x)`, `$(and a b)`, `$(or a b)`, `$(any ..)`, `$(all ..)`, `$(if c a [b])`, `$(param name)`, `$(launch_log_dir)` | As in `launch` |
+
+The grammar is `launch`'s (`frontend/grammar.lark`): a quoted argument loses
+its quotes when parsed, `\x` is `x` everywhere, each substitution checks its
+arity, `$(eval)` yields Python's `str()` (`True`), `$(command)` fails on a
+non-zero exit whatever `on_stderr` says and keeps its trailing newline, and
+`$(anon n)` is `n_<host>_<pid>_<rand>`, one name per `n`. `$(optenv)` is a
+superset kept from earlier releases; Humble has no such substitution.
+
+### Values and command lines
+
+- `<param>` values are typed as `launch_ros` types them: `yaml.safe_load`
+  (YAML 1.1) of the performed text, `type=` (`str`, `int`, `float`, `bool`,
+  lists), `value-sep`, nested `<param>`. A string that would re-type as
+  something else is carried YAML single-quoted (`'1.0'`) through the record,
+  the model and the spawner.
+- `args`, `ros_args` and `<executable cmd>` are split as
+  `ExecuteProcess._parse_cmdline` splits them: `shlex` over the literal
+  text, never inside a substitution's result; an empty attribute is one
+  empty argument.
+- Conditions accept `true`/`1`/`false`/`0` in any case and nothing else;
+  `if` with `unless` is an error.
+- `<arg>` performs its default when it is declared and checks `<choice>`;
+  `<let>` stores the performed value.
+- Containers take `<param>`, `<remap>`, `<env>` and the global parameters,
+  remaps and environment like any node.
+
+Not modelled: `launch-prefix` and `cwd` (warned), `<unset_env>` reaching a
+process (the model has no "unset"), and a `type="str"` value shaped like a
+list (the model has no array type, so it becomes a list).
 
 ### Scoping
 

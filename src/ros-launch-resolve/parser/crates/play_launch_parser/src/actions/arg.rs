@@ -13,10 +13,23 @@ pub struct ArgAction {
     pub name: String,
     pub default: Option<String>,
     pub description: Option<String>,
+    /// `<choice value="…"/>` children.
+    pub choices: Option<Vec<String>>,
 }
 
 impl ArgAction {
     pub fn from_entity(entity: &XmlEntity) -> Result<Self> {
+        use crate::xml::Entity;
+        let choices: Vec<String> = entity
+            .children()
+            .filter(|c| c.type_name() == "choice")
+            .map(|c| {
+                c.optional_attr::<String>("value")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default()
+            })
+            .collect();
         Ok(Self {
             name: entity
                 .required_attr("name")?
@@ -26,26 +39,80 @@ impl ArgAction {
                 })?,
             default: entity.optional_attr("default")?,
             description: entity.optional_attr("description")?,
+            choices: (!choices.is_empty()).then_some(choices),
         })
     }
 
-    /// Apply argument to context (use CLI override if available, otherwise use default)
-    /// Priority: 1) Value already in context (CLI), 2) cli_args parameter, 3) default value
-    pub fn apply(&self, context: &mut LaunchContext, cli_args: &HashMap<String, String>) {
-        // Check if already set in context (from CLI args in constructor)
-        if context.get_configuration(&self.name).is_some() {
-            return; // Don't override CLI args
+    /// Execute the declaration — see [`declare`].
+    pub fn apply(
+        &self,
+        context: &mut LaunchContext,
+        cli_args: &HashMap<String, String>,
+    ) -> Result<()> {
+        if !context.has_configuration(&self.name)
+            && let Some(v) = cli_args.get(&self.name)
+        {
+            context.set_configuration_literal(self.name.clone(), v.clone());
         }
+        let default = self
+            .default
+            .as_deref()
+            .map(crate::substitution::parse_substitutions)
+            .transpose()?;
+        declare(
+            context,
+            &self.name,
+            default.as_deref(),
+            self.description.as_deref(),
+            self.choices.as_deref(),
+        )
+    }
+}
 
-        let value = cli_args
-            .get(&self.name)
-            .cloned()
-            .or_else(|| self.default.clone());
-
-        if let Some(v) = value {
-            context.set_configuration(self.name.clone(), v);
+/// `DeclareLaunchArgument.execute`, shared by every frontend: an unset
+/// configuration takes the default, performed NOW (and only then — a default
+/// is not evaluated when a value is already set); unset with no default is an
+/// error; a value outside `choices` is an error.
+///
+/// The default used to be stored unperformed and resolved on every read, so
+/// `<arg name="b" default="$(var a)"/>` followed by `<let name="a" .../>`
+/// read the NEW `a`, and a `$(command)` or `$(anon)` default ran once per
+/// read.
+pub fn declare(
+    context: &mut LaunchContext,
+    name: &str,
+    default: Option<&[crate::substitution::Substitution]>,
+    description: Option<&str>,
+    choices: Option<&[String]>,
+) -> Result<()> {
+    if !context.has_configuration(name) {
+        match default {
+            Some(subs) => {
+                let value = crate::substitution::resolve_substitutions(subs, context)
+                    .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+                context.set_configuration_literal(name.to_string(), value);
+            }
+            None => {
+                return Err(ParseError::RequiredArgumentNotProvided {
+                    name: name.to_string(),
+                    description: description.unwrap_or("no description given").to_string(),
+                    file: context
+                        .current_file()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default(),
+                });
+            }
         }
     }
+    if let Some(choices) = choices
+        && let Some(value) = context.get_configuration(name)
+        && !choices.contains(&value)
+    {
+        return Err(ParseError::InvalidSubstitution(format!(
+            "Argument '{name}' provided value '{value}' is not valid. Valid options are: {choices:?}"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -95,10 +162,11 @@ mod tests {
             name: "my_arg".to_string(),
             default: Some("default_val".to_string()),
             description: None,
+            choices: None,
         };
 
         let mut context = LaunchContext::new();
-        arg.apply(&mut context, &HashMap::new());
+        arg.apply(&mut context, &HashMap::new()).unwrap();
 
         assert_eq!(
             context.get_configuration("my_arg"),
@@ -112,12 +180,13 @@ mod tests {
             name: "my_arg".to_string(),
             default: Some("default_val".to_string()),
             description: None,
+            choices: None,
         };
 
         let mut context = LaunchContext::new();
         let mut cli_args = HashMap::new();
         cli_args.insert("my_arg".to_string(), "cli_val".to_string());
-        arg.apply(&mut context, &cli_args);
+        arg.apply(&mut context, &cli_args).unwrap();
 
         assert_eq!(
             context.get_configuration("my_arg"),

@@ -6,13 +6,10 @@ use crate::{
         container::{DEFAULT_CONTAINER_EXECUTABLE, DEFAULT_CONTAINER_PACKAGE},
         node::ParamSourceSpec,
     },
-    condition::is_truthy,
     error::{ParseError, Result},
     file_cache::read_file_cached,
     record::CommandGenerator,
-    substitution::{
-        ArgumentMetadata, LaunchContext, Substitution, parse_substitutions, resolve_substitutions,
-    },
+    substitution::{LaunchContext, Substitution, parse_substitutions, resolve_substitutions},
 };
 use serde_yaml_ng::{Mapping, Value};
 use std::{collections::HashMap, path::Path};
@@ -182,25 +179,11 @@ impl LaunchTraverser {
 
     /// Check if/unless conditions on a YAML action mapping
     fn yaml_check_condition(&self, map: &Mapping) -> Result<bool> {
-        if let Some(if_val) = yaml_str(map, "if") {
-            let subs = parse_substitutions(if_val)?;
-            let resolved = resolve_substitutions(&subs, &self.context)
-                .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-            if !is_truthy(&resolved) {
-                return Ok(false);
-            }
-        }
-
-        if let Some(unless_val) = yaml_str(map, "unless") {
-            let subs = parse_substitutions(unless_val)?;
-            let resolved = resolve_substitutions(&subs, &self.context)
-                .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-            if is_truthy(&resolved) {
-                return Ok(false);
-            }
-        }
-
-        Ok(true)
+        crate::condition::conditions_allow(
+            yaml_str(map, "if"),
+            yaml_str(map, "unless"),
+            &self.context,
+        )
     }
 
     /// Process a YAML arg declaration
@@ -214,34 +197,33 @@ impl LaunchTraverser {
 
         log::debug!("[RUST] YAML declares arg: {} = {:?}", name, default_str);
 
-        // Resolve default value substitutions if present
-        let resolved_default = if let Some(ref default) = default_str {
-            if let Ok(subs) = parse_substitutions(default) {
-                resolve_substitutions(&subs, &self.context).ok()
-            } else {
-                Some(default.clone())
-            }
-        } else {
-            None
-        };
-
-        self.context.declare_argument(ArgumentMetadata {
-            name: name.to_string(),
-            default: resolved_default.clone(),
-            description: description.map(|s| s.to_string()),
-            choices: None,
-        });
-
-        if let Some(resolved) = resolved_default
-            && self.context.get_configuration(name).is_none()
-        {
-            log::debug!(
-                "[RUST] YAML setting default value for {}: {}",
-                name,
-                resolved
-            );
-            self.context.set_configuration(name.to_string(), resolved);
-        }
+        let choices: Option<Vec<String>> = map
+            .get(serde_yaml_ng::Value::String("choice".into()))
+            .and_then(|v| v.as_sequence())
+            .map(|seq| {
+                seq.iter()
+                    .filter_map(|c| {
+                        c.get("value").map(|v| match v {
+                            serde_yaml_ng::Value::String(s) => s.clone(),
+                            other => serde_yaml_ng::to_string(other)
+                                .unwrap_or_default()
+                                .trim()
+                                .to_string(),
+                        })
+                    })
+                    .collect()
+            });
+        let default = default_str
+            .as_deref()
+            .map(parse_substitutions)
+            .transpose()?;
+        crate::actions::arg::declare(
+            &mut self.context,
+            name,
+            default.as_deref(),
+            description,
+            choices.as_deref(),
+        )?;
 
         Ok(())
     }
@@ -291,15 +273,54 @@ impl LaunchTraverser {
     /// namespace, remaps, launch configurations and environment on entry and
     /// pops them on exit; `scoped: false` lets all of it reach the siblings.
     fn process_yaml_group(&mut self, map: &Mapping, path: &Path) -> Result<()> {
-        let scoped = yaml_value_string(map, "scoped")
-            .map(|s| !s.trim().eq_ignore_ascii_case("false"))
-            .unwrap_or(true);
-        let scope = scoped.then(|| {
-            (
-                self.context.save_scope(),
-                self.context.push_launch_configurations(),
-            )
-        });
+        // `launch_yaml` does no coercion: `get_attr(.., data_type=bool)`
+        // accepts a string too and hands it over as is, and `GroupAction`
+        // tests it for truth. So `scoped: "false"` — quoted — is a non-empty
+        // string, i.e. true; only a YAML boolean (or 0) turns either off.
+        let flag = |key: &str| -> bool {
+            match map.get(Value::String(key.to_string())) {
+                None | Some(Value::Null) => true,
+                Some(Value::Bool(b)) => *b,
+                Some(Value::String(s)) => !s.is_empty(),
+                Some(Value::Number(n)) => n.as_f64() != Some(0.0),
+                Some(_) => true,
+            }
+        };
+        // `keep: [{name: .., value: ..}]` — `get_attr('keep', List[Entity])`.
+        let keep = map
+            .get(Value::String("keep".to_string()))
+            .and_then(|v| v.as_sequence())
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|item| {
+                        let item = item.as_mapping().ok_or_else(|| {
+                            ParseError::InvalidSubstitution(
+                                "group keep entries must be mappings".to_string(),
+                            )
+                        })?;
+                        let field = |k: &str| -> Result<_> {
+                            let text = yaml_value_string(item, k).ok_or_else(|| {
+                                ParseError::MissingAttribute {
+                                    element: "keep".to_string(),
+                                    attribute: k.to_string(),
+                                }
+                            })?;
+                            parse_substitutions(&text)
+                        };
+                        Ok((field("name")?, field("value")?))
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let group = crate::actions::GroupAction {
+            namespace: None,
+            scoped: flag("scoped"),
+            forwarding: flag("forwarding"),
+            keep,
+        };
+        let scope = group.enter(&mut self.context)?;
 
         // Push namespace if specified
         if let Some(ns_str) = yaml_str(map, "ns") {
@@ -319,10 +340,7 @@ impl LaunchTraverser {
             Ok(())
         };
 
-        if let Some((saved, configurations)) = scope {
-            self.context.restore_scope(saved);
-            self.context.pop_launch_configurations(configurations);
-        }
+        crate::actions::GroupAction::leave(&mut self.context, scope);
         result
     }
 
@@ -405,16 +423,11 @@ impl LaunchTraverser {
                                 .and_then(yaml_scalar_str)
                                 .and_then(crate::actions::node::parse_opt_bool),
                         });
-                    } else if let (Some(pname), Some(pvalue)) = (
-                        yaml_str(param_map, "name"),
-                        yaml_value_string(param_map, "value"),
-                    ) {
-                        let param = Parameter {
-                            name: pname.to_string(),
-                            value: parse_substitutions(&pvalue)?,
-                        };
-                        parameters.push(param.clone());
-                        param_sources.push(ParamSourceSpec::Inline(param));
+                    } else if yaml_str(param_map, "name").is_some() {
+                        for param in yaml_parameters(param_map)? {
+                            parameters.push(param.clone());
+                            param_sources.push(ParamSourceSpec::Inline(param));
+                        }
                     }
                 }
             }
@@ -460,7 +473,7 @@ impl LaunchTraverser {
             param_files,
             param_sources,
             remappings,
-            environment: Vec::new(),
+            environment: yaml_environment(map)?,
             args,
             ros_args,
             output,
@@ -486,22 +499,13 @@ impl LaunchTraverser {
                 attribute: "value".to_string(),
             })?;
 
-        let resolved_value = if let Ok(subs) = parse_substitutions(&value) {
-            resolve_substitutions(&subs, &self.context).unwrap_or_else(|e| {
-                log::debug!(
-                    "Could not resolve YAML let value for {}: {}, using raw value",
-                    name,
-                    e
-                );
-                value.clone()
-            })
-        } else {
-            value
-        };
+        let subs = parse_substitutions(&value)?;
+        let resolved_value = resolve_substitutions(&subs, &self.context)
+            .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
 
         log::debug!("YAML setting {} = {} in context", name, resolved_value);
         self.context
-            .set_configuration(name.to_string(), resolved_value);
+            .set_configuration_literal(name.to_string(), resolved_value);
         Ok(())
     }
 
@@ -691,6 +695,40 @@ impl LaunchTraverser {
         // Parse composable_node children
         let composable_nodes = parse_yaml_composable_nodes(map, "composable_node", &self.context)?;
 
+        // A container is a node: its own params, remaps and env.
+        let mut parameters = Vec::new();
+        let mut param_files = Vec::new();
+        if let Some(param_list) = map
+            .get(Value::String("param".to_string()))
+            .and_then(|v| v.as_sequence())
+        {
+            for item in param_list {
+                if let Some(param_map) = item.as_mapping() {
+                    if let Some(from) = yaml_str(param_map, "from") {
+                        param_files.push(parse_substitutions(from)?);
+                    } else if yaml_str(param_map, "name").is_some() {
+                        parameters.extend(yaml_parameters(param_map)?);
+                    }
+                }
+            }
+        }
+        let mut remappings = Vec::new();
+        if let Some(remap_list) = map
+            .get(Value::String("remap".to_string()))
+            .and_then(|v| v.as_sequence())
+        {
+            for item in remap_list {
+                if let Some(m) = item.as_mapping()
+                    && let (Some(from), Some(to)) = (yaml_str(m, "from"), yaml_str(m, "to"))
+                {
+                    remappings.push(Remapping {
+                        from: parse_substitutions(from)?,
+                        to: parse_substitutions(to)?,
+                    });
+                }
+            }
+        }
+
         let container = ContainerAction {
             name,
             namespace,
@@ -701,6 +739,10 @@ impl LaunchTraverser {
             respawn,
             respawn_delay,
             composable_nodes,
+            parameters,
+            param_files,
+            remappings,
+            environment: yaml_environment(map)?,
         };
 
         self.containers
@@ -855,18 +897,14 @@ fn parse_yaml_composable_node(
     {
         for param_item in param_list {
             if let Some(param_map) = param_item.as_mapping()
-                && let (Some(pname), Some(pvalue)) = (
-                    yaml_str(param_map, "name"),
-                    yaml_value_string(param_map, "value"),
-                )
+                && yaml_str(param_map, "name").is_some()
             {
-                let name_subs = parse_substitutions(pname)?;
-                let value_subs = parse_substitutions(&pvalue)?;
-                let name_resolved = resolve_substitutions(&name_subs, context)
-                    .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                let value_resolved = resolve_substitutions(&value_subs, context)
-                    .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                parameters.push((name_resolved, value_resolved));
+                for p in yaml_parameters(param_map)? {
+                    parameters.push(
+                        p.evaluate(context)
+                            .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?,
+                    );
+                }
             }
         }
     }
@@ -941,6 +979,85 @@ fn yaml_str<'a>(map: &'a Mapping, key: &str) -> Option<&'a str> {
 fn yaml_value_string(map: &Mapping, key: &str) -> Option<String> {
     map.get(Value::String(key.to_string()))
         .and_then(value_to_string)
+}
+
+/// A YAML `param:` entry as `launch_ros` reads it: a native value keeps its
+/// YAML type, a string is substituted and then read with YAML 1.1 rules, a
+/// sequence is a list parameter, and `param:` children are nested
+/// `outer.inner` parameters.
+fn yaml_parameters(param_map: &Mapping) -> Result<Vec<Parameter>> {
+    let name = yaml_str(param_map, "name").unwrap_or_default().to_string();
+    let value_type = yaml_str(param_map, "type").map(str::to_string);
+    let native = |v: &Value| -> Result<Vec<Substitution>> {
+        match v {
+            Value::String(s) => parse_substitutions(s),
+            Value::Bool(b) => Ok(vec![Substitution::Text(
+                if *b { "True" } else { "False" }.to_string(),
+            )]),
+            Value::Number(n) => Ok(vec![Substitution::Text(match n.as_i64() {
+                Some(i) => i.to_string(),
+                None => crate::param_value::render_float(n.as_f64().unwrap_or_default()),
+            })]),
+            other => Err(ParseError::InvalidSubstitution(format!(
+                "parameter '{name}': unsupported value {other:?}"
+            ))),
+        }
+    };
+    if let Some(nested) = param_map
+        .get(Value::String("param".to_string()))
+        .and_then(|v| v.as_sequence())
+    {
+        let mut out = Vec::new();
+        for child in nested {
+            if let Some(child) = child.as_mapping() {
+                for mut p in yaml_parameters(child)? {
+                    p.name = format!("{name}.{}", p.name);
+                    out.push(p);
+                }
+            }
+        }
+        return Ok(out);
+    }
+    match param_map.get(Value::String("value".to_string())) {
+        Some(Value::Sequence(items)) => {
+            let list = items.iter().map(&native).collect::<Result<Vec<_>>>()?;
+            Ok(vec![Parameter {
+                name,
+                value: Vec::new(),
+                value_type,
+                list: Some(list),
+            }])
+        }
+        Some(v) => Ok(vec![Parameter {
+            value: native(v)?,
+            name,
+            value_type,
+            list: None,
+        }]),
+        None => Err(ParseError::MissingAttribute {
+            element: "param".to_string(),
+            attribute: "value".to_string(),
+        }),
+    }
+}
+
+/// A YAML node's `env:` list, as `additional_env`.
+fn yaml_environment(map: &Mapping) -> Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    if let Some(items) = map
+        .get(Value::String("env".to_string()))
+        .and_then(|v| v.as_sequence())
+    {
+        for item in items {
+            if let Some(m) = item.as_mapping()
+                && let (Some(name), Some(value)) =
+                    (yaml_str(m, "name"), yaml_value_string(m, "value"))
+            {
+                out.push((name.to_string(), value));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Convert a YAML value to its string representation

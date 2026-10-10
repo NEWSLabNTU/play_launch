@@ -36,7 +36,7 @@ impl LaunchTraverser {
             }
             "arg" => {
                 let arg = ArgAction::from_entity(entity)?;
-                arg.apply(&mut self.context, &HashMap::new());
+                arg.apply(&mut self.context, &HashMap::new())?;
             }
             "declare_argument" => {
                 let declare_arg = DeclareArgumentAction::from_entity(entity)?;
@@ -78,7 +78,7 @@ impl LaunchTraverser {
                         resolved_default
                     );
                     self.context
-                        .set_configuration(declare_arg.name, resolved_default);
+                        .set_configuration_literal(declare_arg.name, resolved_default);
                 }
             }
             "node" => {
@@ -112,14 +112,9 @@ impl LaunchTraverser {
                 // `PushEnvironment` ... `Pop*`. An `<include>` does not, so a
                 // group is the only thing keeping an included file's `<arg>`s
                 // and `<let>`s from reaching the includer's later siblings.
-                let scope = if group.scoped {
-                    Some((
-                        self.context.save_scope(),
-                        self.context.push_launch_configurations(),
-                    ))
-                } else {
-                    None
-                };
+                // `forwarding="false"` resets the configurations and the
+                // environment inside that push, keeping only `<keep>`.
+                let scope = group.enter(&mut self.context)?;
 
                 // `<group ns="…">`: push the group's namespace onto the stack
                 // for its body — the launch-XML sugar for a leading
@@ -161,43 +156,31 @@ impl LaunchTraverser {
                 }
 
                 // Traverse children
+                // `<keep>` is part of the group, not an action in it.
                 let result = entity
                     .children()
+                    .filter(|child| child.type_name() != "keep")
                     .try_for_each(|child| self.traverse_entity(&child));
 
-                // Restore scope only if scoped=true
-                if let Some((saved, configurations)) = scope {
-                    self.context.restore_scope(saved);
-                    self.context.pop_launch_configurations(configurations);
-                }
+                GroupAction::leave(&mut self.context, scope);
                 self.current_scope_id = prev_scope_id;
                 result?;
             }
             "let" => {
                 let let_action = LetAction::from_entity(entity)?;
-                // Parse and resolve substitutions in the value (e.g., $(eval ...), $(var ...))
-                // Fall back to raw value if resolution fails (e.g., missing packages)
-                let resolved_value = if let Ok(value_subs) = parse_substitutions(&let_action.value)
-                {
-                    resolve_substitutions(&value_subs, &self.context).unwrap_or_else(|e| {
-                        log::debug!(
-                            "Could not resolve <let> value for {}: {}, using raw value",
-                            let_action.name,
-                            e
-                        );
-                        let_action.value.clone()
-                    })
-                } else {
-                    let_action.value.clone()
-                };
+                // `SetLaunchConfiguration`: the value is performed now and the
+                // RESULT stored. An unresolvable value is an error, as in
+                // `launch` — it used to fall back to the raw text.
+                let value_subs = parse_substitutions(&let_action.value)?;
+                let resolved_value = resolve_substitutions(&value_subs, &self.context)
+                    .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
                 log::debug!(
                     "Setting {} = {} in context",
                     let_action.name,
                     resolved_value
                 );
-                // Set resolved variable in context (acts like arg)
                 self.context
-                    .set_configuration(let_action.name, resolved_value);
+                    .set_configuration_literal(let_action.name, resolved_value);
             }
             "set_env" | "set-env" => {
                 let set_env = SetEnvAction::from_entity(entity)?;

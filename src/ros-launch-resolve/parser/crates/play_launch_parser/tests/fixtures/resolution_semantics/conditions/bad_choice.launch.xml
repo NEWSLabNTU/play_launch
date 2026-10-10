@@ -1,0 +1,6 @@
+<launch>
+  <arg name="mode" default="c">
+    <choice value="a"/>
+    <choice value="b"/>
+  </arg>
+</launch>

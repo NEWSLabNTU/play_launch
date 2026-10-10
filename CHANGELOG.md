@@ -72,6 +72,32 @@ allowance heavily.
   it does, an append inside a group survives the group, as it does in
   `ros2 launch` (`PushLaunchConfigurations` copies the dict, not the list).
   Global remappings now reach containers and composable nodes too.
+- **Visible:** substitutions follow `launch`'s grammar: quoted arguments
+  lose their quotes, `\$` escapes, every substitution checks its arity, and
+  `var` with a default, `find-exec`, `exec-in-pkg`, `file-content`,
+  `equals`/`not-equals`/`not`/`and`/`or`/`any`/`all`, `if`, `param` and
+  `launch_log_dir` are implemented. `$(eval)` returns Python's `str()`
+  (`True`, not `true`); `$(command)` fails on any non-zero exit, honours
+  `on_stderr` only for stderr, and no longer trims its output; `$(anon)` uses
+  stock's name format and returns one name per argument.
+- **Visible:** parameter values are typed as `launch_ros` types them. `type=`
+  is honoured (`type="str"` on `1.0` stays a string), `value-sep` and nested
+  `<param>` work, a quoted value (`'5'`) is the string inside, and a YAML
+  launch file's native lists, booleans and nested `param:` are kept. A
+  float written in exponent form (`1e-6`) is carried as `1.0e-6` so it
+  re-types as a float.
+- **Visible:** `args`, `ros_args` and `<executable cmd>` are split with
+  `shlex` the way `ExecuteProcess` splits them, so quoted arguments survive
+  and an executable's command is no longer one argv element.
+- **Visible:** `if`/`unless` accept `true`/`1`/`false`/`0` (any case) and
+  nothing else, as `launch` does; `yes`/`on` used to be true and a typo
+  silently false. `if` with `unless` is an error.
+- **Visible:** `<arg>` performs its default when declared and checks
+  `<choice>`s; `<let>` errors on an unresolvable value instead of storing
+  the raw text. `<group forwarding="false">` with `<keep>` (YAML: `keep:`)
+  is implemented. Containers take their own `<param>`/`<remap>`/`<env>` and
+  the global parameters, remaps and environment; a composable takes the
+  global remaps. A YAML node's `env:` is honoured.
 - The Python half's C ABI moves to **7**: `play_launch_py_exec` takes an
   include callback and exchanges the launch-context state at each include
   and at the end. A v6 pyexec object is refused by the loader by version.

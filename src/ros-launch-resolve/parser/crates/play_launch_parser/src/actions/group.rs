@@ -1,8 +1,12 @@
 //! Group action implementation
 
 use crate::{
-    error::Result,
-    substitution::{Substitution, parse_substitutions},
+    error::{ParseError, Result},
+    substitution::{
+        LaunchContext, Substitution,
+        context::{ConfigurationSnapshot, ScopeSnapshot},
+        parse_substitutions, resolve_substitutions,
+    },
     xml::{Entity, XmlEntity},
 };
 
@@ -13,6 +17,25 @@ pub struct GroupAction {
     /// Whether this group creates an isolated scope (default: true).
     /// When false, namespace/env changes leak to subsequent siblings.
     pub scoped: bool,
+    /// `forwarding` (default true): whether a scoped group's body sees the
+    /// configurations and environment from outside it. `false` resets both
+    /// on entry, keeping only `keep`.
+    pub forwarding: bool,
+    /// `<keep name value>` children: configurations set on entry — the only
+    /// ones that survive `forwarding="false"`.
+    pub keep: Vec<(Vec<Substitution>, Vec<Substitution>)>,
+}
+
+/// What [`GroupAction::enter`] saved, for [`GroupAction::leave`].
+pub type GroupScope = Option<(ScopeSnapshot, ConfigurationSnapshot)>;
+
+/// A `data_type=bool` attribute, as `launch` coerces it.
+pub fn bool_attribute(name: &str, value: &str) -> Result<bool> {
+    crate::param_value::bool_attr(value).map_err(|_| ParseError::TypeCoercion {
+        attribute: name.to_string(),
+        value: value.to_string(),
+        expected_type: "bool",
+    })
 }
 
 impl GroupAction {
@@ -31,14 +54,76 @@ impl GroupAction {
             .map(|s| parse_substitutions(&s))
             .transpose()?;
 
-        // Parse scoped attribute (default: true)
         let scoped = entity
             .optional_attr_str("scoped")?
-            .map(|s| !s.eq_ignore_ascii_case("false"))
+            .map(|s| bool_attribute("scoped", &s))
+            .transpose()?
             .unwrap_or(true);
+        let forwarding = entity
+            .optional_attr_str("forwarding")?
+            .map(|s| bool_attribute("forwarding", &s))
+            .transpose()?
+            .unwrap_or(true);
+        let keep = entity
+            .children()
+            .filter(|c| c.type_name() == "keep")
+            .map(|c| {
+                Ok((
+                    parse_substitutions(&c.required_attr_str("name")?.unwrap_or_default())?,
+                    parse_substitutions(&c.required_attr_str("value")?.unwrap_or_default())?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        Ok(Self { namespace, scoped })
+        Ok(Self {
+            namespace,
+            scoped,
+            forwarding,
+            keep,
+        })
     }
+
+    /// `GroupAction.get_sub_entities`' prologue. Scoped: push the
+    /// configurations and environment, then either set `keep` (forwarding)
+    /// or reset the environment and every configuration but `keep`.
+    /// Unscoped: just set `keep`.
+    pub fn enter(&self, context: &mut LaunchContext) -> Result<GroupScope> {
+        let scope = self
+            .scoped
+            .then(|| (context.save_scope(), context.push_launch_configurations()));
+        if self.scoped && !self.forwarding {
+            context.reset_environment();
+            let keep = self.evaluate_keep(context)?;
+            context.reset_launch_configurations(keep);
+        } else {
+            for (name, value) in &self.keep {
+                let name = resolve(name, context)?;
+                let value = resolve(value, context)?;
+                context.set_configuration_literal(name, value);
+            }
+        }
+        Ok(scope)
+    }
+
+    /// The epilogue: `PopEnvironment`, `PopLaunchConfigurations`.
+    pub fn leave(context: &mut LaunchContext, scope: GroupScope) {
+        if let Some((saved, configurations)) = scope {
+            context.restore_scope(saved);
+            context.pop_launch_configurations(configurations);
+        }
+    }
+
+    /// `ResetLaunchConfigurations` performs every `keep` before clearing.
+    fn evaluate_keep(&self, context: &LaunchContext) -> Result<Vec<(String, String)>> {
+        self.keep
+            .iter()
+            .map(|(n, v)| Ok((resolve(n, context)?, resolve(v, context)?)))
+            .collect()
+    }
+}
+
+fn resolve(subs: &[Substitution], context: &LaunchContext) -> Result<String> {
+    resolve_substitutions(subs, context).map_err(|e| ParseError::InvalidSubstitution(e.to_string()))
 }
 
 #[cfg(test)]

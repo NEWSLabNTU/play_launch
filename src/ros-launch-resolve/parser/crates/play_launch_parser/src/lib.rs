@@ -12,6 +12,7 @@ pub mod exchange;
 mod file_cache;
 #[cfg(feature = "ir")]
 pub mod ir;
+pub mod param_value;
 pub mod params;
 // The seam between parsing and executing Python — see python_backend.rs.
 pub mod python_backend;

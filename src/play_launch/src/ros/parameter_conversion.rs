@@ -27,17 +27,13 @@ pub(crate) fn convert_parameters_to_ros(
 /// yaml.safe_load() to determine parameter types. This allows proper handling of
 /// array parameters like [1, 2, 3] (integer_array) or [0.1, 0.2] (double_array).
 ///
-/// Values may contain unresolved Python string expressions from `$(eval ...)` in launch XML
-/// (e.g., `"'[module1, ' + ']'"`). These are evaluated via PyO3 before YAML parsing.
+/// A YAML single-quoted value is a string (`'5'`) — the parser quotes a string
+/// that would otherwise re-type. Values used to arrive here as unevaluated
+/// `$(eval ...)` text (`"'[module1, ' + ']'"`), which this evaluated with
+/// Python as a workaround; the parser now evaluates them (it consumes the
+/// argument's quotes in the grammar), so that would only turn a quoted string
+/// back into a number.
 fn parse_parameter_value(value: &str) -> Result<rcl_interfaces::msg::ParameterValue> {
-    // Evaluate Python string expressions (from $(eval ...) in launch XML)
-    let resolved = if value.contains("' + '") || (value.starts_with("'") && value.ends_with("'")) {
-        crate::execution::node_cmdline::eval_python_str(value).unwrap_or_else(|| value.to_string())
-    } else {
-        value.to_string()
-    };
-    let value = resolved.as_str();
-
     // Parse value as YAML to determine type
     let yaml_value: serde_yaml_ng::Value = match serde_yaml_ng::from_str(value) {
         Ok(v) => v,

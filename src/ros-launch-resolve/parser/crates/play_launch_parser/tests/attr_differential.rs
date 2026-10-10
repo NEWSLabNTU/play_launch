@@ -139,6 +139,9 @@ const CANDIDATES: &[&str] = &[
     // `<timer period=…>` — ROS 2's `TimerAction.parse` reads it (required).
     "period",
     "allow_substs",
+    // `launch_xml` splits any attribute on `<name>-sep`; `<param value-sep=…>`
+    // is the one with a consumer.
+    "value-sep",
 ];
 
 /// Pairs where this parser may be MORE permissive than the oracle — it warns

@@ -1,0 +1,77 @@
+launch:
+- arg:
+    name: num
+    default: "4"
+- arg:
+    name: flag
+    default: "false"
+- let:
+    name: lv
+    value: "let_$(var num)"
+- node:
+    pkg: demo_nodes_cpp
+    exec: talker
+    name: y_typed
+    namespace: yns
+    param:
+    - name: int_p
+      value: 5
+    - name: float_p
+      value: 2.5
+    - name: bool_p
+      value: true
+    - name: str_p
+      value: "hello"
+    - name: list_p
+      value: [1, 2, 3]
+    - name: strlist_p
+      value: ["a", "b"]
+    - name: subst_p
+      value: "$(var lv)"
+    - name: subst_num
+      value: "$(var num)"
+    - name: grp
+      param:
+      - name: inner
+        value: 1
+    remap:
+    - from: in
+      to: out
+    args: "x y"
+    env:
+    - name: PL_Y
+      value: "yv"
+- group:
+    if: "$(var flag)"
+    children:
+    - node:
+        pkg: demo_nodes_cpp
+        exec: talker
+        name: y_if_false
+- group:
+    scoped: false
+    children:
+    - let:
+        name: leak
+        value: leaked
+- group:
+    children:
+    - let:
+        name: noleak
+        value: leaked
+- arg:
+    name: noleak
+    default: "kept"
+- node:
+    pkg: demo_nodes_cpp
+    exec: talker
+    name: "y_$(var leak)_$(var noleak)"
+    unless: "$(var flag)"
+- executable:
+    cmd: "echo yaml exec"
+    name: yex
+- include:
+    file: "$(dirname)/child.launch.xml"
+    arg:
+    - name: tag
+      value: "from_yaml"

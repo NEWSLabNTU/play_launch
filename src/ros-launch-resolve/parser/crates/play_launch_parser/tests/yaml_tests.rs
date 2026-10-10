@@ -1130,8 +1130,8 @@ fn test_yaml_executable_with_arg_children() {
     let cmd_strs: Vec<&str> = cmd.iter().filter_map(|v| v.as_str()).collect();
     assert_eq!(
         cmd_strs,
-        vec!["ros2 bag record", "-a", "-o", "/tmp/bag"],
-        "arg: children should be appended to cmd in order"
+        vec!["ros2", "bag", "record", "-a", "-o", "/tmp/bag"],
+        "`cmd` is a command line (split as `ExecuteProcess` splits it); arg: children follow"
     );
 }
 

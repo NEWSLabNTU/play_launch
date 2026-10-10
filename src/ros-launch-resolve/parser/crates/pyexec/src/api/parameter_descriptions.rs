@@ -102,6 +102,29 @@ impl ParameterValue {
         }
     }
 
+    /// `ParameterValue.evaluate`: the value performed, then coerced to
+    /// `value_type` — YAML rules when there is none — and rendered as
+    /// `play_launch_parser::param_value` renders a parameter (a string that
+    /// would re-type is quoted).
+    fn perform(&self, py: Python, _context: &Bound<'_, PyAny>) -> PyResult<String> {
+        use play_launch_parser::param_value;
+        let value = self.value.bind(py);
+        let type_name = self
+            .value_type
+            .as_ref()
+            .and_then(|t| t.bind(py).getattr("__name__").ok())
+            .and_then(|n| n.extract::<String>().ok());
+        let text = crate::api::utils::pyobject_to_string(py, &self.value)?;
+        let native = value.is_instance_of::<pyo3::types::PyBool>()
+            || value.is_instance_of::<pyo3::types::PyInt>()
+            || value.is_instance_of::<pyo3::types::PyFloat>();
+        if native && type_name.is_none() {
+            return super::launch_ros::node_value(value);
+        }
+        param_value::evaluate(&text, type_name.as_deref())
+            .map_err(pyo3::exceptions::PyValueError::new_err)
+    }
+
     /// Get the parameter value as a string
     fn __str__(&self, py: Python) -> PyResult<String> {
         let obj_ref = self.value.bind(py);

@@ -1,0 +1,6 @@
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="upper_true" if="TRUE"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="one" if="1"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="zero" if="0"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="unless_false" unless="False"/>
+</launch>

@@ -6,7 +6,7 @@ use crate::{
         ComposableNodeAction, ContainerAction, ExecutableAction, LoadComposableNodeAction,
         NodeAction,
     },
-    condition::is_truthy,
+    condition::condition_value,
     error::{ParseError, Result},
     ir::{
         Action, ActionKind, ComposableNodeDecl, Condition, EnvDecl, Expr, LaunchProgram, RemapDecl,
@@ -178,13 +178,13 @@ impl LaunchTraverser {
                 let resolved = expr
                     .resolve(&self.context)
                     .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                Ok(is_truthy(&resolved))
+                condition_value(&resolved)
             }
             Condition::Unless(expr) => {
                 let resolved = expr
                     .resolve(&self.context)
                     .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                Ok(!is_truthy(&resolved))
+                condition_value(&resolved).map(|b| !b)
             }
         }
     }
@@ -320,9 +320,8 @@ fn ir_to_node_action(kind: &ActionKind) -> NodeAction {
             namespace: namespace.as_ref().map(|n| n.parts.clone()),
             parameters: params
                 .iter()
-                .map(|p| crate::actions::node::Parameter {
-                    name: p.name.clone(),
-                    value: p.value.parts.clone(),
+                .map(|p| {
+                    crate::actions::node::Parameter::new(p.name.clone(), p.value.parts.clone())
                 })
                 .collect(),
             param_files: param_files.iter().map(|pf| pf.parts.clone()).collect(),
@@ -386,6 +385,10 @@ fn ir_to_container_action(
                 .iter()
                 .map(|n| composable_decl_to_action(n, context))
                 .collect(),
+            parameters: Vec::new(),
+            param_files: Vec::new(),
+            remappings: Vec::new(),
+            environment: Vec::new(),
         },
         _ => unreachable!("ir_to_container_action called with non-SpawnContainer"),
     }

@@ -1,0 +1,7 @@
+<launch>
+  <arg name="tool" default="/usr/bin/env"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="quoted" args="a 'b c' &quot;d e&quot; f\ g" ros_args="--log-level debug"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="empty_args" args=""/>
+  <executable cmd="echo 'one two' three" name="ex"/>
+  <executable cmd="$(var tool) -i" name="ex_subst"/>
+</launch>

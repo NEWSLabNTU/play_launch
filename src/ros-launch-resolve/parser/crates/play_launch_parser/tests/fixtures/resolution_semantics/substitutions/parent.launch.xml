@@ -1,0 +1,18 @@
+<launch>
+  <arg name="which" default="inner"/>
+  <arg name="inner" default="nested_ok"/>
+  <arg name="num" default="3"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="subs">
+    <param name="p_nested" value="$(var $(var which))"/>
+    <param name="p_var_default" value="$(var never_declared dflt)"/>
+    <param name="p_env_default" value="$(env PL_RESOLUTION_SEMANTICS_UNSET fallback)"/>
+    <param name="p_eval" value="$(eval '$(var num) * 2')"/>
+    <param name="p_eval_bool" value="$(eval '&quot;$(var which)&quot; == &quot;inner&quot;')"/>
+    <param name="p_command" value="$(command 'echo hello world')"/>
+    <param name="p_command_nested" value="$(command 'echo $(var which)')"/>
+    <param name="p_mixed" value="pre-$(var num)-post"/>
+    <param name="p_escape" value="dollar \$(var num)"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="listener" name="$(anon twin)"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="$(anon twin)" namespace="other"/>
+</launch>

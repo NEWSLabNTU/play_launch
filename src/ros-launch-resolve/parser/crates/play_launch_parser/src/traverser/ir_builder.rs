@@ -174,7 +174,9 @@ impl LaunchTraverser {
                 // <arg> sets a variable — still applied to context so later
                 // substitutions (e.g. in include file paths) can resolve.
                 let arg = crate::actions::ArgAction::from_entity(entity)?;
-                arg.apply(&mut self.context, &std::collections::HashMap::new());
+                // Best effort: the IR is built without evaluating, so an
+                // argument nothing set is not an error here.
+                let _ = arg.apply(&mut self.context, &std::collections::HashMap::new());
 
                 let condition = extract_condition(entity)?;
                 let span = make_span(entity, current_file);
@@ -316,7 +318,7 @@ impl LaunchTraverser {
                     self.context.push_namespace(namespace);
                 }
                 let mut body = Vec::new();
-                for child in entity.children() {
+                for child in entity.children().filter(|c| c.type_name() != "keep") {
                     body.extend(self.build_ir_entity(&child, current_file)?);
                 }
                 self.context.restore_scope(scope);

@@ -15,6 +15,7 @@ pub use container::ComposableNodeContainer;
 pub use lifecycle_node::{LifecycleNode, LifecycleTransition};
 pub use load_composable::LoadComposableNodes;
 pub use node::Node;
+pub(crate) use node::node_value;
 pub use push_namespace::{PopRosNamespace, PushRosNamespace};
 
 use crate::api::utils::pyobject_to_string;

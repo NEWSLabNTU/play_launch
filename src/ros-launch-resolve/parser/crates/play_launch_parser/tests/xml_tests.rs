@@ -1289,7 +1289,8 @@ fn test_command_substitution_unquoted() {
     // `echo` and `on_stderr='hello'` — which `launch` refuses ("expected
     // 'on_stderr' to be one of ..."). A command with arguments is quoted.
     let xml = r#"<launch>
-    <node pkg="demo_nodes_cpp" exec="talker" name="$(command echo hello)"/>
+    <let name="val" value="$(command echo hello)"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="$(var val)"/>
 </launch>"#;
 
     let mut file = NamedTempFile::new().unwrap();
@@ -1718,7 +1719,9 @@ fn extra_args_reach_the_record() {
     };
 
     let inner = by_name("inner");
-    assert_eq!(inner["extra_args"]["use_intra_process_comms"], "true");
+    // Typed as `launch_ros` types a parameter, and spelled the way this
+    // parser spells a boolean.
+    assert_eq!(inner["extra_args"]["use_intra_process_comms"], "True");
     // A substitution resolves like any other value — `$(var pool)` with the
     // arg defaulting to 4.
     assert_eq!(
@@ -1738,7 +1741,7 @@ fn extra_args_reach_the_record() {
     // `<load_composable_node>` shares the same reader, and issue #7 showed
     // that assuming so without asserting it is how one shape stays broken.
     let loaded = by_name("loaded");
-    assert_eq!(loaded["extra_args"]["use_intra_process_comms"], "false");
+    assert_eq!(loaded["extra_args"]["use_intra_process_comms"], "False");
 }
 
 /// `$(eval '\'$(var x)\' == \'y\'')`: a single-quoted template whose Python

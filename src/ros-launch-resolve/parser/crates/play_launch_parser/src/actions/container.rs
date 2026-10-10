@@ -36,6 +36,12 @@ pub struct ContainerAction {
     pub respawn: Option<Vec<Substitution>>,
     pub respawn_delay: Option<Vec<Substitution>>,
     pub composable_nodes: Vec<ComposableNodeAction>,
+    /// A container is a `Node`: its own `<param>`, `<remap>` and `<env>`
+    /// reach its process.
+    pub parameters: Vec<crate::actions::node::Parameter>,
+    pub param_files: Vec<Vec<Substitution>>,
+    pub remappings: Vec<crate::actions::node::Remapping>,
+    pub environment: Vec<(String, String)>,
 }
 
 /// The container's `respawn`/`respawn_delay`, resolved the way the Python
@@ -167,6 +173,10 @@ impl ContainerAction {
 
         // Parse composable_node children
         let mut composable_nodes = Vec::new();
+        let mut parameters = Vec::new();
+        let mut param_files = Vec::new();
+        let mut remappings = Vec::new();
+        let mut environment = Vec::new();
         for child in entity.children() {
             // Child elements never reach `traverse_entity` — validate here.
             crate::xml::attr_spec::validate_attrs(&child)?;
@@ -187,10 +197,15 @@ impl ContainerAction {
                     }
                     composable_nodes.push(ComposableNodeAction::from_entity(&child, context)?);
                 }
-                "param" | "remap" | "env" => {
-                    // Skip these for now - containers don't typically have their own params
-                    log::debug!("Skipping {} in node_container", child.type_name());
+                "param" => {
+                    if let Some(from) = child.optional_attr_str("from")? {
+                        param_files.push(parse_substitutions(&from)?);
+                    } else {
+                        parameters.extend(crate::actions::node::Parameter::from_entity(&child)?);
+                    }
                 }
+                "remap" => remappings.push(crate::actions::node::Remapping::from_entity(&child)?),
+                "env" => environment.push(crate::actions::node::parse_env(&child)?),
                 other => {
                     log::warn!("Unexpected element '{}' in node_container", other);
                 }
@@ -207,7 +222,55 @@ impl ContainerAction {
             respawn,
             respawn_delay,
             composable_nodes,
+            parameters,
+            param_files,
+            remappings,
+            environment,
         })
+    }
+
+    /// What the container process gets as a `Node`: its parameters (inline
+    /// and files), remappings — the global ones (`<set_remap>`) first — and
+    /// environment (`<set_env>` plus its own `<env>`).
+    #[allow(clippy::type_complexity)]
+    fn node_inputs(
+        &self,
+        context: &LaunchContext,
+    ) -> Result<(
+        Vec<(String, String)>,
+        Vec<String>,
+        Vec<(String, String)>,
+        Option<Vec<(String, String)>>,
+    )> {
+        let sub_err =
+            |e: crate::error::SubstitutionError| ParseError::InvalidSubstitution(e.to_string());
+        let params = self
+            .parameters
+            .iter()
+            .map(|p| p.evaluate(context).map_err(sub_err))
+            .collect::<Result<Vec<_>>>()?;
+        let files = self
+            .param_files
+            .iter()
+            .map(|f| resolve_substitutions(f, context).map_err(sub_err))
+            .collect::<Result<Vec<_>>>()?;
+        let mut remaps = context.remappings();
+        for r in &self.remappings {
+            remaps.push((
+                resolve_substitutions(&r.from, context).map_err(sub_err)?,
+                resolve_substitutions(&r.to, context).map_err(sub_err)?,
+            ));
+        }
+        let mut env = context.environment();
+        for (k, v) in &self.environment {
+            let subs = parse_substitutions(v)?;
+            env.insert(
+                k.clone(),
+                resolve_substitutions(&subs, context).map_err(sub_err)?,
+            );
+        }
+        let env = (!env.is_empty()).then(|| env.into_iter().collect());
+        Ok((params, files, remaps, env))
     }
 
     pub fn to_container_record(
@@ -251,14 +314,15 @@ impl ContainerAction {
         let arg_list = arguments.as_deref().unwrap_or(&empty_args);
         let ros_arg_list = ros_arguments.as_deref().unwrap_or(&empty_args);
 
+        let (params, files, remaps, env) = self.node_inputs(context)?;
         let cmd = build_ros_command(
             &exec_path,
             Some(name.as_str()),
             ns_ref,
             &gp,
-            &[],
-            &[],
-            &[],
+            &params,
+            &files,
+            &remaps,
             arg_list,
             ros_arg_list,
         );
@@ -269,17 +333,23 @@ impl ContainerAction {
             start_delay_secs: None,
             args: arguments,
             cmd,
-            env: None,
+            env,
             exec_name: Some(name.clone()),
             executable,
             global_params,
             name: name.clone(),
             namespace,
             package,
-            params: Vec::new(),
-            params_files: Vec::new(),
+            params,
+            params_files: files
+                .iter()
+                .map(|f| {
+                    crate::params::load_and_resolve_param_file(std::path::Path::new(f), context)
+                        .unwrap_or_else(|_| f.clone())
+                })
+                .collect(),
             param_sources: Vec::new(),
-            remaps: Vec::new(),
+            remaps,
             respawn,
             respawn_delay,
             ros_args: ros_arguments,
@@ -461,26 +531,14 @@ impl ComposableNodeAction {
                             parameters.push(("__param_file".to_string(), from_resolved));
                         }
                     } else {
-                        // This is an inline parameter
-                        let name = child.required_attr_str("name")?.ok_or_else(|| {
-                            ParseError::MissingAttribute {
-                                element: "param".to_string(),
-                                attribute: "name".to_string(),
-                            }
-                        })?;
-                        let value = child.required_attr_str("value")?.ok_or_else(|| {
-                            ParseError::MissingAttribute {
-                                element: "param".to_string(),
-                                attribute: "value".to_string(),
-                            }
-                        })?;
-                        let name_parsed = parse_substitutions(&name)?;
-                        let value_parsed = parse_substitutions(&value)?;
-                        let name_resolved = resolve_substitutions(&name_parsed, context)
-                            .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                        let value_resolved = resolve_substitutions(&value_parsed, context)
-                            .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                        parameters.push((name_resolved, value_resolved));
+                        // An inline parameter, or nested ones, evaluated the
+                        // way `launch_ros` evaluates a node's.
+                        for p in crate::actions::node::Parameter::from_entity(&child)? {
+                            parameters.push(
+                                p.evaluate(context)
+                                    .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?,
+                            );
+                        }
                     }
                 }
                 "remap" => {
@@ -526,12 +584,12 @@ impl ComposableNodeAction {
                             attribute: "value".to_string(),
                         }
                     })?;
-                    let name_parsed = parse_substitutions(&name)?;
-                    let value_parsed = parse_substitutions(&value)?;
-                    let name_resolved = resolve_substitutions(&name_parsed, context)
-                        .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                    let value_resolved = resolve_substitutions(&value_parsed, context)
-                        .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+                    // Extra arguments are parameters to `launch_ros`, typed
+                    // the same way.
+                    let (name_resolved, value_resolved) =
+                        crate::actions::node::Parameter::new(name, parse_substitutions(&value)?)
+                            .evaluate(context)
+                            .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
                     extra_args.insert(name_resolved, value_resolved);
                 }
                 other => {

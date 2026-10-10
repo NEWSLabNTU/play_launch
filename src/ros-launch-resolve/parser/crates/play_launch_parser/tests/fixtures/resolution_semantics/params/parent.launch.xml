@@ -1,0 +1,28 @@
+<launch>
+  <arg name="v" default="from_arg"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="params_order">
+    <param from="$(dirname)/a.yaml"/>
+    <param name="x" value="inline_x"/>
+    <param from="$(dirname)/b.yaml"/>
+    <param name="s_float" value="1.0" type="str"/>
+    <param name="s_list" value="[1, 2]" type="str"/>
+    <param name="s_bool" value="true" type="str"/>
+    <param name="auto_float" value="1.0"/>
+    <param name="auto_int" value="7"/>
+    <param name="auto_bool" value="True"/>
+    <param name="auto_list" value="[1, 2, 3]"/>
+    <param name="auto_strlist" value="[a, b]"/>
+    <param name="auto_str_num" value="'5'"/>
+    <param name="value_sep" value="a;b;c" value-sep=";"/>
+    <param name="nested">
+      <param name="child" value="nc"/>
+      <param name="deeper">
+        <param name="leaf" value="2.5"/>
+      </param>
+    </param>
+    <param name="subst" value="$(var v)"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="talker" name="sub_yaml">
+    <param from="$(dirname)/subst.yaml" allow_substs="true"/>
+  </node>
+</launch>

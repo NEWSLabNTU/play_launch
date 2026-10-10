@@ -421,8 +421,21 @@ impl Node {
     pub(crate) fn extract_param_value(value: &Bound<'_, PyAny>) -> PyResult<String> {
         use pyo3::types::PyBool;
 
+        // A Python string is read with YAML rules once performed, as
+        // `evaluate_parameter_dict` reads it: `'yes'` is a boolean, `'5'` an
+        // integer.
         if let Ok(s) = value.extract::<String>() {
-            return Ok(s);
+            return Ok(play_launch_parser::param_value::yaml_value(&s).unwrap_or(s));
+        }
+
+        // A `ParameterValue` renders itself, `value_type` and all.
+        if value
+            .get_type()
+            .name()
+            .map(|n| n == "ParameterValue")
+            .unwrap_or(false)
+        {
+            return pyobject_to_string(value.py(), &value.clone().unbind());
         }
 
         if value.is_instance_of::<PyBool>()
@@ -484,22 +497,34 @@ impl Node {
                     });
                     continue;
                 }
+                // A string element stays a string (a list of strings is a
+                // string array in `launch_ros`, whatever the strings say).
+                if let Ok(text) = item.extract::<String>() {
+                    formatted_items.push(format!("'{}'", text.replace('\'', "''")));
+                    continue;
+                }
                 let val = Self::extract_param_value(item)?;
                 let is_numeric_or_bool = val.parse::<f64>().is_ok()
                     || val.parse::<i64>().is_ok()
-                    || val == "true"
-                    || val == "false";
+                    || matches!(val.as_str(), "true" | "false" | "True" | "False");
                 if is_numeric_or_bool {
                     formatted_items.push(val);
                 } else {
-                    formatted_items.push(format!("'{}'", val));
+                    formatted_items.push(format!("'{}'", val.replace('\'', "''")));
                 }
             }
             return Ok(format!("[{}]", formatted_items.join(", ")));
         }
 
+        // A substitution: performed, then read with YAML rules.
         let py = value.py();
         let obj_py: Py<PyAny> = value.clone().unbind();
-        pyobject_to_string(py, &obj_py)
+        let text = pyobject_to_string(py, &obj_py)?;
+        Ok(play_launch_parser::param_value::yaml_value(&text).unwrap_or(text))
     }
+}
+
+/// A native Python scalar as parameter text.
+pub(crate) fn node_value(value: &Bound<'_, PyAny>) -> PyResult<String> {
+    Node::extract_param_value(value)
 }

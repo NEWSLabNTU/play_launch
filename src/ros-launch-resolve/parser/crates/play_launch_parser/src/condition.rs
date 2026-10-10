@@ -6,45 +6,55 @@ use crate::{
     xml::{Entity, XmlEntity},
 };
 
-/// Evaluate whether an entity should be processed based on if/unless conditions
+/// Whether an entity's `if=`/`unless=` let it execute, as `launch` evaluates
+/// them (`IfCondition`/`UnlessCondition` → `evaluate_condition_expression`).
 pub fn should_process_entity(entity: &XmlEntity, context: &LaunchContext) -> Result<bool> {
-    // Check "if" attribute
-    if let Some(if_condition) = entity.optional_attr_str("if")? {
-        let result = evaluate_condition(&if_condition, context)?;
-        if !result {
-            return Ok(false);
-        }
-    }
+    conditions_allow(
+        entity.optional_attr_str("if")?.as_deref(),
+        entity.optional_attr_str("unless")?.as_deref(),
+        context,
+    )
+}
 
-    // Check "unless" attribute
-    if let Some(unless_condition) = entity.optional_attr_str("unless")? {
-        let result = evaluate_condition(&unless_condition, context)?;
-        if result {
-            return Ok(false);
-        }
+/// `if=`/`unless=`, from any frontend. Both at once is an error in `launch`
+/// ("if and unless conditions can't be used simultaneously").
+pub fn conditions_allow(
+    if_expr: Option<&str>,
+    unless_expr: Option<&str>,
+    context: &LaunchContext,
+) -> Result<bool> {
+    match (if_expr, unless_expr) {
+        (Some(_), Some(_)) => Err(crate::error::ParseError::InvalidSubstitution(
+            "if and unless conditions can't be used simultaneously".to_string(),
+        )),
+        (Some(e), None) => evaluate_condition(e, context),
+        (None, Some(e)) => evaluate_condition(e, context).map(|b| !b),
+        (None, None) => Ok(true),
     }
-
-    Ok(true)
 }
 
 /// Evaluate a condition string (may contain substitutions)
 fn evaluate_condition(condition: &str, context: &LaunchContext) -> Result<bool> {
-    // Parse and resolve substitutions
     let subs = parse_substitutions(condition)?;
     let resolved = resolve_substitutions(&subs, context)
         .map_err(|e| crate::error::ParseError::InvalidSubstitution(e.to_string()))?;
-
-    // Evaluate as boolean
-    Ok(is_truthy(&resolved))
+    condition_value(&resolved)
 }
 
-/// Determine if a string value is "truthy"
-pub fn is_truthy(value: &str) -> bool {
-    let normalized = value.trim().to_lowercase();
-    matches!(
-        normalized.as_str(),
-        "true" | "1" | "yes" | "y" | "on" | "enabled"
-    )
+/// `launch.conditions.evaluate_condition_expression`: `true`/`1` and
+/// `false`/`0`, case-insensitively, and nothing else. This used to read
+/// `yes`/`on`/`enabled` as true and anything unrecognised — a typo
+/// included — as false.
+pub fn condition_value(resolved: &str) -> Result<bool> {
+    match resolved.trim().to_lowercase().as_str() {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => Err(crate::error::ParseError::InvalidSubstitution(format!(
+            "invalid condition expression, expected one of [true, 1, false, 0] but got \
+             '{}'",
+            resolved.trim().to_lowercase()
+        ))),
+    }
 }
 
 #[cfg(test)]
@@ -52,22 +62,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_is_truthy() {
-        assert!(is_truthy("true"));
-        assert!(is_truthy("True"));
-        assert!(is_truthy("TRUE"));
-        assert!(is_truthy("1"));
-        assert!(is_truthy("yes"));
-        assert!(is_truthy("y"));
-        assert!(is_truthy("on"));
-        assert!(is_truthy("enabled"));
-        assert!(is_truthy("  true  "));
+    fn a_condition_is_true_1_false_or_0_and_nothing_else() {
+        for t in ["true", "True", "TRUE", "1", "  true  "] {
+            assert!(condition_value(t).unwrap(), "{t}");
+        }
+        for f in ["false", "FALSE", "0"] {
+            assert!(!condition_value(f).unwrap(), "{f}");
+        }
+        // `launch` raises on each of these; they used to be true or false.
+        for bad in ["yes", "on", "enabled", "no", "", "random"] {
+            assert!(condition_value(bad).is_err(), "{bad:?}");
+        }
+    }
 
-        assert!(!is_truthy("false"));
-        assert!(!is_truthy("0"));
-        assert!(!is_truthy("no"));
-        assert!(!is_truthy(""));
-        assert!(!is_truthy("random"));
+    #[test]
+    fn if_and_unless_together_is_an_error() {
+        let context = LaunchContext::new();
+        assert!(conditions_allow(Some("true"), Some("false"), &context).is_err());
     }
 
     #[test]

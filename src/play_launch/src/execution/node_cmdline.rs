@@ -139,6 +139,12 @@ fn unquote_repr_scalar(s: &str) -> Option<&str> {
 fn str_to_yaml(s: &str) -> yaml_rust2::Yaml {
     use yaml_rust2::Yaml;
 
+    // A YAML single-quoted value is a string the parser kept from being
+    // re-typed (`'5'`, `type="str"`, the empty string).
+    if let Some(inner) = play_launch_parser::param_value::unquote(s) {
+        return Yaml::String(inner);
+    }
+
     // Boolean
     match s {
         "true" | "True" => return Yaml::Boolean(true),
@@ -221,15 +227,6 @@ fn str_to_yaml(s: &str) -> yaml_rust2::Yaml {
     Yaml::String(s.to_string())
 }
 
-/// Evaluate a Python string expression and return the result.
-/// Used for values from `$(eval ...)` in launch XML that produce string concatenations
-/// like `"'[module1, ' + 'module2, ' + ']'"`.
-pub(crate) fn eval_python_str(expr: &str) -> Option<String> {
-    use pyo3::prelude::*;
-    let code = std::ffi::CString::new(expr).ok()?;
-    Python::attach(|py| py.eval(&code, None, None).ok()?.extract::<String>().ok())
-}
-
 /// Split a canonical model FQN (`model::Structure::nodes` key, e.g.
 /// `/perception/detector` or `/detector`) into `(namespace, name)`,
 /// inverting `model_builder::fqn`'s forward join. `namespace` is `""` for a
@@ -272,7 +269,11 @@ pub(crate) fn param_value_to_record_string(v: &model::ParamValue) -> String {
                 format!("{s}.0")
             }
         }
-        model::ParamValue::Str(s) => s.clone(),
+        // A string stays a string: quoted when its text would re-type, as the
+        // parser quotes it. Except a list: the model has no array type, so an
+        // array parameter IS a `Str` holding its YAML flow text.
+        model::ParamValue::Str(s) if s.starts_with('[') && s.ends_with(']') => s.clone(),
+        model::ParamValue::Str(s) => play_launch_parser::param_value::quote_if_ambiguous(s),
         model::ParamValue::StrList(items) => items.join(","),
     }
 }

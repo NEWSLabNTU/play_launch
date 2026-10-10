@@ -41,9 +41,54 @@ pub fn resolve_arg_list(
     subs: &[Substitution],
     context: &LaunchContext,
 ) -> Result<Option<Vec<String>>, crate::error::SubstitutionError> {
-    let resolved = resolve_substitutions(subs, context)?;
-    let list: Vec<String> = resolved.split_whitespace().map(|s| s.to_string()).collect();
-    Ok((!list.is_empty()).then_some(list))
+    // `ExecuteProcess._parse_cmdline`: literal text is split with `shlex`
+    // (quotes group, a quoted space is not a separator), and a substitution's
+    // result is NEVER split — it joins the argument it touches. An empty
+    // attribute is one empty argument. Splitting the resolved string on
+    // whitespace instead broke `args="a 'b c'"` into three and dropped the
+    // empty argument `ros2 launch` passes.
+    let mut result: Vec<String> = Vec::new();
+    let mut arg: Option<String> = None;
+    let flush = |arg: &mut Option<String>, result: &mut Vec<String>| {
+        result.push(arg.take().unwrap_or_default());
+    };
+    for sub in subs {
+        match sub {
+            Substitution::Text(text) => {
+                let tokens = shlex::split(text).ok_or_else(|| {
+                    crate::error::SubstitutionError::InvalidSubstitution(format!(
+                        "unbalanced quotes in command line '{text}'"
+                    ))
+                })?;
+                if tokens.is_empty() {
+                    flush(&mut arg, &mut result);
+                    continue;
+                }
+                if text.starts_with(char::is_whitespace) && arg.is_some() {
+                    flush(&mut arg, &mut result);
+                }
+                arg.get_or_insert_with(String::new).push_str(&tokens[0]);
+                if tokens.len() > 1 {
+                    flush(&mut arg, &mut result);
+                    if tokens.len() > 2 {
+                        result.extend(tokens[1..tokens.len() - 1].iter().cloned());
+                    }
+                    arg = Some(tokens[tokens.len() - 1].clone());
+                }
+                if text.ends_with(char::is_whitespace) {
+                    flush(&mut arg, &mut result);
+                }
+            }
+            other => {
+                let value = other.resolve(context)?;
+                arg.get_or_insert_with(String::new).push_str(&value);
+            }
+        }
+    }
+    if let Some(a) = arg {
+        result.push(a);
+    }
+    Ok((!result.is_empty()).then_some(result))
 }
 
 /// Build a ROS 2 command line from already-resolved values.
@@ -226,8 +271,8 @@ impl CommandGenerator {
             .parameters
             .iter()
             .map(|p| {
-                let resolved_value = resolve_substitutions(&p.value, context)?;
-                Ok((p.name.clone(), normalize_param_value(&resolved_value)))
+                let (name, value) = p.evaluate(context)?;
+                Ok((name, normalize_param_value(&value)))
             })
             .collect::<Result<Vec<_>, GenerationError>>()?;
 
@@ -276,11 +321,9 @@ impl CommandGenerator {
         for src in &node.param_sources {
             match src {
                 crate::actions::node::ParamSourceSpec::Inline(p) => {
-                    let value = resolve_substitutions(&p.value, context)?;
-                    node_param_sources.push(crate::record::types::ParamSource::Inline {
-                        name: p.name.clone(),
-                        value,
-                    });
+                    let (name, value) = p.evaluate(context)?;
+                    node_param_sources
+                        .push(crate::record::types::ParamSource::Inline { name, value });
                 }
                 crate::actions::node::ParamSourceSpec::File {
                     path: subs,
@@ -518,10 +561,11 @@ impl CommandGenerator {
         exec: &ExecutableAction,
         context: &LaunchContext,
     ) -> Result<NodeRecord, GenerationError> {
-        let cmd_str = resolve_substitutions(&exec.cmd, context)?;
-
-        // Build command vector - clone cmd_str since we need it for executable field
-        let mut cmd = vec![cmd_str.clone()];
+        // `cmd` is a command LINE, split the way `ExecuteProcess` splits it
+        // (`resolve_arg_list`); it used to become a single argv element, the
+        // whole line as the program name.
+        let mut cmd = resolve_arg_list(&exec.cmd, context)?.unwrap_or_default();
+        let cmd_str = cmd.first().cloned().unwrap_or_default();
 
         // Add arguments
         for arg in &exec.arguments {
@@ -558,19 +602,9 @@ impl CommandGenerator {
             Some(merged_env.into_iter().collect::<Vec<_>>())
         };
 
-        // Get global parameters from context (already filtered to SetParameter values)
-        // Normalize booleans to Python convention (True/False)
-        let global_params = if context.global_parameters().is_empty() {
-            None
-        } else {
-            Some(
-                context
-                    .global_parameters()
-                    .into_iter()
-                    .map(|(k, v)| (k, normalize_param_value(&v)))
-                    .collect::<Vec<_>>(),
-            )
-        };
+        // A process that is not a ROS node gets no ROS parameters: launch_ros
+        // applies `global_params` to `Node`s, not to `ExecuteProcess`.
+        let global_params = None;
 
         Ok(NodeRecord {
             start_delay_secs: None,
@@ -660,10 +694,10 @@ mod tests {
             executable: vec![Substitution::Text("node".to_string())],
             name: None,
             namespace: None,
-            parameters: vec![Parameter {
-                name: "rate".to_string(),
-                value: vec![Substitution::Text("10.0".to_string())],
-            }],
+            parameters: vec![Parameter::new(
+                "rate",
+                vec![Substitution::Text("10.0".to_string())],
+            )],
             param_files: vec![],
             param_sources: Vec::new(),
             remappings: vec![],

@@ -1,0 +1,22 @@
+<launch>
+  <arg name="num" default="3"/>
+  <!-- an arg's default is performed when it is declared -->
+  <let name="src" value="first"/>
+  <arg name="eager" default="$(var src)"/>
+  <let name="src" value="second"/>
+  <!-- a let stores the performed value; it is not parsed again later -->
+  <let name="lit" value="a\$(var num)"/>
+  <!-- a re-declared arg keeps its first value -->
+  <arg name="re" default="r1"/>
+  <arg name="re" default="r2"/>
+  <arg name="mode" default="b">
+    <choice value="a"/>
+    <choice value="b"/>
+  </arg>
+  <node pkg="demo_nodes_cpp" exec="talker" name="n">
+    <param name="eager" value="$(var eager)"/>
+    <param name="lit" value="$(var lit)"/>
+    <param name="re" value="$(var re)"/>
+    <param name="mode" value="$(var mode)"/>
+  </node>
+</launch>

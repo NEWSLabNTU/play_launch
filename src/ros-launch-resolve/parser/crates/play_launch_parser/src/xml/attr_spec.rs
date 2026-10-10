@@ -230,13 +230,13 @@ static SPECS: &[AttrSpec] = &[
         // 'arg': {'if'}` / `{'unless'}`). Not a real XML element name —
         // `actions/include.rs` routes its arg-children validation here
         // explicitly instead of through the generic `"arg"` spec above.
-        supported: &["name", "value"],
+        supported: &["name", "value", "value-sep"],
         known_unsupported: &[],
         children: &[],
     },
     AttrSpec {
         element: "let",
-        supported: &["if", "unless", "name", "value"],
+        supported: &["if", "unless", "name", "value", "value-sep"],
         known_unsupported: &[],
         children: &[],
     },
@@ -261,8 +261,10 @@ static SPECS: &[AttrSpec] = &[
         // reserves `children` as the generic key for nested sub-entities —
         // `launch_yaml/entity.py`'s `Entity.children` property reads
         // `self.__element['children']`) rather than as sibling keys, so
-        // `children` itself is the one legal key to list here.
-        children: &["children"],
+        // `children` itself is the one legal key to list here. `keep` is
+        // `get_attr('keep', data_type=List[Entity])`: `<keep>` child elements
+        // in XML, a `keep:` list of mappings in YAML.
+        children: &["children", "keep"],
     },
     AttrSpec {
         element: "include",
@@ -275,7 +277,7 @@ static SPECS: &[AttrSpec] = &[
     },
     AttrSpec {
         element: "set_env",
-        supported: &["if", "unless", "name", "value"],
+        supported: &["if", "unless", "name", "value", "value-sep"],
         known_unsupported: &[],
         children: &[],
     },
@@ -314,7 +316,7 @@ static SPECS: &[AttrSpec] = &[
     },
     AttrSpec {
         element: "set_parameter",
-        supported: &["if", "unless", "name", "value"],
+        supported: &["if", "unless", "name", "value", "value-sep"],
         known_unsupported: &[],
         children: &[],
     },
@@ -340,7 +342,10 @@ static SPECS: &[AttrSpec] = &[
     // rejects `if` on `<param>`, `<remap>`, and `<env>`).
     AttrSpec {
         element: "param",
-        supported: &["name", "value", "from", "type"],
+        // `value-sep`: `launch_xml`'s `get_attr` splits `value` on it into a
+        // list, for every attribute (`<name>-sep`); a parameter is where it
+        // matters.
+        supported: &["name", "value", "value-sep", "from", "type"],
         // ROS 2 accepts `allow_substs` alongside `from=` (`launch_ros`
         // `Node._parse_nested_parameter_tuples()` reads it via
         // `param.get_attr('allow_substs', ...)` and threads it into
@@ -375,7 +380,7 @@ static SPECS: &[AttrSpec] = &[
     },
     AttrSpec {
         element: "env",
-        supported: &["name", "value"],
+        supported: &["name", "value", "value-sep"],
         known_unsupported: &[],
         children: &[],
     },
@@ -465,7 +470,30 @@ pub fn validate_attrs<E: Entity + ?Sized>(entity: &E) -> Result<()> {
     let attrs = entity.attributes();
     let names: Vec<&str> = attrs.iter().map(|(k, _)| *k).collect();
     let values: Vec<Option<&str>> = attrs.iter().map(|(_, v)| Some(*v)).collect();
-    check_with_values(element, &names, &values, false)
+    check_with_values(element, &names, &values, false)?;
+    check_value_sep(element, &attrs)
+}
+
+/// `launch_xml` splits ANY attribute on `<name>-sep`, so `value-sep` is
+/// accepted everywhere `value` is — and a value it actually splits is a LIST,
+/// which only `<param>` takes. Elsewhere `launch` refuses it at load time
+/// ("Cannot convert input '[...]' of type list to str").
+fn check_value_sep(element: &str, attrs: &[(&str, &str)]) -> Result<()> {
+    if element == "param" {
+        return Ok(());
+    }
+    let get = |k: &str| attrs.iter().find(|(n, _)| *n == k).map(|(_, v)| *v);
+    if let (Some(sep), Some(value)) = (get("value-sep"), get("value"))
+        && !sep.is_empty()
+        && value.contains(sep)
+    {
+        let parts: Vec<&str> = value.split(sep).collect();
+        return Err(crate::error::ParseError::InvalidSubstitution(format!(
+            "Cannot convert input '{parts:?}' of type '<class 'list'>' to '<class 'str'>' \
+             (value-sep on <{element}>)"
+        )));
+    }
+    Ok(())
 }
 
 /// Validate a bare `(element, attribute names)` pair.
@@ -485,8 +513,10 @@ pub fn validate_named(element: &str, attrs: &[&str]) -> Result<()> {
 /// Errors still name the real tag (`arg`), not the internal spec key — see
 /// `display_name`.
 pub fn validate_arg_child<E: Entity + ?Sized>(child: &E, spec_name: &str) -> Result<()> {
-    let names: Vec<&str> = child.attributes().into_iter().map(|(k, _)| k).collect();
-    check(spec_name, &names, false)
+    let attrs = child.attributes();
+    let names: Vec<&str> = attrs.iter().map(|(k, _)| *k).collect();
+    check(spec_name, &names, false)?;
+    check_value_sep(spec_name, &attrs)
 }
 
 /// Validate YAML mapping keys. YAML nests child elements as keys of the same

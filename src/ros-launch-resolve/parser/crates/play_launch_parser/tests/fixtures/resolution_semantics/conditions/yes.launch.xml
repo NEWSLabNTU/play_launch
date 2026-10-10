@@ -1,0 +1,3 @@
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="n" if="yes"/>
+</launch>

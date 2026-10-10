@@ -132,10 +132,11 @@ impl NodeAction {
                                 .and_then(parse_opt_bool),
                         });
                     } else {
-                        // This is an inline parameter
-                        let param = Parameter::from_entity(&child)?;
-                        parameters.push(param.clone());
-                        param_sources.push(ParamSourceSpec::Inline(param));
+                        // An inline parameter, or a group of nested ones.
+                        for param in Parameter::from_entity(&child)? {
+                            parameters.push(param.clone());
+                            param_sources.push(ParamSourceSpec::Inline(param));
+                        }
                     }
                 }
                 "remap" => remappings.push(Remapping::from_entity(&child)?),
@@ -219,9 +220,8 @@ impl NodeAction {
             .parameters
             .iter()
             .map(|p| {
-                let value = resolve_substitutions(&p.value, context)
-                    .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                Ok((p.name.clone(), value))
+                p.evaluate(context)
+                    .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -267,12 +267,10 @@ impl NodeAction {
             .iter()
             .map(|src| match src {
                 ParamSourceSpec::Inline(p) => {
-                    let value = resolve_substitutions(&p.value, context)
+                    let (name, value) = p
+                        .evaluate(context)
                         .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                    Ok(crate::record::types::ParamSource::Inline {
-                        name: p.name.clone(),
-                        value,
-                    })
+                    Ok(crate::record::types::ParamSource::Inline { name, value })
                 }
                 ParamSourceSpec::File { path: subs, .. } => {
                     // The capture carries the resolved PATH; the record
@@ -306,29 +304,134 @@ impl NodeAction {
 
 #[derive(Debug, Clone)]
 pub struct Parameter {
+    /// The name, raw; it may contain substitutions.
     pub name: String,
     pub value: Vec<Substitution>,
+    /// `type="str|int|float|bool|yaml|list_of_*"`.
+    pub value_type: Option<String>,
+    /// `value-sep`: the value split BEFORE substitution, one element each.
+    pub list: Option<Vec<Vec<Substitution>>>,
 }
 
 impl Parameter {
-    pub fn from_entity(entity: &XmlEntity) -> Result<Self> {
-        let value_str: String =
-            entity
-                .required_attr("value")?
-                .ok_or_else(|| ParseError::MissingAttribute {
-                    element: "param".to_string(),
-                    attribute: "value".to_string(),
-                })?;
+    /// A plain inline parameter.
+    pub fn new(name: impl Into<String>, value: Vec<Substitution>) -> Self {
+        Self {
+            name: name.into(),
+            value,
+            value_type: None,
+            list: None,
+        }
+    }
 
-        Ok(Self {
-            name: entity
+    /// One `<param name=...>`, which may hold nested `<param>`s instead of a
+    /// value: those become `outer.inner` parameters, as `launch_ros`'s
+    /// `parse_nested_parameters` builds them.
+    pub fn from_entity(entity: &XmlEntity) -> Result<Vec<Self>> {
+        use crate::xml::Entity;
+        let name: String =
+            entity
                 .required_attr("name")?
                 .ok_or_else(|| ParseError::MissingAttribute {
                     element: "param".to_string(),
                     attribute: "name".to_string(),
-                })?,
-            value: parse_substitutions(&value_str)?,
-        })
+                })?;
+        let value: Option<String> = entity.optional_attr("value")?;
+        let nested: Vec<XmlEntity> = entity
+            .children()
+            .filter(|c| c.type_name() == "param")
+            .collect();
+        let value_type: Option<String> = entity.optional_attr("type")?;
+        match (value, nested.is_empty()) {
+            (Some(_), false) => Err(ParseError::InvalidSubstitution(
+                "nested parameters and value attributes are mutually exclusive".to_string(),
+            )),
+            (None, true) => Err(ParseError::MissingAttribute {
+                element: "param".to_string(),
+                attribute: "value".to_string(),
+            }),
+            (Some(value), true) => {
+                let list = match entity.optional_attr::<String>("value-sep")? {
+                    Some(sep) if !sep.is_empty() => Some(
+                        value
+                            .split(sep.as_str())
+                            .map(parse_substitutions)
+                            .collect::<Result<Vec<_>>>()?,
+                    ),
+                    _ => None,
+                };
+                Ok(vec![Self {
+                    name,
+                    value: parse_substitutions(&value)?,
+                    value_type,
+                    list,
+                }])
+            }
+            (None, false) => {
+                if value_type.is_some() {
+                    return Err(ParseError::InvalidSubstitution(
+                        "nested parameters and type attributes are mutually exclusive".to_string(),
+                    ));
+                }
+                let mut out = Vec::new();
+                for child in nested {
+                    for mut p in Self::from_entity(&child)? {
+                        p.name = format!("{name}.{}", p.name);
+                        out.push(p);
+                    }
+                }
+                Ok(out)
+            }
+        }
+    }
+
+    /// The parameter's name and value as `launch_ros` evaluates them now:
+    /// substitutions performed, then the value read with YAML 1.1 rules
+    /// unless a `type` says otherwise (`param_value`).
+    pub fn evaluate(
+        &self,
+        context: &LaunchContext,
+    ) -> std::result::Result<(String, String), crate::error::SubstitutionError> {
+        let name = resolve_substitutions(
+            &parse_substitutions(&self.name)
+                .map_err(|e| crate::error::SubstitutionError::InvalidSubstitution(e.to_string()))?,
+            context,
+        )?;
+        let fail = |e: String| {
+            crate::error::SubstitutionError::InvalidSubstitution(format!("parameter '{name}': {e}"))
+        };
+        let value = match &self.list {
+            Some(items) => {
+                let elem_type = self
+                    .value_type
+                    .as_deref()
+                    .and_then(|t| t.strip_prefix("list_of_"));
+                let mut rendered = Vec::new();
+                for item in items {
+                    let text = resolve_substitutions(item, context)?;
+                    let v = crate::param_value::evaluate(&text, elem_type).map_err(fail)?;
+                    // A string element stays a string: quote it.
+                    let text = crate::param_value::unquote(&v);
+                    let is_text = text.is_some()
+                        || elem_type == Some("str")
+                        || (elem_type.is_none()
+                            && !matches!(v.as_str(), "True" | "False")
+                            && v.parse::<f64>().is_err());
+                    let v = text.unwrap_or(v);
+                    rendered.push(if is_text {
+                        format!("'{}'", v.replace('\'', "''"))
+                    } else {
+                        v
+                    });
+                }
+                format!("[{}]", rendered.join(", "))
+            }
+            None => {
+                let text = resolve_substitutions(&self.value, context)?;
+                crate::param_value::evaluate(&text, self.value_type.as_deref()).map_err(fail)?
+            }
+        };
+        Ok((name, value))
     }
 }
 
@@ -363,7 +466,7 @@ impl Remapping {
     }
 }
 
-fn parse_env(entity: &XmlEntity) -> Result<(String, String)> {
+pub(crate) fn parse_env(entity: &XmlEntity) -> Result<(String, String)> {
     let name: String =
         entity
             .required_attr("name")?
