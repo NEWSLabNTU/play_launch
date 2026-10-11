@@ -37,6 +37,10 @@ allowance heavily.
   (`ros-launch-manifest` v0.1.52), where a list parameter is a list rather
   than a string of YAML. Older models load unchanged and spawn as before. A
   tool built on an older `ros-launch-manifest` refuses a schema-2 model.
+- **Fix:** the web UI's Launch page shows each include under its namespace
+  when started with `up <model.yaml>`. Every scope used to arrive with an
+  empty namespace. The model records it now (`ScopeInfo.ns`,
+  `ros-launch-manifest` v0.1.54).
 - Internal: two integration test files found the `ros-launch-resolve` CLI
   only in `src/ros-launch-resolve/target/`, so under a colcon build their
   tests always skipped and still reported passed. They use the shared lookup

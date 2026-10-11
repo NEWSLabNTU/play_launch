@@ -1920,13 +1920,6 @@ pub(crate) async fn play(
 /// binding is checked here — the model is a self-sufficient spawn source
 /// (46.3b); `resolve`/`dump` no longer emit a record companion to bind to
 /// (Phase 46.5).
-/// Build the web launch-tree (Phase 30 shape — `Vec<ScopeEntry>` + member-name
-/// → scope-id map) from a SystemModel's `structure.scopes`/`nodes`. Used on the
-/// standalone `replay --model` path, where there is no in-memory `LaunchDump`
-/// to source it from (Phase 49.B1). File scopes only (the model folds `<group>`
-/// scopes into their file); namespace is a per-node property, so
-/// `ScopeEntry.ns` is left empty. Scope ids are assigned by the model's stable
-/// `structure.scopes` key order.
 /// Best available display name for a traced child.
 ///
 /// Prefers the model FQN (`/safety/brake_controller`) so a trace row reads the
@@ -2061,6 +2054,14 @@ fn launch_tree_from_dump(
     (dump.scopes.clone(), map)
 }
 
+/// Build the web launch-tree (Phase 30 shape — `Vec<ScopeEntry>` + FQN →
+/// scope-id map) from a SystemModel's `structure.scopes`/`nodes`. Used on the
+/// standalone `up <model.yaml>` path, where there is no in-memory `LaunchDump`
+/// to source it from (Phase 49.B1). File scopes only (the model folds `<group>`
+/// scopes into their file). `ScopeEntry.ns` is the namespace the file was
+/// included under (`ScopeInfo.ns`, absent meaning `/`), as the dump path gives
+/// it. Scope ids are assigned by the model's stable `structure.scopes` key
+/// order.
 fn launch_tree_from_model(
     model: &ros_launch_manifest_model::SystemModel,
 ) -> (
@@ -2088,7 +2089,7 @@ fn launch_tree_from_model(
                 file: info.file.clone().unwrap_or_else(|| key.clone()),
                 path: None,
             }),
-            ns: String::new(),
+            ns: info.ns.clone().unwrap_or_else(|| "/".to_string()),
             args: info
                 .args
                 .iter()
@@ -2175,6 +2176,7 @@ mod tests {
                 parent: Some("root_pkg/root.launch.xml".to_string()),
                 file: Some("child.launch.xml".to_string()),
                 package: Some("dep_pkg".to_string()),
+                ns: Some("/robot".to_string()),
                 ..Default::default()
             },
         );
@@ -2201,6 +2203,10 @@ mod tests {
         assert_eq!(child.parent, Some(root.id), "child scope links to root");
         assert!(root.parent.is_none(), "root has no parent");
         assert_eq!(child.pkg(), Some("dep_pkg"));
+        // The include's namespace, `/` where the model records none — the
+        // spelling the dump path gives, which the web UI compares against.
+        assert_eq!(child.ns, "/robot");
+        assert_eq!(root.ns, "/");
 
         // Keyed by FQN, not by the bare last segment.
         assert_eq!(node_scope_map.get("/robot/talker"), Some(&child.id));

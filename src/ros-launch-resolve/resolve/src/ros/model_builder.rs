@@ -567,6 +567,11 @@ pub fn build_system_model(
                     .map(|m| m.contract_path.display().to_string()),
                 package: s.pkg().map(str::to_string),
                 file: s.file().map(str::to_string),
+                // The namespace the file was included under, for the web
+                // launch tree off a model (`up <model.yaml>` has no dump).
+                ns: Some(s.ns.as_str())
+                    .filter(|ns| !ns.is_empty() && *ns != "/")
+                    .map(str::to_string),
                 // Resolved include args (49.A2) — for `context` launch-tree
                 // inspection off the model.
                 args: s.args.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),

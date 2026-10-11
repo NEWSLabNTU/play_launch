@@ -97,6 +97,15 @@ fn resolve_merges_launch_and_contracts_into_full_model() {
         "included scope is parented to the root launch file"
     );
     assert_eq!(perception["file"], "perception.launch.xml");
+    // The namespace the include was made under, which no node of it need
+    // carry; the web launch tree off `up <model.yaml>` reads it. The root
+    // namespace is left absent.
+    assert_eq!(perception["ns"], "/perception");
+    assert!(
+        scopes["bringup.launch.xml"].get("ns").is_none(),
+        "root scope records no namespace: {}",
+        scopes["bringup.launch.xml"]
+    );
     assert!(
         perception["manifest"]
             .as_str()

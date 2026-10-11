@@ -108,7 +108,7 @@ The parser tracks which launch file each node originates from via a **scope tabl
 - **Member name mapping**: `node_scope_map` keyed by `name.or(exec_name)` to match actor system member names
 - **CLI**: `play_launch context <system_model.yaml> --tree|--node <FQN>|--launch <pkg> <file>` (Phase 49: reads the SystemModel, not the retired record.json)
 - **Web UI**: "Launch" page (`LaunchTreeView.js`, `LaunchPanel.js`) with tree view + detail panel
-- **API**: `GET /api/launch-tree` returns `{ scopes, node_scopes }` — sourced from the in-memory `LaunchDump` `replay`/`launch` build for the invocation (Phase 47: no `record.json` on disk anywhere). `launch`'s in-memory round-trip passes the real parsed dump, so this stays populated there; standalone `replay --model <path>` (no launch step) has no dump to read and degrades to empty (`{}`), not an error — a documented follow-up is to source it from `model.structure.scopes` instead (`.superpowers/sdd/p46-w5-report.md` §6)
+- **API**: `GET /api/launch-tree` returns `{ scopes, node_scopes }` (`node_scopes` keyed by canonical member id). `launch`/`run` source it from the in-memory `LaunchDump` they just parsed; standalone `up <model.yaml>` has no dump and sources it from the model's `structure.scopes` (`commands/up.rs::launch_tree_from_model`, Phase 49.B1). The model path folds `<group>` scopes into their file and carries no absolute `origin.path`; each include's namespace rides on `ScopeInfo.ns` (manifest `v0.1.54`, absent meaning `/`), which the Launch page groups by
 - **Validation**: `scripts/compare_scopes.py` — self-consistency + cross-parser comparison
 
 ### Launch IR (feature-gated, DORMANT — no consumer)
@@ -528,7 +528,7 @@ add `src/ros-launch-resolve` to `members`. `just check-layer2-isolation`
 boundary breaks: no ROS crates in the graph, no ROS shared libraries linked,
 and both launch frontends resolve with no ROS installed.
 
-**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.1.20`), not a
+**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.1.54`), not a
 submodule — phase-55 W2. Layer 2 now has no submodules at all. **Three**
 manifests name the tag and must move together:
 `src/play_launch/Cargo.toml`, `src/ros-launch-resolve/Cargo.toml` and
@@ -670,6 +670,19 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-12**: **The Launch page off a model shows each include under
+  its namespace.** `up <model.yaml>` already built the web launch tree from
+  the model (Phase 49.B1), but the model's scope table had no namespace, so
+  every scope arrived with `ns: ""`. The UI compares against `/`, so each
+  scope got a blank namespace badge and namespace grouping was lost. Checked
+  end-to-end against `launch` on `contract_merge`, before and after.
+  `ScopeInfo.ns` (manifest `v0.1.54`) records the namespace in effect where
+  a file was included. The include's nodes may set their own, so it cannot
+  be recovered from them. The two paths still differ, by design: the model
+  folds `<group>` scopes into their file and omits the absolute
+  `origin.path`. `v0.1.53` was tagged by mistake on `v0.1.52`'s commit and
+  is identical to it; pin `v0.1.54`.
+
 - **2026-10-12**: **#0067 re-shaped any list element holding `: ` or `, `
   (#0068), and `test-all` was the first thing to run it.** Schema 2 renders
   a list as flow text, `[e1, e2]`, and v0.1.51 quoted an element only by the
@@ -729,8 +742,9 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   are fixed together, since fixing either alone regresses through the other.
   The YAML path also never entered the include chain (a YAML cycle
   overflowed the stack) and never stamped its records' scope. The Autoware
-  parity gate is unchanged (119 = 119). Not fixed: configurations a
-  `.launch.py` sets do not cross the pyexec boundary.
+  parity gate is unchanged (119 = 119). Configurations a `.launch.py`
+  sets did not yet cross the pyexec boundary; `09bd9546` (C ABI 7) fixed
+  that, sending the state across at every include.
 
 - **2026-10-09**: **`play_launch run` exits on a signal (#0061), and `just
   check` reports what failed.** `run` kept its own copy of the signal loop.
