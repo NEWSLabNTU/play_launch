@@ -1,6 +1,6 @@
 # Phase 86 - a lifecycle node's autostart comes from the launch file
 
-Status: **designed** (2026-10-10). Not started. This is play_launch's part of a
+Status: **designed** (2026-10-10, corrected 2026-10-12). Not started. This is play_launch's part of a
 cross-repository change. The design of record is rlm's
 `docs/model-boundary.md`; the work items, ordering and retirement live in
 nano-ros phase 486 (`docs/roadmap/phase-486-launch-model-boundary.md`), where
@@ -14,7 +14,13 @@ has only two inputs:
 
 - the contract's `lifecycle: true`;
 - nano-ros's system-wide `[lifecycle] autostart`, projected onto every
-  lifecycle node by rlm's `apply_to_launch`.
+  lifecycle node by THIS repository's resolver:
+  `src/ros-launch-resolve/resolve/src/model.rs` loops over
+  `structure.nodes` with rlm's `SystemConfigToml::lifecycle_autostart()`
+  accessor. rlm's `apply_to_launch` writes only the execution layer and never
+  touched the per-node field. (Corrected 2026-10-12: this doc, rlm's
+  `model-boundary.md` and nano-ros phase 486 had all named rlm as the
+  projector, which put the deletion in the wrong repository.)
 
 The second is nano-ros boot policy, and it is leaving the model (rlm
 `model-boundary.md`). The portable source of the per-node fact is the launch
@@ -28,6 +34,13 @@ file, and this parser cannot read it:
 
 ## Work
 
+- **W0. Stop projecting the system-wide default.** Delete the
+  `[lifecycle] autostart` loop in `resolve/src/model.rs`, so the model's
+  per-node `lifecycle_autostart` comes only from the launch file (W1/W2) and
+  the contract. Lands with W5's pin bump, not before: until nano-ros reads the
+  default from its own overlay (phase 486 W3), a nano-ros model resolved by an
+  older nano-ros still expects it here. rlm deletes the accessor afterwards
+  (phase 486 W8).
 - **W1. XML and YAML frontends.**
   - Dispatch `<lifecycle_node>` like `<node>`, plus the lifecycle marker.
   - Add its attribute spec from the Humble/Jazzy diff (`external/diff_attrs.sh`):
@@ -47,8 +60,8 @@ file, and this parser cannot read it:
   enforcement's `lifecycle_nodes` set (`runtime_enforcement/view.rs`) is
   unchanged.
 - **W5. Pin bump.** `just bump-manifest <tag>` to the rlm tag from nano-ros
-  phase 486 W6, which stops projecting `[lifecycle]`, `features` and the build
-  half of `[deploy.*]`. Update the field census baseline; `Execution.features`
+  phase 486 W6, which stops writing `Execution.features`, `Deploy.extra` and
+  `Target::Mcu` (W0 above removes the lifecycle projection on this side). Update the field census baseline; `Execution.features`
   leaves the consumer list. Fast-forward `main`.
 
 ## Acceptance
@@ -58,9 +71,12 @@ file, and this parser cannot read it:
   parsers.
 - `play_launch up` brings that node to `active` with no external
   `ros2 lifecycle set`.
-- A model that rlm resolved from a nano-ros `system.toml` carrying
-  `[lifecycle]`, `features` and `[deploy.*]` build fields still resolves. Those
-  keys reach nothing.
+- A model resolved from a nano-ros `system.toml` carrying `[lifecycle]`,
+  `features` and `[deploy.*]` still resolves. Those keys reach nothing: no
+  lifecycle default on any node, no `execution.features`, no `Deploy.extra`.
+- Nothing here reads `execution.deploy` (`target`, `Mcu`, `extra`); measured
+  2026-10-12 by `git grep`, so the fields rlm stops writing cost this repository
+  nothing.
 
 ## Migration
 
