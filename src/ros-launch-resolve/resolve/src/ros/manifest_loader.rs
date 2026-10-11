@@ -2627,25 +2627,47 @@ fn check_fault_reaction(
                     let mut best: Option<(f64, String)> = None;
                     if kind == FaultKind::Reported {
                         // The guard IS a detector's output. Detection = its
-                        // input period + its own path latency, both derived.
+                        // input period + its own path latency, both derived,
+                        // + the release jitter of the timer that publishes it
+                        // when that timer states one: a verdict published on
+                        // a tick released late reaches the guard that much
+                        // later, the same wait the walk's sampling hop
+                        // charges (phase 85 D1).
                         for pub_ref in &topic.publishers {
                             let Some((node_fqn, ep)) = split_endpoint_ref_for_check(pub_ref) else {
                                 continue;
                             };
-                            let lat = node_paths
-                                .iter()
-                                .filter(|p| p.node_fqn == node_fqn && p.path.output.contains(&ep))
+                            let publishing = || {
+                                node_paths.iter().filter(|p| {
+                                    p.node_fqn == node_fqn && p.path.output.contains(&ep)
+                                })
+                            };
+                            let lat = publishing()
                                 .filter_map(|p| p.path.max_latency.map(|d| d.as_millis_f64()))
                                 .fold(0.0, f64::max);
+                            let jitter = publishing()
+                                .filter(|p| {
+                                    matches!(
+                                        p.path.effective_trigger(),
+                                        ros_launch_manifest_types::EffectiveTrigger::Timer { .. }
+                                    )
+                                })
+                                .filter_map(|p| p.path.timer_jitter().map(|d| d.as_millis_f64()))
+                                .fold(0.0, f64::max);
                             if let Some(period) = period_ms {
-                                let v = period + lat;
+                                let v = period + jitter + lat;
                                 if best.as_ref().is_none_or(|(b, _)| v < *b) {
-                                    best = Some((
-                                        v,
+                                    let why = if jitter > 0.0 {
+                                        format!(
+                                            "{pub_ref} reports every {period:.2}ms + \
+                                             {jitter:.2}ms jitter + {lat:.2}ms"
+                                        )
+                                    } else {
                                         format!(
                                             "{pub_ref} reports every {period:.2}ms + {lat:.2}ms"
-                                        ),
-                                    ));
+                                        )
+                                    };
+                                    best = Some((v, why));
                                 }
                             }
                         }
@@ -4017,8 +4039,9 @@ fn check_scope_path_critical_path(
                 severity: Severity::Warning,
                 message: format!(
                     "scope path '{}' (scope {}) declares max_jitter ({max_jitter:.2}ms) below \
-                     the sampling jitter its own route already carries ({:.2}ms, one period \
-                     per clock boundary crossed: {}). No priority assignment can reduce this \
+                     the sampling jitter its own route already carries ({:.2}ms, one period and \
+                     its declared release jitter per clock boundary crossed: {}). No priority \
+                     assignment can reduce this \
                      — raise the boundary's rate or the requirement",
                     scope_path.path_name,
                     scope_path.scope_id,
@@ -4049,7 +4072,8 @@ fn check_scope_path_critical_path(
                 severity: Severity::Warning,
                 message: format!(
                     "scope path '{}' (scope {}) is structurally infeasible: sampling cost \
-                     alone ({:.2}ms, one period per clock boundary crossed: {}) meets or \
+                     alone ({:.2}ms, one period and its declared release jitter per clock boundary \
+                     crossed: {}) meets or \
                      exceeds the declared max_latency ({declared}ms). No priority assignment \
                      can reduce this — raise the boundary's rate or the budget",
                     scope_path.path_name,

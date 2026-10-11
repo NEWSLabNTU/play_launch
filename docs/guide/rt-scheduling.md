@@ -635,7 +635,10 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    ```
 
    The boundary contributes its *period* — the cost of crossing a clock —
-   not an execution time, because `tick` declares no cost of its own.
+   not an execution time, because `tick` declares no cost of its own. A
+   timer that states a release jitter (`trigger: { timer: { rate_hz: 100,
+   jitter: 2ms } }`) contributes period + jitter: a tick released late is a
+   longer wait on the same clock.
    `check` says so rather than treating absent as zero:
 
    ```

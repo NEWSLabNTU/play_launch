@@ -1010,6 +1010,69 @@ RankedPlan {
     ],
     warnings: [],
 }
+== contract_takeover_gate_jitter/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/handler",
+            path: "call_mrm",
+            fine_group: 0,
+            coarse_group: Some(
+                "sys.notice",
+            ),
+            tie_group: None,
+            provenance: "derived(chain_aware: sys.notice segment drain 1/1)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "on_timer",
+            fine_group: 1,
+            coarse_group: Some(
+                "sys.notice",
+            ),
+            tie_group: None,
+            provenance: "derived(chain_aware: sys.notice boundary RM period=100ms)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "on_timer",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "driver_exit",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
+        },
+        RankItem {
+            node: "/estop_op",
+            path: "on_timer",
+            fine_group: 4,
+            coarse_group: None,
+            tie_group: Some(
+                4,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+        },
+    ],
+    warnings: [
+        ChainFeasibleWithoutWcet {
+            chain: "sys.notice",
+            boundaries_without_wcet: [
+                "/gate/on_timer",
+            ],
+        },
+    ],
+}
 == contract_takeover_jitter/launch/bringup.launch.xml
 RankedPlan {
     items: [

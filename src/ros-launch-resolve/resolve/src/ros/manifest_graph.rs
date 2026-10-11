@@ -95,16 +95,17 @@ impl GlobalNode {
     /// `chain_checks`'s `sampling_cost`, so the chain and scope-path forms of
     /// one system agree. The boundary's own `exec` is included here and must
     /// not also be added elsewhere.
+    ///
+    /// A timer that declares a release `jitter:` (phase 85 D1) is charged
+    /// `period + jitter + exec`: a tick released late makes the wait longer
+    /// by exactly that much, as `walk_reaction`'s sampling hop already
+    /// charges it.
     pub fn traversal_latency_ms(&self, path: Option<&str>) -> f64 {
-        use ros_launch_manifest_types::EffectiveTrigger;
         let Some(decl) = path.and_then(|name| self.paths.get(name)) else {
             return self.max_latency_ms();
         };
         let exec = decl.max_latency.map(|d| d.as_millis_f64()).unwrap_or(0.0);
-        match decl.effective_trigger() {
-            EffectiveTrigger::Timer { rate_hz } if rate_hz > 0.0 => 1000.0 / rate_hz + exec,
-            _ => exec,
-        }
+        self.sampling_cost_ms(path) + exec
     }
 
     /// Sets of this node's paths that may not run concurrently.
@@ -174,11 +175,16 @@ impl GlobalNode {
     /// two terms answer different questions — `exec` is work that scheduling
     /// can shorten, a period is a wait that it cannot — which is the whole
     /// reason `chain-sampling-feasibility` exists.
+    ///
+    /// One period plus the timer's declared release jitter, when it states
+    /// one: both are waits on a clock that no priority assignment removes.
     pub fn sampling_cost_ms(&self, path: Option<&str>) -> f64 {
         use ros_launch_manifest_types::EffectiveTrigger;
         match path.and_then(|name| self.paths.get(name)) {
             Some(decl) => match decl.effective_trigger() {
-                EffectiveTrigger::Timer { rate_hz } if rate_hz > 0.0 => 1000.0 / rate_hz,
+                EffectiveTrigger::Timer { rate_hz } if rate_hz > 0.0 => {
+                    1000.0 / rate_hz + decl.timer_jitter().map_or(0.0, |d| d.as_millis_f64())
+                }
                 _ => 0.0,
             },
             None => 0.0,
@@ -1308,6 +1314,45 @@ mod tests {
         let cp = critical_path(&subgraph(&g, "/src", "/sink")).expect("route exists");
         assert_eq!(cp.total_ms, 17.0, "10 period + 3 exec + 4 = 17, not 20");
         assert_eq!(cp.sampling_cost_ms, 10.0, "the period alone");
+    }
+
+    /// A boundary whose timer states a release `jitter:` (phase 85 D1) is
+    /// charged `period + jitter + exec`: a tick released late is a longer
+    /// wait on the clock, and it is reported in the sampling term, not in
+    /// the event segment. The island's gate: 100 + 6 + 20.
+    #[test]
+    fn a_jittered_boundary_is_charged_period_plus_jitter_plus_exec() {
+        let mut tick = timer_path(10.0, &["out"], Some(20.0));
+        tick.trigger = Some(Trigger::Timer {
+            rate_hz: 10.0,
+            jitter: Some(ros_launch_manifest_types::duration::Duration::from_millis_f64(6.0)),
+        });
+        let g = assemble(
+            vec![
+                node("/gate", &[("tick", tick)]),
+                node("/sink", &[("main", path(&["in"], &["o"], Some(4.0)))]),
+            ],
+            vec![edge("/gate", "out", "/sink", "in")],
+        );
+        let cp = critical_path(&subgraph(&g, "/gate", "/sink")).expect("route exists");
+        assert_eq!(cp.sampling_cost_ms, 106.0, "the period and the jitter");
+        assert_eq!(cp.total_ms, 130.0, "100 + 6 + 20 + 4");
+    }
+
+    /// No `jitter:` is no jitter: the boundary stays one period, so every
+    /// contract written before phase 85 D1 reads the same totals.
+    #[test]
+    fn a_timer_without_jitter_still_costs_one_period() {
+        let g = assemble(
+            vec![
+                node("/gate", &[("tick", timer_path(10.0, &["out"], Some(20.0)))]),
+                node("/sink", &[("main", path(&["in"], &["o"], Some(4.0)))]),
+            ],
+            vec![edge("/gate", "out", "/sink", "in")],
+        );
+        let cp = critical_path(&subgraph(&g, "/gate", "/sink")).expect("route exists");
+        assert_eq!(cp.sampling_cost_ms, 100.0);
+        assert_eq!(cp.total_ms, 124.0);
     }
 
     /// An event-triggered route has no clock crossing, so nothing is added.

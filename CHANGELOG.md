@@ -22,6 +22,15 @@ allowance heavily.
 - **Visible:** `ros-launch-manifest` v0.1.55. Models no longer carry
   `execution.features`, `execution.deploy.*.target` or `.extra` from a
   `system.toml`; nothing here read them. Older models still load.
+- **Fix:** a timer's release `jitter:` (phase 85 D1) is now charged
+  wherever the timer's period is. Two places charged the period alone: the
+  detection of a `reported` fault whose verdict is published on a jittered
+  timer (`reports every 100.00ms + 6.00ms jitter + 20.00ms`), and a scope
+  path's critical path through a jittered timer boundary (its
+  `sampling_cost`, and so `scope-budget`, `scope-sampling-feasibility` and
+  `jitter-feasibility`). A contract that states no `jitter:` reads the same
+  totals as before; one that does may see a reported fault's detection, and
+  every total below it, grow by the jitter.
 - **Fix:** `--parser python` no longer RUNS a plain `ExecuteProcess` while
   parsing (#0066). It records it, as the Rust parser does. Before, `resolve
   --parser python` started every command a launch file declared, and the
