@@ -680,8 +680,8 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   a file was included. The include's nodes may set their own, so it cannot
   be recovered from them. The two paths still differ, by design: the model
   folds `<group>` scopes into their file and omits the absolute
-  `origin.path`. `v0.1.53` was tagged by mistake on `v0.1.52`'s commit and
-  is identical to it; pin `v0.1.54`.
+  `origin.path`. `v0.1.53` does not exist: a tag of that name was pushed by
+  mistake on `v0.1.52`'s commit and deleted.
 
 - **2026-10-12**: **#0067 re-shaped any list element holding `: ` or `, `
   (#0068), and `test-all` was the first thing to run it.** Schema 2 renders
