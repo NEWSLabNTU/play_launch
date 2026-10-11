@@ -868,3 +868,40 @@ fn test_observable_data_delivery() {
          if this fails, the issue is not specific to fork+exec isolated isolation."
     );
 }
+
+/// `--composable-respawn` can only act under `isolated`, where a composable is
+/// a process of its own. Under the default `observable` a composable crash
+/// ends its container, so the flag would silently do nothing; it warns
+/// instead, naming the mode and what recovers.
+#[test]
+fn composable_respawn_warns_when_the_mode_cannot_honour_it() {
+    let env = fixtures::install_env();
+    let work_tmp = tempfile::TempDir::new().expect("tempdir");
+    let work_dir = work_tmp.path();
+    let stdout = work_dir.join("stdout.log");
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_dir)
+        .args([
+            "launch",
+            "--disable-web-ui",
+            "--disable-monitoring",
+            "--disable-diagnostics",
+            "--composable-respawn",
+            "on-crash",
+            &launch_file(),
+        ])
+        .stdout(Stdio::from(std::fs::File::create(&stdout).unwrap()))
+        .stderr(Stdio::from(
+            std::fs::File::create(work_dir.join("stderr.log")).unwrap(),
+        ));
+    let _proc = ManagedProcess::spawn(&mut cmd).expect("spawn play_launch");
+
+    let found = wait_for_pattern(
+        &stdout,
+        &["has no effect under --container-mode observable"],
+        1,
+        Duration::from_secs(30),
+    );
+    let out = std::fs::read_to_string(&stdout).unwrap_or_default();
+    assert_eq!(found, 1, "expected the composable-respawn warning:\n{out}");
+}

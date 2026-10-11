@@ -11,7 +11,8 @@ knows every one of those facts.
 SystemModel and it prints a contract file to stdout.
 
 ```sh
-# 1. run the system once, with interception on
+# 1. run the system once, with interception on -- a system with no contract
+#    does not intercept by default; `--interception on` works too
 cat > interception.yaml <<'EOF'
 interception:
   enabled: true

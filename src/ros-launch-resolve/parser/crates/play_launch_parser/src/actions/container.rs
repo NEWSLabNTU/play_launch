@@ -35,6 +35,9 @@ pub struct ContainerAction {
     /// `composable_respawn: inherit` reads the container's.
     pub respawn: Option<Vec<Substitution>>,
     pub respawn_delay: Option<Vec<Substitution>>,
+    /// `<node_container on_exit="shutdown">` (#0064): a container is a node,
+    /// and stock launch honours it the same way.
+    pub on_exit_shutdown: Option<bool>,
     pub composable_nodes: Vec<ComposableNodeAction>,
     /// A container is a `Node`: its own `<param>`, `<remap>` and `<env>`
     /// reach its process.
@@ -221,6 +224,7 @@ impl ContainerAction {
             ros_args,
             respawn,
             respawn_delay,
+            on_exit_shutdown: crate::actions::node::parse_on_exit(entity, "node_container")?,
             composable_nodes,
             parameters,
             param_files,
@@ -352,6 +356,7 @@ impl ContainerAction {
             remaps,
             respawn,
             respawn_delay,
+            on_exit_shutdown: self.on_exit_shutdown,
             ros_args: ros_arguments,
             scope: None,
         })
@@ -425,9 +430,7 @@ impl ContainerAction {
 
         Ok(NodeRecord {
             start_delay_secs: None,
-            // The Rust parser does not model on_exit handlers; only the Python
-            // dump path carries them (see NodeRecord::on_exit_shutdown).
-            on_exit_shutdown: None,
+            on_exit_shutdown: self.on_exit_shutdown,
             args: arguments,
             cmd,
             env: None,

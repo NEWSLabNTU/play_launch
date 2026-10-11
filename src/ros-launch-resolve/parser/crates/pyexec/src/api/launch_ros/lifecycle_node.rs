@@ -8,6 +8,9 @@ use pyo3::{prelude::*, types::PyDict};
 #[derive(Clone)]
 pub struct LifecycleNode {
     spec: NodeSpec,
+    /// `on_exit=Shutdown()`, as on `Node` (#0064): a `LifecycleNode` is an
+    /// `ExecuteProcess`, so stock launch honours it the same way.
+    on_exit_shutdown: Option<bool>,
     #[pyo3(get)]
     condition: Option<Py<PyAny>>,
 }
@@ -46,6 +49,7 @@ impl LifecycleNode {
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> Self {
         Self {
+            on_exit_shutdown: super::node::on_exit_kwarg_shuts_down(_kwargs),
             spec: NodeSpec {
                 package,
                 executable,
@@ -74,7 +78,8 @@ impl LifecycleNode {
         if !crate::api::visit::claim_execution(this.as_any(), &label) {
             return Ok(());
         }
-        spec.capture(py).map(|_| ())
+        spec.capture_with(py, this.borrow().on_exit_shutdown)
+            .map(|_| ())
     }
 }
 

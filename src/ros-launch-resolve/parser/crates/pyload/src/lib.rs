@@ -166,7 +166,10 @@ impl std::error::Error for LoadError {}
 /// with the object's own context. A v5 object reports none and `check` then
 /// passes a launch file whose delays were silently discarded — the same
 /// serde-defaulted-field trap ABI 3 was bumped for.
-const ABI_VERSION: u32 = 7;
+/// 8: the captures carry `on_exit_shutdown` (nodes, containers,
+/// `LifecycleNode`s; play_launch #0064). A v7 object reports none, so a
+/// required process's exit silently stops ending the launch.
+const ABI_VERSION: u32 = 8;
 
 /// What `sysconfig` says about an interpreter.
 #[derive(Debug, Clone)]

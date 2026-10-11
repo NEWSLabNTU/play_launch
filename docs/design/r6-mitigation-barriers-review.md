@@ -75,9 +75,11 @@ design". It verifies one necessary condition for independence, and this
 repository documents at least three ways two data-disjoint nodes still fail
 together:
 
-- **Same container.** `--container-mode isolated` is the default *because*
+- **Same container.** `--container-mode isolated` exists *because*
   one segfault takes down every composable sharing a container
-  (`container-isolation.md`). Autoware resolves to 15 containers holding 70
+  (`container-isolation.md`); it was the default when this was written, and
+  since 615d0de2 the default is `observable`, where that sharing is the
+  normal case. Autoware resolves to 15 containers holding 70
   composables. A barrier and the pipeline it bounds inside one container is
   a common-cause failure with disjoint ancestors.
 - **Same cgroup / OOM group.** Phase 66 measured `oom.group=1 bystander=dead`.

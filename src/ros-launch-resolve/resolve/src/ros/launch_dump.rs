@@ -155,6 +155,10 @@ pub struct NodeContainerRecord {
     pub respawn: Option<bool>,
     #[serde(default)]
     pub respawn_delay: Option<f64>,
+    /// `on_exit=Shutdown()` on the container (#0064): its exit ends the
+    /// launch. Absent on records dumped before this was supported.
+    #[serde(default)]
+    pub on_exit_shutdown: Option<bool>,
     #[serde(default)]
     pub global_params: Option<Vec<(String, ParameterValue)>>,
     /// Scope ID referencing the scopes table (launch file origin)

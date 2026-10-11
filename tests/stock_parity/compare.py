@@ -324,26 +324,30 @@ def main():
         if len(s[k]) != len(m[k]):
             print(f'COUNT {k}: stock {len(s[k])} play_launch {len(m[k])}')
             diffs += 1
-        se, me = s[k][0], m[k][0]
-        for f in sorted(set(se) | set(me)):
-            if f.startswith('_'):
-                continue
-            sv, mv = se.get(f), me.get(f)
-            if f == 'remaps':
-                sv = [tuple(x) for x in (sv or [])]
-                mv = [tuple(x) for x in (mv or [])]
-            if f == 'args' and me['kind'] == 'node':
-                # the model keeps args as one list; stock splits the same way
-                pass
-            if sv != mv:
-                if f == 'params' and isinstance(sv, dict) and isinstance(mv, dict):
-                    for pk in sorted(set(sv) | set(mv)):
-                        if sv.get(pk) != mv.get(pk):
-                            print(f'DIFF {k} param {pk}: stock={sv.get(pk)} play_launch={mv.get(pk)}')
-                            diffs += 1
+        # Every instance, paired in declaration order: comparing only the first
+        # let a wrong second instance of a duplicated key through.
+        dup = len(s[k]) > 1 or len(m[k]) > 1
+        for idx, (se, me) in enumerate(zip(s[k], m[k])):
+            label = f'{k}#{idx}' if dup else k
+            for f in sorted(set(se) | set(me)):
+                if f.startswith('_'):
                     continue
-                print(f'DIFF {k} {f}: stock={sv!r} play_launch={mv!r}')
-                diffs += 1
+                sv, mv = se.get(f), me.get(f)
+                if f == 'remaps':
+                    sv = [tuple(x) for x in (sv or [])]
+                    mv = [tuple(x) for x in (mv or [])]
+                if f == 'args' and me['kind'] == 'node':
+                    # the model keeps args as one list; stock splits the same way
+                    pass
+                if sv != mv:
+                    if f == 'params' and isinstance(sv, dict) and isinstance(mv, dict):
+                        for pk in sorted(set(sv) | set(mv)):
+                            if sv.get(pk) != mv.get(pk):
+                                print(f'DIFF {label} param {pk}: stock={sv.get(pk)} play_launch={mv.get(pk)}')
+                                diffs += 1
+                        continue
+                    print(f'DIFF {label} {f}: stock={sv!r} play_launch={mv!r}')
+                    diffs += 1
     print(f'-- {diffs} difference(s); stock {sum(map(len, s.values()))} entities, '
           f'play_launch {sum(map(len, m.values()))}')
     sys.exit(1 if diffs else 0)

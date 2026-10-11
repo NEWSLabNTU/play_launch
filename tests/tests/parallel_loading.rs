@@ -145,6 +145,22 @@ fn composable_id(name: &str) -> String {
     format!("composable:/{name}")
 }
 
+/// Seconds since midnight of the first ` LOADED for '<composable>'` log line,
+/// read from its leading RFC 3339 timestamp (`2026-10-11T02:01:22.711138Z`).
+/// Good enough for gaps within one test run, which never crosses midnight in
+/// a way that matters for a 3 s fixture.
+fn loaded_time_of_day(log: &str, name: &str) -> Option<f64> {
+    let marker = format!(" LOADED for '{}'", composable_id(name));
+    let line = log.lines().find(|l| l.contains(&marker))?;
+    let time = line.split_whitespace().next()?.split('T').nth(1)?;
+    let time = time.trim_end_matches('Z');
+    let mut parts = time.split(':');
+    let h: f64 = parts.next()?.parse().ok()?;
+    let m: f64 = parts.next()?.parse().ok()?;
+    let s: f64 = parts.next()?.parse().ok()?;
+    Some(h * 3600.0 + m * 60.0 + s)
+}
+
 // ---- Resolve tests (Phase 47.B6: model, not record.json) ----
 
 #[test]
@@ -202,6 +218,12 @@ fn test_parallel_load_completes() {
     cmd.current_dir(work_dir);
     cmd.args([
         "launch",
+        // The fixtures exercise isolated's parallel loading. Under the
+        // default `observable` the container serialises loads on its executor
+        // and `--isolated` in the fixture's args is stripped, so these tests
+        // would pass without testing it.
+        "--container-mode",
+        "isolated",
         "--disable-web-ui",
         "--disable-monitoring",
         "--disable-diagnostics",
@@ -273,6 +295,12 @@ fn test_fast_not_blocked_by_slow() {
     cmd.current_dir(work_dir);
     cmd.args([
         "launch",
+        // The fixtures exercise isolated's parallel loading. Under the
+        // default `observable` the container serialises loads on its executor
+        // and `--isolated` in the fixture's args is stripped, so these tests
+        // would pass without testing it.
+        "--container-mode",
+        "isolated",
         "--disable-web-ui",
         "--disable-monitoring",
         "--disable-diagnostics",
@@ -336,6 +364,23 @@ fn test_fast_not_blocked_by_slow() {
         "SlowLoader should have completed construction eventually"
     );
 
+    // The proof of non-blocking is the GAP between the two LOADED reports, read
+    // from the log's own timestamps. The 8 s bound below cannot tell parallel
+    // from serial: serial loading finishes the talker at about 3 s plus
+    // warmup, also under 8 s. ORDER cannot either: serially, the talker
+    // completes milliseconds after the slow node, and the two reports arrive
+    // on different channels (control socket, ComponentEvent) in either order.
+    // Loaded in parallel, the talker reports while the slow node still has
+    // most of its 3 s constructor left.
+    let talker_t = loaded_time_of_day(&stdout_final, "fast_talker").expect("talker LOADED line");
+    let slow_t = loaded_time_of_day(&stdout_final, "slow_node").expect("slow_node LOADED line");
+    assert!(
+        slow_t - talker_t >= 1.0,
+        "fast_talker reported LOADED {:.3}s before slow_node; parallel loading leaves a gap of \
+         most of the 3 s constructor. Loading was serialised behind it.",
+        slow_t - talker_t
+    );
+
     // Verify the Talker loaded before the 5s mark (proving it wasn't blocked)
     if let Some(talker_time) = talker_loaded_at {
         assert!(
@@ -366,6 +411,10 @@ fn spawn_lifecycle_play_launch(
     cmd.current_dir(work_dir);
     cmd.args([
         "launch",
+        // Isolated, for the same reason as above: unload and reload of a
+        // composable mid-construction is isolated's behaviour.
+        "--container-mode",
+        "isolated",
         "--disable-monitoring",
         "--disable-diagnostics",
         "--web-addr",

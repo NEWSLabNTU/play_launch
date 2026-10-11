@@ -236,6 +236,7 @@ impl ContainerCapture {
             remaps: self.remappings.clone(),
             respawn: Some(false),
             respawn_delay: None,
+            on_exit_shutdown: self.on_exit_shutdown,
             start_delay_secs: self.start_delay_secs,
             ros_args: (!self.ros_arguments.is_empty()).then(|| self.ros_arguments.clone()),
             scope: None,

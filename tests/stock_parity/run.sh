@@ -98,8 +98,18 @@ for n in "${cases[@]}"; do
     if [ $status = 3 ]; then
         echo "=== $n: FAIL"; echo "$out" | sed 's/^/  /'; failed+=("$n"); continue
     fi
-    # Drop expected differences; anything left (other than the summary) fails.
-    unexpected=$(echo "$out" | grep -E '^(DIFF|EXTRA|MISSING)' | while IFS= read -r line; do
+    # compare.py ends every completed comparison with a "-- N difference(s)"
+    # summary. Without it the comparator died part-way (a traceback also
+    # exits 1, the same status as "differences found"), and an empty diff
+    # list would read as a match.
+    if ! echo "$out" | grep -q '^-- [0-9]* difference(s)'; then
+        echo "=== $n: FAIL (compare.py did not finish)"; echo "$out" | tail -20 | sed 's/^/  /'
+        failed+=("$n"); continue
+    fi
+    # Drop expected differences; every other line except the summary fails.
+    # Matching all lines, not a list of prefixes: the prefix list missed
+    # COUNT, so a missing or duplicated instance passed.
+    unexpected=$(echo "$out" | grep -v '^-- [0-9]* difference(s)' | grep -v '^$' | while IFS= read -r line; do
         known=0
         if [ -f "$dir/EXPECTED_DIFFS" ]; then
             while IFS= read -r pat; do

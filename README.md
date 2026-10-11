@@ -111,7 +111,7 @@ All features enabled by default:
 - **Resource monitoring**: CPU, memory, I/O, GPU (2s interval)
 - **Diagnostic monitoring**: the `/diagnostics` topic (add more via `diagnostics.topics`)
 - **Web UI**: Interactive management at `http://127.0.0.1:8080`
-- **Container isolation**: Composable nodes run in isolated processes via fork+exec (default)
+- **Observable containers**: Composable nodes share their container's process, as under `ros2 launch`, with `ComponentEvent` load reporting (default; `--container-mode isolated` fork+execs each composable instead)
 
 ### Disable Features
 
@@ -247,8 +247,8 @@ play_launch launch <pkg> <file> --parser rust     # Default, fast
 play_launch launch <pkg> <file> --parser python   # Maximum compatibility
 
 # Container mode
-play_launch launch <pkg> <file> --container-mode isolated    # Default
-play_launch launch <pkg> <file> --container-mode observable
+play_launch launch <pkg> <file> --container-mode observable  # Default
+play_launch launch <pkg> <file> --container-mode isolated
 play_launch launch <pkg> <file> --container-mode stock
 
 # Disable features

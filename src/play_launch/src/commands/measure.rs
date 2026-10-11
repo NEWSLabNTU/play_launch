@@ -218,9 +218,11 @@ fn resolve_events_path(arg: &Path) -> eyre::Result<PathBuf> {
     }
     bail!(
         "no events.jsonl under {}.\n\
-         `measure` reads the per-message record the interception layer writes; \
-         enable it for the run with `interception.enabled: true` (and `stats: true`, \
-         which produces the publish/take events) in the config passed to `--config`.",
+         `measure` reads the per-message record the interception layer writes, \
+         and a system with no contract does not intercept by default. Enable it for \
+         the run with `--interception on`, or `interception.enabled: true` (and \
+         `stats: true`, which produces the publish/take events) in the config passed \
+         to `--config`.",
         arg.display()
     )
 }

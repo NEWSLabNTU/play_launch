@@ -213,11 +213,8 @@ impl NodeSpec {
         })
     }
 
-    /// Capture this node as executed now.
-    pub(crate) fn capture(&self, py: Python) -> PyResult<ExpandedNode> {
-        self.capture_with(py, None)
-    }
-
+    /// Capture this node as executed now. Every caller passes its own
+    /// `on_exit` (#0064): `LifecycleNode` and containers are nodes too.
     pub(crate) fn capture_with(
         &self,
         py: Python,

@@ -401,6 +401,10 @@ pub struct ComposableNodeContainerRecord {
     pub remaps: Vec<(String, String)>,
     pub respawn: Option<bool>,
     pub respawn_delay: Option<f64>,
+    /// `on_exit=Shutdown()` on the container (#0064): its exit ends the
+    /// launch. Defaulted so records written before this field deserialize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_exit_shutdown: Option<bool>,
     pub ros_args: Option<Vec<String>>,
     /// Scope ID referencing the scopes table (launch file origin)
     #[serde(default, skip_serializing_if = "Option::is_none")]

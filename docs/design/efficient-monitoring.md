@@ -503,7 +503,7 @@ Phase 61 established that process count is what drives the load, and
 
 | mode | processes | system CPU (12 cores) | play_launch |
 |---|---|---|---|
-| `isolated` (default) | 160 | **89%** | 14.6% |
+| `isolated` (the default when measured; `observable` since 615d0de2) | 160 | **89%** | 14.6% |
 | `observable` | 68 | **68%** | 22.9% |
 
 **~2.5 cores returned**, by collapsing 92 composable processes into threads

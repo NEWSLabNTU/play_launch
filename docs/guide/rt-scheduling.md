@@ -317,9 +317,10 @@ silent fallback.
 
 Two exemptions and one refusal, all deliberate:
 
-- **Containers are exempt** and keep `SCHED_FIFO`. `--container-mode isolated`
-  is the default, so without this nearly every real system would hard-error on
-  a container shell that has no timing facts of its own.
+- **Containers are exempt** and keep `SCHED_FIFO`. Every launch with
+  composable nodes has container processes, in any `--container-mode`, so
+  without this nearly every real system would hard-error on a container that
+  has no timing facts of its own.
 - **A reservation is per-thread.** `play_launch` reserves the thread-group
   leader and leaves siblings on `SCHED_FIFO`; sweeping an 8 ms/100 ms budget
   across a ROS node's ~11 threads would ask admission control for 88 % of a
@@ -759,8 +760,13 @@ targets:
 |---|---|---|
 | `<node>` | one process per node | ✅ |
 | `<node_container>` | one container process | ✅ (its own tier) |
-| composable node (`isolated` mode, default) | one `component_node` process, fork+exec'd by the container | ✅ (its own tier) |
-| composable node (`observable`/`stock` mode) | a *thread group inside* the container — no process of its own | ❌ only the container is schedulable |
+| composable node (`isolated` mode) | one `component_node` process, fork+exec'd by the container | ✅ (its own tier) |
+| composable node (`observable` mode, the default, or `stock`) | a *thread group inside* the container — no process of its own | ❌ only the container is schedulable |
+
+A tier aimed at a composable node is therefore applied only under
+`--container-mode isolated`. The default is `observable` (one process per
+container, as `ros2 launch` runs it), so pass `--container-mode isolated` when
+a platform file schedules composables individually.
 
 ### 2.2 Resolution: contract + platform file + launch → plan
 

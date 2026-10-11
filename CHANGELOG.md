@@ -6,6 +6,33 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Fix:** `--parser python` no longer RUNS a plain `ExecuteProcess` while
+  parsing (#0066). It records it, as the Rust parser does. Before, `resolve
+  --parser python` started every command a launch file declared, and the
+  processes were missing from the model.
+- **Fix:** `on_exit=Shutdown()` is honoured everywhere `ros2 launch` honours
+  it (#0063, #0064, #0065):
+  - by `up <model.yaml>` (the model carries it, `ros-launch-manifest`
+    v0.1.50);
+  - in XML and YAML (`on_exit="shutdown"` on `<node>`, `<executable>`,
+    `<node_container>`; any other value is refused with launch's message);
+  - for `LifecycleNode` and `ComposableNodeContainer`.
+
+  A process with the same executable or name as the required one no longer
+  ends the launch.
+- **Fix:** `--sched-apply strict` with no `--container-mode` uses `isolated`
+  when a composable carries a scheduling tier, and says so (#0062). Since
+  0.15.0 made `observable` the default it refused such launches outright. An
+  explicit `--container-mode` is never overridden.
+- **Fix:** `$(find-exec)` skips a non-executable file on `PATH`, as
+  `shutil.which` does.
+- **Visible:** `--composable-respawn` warns when the container mode cannot
+  honour it (anything but `isolated`).
+- Internal: the pyexec C ABI is 8. The captures carry `on_exit_shutdown`, and
+  a v7 object would drop it silently.
+
 ## 0.15.1
 
 - **Fix:** the Rust parser honours `on_exit=Shutdown()` in a `.launch.py`, as

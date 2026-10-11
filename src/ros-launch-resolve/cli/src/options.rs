@@ -528,7 +528,7 @@ impl Default for ContainerOptions {
             standalone_composable_nodes: false,
             load_orphan_composable_nodes: false,
             disable_respawn: false,
-            container_mode: ContainerMode::Isolated,
+            container_mode: ContainerMode::Observable,
             load_total_budget: None,
             load_node_timeout: None,
             on_startup_failure: OnStartupFailure::Continue,

@@ -153,9 +153,9 @@ The parser includes an optional IR layer (`--features ir` on the parser crate) t
     containers — none visible to the mapper): runtime from `budget_us`, period
     from `1/rate_hz` propagated along a chain from its source, deadline
     declared-else-period. All-or-nothing within the RT band, scoped to nodes
-    carrying a timing fact, **containers exempt** — `--container-mode isolated`
-    is the default, so without the exemption nearly every system would
-    hard-error. Reservation parameters ride the portable tier head
+    carrying a timing fact, **containers exempt** — every launch with
+    composable nodes has container processes, in any `--container-mode`, so
+    without the exemption nearly every system would hard-error. Reservation parameters ride the portable tier head
     (`budget_us`/`deadline_us`/`period_us`) so `up`, which reads the model and
     never the platform file, can rebuild them.
   - **Reservations need a cpuset partition, and play_launch creates nothing.**
@@ -422,8 +422,21 @@ grouping costs **zero** changes to `play_launch_container`.
   `docs/design/cgroup-per-container.md`. Roadmap:
   `docs/roadmap/phase-66-cgroup-per-container.md`.
 
-**Interception** (`interception` config section, default: disabled):
-- `enabled: true` — inject `LD_PRELOAD` interception .so into all child processes
+**Interception** (`interception` config section, default: decided per run):
+- `enabled: true` — inject `LD_PRELOAD` interception .so into all child processes.
+  Precedence: `--interception on|off` > `interception.enabled` > implied ON
+  when `--enforce-rules` is not `off` AND there is something to enforce — a
+  contract resolved into the model (`ContractView::model_has_contracts`, the
+  model's `contracts` section, not the view, which lists every launch topic)
+  or `--enforce-rules` was written explicitly
+  (`cli::options::enforce_rules_given_explicitly`) — else off
+  (`InterceptionSettings::decide`, fa366b23 + 5bb08f8d). A contract-free launch
+  under the default mode therefore runs with no interception, as under
+  `ros2 launch`: no `graph-deviation-runtime`/`qos-match-runtime`, no
+  `events.jsonl`, no `endpoints.tsv` (so `contract capture` needs a run made
+  with `--interception on`). The old "implied whenever not `off`" rule wrote
+  40 GB of `play_launch.log` in five minutes on a contract-free Autoware.
+  `run` never implies it (#0053).
 - `frontier: true` — enable per-topic timestamp frontier tracking
 - `stats: true` — enable per-topic message count/rate statistics
 - `ring_capacity: 65536` — SPSC ring buffer capacity per child process
@@ -431,8 +444,11 @@ grouping costs **zero** changes to `play_launch_container`.
   `play_launch measure` reads (Phase 58 W2). Like `trace` it is one line per
   publish/take (~110 bytes), but unlike `trace` it defaults ON: its value is
   being there *after* a run you then decide to measure, so an opt-in flag
-  would be discovered exactly when it is too late. Turn it off for long runs
-  on high-rate systems.
+  would be discovered exactly when it is too late. That holds only on a run
+  that intercepts (see `enabled` above): a contract-free run under the default
+  `--enforce-rules` writes no `events.jsonl`, so a run you mean to measure
+  without a contract needs `--interception on`. Turn it off for long runs on
+  high-rate systems.
 
 When enabled, play_launch creates a shared memory ring buffer per child, injects `LD_PRELOAD` + fd env vars, and spawns a consumer tokio task that writes `frontier_summary.json` and `stats_summary.json` to `play_log/<ts>/interception/` on shutdown.
 
@@ -651,6 +667,24 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-10-11**: **`on_exit=Shutdown()` reaches every path, and the Python
+  dumper stops running processes.** A review of the 0.15 commits found
+  `on_exit` honoured on one path of five (#0063–#0065). The flag now rides
+  on the model (`ros-launch-manifest` v0.1.50, `NodeInstance.on_exit`), so
+  `up <model.yaml>` sees what `launch` sees. Each member's own record decides
+  whether it is required, which deleted the bare-name matching that let a
+  same-stem bystander end a launch. XML and YAML parse `on_exit="shutdown"`
+  with launch's own refusal for any other value. Making the vacuous
+  `on_exit_shutdown.rs` check WHY the launch ended exposed something worse
+  (#0066): the Python dumper's action visitor had no `ExecuteProcess` branch,
+  so it fell through to stock `execute()` and STARTED every plain process
+  during `resolve`, recording none. Its Python case had passed because the
+  parse happened to take two seconds. `--sched-apply strict` without a mode
+  now picks `isolated` when composables carry tiers (#0062). The stock-parity
+  gate dropped `COUNT` lines and passed on a crashed comparator, and
+  `parallel_loading.rs` had been running under `observable` since 0.15; both
+  are fixed, each with a negative control. pyexec C ABI 7 -> 8.
 
 - **2026-10-10**: **An XML include into a YAML launch file dropped its
   arguments, and the reason was that includes had two wrong scoping models.**
@@ -1544,6 +1578,8 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   concurrency than the safe answer. This matters because today's summing
   analysis is sound ONLY because `--container-mode isolated` is the default;
   under `observable`/`stock` nodes share an executor and nothing says so.
+  (Since 615d0de2 the default is `observable`, so the shared-executor case is
+  now the default one.)
   **One ruling narrowed by reading the headers rather than assuming.** `rclcpp`
   lists `Deadline` and `LivelinessLeaseDuration` as overridable kinds, settable
   from outside as `qos_overrides.<topic>.<endpoint>.<policy>` parameters — but
@@ -1658,7 +1694,8 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   so already-running nodes held the gate shut until its 30 s bypass fired each
   time (startup unfinished at 190 s, peak load1 **217 vs the unpaced 183**).
   What actually moves it is the **process count**. `--container-mode isolated`
-  (the default) forks a process per composable: 144 processes vs 60 under
+  (then the default; since 615d0de2 the default is `observable`) forks a
+  process per composable: 144 processes vs 60 under
   `observable`, **10.2 of 12 cores vs 3.9** during startup, peak load1 190 vs
   **45**, 3.5 GiB vs **1.4**, and `observable` finishes *faster* (8.4 s vs
   10.7 s) with the same 84/84 loaded. **That is not a recommendation**: the cost
@@ -1978,7 +2015,7 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 - **2026-02-18**: Phase 21 (build optimization) mostly complete: `scripts/bundle_wheel.sh` with artifact manifest, incremental build recipes (`build-cpp`, `build-rust`, `build-wheel`), proper wheel platform tag via `wheel tags`. Phase 20 (web UI modernization) planned: Preact + htm + SSE-driven state, vendored locally (no CDN), zero polling.
 - **2026-02-17**: Phase 19 complete — fork()+exec() isolation, child death monitoring, parallel loading, event-driven container status. PR_SET_CHILD_SUBREAPER added to replay. Subprocess PID cache uses time-based 1s interval.
 - **2026-02-16**: Fix container parameter passing in fork+exec isolation: `write_params_file()` now serializes `request->parameters` (not `extra_arguments`), uses `/**:` wildcard YAML namespace, enforces decimal points on double arrays. Smoke test (`tests/src/health.rs`) detects `ComponentEvent LOAD_FAILED` events. `component_node` supports `--use-intra-process-comms`. Autoware: 64/64 composable nodes load successfully.
-- **2026-02-15**: Default `--container-mode isolated` — replay overrides stock containers to `play_launch_container` with fork+exec isolation. `ComponentEvent` subscription conditional on mode (skipped for `stock`). Nextest failure output deferred to end (`--failure-output final`); isolated-container tests retry once for DDS flakes.
+- **2026-02-15**: Default `--container-mode isolated` (since 615d0de2 the default is `observable`) — replay overrides stock containers to `play_launch_container` with fork+exec isolation. `ComponentEvent` subscription conditional on mode (skipped for `stock`). Nextest failure output deferred to end (`--failure-output final`); isolated-container tests retry once for DDS flakes.
 - **2026-02-08**: Phase 18 complete — ObservableComponentManager + play_launch_msgs packages.
 - **2026-02-06**: Context unification investigation, namespace fix, YAML parameter loading for composable nodes. See `docs/roadmap/phase-17-context_unification.md`.
 - **2026-02-01**: Phase 14 complete — Python launch file execution. Phase 15 — PyO3 type safety.
@@ -2052,7 +2089,7 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   invisible to any check that compared numbers
 - **Migration Guide**: `docs/guide/parser-migration.md` — Rust parser migration (v0.6.0+)
 - **Multi-host Guide**: `docs/guide/multi-host.md` — running one launch file's nodes across multiple hosts (ROS 2 has no `<node machine=>`)
-- **Edge Machines Guide**: `docs/guide/edge-machines.md` — what to change on a Jetson-class board, and why `--container-mode observable` is worth more than everything else combined
+- **Edge Machines Guide**: `docs/guide/edge-machines.md` — what to change on a Jetson-class board, and why `--container-mode observable` (now the default) is worth more than everything else combined
 
 ## Parser Parity Status
 

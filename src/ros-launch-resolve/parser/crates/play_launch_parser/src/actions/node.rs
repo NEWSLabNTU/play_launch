@@ -74,6 +74,29 @@ pub struct NodeAction {
     pub output: Option<String>,
     pub respawn: Option<Vec<Substitution>>,
     pub respawn_delay: Option<Vec<Substitution>>,
+    /// `on_exit="shutdown"`: this process is required, and the launch ends
+    /// when it exits (#0064).
+    pub on_exit_shutdown: Option<bool>,
+}
+
+/// Read `on_exit` the way `ExecuteProcess.parse` does: absent is `None`, the
+/// literal `shutdown` (no substitution) is `Some(true)`, and anything else is
+/// an error, as it is in `launch`. Shared by `<node>`, `<executable>` and
+/// `<node_container>`, which all reach that same parse.
+pub(crate) fn parse_on_exit(entity: &XmlEntity, element: &str) -> Result<Option<bool>> {
+    parse_on_exit_value(entity.optional_attr_str("on_exit")?.as_deref(), element)
+}
+
+/// [`parse_on_exit`] for a value already read, as the YAML frontend has it.
+pub(crate) fn parse_on_exit_value(value: Option<&str>, element: &str) -> Result<Option<bool>> {
+    match value {
+        None => Ok(None),
+        Some("shutdown") => Ok(Some(true)),
+        Some(value) => Err(ParseError::UnsupportedOnExit {
+            element: element.to_string(),
+            value: value.to_string(),
+        }),
+    }
 }
 
 impl NodeAction {
@@ -189,6 +212,7 @@ impl NodeAction {
                 .optional_attr_str("respawn_delay")?
                 .map(|s| parse_substitutions(&s))
                 .transpose()?,
+            on_exit_shutdown: parse_on_exit(entity, "node")?,
         })
     }
 
@@ -298,7 +322,7 @@ impl NodeAction {
             global_params: None,
             scope_id: None,
             start_delay_secs: None,
-            on_exit_shutdown: None,
+            on_exit_shutdown: self.on_exit_shutdown,
         })
     }
 }

@@ -447,9 +447,7 @@ impl CommandGenerator {
 
         Ok(NodeRecord {
             start_delay_secs: None,
-            // The Rust parser does not model on_exit handlers; only the Python
-            // dump path carries them (see NodeRecord::on_exit_shutdown).
-            on_exit_shutdown: None,
+            on_exit_shutdown: node.on_exit_shutdown,
             args,
             cmd,
             env,
@@ -608,9 +606,7 @@ impl CommandGenerator {
 
         Ok(NodeRecord {
             start_delay_secs: None,
-            // The Rust parser does not model on_exit handlers; only the Python
-            // dump path carries them (see NodeRecord::on_exit_shutdown).
-            on_exit_shutdown: None,
+            on_exit_shutdown: exec.on_exit_shutdown,
             args: if exec.arguments.is_empty() {
                 None
             } else {
@@ -666,6 +662,7 @@ mod tests {
             output: None,
             respawn: None,
             respawn_delay: None,
+            on_exit_shutdown: None,
         };
 
         let context = LaunchContext::new();
@@ -707,6 +704,7 @@ mod tests {
             output: None,
             respawn: None,
             respawn_delay: None,
+            on_exit_shutdown: None,
         };
 
         let context = LaunchContext::new();
@@ -736,6 +734,7 @@ mod tests {
             output: None,
             respawn: None,
             respawn_delay: None,
+            on_exit_shutdown: None,
         };
 
         let context = LaunchContext::new();

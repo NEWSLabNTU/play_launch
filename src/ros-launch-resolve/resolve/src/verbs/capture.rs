@@ -702,8 +702,9 @@ pub fn capture(inputs: CaptureInputs) -> Result<String> {
         bail!(
             "no endpoints.tsv under {}.\n\
              The wiring can only come from the endpoints a run CREATED, and only the \
-             interceptor records those. Re-run with interception enabled \
-             (`interception: {{enabled: true}}` in --config) and try again.",
+             interceptor records those, and a system with no contract does not \
+             intercept by default. Re-run with `--interception on` (or \
+             `interception: {{enabled: true}}` in --config) and try again.",
             idir.display()
         );
     }

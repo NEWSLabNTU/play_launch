@@ -841,10 +841,11 @@ pub struct ContractOptions {
     ///
     /// PRECONDITION: the engine's only event source is LD_PRELOAD
     /// interception, so any mode but `off` turns `--interception` ON when a
-    /// contract resolves, unless you switch it off explicitly (phase 79 W1,
-    /// issue #0031 — it used to enforce nothing by default and say so
-    /// nowhere). With no contract there is nothing to enforce and the run has
-    /// no interception layer, as under `ros2 launch`. Turning it off under
+    /// contract resolves or the mode is written explicitly, unless you switch
+    /// it off explicitly (phase 79 W1, issue #0031 — it used to enforce
+    /// nothing by default and say so nowhere). With no contract and the
+    /// default mode there is nothing to enforce and the run has no
+    /// interception layer, as under `ros2 launch`. Turning it off under
     /// a non-`off` mode warns; under `strict` it is an error before the
     /// first spawn, because a gate with no event source is green for the
     /// wrong reason.
@@ -858,7 +859,8 @@ pub struct ContractOptions {
 
     /// Force LD_PRELOAD interception on or off for this run without a
     /// --config file. Overrides `interception.enabled` in --config; unset
-    /// leaves the decision to --enforce-rules (issue #0031).
+    /// leaves the decision to --enforce-rules: on when a contract resolved or
+    /// the mode was written explicitly (issue #0031).
     ///
     /// ON `run` IT MUST BE ASKED FOR (issue #0053): `run` builds no rule
     /// engine — every enforcing mode is refused there — so nothing implies
@@ -1099,16 +1101,24 @@ impl CommonOptions {
 /// `InterceptionSettings::decide`). Asked of clap, as `run` does, so a flag
 /// meant for a node after `--` is never mistaken for play_launch's.
 pub fn enforce_rules_given_explicitly() -> bool {
+    given_explicitly("enforce_rules")
+}
+
+/// Whether `--container-mode` was written on the command line, rather than
+/// taken from its default (issue #0062: strict picks `isolated` only when it
+/// was not).
+pub fn container_mode_given_explicitly() -> bool {
+    given_explicitly("container_mode")
+}
+
+/// Whether the subcommand's argument `id` came from the command line (or the
+/// environment) rather than its default.
+fn given_explicitly(id: &str) -> bool {
     use clap::{CommandFactory, parser::ValueSource};
     match Options::command().try_get_matches_from(std::env::args_os()) {
         Ok(matches) => matches
             .subcommand()
-            .and_then(|(_, m)| {
-                m.try_get_raw("enforce_rules")
-                    .ok()
-                    .flatten()
-                    .and(m.value_source("enforce_rules"))
-            })
+            .and_then(|(_, m)| m.try_get_raw(id).ok().flatten().and(m.value_source(id)))
             .is_some_and(|source| source != ValueSource::DefaultValue),
         Err(_) => false,
     }

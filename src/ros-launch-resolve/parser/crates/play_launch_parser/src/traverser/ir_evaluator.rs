@@ -314,6 +314,8 @@ fn ir_to_node_action(kind: &ActionKind) -> NodeAction {
             respawn,
             respawn_delay,
         } => NodeAction {
+            // The IR does not model on_exit (dormant feature; see CLAUDE.md).
+            on_exit_shutdown: None,
             package: package.parts.clone(),
             executable: executable.parts.clone(),
             name: name.as_ref().map(|n| n.parts.clone()),
@@ -346,6 +348,8 @@ fn ir_to_executable_action(kind: &ActionKind) -> ExecutableAction {
             args,
             env,
         } => ExecutableAction {
+            // The IR does not model on_exit (dormant feature; see CLAUDE.md).
+            on_exit_shutdown: None,
             cmd: cmd.parts.clone(),
             cwd: None,
             name: name.as_ref().map(|n| n.parts.clone()),
@@ -372,6 +376,8 @@ fn ir_to_container_action(
             ros_args,
             nodes,
         } => ContainerAction {
+            // The IR does not model on_exit (dormant feature; see CLAUDE.md).
+            on_exit_shutdown: None,
             package: package.parts.clone(),
             executable: executable.parts.clone(),
             name: name.parts.clone(),

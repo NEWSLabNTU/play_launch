@@ -1165,8 +1165,9 @@ fn input_with_declared_rates(input: &MapperInput, index: Option<&ManifestIndex>)
 ///   it loads and forks, so it is a supervisor, not a periodic task. Reserving
 ///   one would spend admission bandwidth on a process that does almost nothing
 ///   steady-state. It keeps `SCHED_FIFO`. Without this exemption the phase
-///   would be unusable: `--container-mode isolated` is the DEFAULT, so nearly
-///   every real system would hit a hard error its author could not fix.
+///   would be unusable: every launch with composable nodes has container
+///   processes, whatever `--container-mode` says, so nearly every real system
+///   would hit a hard error its author could not fix.
 /// - **Nodes the mapper could not rank**, for the same reason.
 ///
 /// # Where the numbers come from
@@ -3374,8 +3375,9 @@ nodes = ["fast_node"]
 
     #[test]
     fn a_container_is_exempt_and_keeps_fixed_priority() {
-        // Without this, `--container-mode isolated` - the DEFAULT - would make
-        // nearly every real system a hard error its author could not fix.
+        // Without this, every launch with composable nodes (and so a container
+        // process, in any `--container-mode`) would be a hard error its author
+        // could not fix.
         let mut plan = ResolvedTierTable {
             tiers: vec![rt_tier("/a", 40), rt_tier("/container", 30)],
         };

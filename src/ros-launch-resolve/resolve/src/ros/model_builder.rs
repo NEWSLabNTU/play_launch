@@ -730,6 +730,12 @@ pub fn build_system_model(
             structure.nodes.insert(key, inst);
         };
 
+    /// `on_exit_shutdown: Some(true)` in the dump is `on_exit: shutdown` in the
+    /// model; anything else is the launch default, absent.
+    fn lower_on_exit(on_exit_shutdown: Option<bool>) -> Option<model::OnExit> {
+        (on_exit_shutdown == Some(true)).then_some(model::OnExit::Shutdown)
+    }
+
     // Phase 46.2 — lower the LaunchDump record's spawn fields into the
     // model's launch-input fields (`NodeInstance::{remaps,ros_args,respawn,
     // respawn_delay,env}`, Phase 46.1b). play_launch's spawn path derives
@@ -792,6 +798,9 @@ pub fn build_system_model(
                 ros_args: n.ros_args.clone().unwrap_or_default(),
                 respawn: n.respawn,
                 respawn_delay: n.respawn_delay,
+                // `on_exit=Shutdown()`: required, its exit ends the system
+                // (#0063). On the model so `up <model.yaml>` sees it too.
+                on_exit: lower_on_exit(n.on_exit_shutdown),
                 // `<timer period="N">` — seconds before the FIRST spawn,
                 // accumulated across nested timers by the parser. Unrelated
                 // to `respawn_delay` above; a node may carry both.
@@ -854,6 +863,7 @@ pub fn build_system_model(
                 ros_args: c.ros_args.clone().unwrap_or_default(),
                 respawn: c.respawn,
                 respawn_delay: c.respawn_delay,
+                on_exit: lower_on_exit(c.on_exit_shutdown),
                 // A container's own delay. Its composables ride along: they
                 // cannot load before the container process exists.
                 start_delay_secs: c.start_delay_secs,
@@ -903,6 +913,9 @@ pub fn build_system_model(
                 ros_args: Vec::new(),
                 respawn: None,
                 respawn_delay: None,
+                // No process of its own, so no `on_exit`: it ends with its
+                // container, whose flag is the one that counts.
+                on_exit: None,
                 // A composable has no respawn policy, but a `<timer>` CAN
                 // enclose one — what it delays there is the LoadNode request,
                 // not a process. Carried because the producer knows it; see
@@ -1912,6 +1925,7 @@ mod tests {
                 "ros_args": ["--log-level", "detector_node:=debug"],
                 "respawn": true,
                 "respawn_delay": 2.5,
+                "on_exit_shutdown": true,
                 "env": [["CUDA_VISIBLE_DEVICES", "0"]]
             }],
             "container": [{
@@ -2062,6 +2076,8 @@ mod tests {
         );
         assert_eq!(node.respawn, Some(true));
         assert_eq!(node.respawn_delay, Some(2.5));
+        // #0063: the flag reaches the model, so `up <model.yaml>` can read it.
+        assert_eq!(node.on_exit, Some(model::OnExit::Shutdown));
         assert_eq!(
             node.env,
             vec![model::EnvVar {
@@ -2092,6 +2108,8 @@ mod tests {
         );
         assert_eq!(container.respawn, Some(false));
         assert_eq!(container.respawn_delay, None);
+        // Not declared on this container: absent, not `false`.
+        assert_eq!(container.on_exit, None);
         assert_eq!(
             container.env,
             vec![model::EnvVar {

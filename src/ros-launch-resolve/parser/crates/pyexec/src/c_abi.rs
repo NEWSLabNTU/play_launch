@@ -372,7 +372,13 @@ pub extern "C" fn play_launch_py_abi_version() -> u32 {
     // a `.launch.py` set reached neither the files it included nor the file
     // that included it. A different entry point and a different response,
     // so a v6 object cannot even be asked.
-    7
+    //
+    // 8: the captures carry `on_exit_shutdown`, on nodes (fcd2188a, which did
+    // not bump) and on containers and `LifecycleNode`s (play_launch #0064).
+    // Serde-defaulted, so a v7 object reports none, and a launch whose
+    // required process exits keeps running: the bug those changes fix, back
+    // in silence.
+    8
 }
 
 #[cfg(test)]
@@ -734,7 +740,7 @@ mod tests {
     /// launch tree that silently resolves to nothing.
     #[test]
     fn the_abi_version_moved_with_the_contract() {
-        assert_eq!(play_launch_py_abi_version(), 7);
+        assert_eq!(play_launch_py_abi_version(), 8);
     }
 
     /// `exec_file` on the old entry point is refused by name, not answered

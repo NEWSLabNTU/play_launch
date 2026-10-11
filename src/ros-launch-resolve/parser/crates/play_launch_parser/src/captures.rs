@@ -79,6 +79,9 @@ pub struct ContainerCapture {
     /// `None` means "not recorded" and falls back to the final set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub global_params: Option<Vec<(String, String)>>,
+    /// `on_exit=Shutdown()` on the container (#0064).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_exit_shutdown: Option<bool>,
     /// Scope ID from the launch tree (set by traverser after capture)
     pub scope_id: Option<usize>,
     /// Seconds to wait after launch start before this member is spawned,

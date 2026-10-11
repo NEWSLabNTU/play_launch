@@ -355,9 +355,9 @@ pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeR
     NodeRecord {
         executable: inst.exec.clone().unwrap_or_default(),
         package: inst.pkg.clone(),
-        // Rebuilt from a resolved instance, which does not carry launch-level
-        // handlers; on_exit is honoured where the record is first read.
-        on_exit_shutdown: None,
+        // `on_exit=Shutdown()` rides on the model (#0063), so a node started
+        // by `up <model.yaml>` is as required as one started by `launch`.
+        on_exit_shutdown: (inst.on_exit == Some(model::OnExit::Shutdown)).then_some(true),
         // The DECLARED name (drives the conditional `__node` remap) —
         // `None` when the launch had `name=None`, NOT the FQN segment.
         name: inst.node_name.clone(),
@@ -1745,6 +1745,7 @@ mod tests {
             ros_args: vec!["--log-level".to_string(), "detector:=debug".to_string()],
             respawn: Some(true),
             respawn_delay: Some(2.5),
+            on_exit: None,
             env: vec![model::EnvVar {
                 name: "CUDA_VISIBLE_DEVICES".to_string(),
                 value: "0".to_string(),
@@ -1819,6 +1820,7 @@ mod tests {
             ros_args: Vec::new(),
             respawn: None,
             respawn_delay: None,
+            on_exit: None,
             env: Vec::new(),
             args: Vec::new(),
             params_files: Vec::new(),
@@ -1859,6 +1861,7 @@ mod tests {
             ros_args: Vec::new(),
             respawn: None,
             respawn_delay: None,
+            on_exit: None,
             env: Vec::new(),
             args: Vec::new(),
             params_files: Vec::new(),
@@ -1908,6 +1911,7 @@ mod tests {
             ros_args: Vec::new(),
             respawn: None,
             respawn_delay: None,
+            on_exit: None,
             env: Vec::new(),
             args: Vec::new(),
             params_files: Vec::new(),

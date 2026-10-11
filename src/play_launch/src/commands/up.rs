@@ -621,6 +621,48 @@ pub(crate) async fn play(
         None
     };
 
+    // Phase 38: resolve the scheduling spec (if any) once, before spawning any
+    // member. Phase 38.10: prefer delegating to the RT helper (works
+    // unprivileged given `play_launch setcap`); only fall back to the
+    // root-or-capped-helper privilege check. Not being root is no longer
+    // grounds to hard-fail — that's the entire point of this wave.
+    // Resolve the platform file through the shipping channels (Phase 41.3):
+    // explicit `--sched <path>` > overlay > provider sidecar. Reuses the
+    // overlay root already discovered for contracts above, so both channels
+    // agree on which root is in play for this invocation.
+    // Phase 43.3/47.B3 — the plan comes from the SystemModel's execution
+    // layer directly (derive/override/band-validate ran at resolve time);
+    // the platform-file channels (`--sched`, overlay, provider sidecar) are
+    // resolve-time-only concerns now — there is no legacy record-only
+    // replay path left to consult them from.
+    let model_plan: Option<crate::execution::sched_plan::SchedPlan> =
+        if !system_model.execution.is_empty() {
+            info!("Scheduling source: SystemModel execution layer");
+            Some(crate::execution::sched_plan::SchedPlan::from_model(
+                &system_model,
+                &common.sched_opts.target,
+                common.sched_opts.sched_apply,
+            )?)
+        } else {
+            info!("SystemModel carries no execution layer — scheduling disabled");
+            None
+        };
+
+    // Issue #0062: per-composable scheduling needs `isolated` (one process per
+    // composable). `observable` became the default in 0.15, and `strict` then
+    // refused every launch whose composables carry a tier, for a mode the user
+    // never chose. Strict means "deliver the plan or do not start", and
+    // isolated is the mode that can deliver it, so when the mode was not given
+    // and the plan needs it, use it and say so. An explicit
+    // `--container-mode` is never overridden: strict still refuses below.
+    let container_mode = effective_container_mode(
+        common.containers.container_mode,
+        common.sched_opts.sched_apply,
+        crate::cli::options::container_mode_given_explicitly(),
+        model_plan.as_ref(),
+        &system_model,
+    );
+
     // Prepare node and container execution contexts. Phase 46.3b/47.B3: the
     // spawn context (argv/env/params-files/LoadNode requests) is built from
     // the model's `structure.nodes` — the SystemModel is the sole spawn
@@ -640,7 +682,7 @@ pub(crate) async fn play(
     let mut container_contexts = prepare_container_contexts_from_model(
         &system_model,
         &node_log_dir,
-        common.containers.container_mode,
+        container_mode,
         cgroups.as_ref(),
         cgroup_limits.as_ref(),
     )?;
@@ -756,32 +798,6 @@ pub(crate) async fn play(
         None
     };
 
-    // Phase 38: resolve the scheduling spec (if any) once, before spawning any
-    // member. Phase 38.10: prefer delegating to the RT helper (works
-    // unprivileged given `play_launch setcap`); only fall back to the
-    // root-or-capped-helper privilege check. Not being root is no longer
-    // grounds to hard-fail — that's the entire point of this wave.
-    // Resolve the platform file through the shipping channels (Phase 41.3):
-    // explicit `--sched <path>` > overlay > provider sidecar. Reuses the
-    // overlay root already discovered for contracts above, so both channels
-    // agree on which root is in play for this invocation.
-    // Phase 43.3/47.B3 — the plan comes from the SystemModel's execution
-    // layer directly (derive/override/band-validate ran at resolve time);
-    // the platform-file channels (`--sched`, overlay, provider sidecar) are
-    // resolve-time-only concerns now — there is no legacy record-only
-    // replay path left to consult them from.
-    let model_plan: Option<crate::execution::sched_plan::SchedPlan> =
-        if !system_model.execution.is_empty() {
-            info!("Scheduling source: SystemModel execution layer");
-            Some(crate::execution::sched_plan::SchedPlan::from_model(
-                &system_model,
-                &common.sched_opts.target,
-                common.sched_opts.sched_apply,
-            )?)
-        } else {
-            info!("SystemModel carries no execution layer — scheduling disabled");
-            None
-        };
     let (sched_plan, sched_helper, sched_helper_join) = if let Some(mut plan) = model_plan {
         // Phase 44.4 §4: chain-member composable nodes co-located in a
         // non-isolated container can't receive distinct priorities —
@@ -801,7 +817,7 @@ pub(crate) async fn play(
         // priority being applied at all.
         for msg in crate::execution::sched_plan::chain_colocation_warnings_for_plan(
             &launch_dump,
-            common.containers.container_mode,
+            container_mode,
             &plan,
         ) {
             tracing::warn!("{msg}");
@@ -820,7 +836,7 @@ pub(crate) async fn play(
         // with startup after the fact.
         let unapplied = crate::execution::sched_plan::composable_tiers_not_applied(
             &plan,
-            common.containers.container_mode,
+            container_mode,
             &load_node_contexts
                 .iter()
                 .map(|ctx| {
@@ -855,9 +871,7 @@ pub(crate) async fn play(
                     "--sched-apply strict: {} composable tier(s) cannot be applied under \
                      --container-mode {}:\n  {}",
                     unapplied.len(),
-                    crate::execution::sched_plan::container_mode_flag(
-                        common.containers.container_mode
-                    ),
+                    crate::execution::sched_plan::container_mode_flag(container_mode),
                     lines.join("\n  ")
                 );
             }
@@ -952,6 +966,22 @@ pub(crate) async fn play(
         if common.containers.disable_respawn {
             settings.composable_respawn = crate::cli::config::ComposableRespawn::Off;
         }
+        // A composable crash is a process of its own exiting only under
+        // `isolated`. Elsewhere it takes its container down with it, so there is
+        // no composable to reload: the container's own `respawn` is what
+        // recovers. Asked for and unable to act, it says so rather than doing
+        // nothing in silence (observable became the default in 0.15).
+        if settings.composable_respawn != crate::cli::config::ComposableRespawn::Off
+            && container_mode != crate::cli::options::ContainerMode::Isolated
+        {
+            warn!(
+                "composable respawn ({:?}) has no effect under --container-mode {}: a \
+                 composable shares its container's process, so a crash ends the container. \
+                 Use respawn=\"true\" on the container, or --container-mode isolated.",
+                settings.composable_respawn,
+                crate::execution::sched_plan::container_mode_flag(container_mode),
+            );
+        }
         crate::member_actor::container_actor::LoadTimings::from_settings(&settings)
     };
     info!(
@@ -980,7 +1010,7 @@ pub(crate) async fn play(
     // Phase 61: report what `isolated` costs on this machine — as a fact, not
     // as advice to turn it off.
     //
-    // `--container-mode isolated` (the default) fork+execs every composable
+    // `--container-mode isolated` fork+execs every composable
     // into its own process. Measured on a 12-core AGX Orin bringing up a
     // 44-node / 16-container / 84-composable launch, that is 144 processes
     // against 60 and 10.2 of 12 cores against 3.9 during startup.
@@ -999,7 +1029,7 @@ pub(crate) async fn play(
     // names the alternative together with what it forfeits. It is emphatically
     // not an automatic downgrade: on a vehicle, trading crash containment for
     // CPU is a safety decision that belongs to the integrator.
-    if common.containers.container_mode == crate::cli::options::ContainerMode::Isolated {
+    if container_mode == crate::cli::options::ContainerMode::Isolated {
         let ncpu = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
@@ -1063,7 +1093,7 @@ pub(crate) async fn play(
         // hold back a container that had capacity. The real limit there is the
         // container's own spawn admission, which is governed by resources
         // rather than by a count.
-        let cap = match common.containers.container_mode {
+        let cap = match container_mode {
             crate::cli::options::ContainerMode::Isolated => 0, // 0 = unlimited
             _ => {
                 runtime_config
@@ -1084,7 +1114,7 @@ pub(crate) async fn play(
                 if limits.max_concurrent_loads == usize::MAX {
                     // Says WHY, because "unlimited" on a knob the config sets
                     // to 10 otherwise reads as the setting being ignored.
-                    match common.containers.container_mode {
+                    match container_mode {
                         crate::cli::options::ContainerMode::Isolated => {
                             "unlimited (isolated: the container paces its own spawns)".to_string()
                         }
@@ -1104,26 +1134,9 @@ pub(crate) async fn play(
         ))
     };
 
-    // Nodes declared `on_exit=Shutdown()` are required: when one exits, the launch is
-    // over. Read from the dump, because on the model path `context.record` is rebuilt
-    // from a NodeInstance that carries no launch-level handlers. Keyed the same way
-    // `member_name` is derived below, so the names match what the actors report.
-    {
-        let shutdown_on_exit: std::collections::HashSet<String> = launch_dump
-            .node
-            .iter()
-            .filter(|record| record.on_exit_shutdown == Some(true))
-            .filter_map(|record| record.name.clone().or_else(|| record.exec_name.clone()))
-            .collect();
-        if !shutdown_on_exit.is_empty() {
-            debug!(
-                "on_exit=Shutdown declared by {} node(s): {:?}",
-                shutdown_on_exit.len(),
-                shutdown_on_exit
-            );
-            builder.set_shutdown_on_exit(shutdown_on_exit);
-        }
-    }
+    // Nodes and containers declared `on_exit=Shutdown()` are required: when one exits,
+    // the launch is over. The builder reads it from each member's own record, which
+    // the model carries (#0063), so `launch` and `up <model.yaml>` agree.
 
     // One epoch for every launch `<timer>` in this run. A `<timer
     // period="6.0">` is six seconds after the LAUNCH started, not six seconds
@@ -1243,8 +1256,7 @@ pub(crate) async fn play(
         };
 
         // Add container (oneshot receiver is ignored since composable nodes will be matched internally)
-        let use_component_events =
-            common.containers.container_mode != crate::cli::options::ContainerMode::Stock;
+        let use_component_events = container_mode != crate::cli::options::ContainerMode::Stock;
         std::mem::drop(builder.add_container(
             member_name.clone(),
             context.node_context,
@@ -1953,6 +1965,49 @@ pub(super) fn interception_identity_path(log_dir: &std::path::Path) -> Option<Pa
             None
         }
     }
+}
+
+/// The container mode this run uses (issue #0062).
+///
+/// The flag's own value, except in one case: `--sched-apply strict`, no
+/// `--container-mode` on the command line, and a composable that the plan gives
+/// a tier. Only `isolated` gives a composable a process of its own to schedule,
+/// so strict would otherwise refuse a mode the user did not choose. Then the run
+/// uses `isolated`, and says so.
+fn effective_container_mode(
+    flag: crate::cli::options::ContainerMode,
+    sched_apply: crate::execution::sched_apply::SchedApplyMode,
+    given_explicitly: bool,
+    plan: Option<&crate::execution::sched_plan::SchedPlan>,
+    model: &ros_launch_manifest_model::SystemModel,
+) -> crate::cli::options::ContainerMode {
+    use crate::{cli::options::ContainerMode, execution::sched_apply::SchedApplyMode};
+    if given_explicitly || flag == ContainerMode::Isolated || sched_apply != SchedApplyMode::Strict
+    {
+        return flag;
+    }
+    let Some(plan) = plan else {
+        return flag;
+    };
+    let tiered: Vec<&str> = model
+        .structure
+        .nodes
+        .iter()
+        .filter(|(fqn, inst)| inst.plugin.is_some() && plan.for_fqn(fqn).is_some())
+        .map(|(fqn, _)| fqn.as_str())
+        .collect();
+    if tiered.is_empty() {
+        return flag;
+    }
+    info!(
+        "--sched-apply strict: {} composable(s) carry a scheduling tier, which only \
+         --container-mode isolated can apply; using isolated (the default is {}). Pass \
+         --container-mode to choose: an explicit mode is never overridden.",
+        tiered.len(),
+        crate::execution::sched_plan::container_mode_flag(flag),
+    );
+    debug!("tiered composables: {tiered:?}");
+    ContainerMode::Isolated
 }
 
 /// Map each member's canonical id to its launch scope, joining on FQN.

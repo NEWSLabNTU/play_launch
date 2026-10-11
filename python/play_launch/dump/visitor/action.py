@@ -1,4 +1,5 @@
 from launch.action import Action
+from launch.actions import ExecuteProcess
 from launch.actions.include_launch_description import IncludeLaunchDescription
 from launch.events import ExecutionComplete  # noqa
 from launch.launch_context import LaunchContext
@@ -10,6 +11,7 @@ from launch_ros.actions.load_composable_nodes import LoadComposableNodes
 from launch_ros.actions.node import Node
 
 from ..launch_dump import LaunchDump
+from .bare_execute_process import visit_bare_execute_process
 from .composable_node_container import visit_composable_node_container
 from .include_launch_description import visit_include_launch_description
 from .lifecycle_node import visit_lifecycle_node
@@ -53,6 +55,12 @@ def visit_action_by_class(
 
     elif is_a(action, IncludeLaunchDescription):
         return visit_include_launch_description(action, context, dump)
+
+    # After the Node branches: Node subclasses ExecuteProcess. Without this
+    # branch a plain ExecuteProcess fell through to stock `execute()` below,
+    # which starts the process during the dump and records nothing (#0066).
+    elif is_a(action, ExecuteProcess):
+        return visit_bare_execute_process(action, context, dump)
 
     else:
         return action.execute(context)

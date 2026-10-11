@@ -488,9 +488,90 @@ fn composable_tier_strict_refuses_before_spawn_under_stock() {
     );
 }
 
+/// Issue #0062: with NO `--container-mode`, strict uses `isolated` when a
+/// composable carries a tier, and says so, instead of refusing a mode the user
+/// never chose. `observable` became the default in 0.15, and until this fix
+/// the same command that worked on 0.14 exited before spawning anything.
+///
+/// The run may still stop later on an unprivileged host (strict also refuses
+/// without `CAP_SYS_NICE`), so this asserts the decision, not a full start.
+#[test]
+fn composable_tier_strict_without_a_mode_uses_isolated() {
+    let env = fixtures::install_env();
+    let launch = fixtures::test_workspace_path("container_events")
+        .join("launch/container_events.launch.xml");
+
+    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let sched_path = write_sched_toml(tmp.path());
+
+    let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let (mut proc, stdout_path, stderr_path) =
+        spawn_sched_launch_in_mode(&env, work_tmp.path(), &sched_path, &launch, "strict", None);
+
+    let decided = wait_for_pattern(
+        &stdout_path,
+        &["which only --container-mode isolated can apply; using isolated"],
+        1,
+        Duration::from_secs(30),
+    );
+    // Let it either fail on privilege or keep running; the decision is made.
+    let _ = proc.try_wait();
+    let stdout = std::fs::read_to_string(&stdout_path).unwrap_or_default();
+    let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+    let combined = format!("{stdout}\n{stderr}");
+
+    assert_eq!(
+        decided, 1,
+        "expected strict to choose isolated for the tiered composables:\n{combined}"
+    );
+    assert!(
+        !combined.contains("cannot be applied under --container-mode"),
+        "strict refused the composable tiers although no mode was given:\n{combined}"
+    );
+}
+
+/// The other half of #0062: an EXPLICIT mode is never overridden. Strict with
+/// `--container-mode observable` written out still refuses.
+#[test]
+fn composable_tier_strict_with_explicit_observable_still_refuses() {
+    let env = fixtures::install_env();
+    let launch = fixtures::test_workspace_path("container_events")
+        .join("launch/container_events.launch.xml");
+
+    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let sched_path = write_sched_toml(tmp.path());
+
+    let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let (mut proc, stdout_path, stderr_path) = spawn_sched_launch_in_mode(
+        &env,
+        work_tmp.path(),
+        &sched_path,
+        &launch,
+        "strict",
+        Some("observable"),
+    );
+
+    let status = proc.wait_with_timeout(Duration::from_secs(30));
+    let stdout = std::fs::read_to_string(&stdout_path).unwrap_or_default();
+    let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+    assert!(
+        !status.success(),
+        "expected strict to refuse under an explicit observable:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("cannot be applied under --container-mode observable"),
+        "expected the composable refusal naming observable:\n{stderr}"
+    );
+    assert!(
+        !stdout.contains("using isolated"),
+        "an explicit --container-mode was overridden:\n{stdout}"
+    );
+}
+
 /// The assertion that stops the silent regression coming back from the other
-/// side: under `--container-mode isolated` — the default, and the path
-/// almost every user takes — the same model must produce NO such warning,
+/// side: under `--container-mode isolated` (no longer the default since
+/// 615d0de2 made it `observable`, but the mode composable scheduling needs)
+/// the same model must produce NO such warning,
 /// because every composable is fork+exec'd and its tier IS applied.
 /// `composable_scheduling_engages_on_isolated_container` above asserts the
 /// apply itself; this asserts the absence of the report, and that

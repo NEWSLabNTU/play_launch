@@ -50,39 +50,11 @@ struct ComposableNodeDefinition {
     start_after: Option<tokio::time::Instant>,
 }
 
-/// Does `member_name` name one of the members declared `on_exit=Shutdown()`?
-///
-/// Matches the name as-is, and again with a trailing `-N` counter removed. The dump
-/// strips that counter from `exec_name` ("talker-1" -> "talker") to match the Rust
-/// parser, while the model keeps the launch-level name, so an UNNAMED node reaches the
-/// coordinator as "dash-1" and appears in the dump-derived set as "dash". A node with a
-/// real ROS name (the case that matters — SSv2's `scenario_test_runner`) matches on the
-/// first comparison; this is only for the unnamed ones.
-fn declares_shutdown_on_exit(
-    declared: &std::collections::HashSet<String>,
-    member_name: &str,
-) -> bool {
-    if declared.contains(member_name) {
-        return true;
-    }
-    match member_name.rsplit_once('-') {
-        Some((stem, counter))
-            if !counter.is_empty() && counter.bytes().all(|b| b.is_ascii_digit()) =>
-        {
-            declared.contains(stem)
-        }
-        _ => false,
-    }
-}
-
 /// Builder for collecting member definitions before spawning
 pub struct MemberCoordinatorBuilder {
     regular_nodes: Vec<RegularNodeDefinition>,
     containers: Vec<ContainerDefinition>,
     composable_nodes: Vec<ComposableNodeDefinition>,
-    /// Nodes launched with `on_exit=Shutdown()`: when one of these exits, the whole
-    /// launch goes down with it. See `MemberRunner`.
-    shutdown_on_exit: std::collections::HashSet<String>,
     /// LoadNode-path timings applied to every container (phase-52.2)
     load_timings: crate::member_actor::container_actor::LoadTimings,
 }
@@ -94,18 +66,8 @@ impl MemberCoordinatorBuilder {
             regular_nodes: Vec::new(),
             containers: Vec::new(),
             composable_nodes: Vec::new(),
-            shutdown_on_exit: std::collections::HashSet::new(),
             load_timings: Default::default(),
         }
-    }
-
-    /// Declare the members that carry `on_exit=Shutdown()`.
-    ///
-    /// Taken from the dump rather than from each node's record because on the model
-    /// path the record is rebuilt from a `NodeInstance`, which does not carry
-    /// launch-level handlers. See `MemberRunner::honour_on_exit_shutdown`.
-    pub fn set_shutdown_on_exit(&mut self, names: std::collections::HashSet<String>) {
-        self.shutdown_on_exit.extend(names);
     }
 
     /// Set the LoadNode-path timings applied to every container
@@ -141,10 +103,6 @@ impl MemberCoordinatorBuilder {
                 .or(context.record.exec_name.clone()),
             auto_load: None, // Not applicable for regular nodes
         };
-
-        if context.record.on_exit_shutdown == Some(true) {
-            self.shutdown_on_exit.insert(name.clone());
-        }
 
         self.regular_nodes.push(RegularNodeDefinition {
             name,
@@ -260,9 +218,11 @@ impl MemberCoordinatorBuilder {
         // bare display names collide (issue 0001) and silently overwrote.
         let mut id_alloc = IdAllocator::new();
 
-        // Display names collected by `set_shutdown_on_exit` / `add_regular_node` become
-        // canonical member ids here, because that is what actors report in
-        // `StateEvent::Exited` — matching on the display name silently never fired.
+        // Members declared `on_exit=Shutdown()`, by the canonical id their actor
+        // reports in `StateEvent::Exited`. Each member's OWN record decides
+        // (#0065): the flag rides on the model instance (#0063), so no name has to
+        // be matched against a set, which is what let a same-named or same-stem
+        // member end the launch.
         let mut shutdown_on_exit_ids = std::collections::HashSet::new();
 
         for def in self.regular_nodes {
@@ -271,7 +231,7 @@ impl MemberCoordinatorBuilder {
                 def.metadata.namespace.as_deref(),
                 &def.name,
             );
-            if declares_shutdown_on_exit(&self.shutdown_on_exit, &def.name) {
+            if def.context.record.on_exit_shutdown == Some(true) {
                 shutdown_on_exit_ids.insert(member_id.clone());
             }
             let (control_tx, control_rx) = mpsc::channel(CONTROL_CHANNEL_SIZE);
@@ -317,6 +277,11 @@ impl MemberCoordinatorBuilder {
                 def.metadata.namespace.as_deref(),
                 &def.name,
             );
+            // A container is a node: `on_exit=Shutdown()` on it ends the launch when
+            // its process exits (#0064).
+            if def.context.record.on_exit_shutdown == Some(true) {
+                shutdown_on_exit_ids.insert(unique_member_name.clone());
+            }
 
             // Build the full node name BEFORE moving def.context
             // This matches what composable nodes use in target_container_name
@@ -682,41 +647,5 @@ impl MemberCoordinatorBuilder {
 impl Default for MemberCoordinatorBuilder {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::declares_shutdown_on_exit;
-    use std::collections::HashSet;
-
-    #[test]
-    fn a_named_node_matches_directly() {
-        let declared: HashSet<String> = ["scenario_test_runner".to_string()].into();
-        assert!(declares_shutdown_on_exit(&declared, "scenario_test_runner"));
-    }
-
-    /// The dump strips the launch counter from `exec_name`, the model keeps it.
-    #[test]
-    fn an_unnamed_node_matches_with_its_counter_stripped() {
-        let declared: HashSet<String> = ["dash".to_string()].into();
-        assert!(declares_shutdown_on_exit(&declared, "dash-1"));
-        assert!(declares_shutdown_on_exit(&declared, "dash-12"));
-    }
-
-    #[test]
-    fn an_unrelated_member_does_not_match() {
-        let declared: HashSet<String> = ["dash".to_string()].into();
-        assert!(!declares_shutdown_on_exit(&declared, "sh-1"));
-        assert!(!declares_shutdown_on_exit(&declared, "dashboard"));
-    }
-
-    /// A hyphen that is not a counter must not be stripped, or `foo-bar` would match a
-    /// declaration of `foo`.
-    #[test]
-    fn a_hyphen_that_is_not_a_counter_is_left_alone() {
-        let declared: HashSet<String> = ["foo".to_string()].into();
-        assert!(!declares_shutdown_on_exit(&declared, "foo-bar"));
-        assert!(!declares_shutdown_on_exit(&declared, "foo-"));
     }
 }

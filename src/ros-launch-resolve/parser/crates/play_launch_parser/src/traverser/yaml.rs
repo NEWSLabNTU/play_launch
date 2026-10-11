@@ -479,6 +479,10 @@ impl LaunchTraverser {
             output,
             respawn,
             respawn_delay,
+            on_exit_shutdown: crate::actions::node::parse_on_exit_value(
+                yaml_str(map, "on_exit"),
+                "node",
+            )?,
         };
 
         let record = CommandGenerator::generate_node_record(&node, &self.context)
@@ -649,6 +653,10 @@ impl LaunchTraverser {
             output,
             environment,
             arguments,
+            on_exit_shutdown: crate::actions::node::parse_on_exit_value(
+                yaml_str(map, "on_exit"),
+                "executable",
+            )?,
         };
 
         let record = CommandGenerator::generate_executable_record(&exec, &self.context)
@@ -738,6 +746,10 @@ impl LaunchTraverser {
             ros_args,
             respawn,
             respawn_delay,
+            on_exit_shutdown: crate::actions::node::parse_on_exit_value(
+                yaml_str(map, "on_exit"),
+                "node_container",
+            )?,
             composable_nodes,
             parameters,
             param_files,

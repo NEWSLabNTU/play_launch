@@ -17,12 +17,39 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-*None.* Every filed issue is resolved as of 2026-09-25. `just check-issue-index`
-fails if this section and the per-file `status:` frontmatter ever disagree
-again — they drifted in both directions twice in one day, which is what the
-check is for.
+**#0067** -- a string parameter whose text looks like a list (`type="str"`,
+`value="[a, b]"`) is spawned as a list. The model's `ParamValue` has no array
+type, so an array rides as a `Str` of its YAML text and the two cannot be
+told apart at spawn. Needs a model type that nano-ros agrees to. See `0067-*`.
+
+`just check-issue-index` fails if this section and the per-file `status:`
+frontmatter disagree.
 
 ## Resolved
+
+**#0066** -- `--parser python` RAN every plain `ExecuteProcess` at parse time
+and recorded none of them: the action visitor had no branch for it. It is
+now recorded the way the Rust parser records it, and the dump starts nothing.
+Found by tightening the vacuous `on_exit_shutdown.rs`. See `0066-*`.
+
+**#0065** -- the `on_exit=Shutdown()` set was matched by bare name plus a
+`-N`-stripping fallback, so a same-stem unnamed process could end the launch
+early. Each member's own record now decides, and no name is matched. See
+`0065-*`.
+
+**#0064** -- `on_exit` was honoured only for `Node`/`ExecuteProcess` in a
+`.launch.py`. XML, YAML, `LifecycleNode` and containers now carry it too, and
+any value other than `shutdown` is refused with stock launch's message. See
+`0064-*`.
+
+**#0063** -- `play_launch up <model.yaml>` ignored `on_exit=Shutdown()`: the
+flag lived only in the launch-time dump. The model carries it now
+(`ros-launch-manifest` v0.1.50, `NodeInstance.on_exit`). See `0063-*`.
+
+**#0062** -- `--sched-apply strict` refused every launch whose composables
+carry a tier once `observable` became the default. With no mode given, strict
+now uses `isolated` and says so; an explicit mode is never overridden. See
+`0062-*`.
 
 **#0061** -- `play_launch run` never exited on SIGTERM or SIGINT. Its
 private copy of the signal loop signalled the process group and the task

@@ -15,8 +15,8 @@ matters here — where a LoadNode request is executed:
 | mode | LoadNode handled | concurrency |
 |---|---|---|
 | `stock` (`rclcpp_components`) | inline, **on the executor** | serialised |
-| `observable` (ours) | inline, on the executor | serialised |
-| `isolated` (ours, default) | answered immediately with a pre-assigned id; work runs on a spawn-worker pool | parallel |
+| `observable` (ours, default since 615d0de2) | inline, on the executor | serialised |
+| `isolated` (ours; the default until 615d0de2) | answered immediately with a pre-assigned id; work runs on a spawn-worker pool | parallel |
 
 `tests/fixtures/sequential_loading` documents the first case as intended
 behaviour: *"No parallel loading: Container serializes all LoadNode
@@ -174,8 +174,10 @@ what sent the first investigation of #0019 down the wrong path.
    machine they can each be waiting for headroom the other is about to consume.
 3. **`observable` still serialises on its executor**, so a slow constructor
    there blocks every other load in that container. Nothing here changes that;
-   it is inherent to loading into a running executor, and it is one more reason
-   `isolated` is the default.
+   it is inherent to loading into a running executor. (This was written as one
+   more reason `isolated` was the default; since 615d0de2 the default is
+   `observable`, so the serialised case is now the common one, and
+   `--container-mode isolated` is how to get parallel loads.)
 4. **Progress is logged, not modelled.** The web UI and `HealthSummary` still
    see a bare `MemberState::Loading` with no elapsed time, because carrying it
    there means changing a ts-rs-exported type and the frontend that reads it.

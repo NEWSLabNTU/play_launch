@@ -17,6 +17,8 @@ pub struct ExecutableAction {
     pub output: Option<String>,
     pub environment: Vec<(String, String)>,
     pub arguments: Vec<Vec<Substitution>>,
+    /// `on_exit="shutdown"` (#0064); see `node::parse_on_exit`.
+    pub on_exit_shutdown: Option<bool>,
 }
 
 impl ExecutableAction {
@@ -103,6 +105,7 @@ impl ExecutableAction {
             output,
             environment,
             arguments,
+            on_exit_shutdown: crate::actions::node::parse_on_exit(entity, "executable")?,
         })
     }
 
@@ -148,7 +151,7 @@ impl ExecutableAction {
             global_params: None,
             scope_id: None,
             start_delay_secs: None,
-            on_exit_shutdown: None,
+            on_exit_shutdown: self.on_exit_shutdown,
         })
     }
 }

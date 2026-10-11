@@ -422,14 +422,16 @@ fn resolve_call(
             let pkg = arg(0)?;
             find_package_prefix(&pkg).ok_or(SubstitutionError::PackageNotFound(pkg))
         }
-        // `FindExecutable`: the first match on `PATH`.
+        // `FindExecutable`: `shutil.which`, the first EXECUTABLE match on
+        // `PATH`. A non-executable file of the same name earlier on `PATH` is
+        // skipped there, so it is skipped here too.
         "find-exec" => {
             let exe = arg(0)?;
             std::env::var_os("PATH")
                 .and_then(|paths| {
                     std::env::split_paths(&paths)
                         .map(|dir| dir.join(&exe))
-                        .find(|p| p.is_file())
+                        .find(|p| is_executable_file(p))
                 })
                 .and_then(|p| p.to_str().map(String::from))
                 .ok_or_else(|| {
@@ -542,6 +544,16 @@ pub fn resolve_substitutions(
     Ok(result)
 }
 
+/// A regular file with an execute bit set: `shutil.which`'s test
+/// (`os.access(path, X_OK)` and not a directory), short of the effective-uid
+/// subtlety, which does not change the answer for a file nobody may run.
+fn is_executable_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod ament_lookup_tests {
     use super::ament_package_prefix;
@@ -581,5 +593,30 @@ mod ament_lookup_tests {
             real.path().to_str()
         );
         assert_eq!(ament_package_prefix(&path, "absent"), None);
+    }
+}
+
+#[cfg(test)]
+mod find_exec_tests {
+    use super::is_executable_file;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// `$(find-exec)` follows `shutil.which`: a file without an execute bit
+    /// is not a match, so a non-executable file earlier on `PATH` cannot
+    /// shadow the real one.
+    #[test]
+    fn only_an_executable_regular_file_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("tool");
+        std::fs::write(&file, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!is_executable_file(&file), "mode 644 is not executable");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(is_executable_file(&file), "mode 755 is executable");
+        assert!(!is_executable_file(dir.path()), "a directory is not");
+        assert!(
+            !is_executable_file(&dir.path().join("absent")),
+            "nor is nothing"
+        );
     }
 }

@@ -447,7 +447,10 @@ pub struct InterceptionSettings {
     pub trace: bool,
 
     /// Write the per-message record `play_launch measure` reads
-    /// (`interception/events.jsonl`). Default: on.
+    /// (`interception/events.jsonl`). Default: on, whenever interception
+    /// itself runs (see `InterceptionSettings::decide`) — a contract-free
+    /// run under the default `--enforce-rules` intercepts nothing and writes
+    /// no events file unless `--interception on` was given.
     ///
     /// Like `trace`, this is one line per publish/take rather than a summary,
     /// so it grows with traffic (~110 bytes a message). Unlike `trace` it

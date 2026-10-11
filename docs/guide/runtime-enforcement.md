@@ -58,7 +58,7 @@ Two lines matter. The first is printed before anything spawns and says where
 the events are coming from:
 
 ```
-INFO  Interception: on (implied by --enforce-rules warn)
+INFO  Interception: enabled, implied by --enforce-rules Warn (1 declared topics, 0 externals to check against; ...)
 ```
 
 The second lands about six seconds in — the rate rule needs half a second of
@@ -100,8 +100,11 @@ play_launch up --enforce-rules strict system_model.yaml
 ```
 
 Enforcement on `up` reads `contracts:` out of the model — a model resolved
-without `--contracts` carries none, and the engine then has nothing to
-enforce but the structure (see `graph-deviation-runtime` below).
+without `--contracts` carries none. Under the default `--enforce-rules warn`
+such a run has no interception layer at all, so no rule runs; written
+explicitly (`--enforce-rules warn`), or with `--interception on`, the engine
+still checks the structure (see `graph-deviation-runtime` below and
+[Preconditions](#preconditions-the-mode-has-an-event-source-or-says-it-has-none)).
 
 ## The modes
 
@@ -131,18 +134,50 @@ agree. They are resolved in one place, by precedence, highest first:
 
 1. `--interception on|off` on the command line
 2. an explicit `interception: enabled:` in the `--config` YAML
-3. implied **on** when `--enforce-rules` is anything but `off`
+3. implied **on** when `--enforce-rules` is anything but `off` **and** there
+   is something to enforce: a contract resolved into the model, or
+   `--enforce-rules` was written on the command line rather than left at its
+   default
 4. otherwise off
+
+So a plain launch with no contract runs as `ros2 launch` would, with no
+`LD_PRELOAD` layer and nothing written per message. That is deliberate: under
+the old rule (implied whenever the mode was not `off`) a contract-free Autoware
+stack wrote 40 GB of `play_launch.log` and 3.8 GB of `interception/` in five
+minutes. A launch whose contract resolves is still enforced by default
+(#0031).
 
 The startup `info` line reports the answer *and the decider*, because those
 are different questions — one tells you whether rules will run, the other
 tells you which file to edit:
 
 ```
-INFO  Interception: on (implied by --enforce-rules warn)
-INFO  Interception: off (--interception off)
-INFO  Interception: off (default)
+INFO  Interception: enabled (--interception on)
+INFO  Interception: enabled, implied by --enforce-rules Warn (3 declared topics, 0 externals to check against; ...)
+INFO  Interception: off (no contract to enforce and none asked for; `--interception on` records anyway)
 ```
+
+`--interception off` (or `interception.enabled: false`) under a mode that
+would have wanted interception warns that no runtime rule can fire, and under
+`strict` it is an error before the first spawn.
+
+### What a contract-free run no longer has
+
+Because interception is off by default when no contract resolved, three things
+that need it are absent from such a run unless you pass `--interception on`
+(or write `--enforce-rules` explicitly, which also implies it):
+
+- **The contract-independent rules.** `graph-deviation-runtime` and
+  `qos-match-runtime` read no contract field — they compare the running
+  system against the model and against itself — but they still need the
+  event source, so they do not run.
+- **`interception/events.jsonl`**, the per-message record
+  `play_launch measure` reads. `interception.events` defaults on, but only
+  takes effect on a run that intercepts.
+- **`interception/endpoints.tsv`**, which `play_launch contract capture`
+  reads to write a first contract for a system that has none. Since such a
+  system has no contract by definition, the run you capture from must be made
+  with `--interception on`.
 
 A non-`off` mode can still end up with no event source two ways, and neither
 is allowed to be quiet.

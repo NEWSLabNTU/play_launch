@@ -10,6 +10,15 @@ pub enum ParseError {
     #[error("Missing required attribute '{attribute}' on element '<{element}>'")]
     MissingAttribute { element: String, attribute: String },
 
+    /// `on_exit` with a value other than `shutdown`. Mirrors
+    /// `ExecuteProcess.parse`, which compares the literal string and raises
+    /// for anything else.
+    #[error(
+        "Attribute on_exit of Entity {element} expected to be shutdown but got `{value}`. \
+         Other on_exit actions not yet supported"
+    )]
+    UnsupportedOnExit { element: String, value: String },
+
     #[error("Missing required attribute '{attribute}' on element '<{element}>' in file {file}")]
     MissingAttributeWithContext {
         element: String,

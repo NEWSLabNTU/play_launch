@@ -70,6 +70,11 @@ const NODE_SUPPORTED: &[&str] = &[
     "output",
     "respawn",
     "respawn_delay",
+    // `on_exit="shutdown"`: read by `ExecuteProcess.parse` (reached from
+    // `Node.parse` via `super().parse(...)`, `launch_ros/actions/node.py:309`)
+    // and honoured as `on_exit=[Shutdown()]`; any other value is an error
+    // there and here (#0064, `actions::node::parse_on_exit`).
+    "on_exit",
 ];
 const NODE_KNOWN_UNSUPPORTED: &[&str] = &[
     "exec_name",
@@ -84,14 +89,6 @@ const NODE_KNOWN_UNSUPPORTED: &[&str] = &[
     "respawn_max_retries",
     "sigkill_timeout",
     "sigterm_timeout",
-    // ROS 2 accepts and fully honors this (`ExecuteProcess.parse`, read via
-    // `Node.parse`'s `super().parse(entity, parser, ignore=['cmd'])` —
-    // `launch_ros/actions/node.py:309`; `on_exit="shutdown"` registers a
-    // `Shutdown()` handler). Measured: `<node pkg=… exec=… on_exit=
-    // "shutdown"/>` and the same on `<node_container>` both parse and
-    // construct cleanly against Humble. Not implemented here — warn, don't
-    // reject.
-    "on_exit",
     // ROS 2's frontend consumes this without complaint — `node.py:316`
     // (`entity.get_attr('node-name', optional=True)`) unconditionally reads
     // it, so `assert_entity_completely_parsed()` never flags it as
@@ -153,19 +150,17 @@ static SPECS: &[AttrSpec] = &[
             "respawn",
             "respawn_delay",
             "cmd",
+            // Honoured since #0064; see `<node>`'s entry.
+            "on_exit",
         ],
-        // `on_exit`: same story as `<node>`'s — read unconditionally in
-        // `ExecuteProcess.parse` (`execute_process.py:335`) and fully
-        // honored (unlike `node-name`, which `ExecuteProcess.parse` never
-        // reads at all — `<executable node-name=…>` is genuinely rejected
-        // by ROS 2 with "Unexpected attribute", measured, so it stays out
-        // of this table).
+        // `<executable node-name=…>` is genuinely rejected by ROS 2 with
+        // "Unexpected attribute" (`ExecuteProcess.parse` never reads it,
+        // measured), so it stays out of this table.
         known_unsupported: &[
             "launch-prefix",
             "cwd",
             "emulate_tty",
             "shell",
-            "on_exit",
             // Jazzy-only, same union rationale as `<node>`.
             "respawn_max_retries",
             "sigkill_timeout",

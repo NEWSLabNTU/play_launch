@@ -16,6 +16,8 @@ use pyo3::{prelude::*, types::PyDict};
 #[derive(Clone)]
 pub struct ComposableNodeContainer {
     spec: NodeSpec,
+    /// `on_exit=Shutdown()` (#0064): a container is a `Node`.
+    on_exit_shutdown: Option<bool>,
     composable_node_descriptions: Option<Py<PyAny>>,
     #[pyo3(get)]
     condition: Option<Py<PyAny>>,
@@ -59,6 +61,7 @@ impl ComposableNodeContainer {
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> Self {
         Self {
+            on_exit_shutdown: super::node::on_exit_kwarg_shuts_down(_kwargs),
             spec: NodeSpec {
                 package,
                 executable,
@@ -135,6 +138,7 @@ impl ComposableNodeContainer {
             global_params: Some(n.global_params),
             scope_id: None,
             start_delay_secs: None,
+            on_exit_shutdown: this.borrow().on_exit_shutdown,
         });
         crate::api::visit::stamp_delay(mark);
         this.borrow_mut().executed_fqn = Some(fqn.clone());
