@@ -1767,6 +1767,27 @@ fn a_timers_release_jitter_is_charged_where_a_tick_is_waited_for() {
     let _ = std::fs::remove_file(&model_path);
 }
 
+/// Phase 85 D1, the two places 0.15.1 left out: a timer's release jitter
+/// is charged wherever its period is. The gate that REPORTS odd_exit is on a
+/// 10 Hz timer released up to 6 ms late, so the fault's detection is
+/// 100 + 6 + 20 (not 120), and the scope path through the gate carries the
+/// jitter in its sampling cost (332 = 226 event-segment + 106 sampling,
+/// against 330 declared; without the jitter it was 326 and passed).
+#[test]
+fn a_timers_release_jitter_is_charged_in_detection_and_the_critical_path() {
+    let (code, out) = check_takeover("contract_takeover_gate_jitter", &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    for needle in [
+        "detection 126.00ms (/gate/availability reports every 100.00ms + 6.00ms jitter + 20.00ms)",
+        "odd_exit  takeover     window   126.00",
+        "warning[scope-budget]: scope path 'sys.notice' (scope 0) max_latency_ms (330) is less \
+         than critical path: /gate",
+        "/handler = 332.00ms (226.00ms event-segment + 106.00ms sampling_cost)",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+}
+
 /// Phase 85 T2 (D1): the same ladder with a call_mrm of 110 ms. Against a
 /// bare 100 ms period it held the late notice; against the stated 18 ms of
 /// release jitter it leaves 8 ms charged nowhere, once per rung below.

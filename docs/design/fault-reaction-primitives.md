@@ -452,7 +452,8 @@ hazards:
 ```
 
 FDTI for `reported` = the detector's input period + its own path latency —
-both already declared or derived. We never inspect a value; we account for
+both already declared or derived -- plus the release `jitter:` of the timer that
+publishes the verdict, when it states one (phase 85 D1). We never inspect a value; we account for
 the node that does. This turns "value faults are out of scope" into "value
 faults are detected by a node you declare like any other", which is what
 ISO 26262 means by a safety mechanism anyway.

@@ -582,3 +582,27 @@ Still open: D6 (contract vs code, consumer of nano-ros 463), I11 (install
 prefix per scope), T3 (Dependabot), the provenance field (D7, D9), and the
 island's own move (phase 9 W5: call_mrm 206 -> 149, and the link re-sized
 from 57 to about 81 ms).
+
+## After 0.15.1: D1's two missing charges (branch `fix/timer-jitter-detection`)
+
+The island's phase 9 W6 put its demo gate on a 10 Hz timer with `jitter:
+6ms` and found two places where D1 charged the period but not the jitter:
+
+- **A reported fault's detection.** `odd_exit` is reported by the gate, so
+  its detection is the gate's period + its path. It now adds the release
+  jitter of the timer path that publishes the guard
+  (`/gate/availability reports every 100.00ms + 6.00ms jitter + 20.00ms`).
+  Only the publisher's own timer counts; a rate derived from a timer
+  further upstream adds nothing.
+- **A scope path's critical path.** `GlobalNode::sampling_cost_ms` (and so
+  `traversal_latency_ms`) charges period + jitter at a jittered timer
+  boundary, so `scope-budget`, `scope-sampling-feasibility` and
+  `jitter-feasibility` see it. The island's `island.tor` reads 356
+  (100 + 6 + 20 + 81 + 149), as hand-derived, instead of 350.
+
+A contract with no `jitter:` reads the same totals. The rlm chain
+derivation (`sched`'s sampling cost for the ranked plan) is unchanged: it
+ranks by period, and no totals come from it. Fixture
+`contract_takeover_gate_jitter`; unit tests
+`a_jittered_boundary_is_charged_period_plus_jitter_plus_exec` and
+`a_timer_without_jitter_still_costs_one_period`.
