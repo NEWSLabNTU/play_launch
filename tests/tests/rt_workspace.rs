@@ -32,24 +32,12 @@ fn fixture_dir() -> PathBuf {
 /// ros-launch-resolve; drop the resolve pipeline", RFC-0060 W3) moved it —
 /// along with `resolve`'s siblings — into the extracted CLI. `play_launch`
 /// now answers `unrecognized subcommand 'dump'`. The binary is neither
-/// installed nor on `PATH`, so this looks in the submodule's own target dir
-/// and returns `None` (test skips) when it has not been built.
+/// installed nor on `PATH`; `fixtures::resolve_cli_bin` finds the newest
+/// build, and this returns `None` (test skips) when there is none.
 fn resolve_cli_cmd(
     env: &std::collections::HashMap<String, String>,
 ) -> Option<std::process::Command> {
-    let root = fixtures::repo_root().join("src/ros-launch-resolve/target");
-    let bin = ["debug", "release"]
-        .iter()
-        .map(|p| root.join(p).join("ros-launch-resolve"))
-        .find(|c| c.is_file());
-    let Some(bin) = bin else {
-        eprintln!(
-            "SKIP: ros-launch-resolve CLI not built ({}/{{debug,release}}/ros-launch-resolve \
-             missing) — run `cd src/ros-launch-resolve && cargo build` first",
-            root.display()
-        );
-        return None;
-    };
+    let bin = fixtures::resolve_cli_bin()?;
     let mut cmd = std::process::Command::new(bin);
     cmd.env_clear();
     cmd.envs(env);
@@ -653,6 +641,11 @@ fn sched_apply_warn_smoke_launch() {
         sched.to_str().unwrap(),
         "--sched-apply",
         "warn",
+        // A composable's tier applies only where the composable is a process
+        // of its own; under the default `observable` it is a thread pool in
+        // the container and the tier is reported unapplied (#0062).
+        "--container-mode",
+        "isolated",
         "rt_demo",
         "bringup.launch.xml",
     ]);
@@ -887,7 +880,7 @@ fn resolve_emits_joined_system_model() {
     let model: serde_json::Value = serde_yaml_value(&yaml);
 
     // meta: schema version + provenance hashes present
-    assert_eq!(model["meta"]["version"], 1);
+    assert_eq!(model["meta"]["version"], 2, "SystemModel schema 2 (#0067)");
     assert!(
         model["meta"]["inputs"]
             .as_array()

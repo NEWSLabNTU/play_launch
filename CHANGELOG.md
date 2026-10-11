@@ -34,9 +34,15 @@ allowance heavily.
   (`<param value="[a, b]" type="str"/>`) reaches the node as a string (#0067).
   It used to be spawned as a list.
 - **Visible:** models are written at SystemModel schema 2
-  (`ros-launch-manifest` v0.1.51), where a list parameter is a list rather
+  (`ros-launch-manifest` v0.1.52), where a list parameter is a list rather
   than a string of YAML. Older models load unchanged and spawn as before. A
   tool built on an older `ros-launch-manifest` refuses a schema-2 model.
+- Internal: two integration test files found the `ros-launch-resolve` CLI
+  only in `src/ros-launch-resolve/target/`, so under a colcon build their
+  tests always skipped and still reported passed. They use the shared lookup
+  now. One test they hid still expected schema 1, and
+  `sched_apply_warn_smoke_launch` still expected a composable tier to apply
+  under the `observable` default.
 - Internal: the pyexec C ABI is 8. The captures carry `on_exit_shutdown`, and
   a v7 object would drop it silently.
 

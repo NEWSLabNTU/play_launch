@@ -136,6 +136,26 @@ fn unquote_repr_scalar(s: &str) -> Option<&str> {
     None
 }
 
+/// A flow sequence of scalars as YAML values, typed as YAML reads them; `None`
+/// when `s` does not parse as one.
+fn flow_scalars(s: &str) -> Option<Vec<yaml_rust2::Yaml>> {
+    use serde_yaml_ng::Value;
+    use yaml_rust2::Yaml;
+
+    let seq: Vec<Value> = serde_yaml_ng::from_str(s).ok()?;
+    seq.into_iter()
+        .map(|v| match v {
+            Value::String(s) => Some(Yaml::String(s)),
+            Value::Bool(b) => Some(Yaml::Boolean(b)),
+            Value::Number(n) => match n.as_i64() {
+                Some(i) => Some(Yaml::Integer(i)),
+                None => Some(Yaml::Real(format!("{:?}", n.as_f64()?))),
+            },
+            _ => None,
+        })
+        .collect()
+}
+
 fn str_to_yaml(s: &str) -> yaml_rust2::Yaml {
     use yaml_rust2::Yaml;
 
@@ -176,6 +196,13 @@ fn str_to_yaml(s: &str) -> yaml_rust2::Yaml {
         let trimmed = inner.trim();
         if trimmed.is_empty() {
             return Yaml::Array(vec![]);
+        }
+        // A list from the model (schema 2) is real flow YAML whose elements
+        // are quoted wherever flow syntax would re-shape them (`'a: b'`,
+        // `'a, b'`), so read it as YAML. Splitting on commas would cut a
+        // quoted `'a, b'` in two.
+        if let Some(items) = flow_scalars(s.trim()) {
+            return Yaml::Array(items);
         }
         let items: Vec<Yaml> = trimmed
             .split(',')
@@ -1684,6 +1711,24 @@ mod tests {
                 "5".into(),
             ])),
             "[a, '5', 5]"
+        );
+    }
+
+    /// #0068: a quoted list element holding `, ` or `: ` is one string
+    /// element, not two elements or a mapping.
+    #[test]
+    fn a_quoted_element_with_flow_syntax_inside_stays_one_string() {
+        use yaml_rust2::Yaml;
+        assert_eq!(
+            str_to_yaml("['mon: map_status', 'a, b', '5', 5, 1.0, true]"),
+            Yaml::Array(vec![
+                Yaml::String("mon: map_status".into()),
+                Yaml::String("a, b".into()),
+                Yaml::String("5".into()),
+                Yaml::Integer(5),
+                Yaml::Real("1.0".into()),
+                Yaml::Boolean(true),
+            ])
         );
     }
 

@@ -23,19 +23,7 @@ use std::{
 };
 
 fn ros_launch_resolve_bin() -> Option<PathBuf> {
-    let root = fixtures::repo_root().join("src/ros-launch-resolve/target");
-    for profile in ["debug", "release"] {
-        let candidate = root.join(profile).join("ros-launch-resolve");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    eprintln!(
-        "SKIP: ros-launch-resolve CLI not built ({}/{{debug,release}}/ros-launch-resolve \
-         missing) — run `cd src/ros-launch-resolve && cargo build` first",
-        root.display()
-    );
-    None
+    fixtures::resolve_cli_bin()
 }
 
 /// The launch file #0048 was measured on: `talker` carries no `name=` and

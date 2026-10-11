@@ -71,8 +71,10 @@ The parser evaluates conditions during parsing and processes only the selected p
 - **Parameter values are TEXT typed by YAML 1.1** (`param_value.rs`). A float
   keeps a dot and a signed exponent (`0.0`, `1.0e-6`); a string that would
   re-type as something else is YAML single-quoted (`'1.0'`, `'true'`), and
-  the model (`lower_scalar`) and spawner (`str_to_yaml`) unquote it. A `Str`
-  shaped `[...]` is passed through unquoted because the model has no arrays.
+  the model (`lower_scalar`) and spawner (`str_to_yaml`) unquote it. An
+  unquoted `[...]` is a list: the model carries it as a `StrList` (schema 2,
+  #0067), each element quoted wherever YAML, flow syntax included, would
+  re-shape it (`'5'`, `'a: b'`, `'a, b'`; #0068).
 - **`<let>` statements**: sequential parse-time resolution — values resolved immediately, stored in record.json
 - **Runtime fallback**: unresolved `$(var ...)` in executable names resolved at replay time (`src/execution/node_cmdline.rs`)
 - **YAML params**: substitutions in YAML files resolved and typed before passing to nodes (`src/params.rs::load_and_resolve_param_file()`)
@@ -667,6 +669,21 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-10-12**: **#0067 re-shaped any list element holding `: ` or `, `
+  (#0068), and `test-all` was the first thing to run it.** Schema 2 renders
+  a list as flow text, `[e1, e2]`, and v0.1.51 quoted an element only by the
+  scalar rule. Inside `[...]` that is not enough: `a: b` reads back as a
+  mapping. Autoware's `component_state_monitor` passes exactly that, and its
+  `launch.map` reached LoadNode as a `string` the node refused. The
+  Autoware process-count tests passed through it because they count
+  processes, not loaded composables. `ros-launch-manifest` v0.1.52 quotes
+  any element that does not read back inside `[...]`. The same run found
+  two more test copies of the `ros-launch-resolve` lookup the 2026-10-07
+  consolidation missed (`contract_node_identity.rs`, `rt_workspace.rs`):
+  they searched only `src/ros-launch-resolve/target/`, so under colcon about
+  eighteen tests always skipped and still reported passed. Unhidden, one
+  still expected schema 1.
 
 - **2026-10-11**: **`on_exit=Shutdown()` reaches every path, and the Python
   dumper stops running processes.** A review of the 0.15 commits found

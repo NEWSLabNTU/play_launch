@@ -22,6 +22,13 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Resolved
 
+**#0068** -- a list parameter whose string elements held `: ` or `, ` reached
+the node re-shaped, a #0067 regression: an element was quoted only by the
+scalar rule, so `[a: b]` read back as a mapping and Autoware's
+`component_state_monitor` refused its `launch.map`. `ros-launch-manifest`
+v0.1.52 quotes any element that does not read back inside `[...]`. See
+`0068-*`.
+
 **#0067** -- a string parameter whose text looked like a list (`type="str"`,
 `value="[a, b]"`) was spawned as a list: the model carried a list as a `Str`
 of its flow text. SystemModel schema 2 (`ros-launch-manifest` v0.1.51) makes

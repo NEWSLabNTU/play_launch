@@ -19,6 +19,7 @@ const LAUNCH_XML: &str = r#"<launch>
     <param name="as_str" value="[a, b]" type="str"/>
     <param name="as_list" value="[a, b]"/>
     <param name="ints" value="[1, 2]"/>
+    <param name="names" value="['mon: map_status', 'a, b', plain]"/>
   </node>
 </launch>
 "#;
@@ -100,6 +101,14 @@ fn assert_spawned_apart(params: &serde_yaml_ng::Mapping) {
         ints.iter().all(|v| v.is_i64()),
         "ints keep their type: {ints:?}"
     );
+    // #0068: elements holding `: ` or `, ` are each one string.
+    let names: Vec<&str> = get("names")
+        .as_sequence()
+        .expect("names is a list")
+        .iter()
+        .map(|v| v.as_str().unwrap_or_else(|| panic!("names: {v:?}")))
+        .collect();
+    assert_eq!(names, ["mon: map_status", "a, b", "plain"]);
 }
 
 #[test]

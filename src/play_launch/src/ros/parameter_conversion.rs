@@ -184,3 +184,26 @@ fn create_string_array_parameter(values: Vec<String>) -> rcl_interfaces::msg::Pa
         string_array_value = values
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ros_launch_manifest_model::ParamValue;
+
+    /// #0068: the composable path. A model list whose string elements hold
+    /// `: ` or `, ` reaches LoadNode as a string array of those elements.
+    /// Bare, `[mon: map_status]` parsed as a sequence holding a mapping and
+    /// fell back to a `string`, which a node declaring `string_array` refuses.
+    #[test]
+    fn a_list_with_flow_syntax_in_its_elements_loads_as_a_string_array() {
+        let list = ParamValue::list_from_flow("['mon: map_status', 'a, b']").unwrap();
+        let text = crate::execution::node_cmdline::param_value_to_record_string(&list);
+        let v = parse_parameter_value(&text).unwrap();
+        assert_eq!(
+            v.type_,
+            rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY,
+            "{text}"
+        );
+        assert_eq!(v.string_array_value, ["mon: map_status", "a, b"]);
+    }
+}
