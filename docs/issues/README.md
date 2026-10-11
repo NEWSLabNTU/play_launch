@@ -17,15 +17,16 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0067** -- a string parameter whose text looks like a list (`type="str"`,
-`value="[a, b]"`) is spawned as a list. The model's `ParamValue` has no array
-type, so an array rides as a `Str` of its YAML text and the two cannot be
-told apart at spawn. Needs a model type that nano-ros agrees to. See `0067-*`.
-
-`just check-issue-index` fails if this section and the per-file `status:`
-frontmatter disagree.
+*None.* `just check-issue-index` fails if this section and the per-file
+`status:` frontmatter disagree.
 
 ## Resolved
+
+**#0067** -- a string parameter whose text looked like a list (`type="str"`,
+`value="[a, b]"`) was spawned as a list: the model carried a list as a `Str`
+of its flow text. SystemModel schema 2 (`ros-launch-manifest` v0.1.51) makes
+a list a `StrList` and a `Str` always a string, and upgrades a schema-1 model
+on read. See `0067-*`.
 
 **#0066** -- `--parser python` RAN every plain `ExecuteProcess` at parse time
 and recorded none of them: the action visitor had no branch for it. It is

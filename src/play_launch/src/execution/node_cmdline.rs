@@ -251,9 +251,8 @@ pub(crate) fn split_model_fqn(fqn: &str) -> (&str, &str) {
 /// numbers (`50.0` -> `"50"`), which `str_to_yaml` would then re-infer as an
 /// **Integer**, silently changing the ROS parameter type (CLAUDE.md: "Float
 /// parameters: always include decimal point"). Force one back on when
-/// missing. `StrList` has no producer today (`model_builder::lower_params`
-/// never emits it — it only recognizes Bool/Int/Float/Str) so it's handled
-/// defensively (best-effort join), not exercised by the equivalence gate.
+/// missing. `StrList` is a list (schema 2,
+/// #0067), rendered as YAML flow text from its already-typed elements.
 pub(crate) fn param_value_to_record_string(v: &model::ParamValue) -> String {
     match v {
         model::ParamValue::Bool(b) => b.to_string(),
@@ -270,11 +269,12 @@ pub(crate) fn param_value_to_record_string(v: &model::ParamValue) -> String {
             }
         }
         // A string stays a string: quoted when its text would re-type, as the
-        // parser quotes it. Except a list: the model has no array type, so an
-        // array parameter IS a `Str` holding its YAML flow text.
-        model::ParamValue::Str(s) if s.starts_with('[') && s.ends_with(']') => s.clone(),
+        // parser quotes it, including text that looks like a list (#0067:
+        // schema 2 gives a list its own variant, so a `Str` is never one).
         model::ParamValue::Str(s) => play_launch_parser::param_value::quote_if_ambiguous(s),
-        model::ParamValue::StrList(items) => items.join(","),
+        // Each element is already spelled as a YAML scalar that re-types to
+        // what it was (`ParamValue`'s doc), so the list is their flow form.
+        model::ParamValue::StrList(items) => format!("[{}]", items.join(", ")),
     }
 }
 
@@ -1669,6 +1669,24 @@ mod tests {
     /// re-infer an Integer instead of a Float, silently changing the ROS
     /// parameter type. Must always come back with a decimal point (or
     /// scientific notation).
+    /// #0067: a string whose text looks like a list stays a string (quoted),
+    /// and a list renders as YAML flow text from its typed elements.
+    #[test]
+    fn a_list_and_a_string_that_looks_like_one_render_apart() {
+        assert_eq!(
+            param_value_to_record_string(&model::ParamValue::Str("[a, b]".into())),
+            "'[a, b]'"
+        );
+        assert_eq!(
+            param_value_to_record_string(&model::ParamValue::StrList(vec![
+                "a".into(),
+                "'5'".into(),
+                "5".into(),
+            ])),
+            "[a, '5', 5]"
+        );
+    }
+
     #[test]
     fn test_param_value_to_record_string_preserves_float_type() {
         assert_eq!(

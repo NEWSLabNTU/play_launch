@@ -30,6 +30,13 @@ allowance heavily.
   `shutil.which` does.
 - **Visible:** `--composable-respawn` warns when the container mode cannot
   honour it (anything but `isolated`).
+- **Fix:** a string parameter whose text looks like a list
+  (`<param value="[a, b]" type="str"/>`) reaches the node as a string (#0067).
+  It used to be spawned as a list.
+- **Visible:** models are written at SystemModel schema 2
+  (`ros-launch-manifest` v0.1.51), where a list parameter is a list rather
+  than a string of YAML. Older models load unchanged and spawn as before. A
+  tool built on an older `ros-launch-manifest` refuses a schema-2 model.
 - Internal: the pyexec C ABI is 8. The captures carry `on_exit_shutdown`, and
   a v7 object would drop it silently.
 

@@ -685,6 +685,16 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   gate dropped `COUNT` lines and passed on a crashed comparator, and
   `parallel_loading.rs` had been running under `observable` since 0.15; both
   are fixed, each with a negative control. pyexec C ABI 7 -> 8.
+  Same day, #0067: **SystemModel schema 2** (`ros-launch-manifest`
+  v0.1.51). Schema 1 carried an inline list as a `Str` of its flow text, so
+  a `type="str"` value that looked like a list (`[a, b]`) could not be told
+  from one and was spawned as a list. The parser had kept them apart (it
+  single-quotes such a string); `lower_scalar` threw the difference away.
+  Now a list is a `StrList` with each element spelled as a YAML scalar
+  that reads back as what it was, and a `Str` is always a string. A
+  schema-1 model is upgraded in `SystemModel::from_yaml_str`, so a saved
+  model spawns as it did. An older `ros-launch-manifest` refuses schema 2,
+  so nano-ros must bump to read new models.
 
 - **2026-10-10**: **An XML include into a YAML launch file dropped its
   arguments, and the reason was that includes had two wrong scoping models.**

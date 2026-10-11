@@ -590,6 +590,12 @@ pub fn build_system_model(
         if let Some(s) = play_launch_parser::param_value::unquote(v) {
             return model::ParamValue::Str(s);
         }
+        // An unquoted flow sequence is a list: the parser renders an array
+        // that way and single-quotes a string that would read as one, so the
+        // two arrive apart and stay apart (#0067, schema 2).
+        if let Some(list) = model::ParamValue::list_from_flow(v) {
+            return list;
+        }
         match v {
             "true" | "True" => model::ParamValue::Bool(true),
             "false" | "False" => model::ParamValue::Bool(false),

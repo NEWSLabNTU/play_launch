@@ -1,7 +1,7 @@
 ---
 id: 67
 title: "A string parameter whose text looks like a list (`type=\"str\"`, `value=\"[a, b]\"`) is spawned as a list: the model has no array type"
-status: open
+status: resolved
 type: defect
 severity: low
 ---
@@ -69,3 +69,37 @@ A `resolve_launch_fields.rs` case with the two parameters above: the model
 distinguishes them, and the spawned command line carries `as_str` quoted and
 `as_list` as a list. A negative control, reverting the lowering, must fail
 it.
+
+## Resolution (2026-10-11)
+
+Schema 2 (`ros-launch-manifest` v0.1.51), a refinement of option 2 that needs
+no new variant: `StrList` already existed, and the params-file projection
+already produced it for lists.
+
+- **The model:** a `Str` is always a string. A list is a `StrList` whose
+  elements are each spelled as a YAML scalar that reads back as what it was
+  (`5`, `1.0`, `true`, `a`, and `'5'` for a string that would read as a
+  number), the convention the parser uses for a scalar.
+  `ParamValue::list_from_flow` lowers flow text into it.
+- **Old models:** `SystemModel::from_yaml_str` upgrades a schema-1 model on
+  read, turning a flow-text `Str` into the `StrList` it meant. A saved model
+  spawns exactly as before.
+- **play_launch:** `model_builder::lower_scalar` lowers an unquoted flow
+  sequence to a list; the parser single-quotes a string that would read as
+  one, so the two arrive apart. `param_value_to_record_string` quotes every
+  ambiguous `Str` and renders a `StrList` as flow text.
+
+The cost is the one the issue predicted, in one place: a reader on an older
+`ros-launch-manifest` refuses a schema-2 model with `unsupported
+SystemModel schema version 2`, so nano-ros must bump to read models from this
+release. `to_bake_string` is unchanged, so nano-ros, which has no array
+parameter type, bakes an inline list as its elements joined by `,`, as a
+params-file list already baked.
+
+Tests: `tests/tests/param_lists.rs` resolves and spawns the fixture above and
+reads the node's params file (`as_str` a string, `as_list` and `ints` lists
+with their element types), and `up`s a hand-written schema-1 model whose
+lists must still spawn as lists. Negative controls: without the lowering the
+first fails, and without the upgrade the second fails. The manifest's own
+`model/tests/param_lists.rs` pins the element spelling and the upgrade.
+
