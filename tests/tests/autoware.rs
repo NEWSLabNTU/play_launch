@@ -113,6 +113,87 @@ fn test_autoware_parser_parity() {
 
 // ---- Process count tests ----
 
+/// Wait for startup to complete, then fail on any composable that did not
+/// load. Counting processes alone cannot see this: a container is one process
+/// however many of its composables refuse to construct, which is how #0068
+/// (`component_state_monitor` refusing its `launch.map`) passed both
+/// process-count tests.
+///
+/// Reads the bundle's own `play_launch.log` (debug level, written on every
+/// run, #0023), so no stdout capture is needed. Two failures are expected:
+/// rclcpp's shutdown race (ros2/rclcpp#812), and, when the sample map is
+/// absent, the loaders that read it.
+fn assert_composables_loaded(play_log: &std::path::Path, expected: usize) {
+    let log = play_log.join("play_launch.log");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        if text.contains("Startup complete") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "startup did not complete within 120 s; see {}",
+            log.display()
+        );
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+
+    let report = HealthReport::analyze(play_log, &log, expected);
+    let map_path = fixtures::autoware_map_path();
+    let map_present = std::path::Path::new(&map_path).exists();
+    let allowed = |error: &str| {
+        error.contains("context is not valid")
+            || error.contains("context is invalid")
+            || (!map_present && error.contains(&map_path))
+    };
+    // A composable the run reports missing at startup-complete must be one
+    // whose failure is allowed. This also catches a load that was lost
+    // without any LOAD_FAILED line, which the failure scan cannot see.
+    let explained: std::collections::HashSet<&str> = report
+        .load_node_failures
+        .iter()
+        .filter(|f| allowed(&f.error))
+        .map(|f| f.component.trim_start_matches("composable:"))
+        .collect();
+    let text = std::fs::read_to_string(&log).unwrap_or_default();
+    let missing: Vec<String> = text
+        .lines()
+        .filter_map(|l| l.split_once("STARTUP_SUMMARY ").map(|(_, json)| json))
+        .filter_map(|json| serde_json::from_str::<serde_json::Value>(json.trim()).ok())
+        .flat_map(|summary| {
+            summary["composable_shortfall"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .flat_map(|c| c["missing"].as_array().cloned().unwrap_or_default())
+        .filter_map(|m| m.as_str().map(str::to_string))
+        .filter(|fqn| !explained.contains(fqn.as_str()))
+        .map(|fqn| format!("{fqn}: missing at startup-complete"))
+        .collect();
+    let unexpected: Vec<String> = report
+        .load_node_failures
+        .iter()
+        .filter(|f| !allowed(&f.error))
+        .map(|f| format!("{}/{}: {}", f.container, f.component, f.error))
+        .chain(missing)
+        .chain(
+            report
+                .composable_crashes
+                .iter()
+                .map(|c| format!("{}/{}: crashed: {}", c.container, c.component, c.detail)),
+        )
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "{} composable(s) failed to load:\n  {}\n(log: {})",
+        unexpected.len(),
+        unexpected.join("\n  "),
+        log.display()
+    );
+}
+
 #[test]
 fn test_autoware_process_count_rust() {
     require_autoware();
@@ -144,6 +225,7 @@ fn test_autoware_process_count_rust() {
 
     let actual = fixtures::count_cmdline_files(&play_log);
     assert_eq!(actual, expected, "process count: {actual}/{expected}");
+    assert_composables_loaded(&play_log, expected);
 
     // _proc dropped here — ManagedProcess::drop kills the process group
 }
@@ -261,6 +343,7 @@ fn test_autoware_process_count_python() {
 
     let actual = fixtures::count_cmdline_files(&play_log);
     assert_eq!(actual, expected, "process count: {actual}/{expected}");
+    assert_composables_loaded(&play_log, expected);
 
     // _proc dropped here — ManagedProcess::drop kills the process group
 }

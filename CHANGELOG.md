@@ -47,6 +47,9 @@ allowance heavily.
   when started with `up <model.yaml>`. Every scope used to arrive with an
   empty namespace. The model records it now (`ScopeInfo.ns`,
   `ros-launch-manifest` v0.1.54).
+- Internal: the Autoware process-count tests fail when a composable does
+  not load. Counting processes could not see it, which is how #0068 passed
+  them.
 - Internal: two integration test files found the `ros-launch-resolve` CLI
   only in `src/ros-launch-resolve/target/`, so under a colcon build their
   tests always skipped and still reported passed. They use the shared lookup

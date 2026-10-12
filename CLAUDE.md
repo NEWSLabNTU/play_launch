@@ -699,7 +699,13 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   mapping. Autoware's `component_state_monitor` passes exactly that, and its
   `launch.map` reached LoadNode as a `string` the node refused. The
   Autoware process-count tests passed through it because they count
-  processes, not loaded composables. `ros-launch-manifest` v0.1.52 quotes
+  processes, not loaded composables. They now also wait for startup to
+  complete and fail on any composable that did not load, reading the
+  bundle's `play_launch.log`: each `LOAD_FAILED`, and each composable the
+  `STARTUP_SUMMARY` shortfall names without an allowed failure behind it,
+  which catches a lost load too. Allowed: rclcpp's shutdown race, and the
+  map loaders when the sample map is absent. Both checks were verified by
+  negative controls. `ros-launch-manifest` v0.1.52 quotes
   any element that does not read back inside `[...]`. The same run found
   two more test copies of the `ros-launch-resolve` lookup the 2026-10-07
   consolidation missed (`contract_node_identity.rs`, `rt_workspace.rs`):
