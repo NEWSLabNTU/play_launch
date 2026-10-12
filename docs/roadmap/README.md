@@ -295,7 +295,8 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     application`. Issue #0046 ruled. W4 (a sampling hop in the reaction walk)
     is separate.
     [phase-82-what-a-detector-may-see.md](./phase-82-what-a-detector-may-see.md).
-  - **Phase 86** - designed: a lifecycle node's autostart comes from the
+  - **Phase 86** - in progress (W1-W4 done 2026-10-12; W0/W5 wait on rlm
+    and nano-ros): a lifecycle node's autostart comes from the
     launch file (2026-10-10). `<lifecycle_node>` is dispatched (XML/YAML,
     Jazzy `autostart`), the Python `LifecycleNode` captures `autostart`, `up`
     drives `Active` nodes to active, and the rlm bump stops projecting

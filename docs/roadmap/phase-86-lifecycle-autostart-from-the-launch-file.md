@@ -1,6 +1,7 @@
 # Phase 86 - a lifecycle node's autostart comes from the launch file
 
-Status: **designed** (2026-10-10, corrected 2026-10-12). Not started. This is play_launch's part of a
+Status: **in progress** (2026-10-10, corrected 2026-10-12). W1-W4 landed
+2026-10-12 (see "Done"); W0 and W5 wait on rlm and nano-ros. This is play_launch's part of a
 cross-repository change. The design of record is rlm's
 `docs/model-boundary.md`; the work items, ordering and retirement live in
 nano-ros phase 486 (`docs/roadmap/phase-486-launch-model-boundary.md`), where
@@ -63,6 +64,65 @@ file, and this parser cannot read it:
   phase 486 W6, which stops writing `Execution.features`, `Deploy.extra` and
   `Target::Mcu` (W0 above removes the lifecycle projection on this side). Update the field census baseline; `Execution.features`
   leaves the consumer list. Fast-forward `main`.
+
+## Done (2026-10-12)
+
+- **W1** (`3e6452e`). XML and YAML dispatch `<lifecycle_node>` through the
+  `<node>` path; `NodeAction` reads the marker off the element name and,
+  for that element only, `autostart`. Coercion is `launch`'s bool coercion
+  (`1`/`0`, then the YAML 1.1 spellings); anything else is refused. The
+  attribute spec is `<node>`'s plus `autostart`, kept in step by a unit
+  test. Captures and records carry `lifecycle` / `lifecycle_autostart`,
+  skipped when absent. The model lowering: `lifecycle` is the launch
+  marker OR the contract's; resolved `true` is `active`, `false` and absent
+  are none. The attribute differential landed here, not in W3, because its
+  completeness test refuses a specced attribute nobody probes.
+- **W2** (`0577497`). The `LifecycleNode` mock takes `autostart=`, resolves
+  it at execute. C ABI 9.
+- **W3** (`ea62f69`). `tests/fixtures/lifecycle` with two `test-parity`
+  gates and a per-node expected answer (`expect.py`); `--parser python`
+  records the marker and `autostart` too.
+- **W4** (`b8b1c42`). `execution/lifecycle_autostart.rs`: per node, wait
+  for `<fqn>/change_state` (no deadline, as stock), configure, then
+  activate if `active`. Only `lifecycle: true` nodes are driven.
+
+Measured on Humble (no Jazzy install was available):
+
+- `just test`: parser unit 507/507, play_launch unit 365/365, layer-2 unit
+  260/260, fast integration 189/189 (20 skipped: privilege, corpus,
+  `rt_workspace` unbuilt). `just test-ir` 553/553. `just check` passes.
+- `just test-parity`: simple_test, container_events, **lifecycle** and
+  autoware (119 = 119) pass; `lifecycle_autostart` SKIPs (Humble's
+  `launch_ros` has no `autostart`), `rt_workspace` SKIPs (unbuilt).
+- The attribute differential against Humble: 3/3. Its baseline confirms
+  Humble refuses the element (`Unrecognized entity of the type:
+  lifecycle_node`). **The Jazzy side is NOT RUN**: the candidate matrix
+  for `<lifecycle_node>`, and the `lifecycle_autostart` parity gate, need a
+  Jazzy `launch_ros` this host does not have. Both are wired to run there
+  without changes.
+- **Humble files are unchanged** except where they use `LifecycleNode`.
+  Every tracked `*.launch.{xml,yaml,py}` (248) resolved with the base and
+  the new resolver (`--parser rust`), compared byte for byte: 187
+  identical, 55 fail on both (packages or arguments absent here), 6
+  differ. Of the 6: four differ only in `env` order, and the base differs
+  from itself run to run on those same four; one is `$(anon)`. The sixth
+  is the intended change: `python/test_lifecycle_nodes.launch.py`'s four
+  `LifecycleNode`s gain `lifecycle: true`.
+- `play_launch up` on the resolved `lifecycle_autostart.launch.xml`:
+  `ros2 lifecycle get` gives `/lc_on` active, `/lc_off` and `/lc_unsaid`
+  unconfigured. With `/lc_off` set to `configure` in the model, it is
+  inactive.
+
+Two things decided in the code that the design did not spell out:
+
+- **A launch-file `LifecycleNode` on Humble now models as `lifecycle:
+  true`.** "A Humble-only launch file stays byte-identical" holds for files
+  without one; a file with one changes by exactly that field, which is the
+  defect named under "Why".
+- **`up` drives only nodes marked `lifecycle: true`**, and reports any other
+  node with a request. Until W0 lands, `[lifecycle] autostart` is projected
+  onto EVERY node, lifecycle or not; driving those would wait forever for a
+  `change_state` that never appears.
 
 ## Acceptance
 

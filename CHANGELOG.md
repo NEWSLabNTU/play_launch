@@ -8,6 +8,12 @@ allowance heavily.
 
 ## Unreleased
 
+- **New:** a lifecycle node's `autostart` comes from the launch file (phase
+  86). `<lifecycle_node>` is read in XML and YAML (it used to be dropped),
+  Jazzy's `autostart` is honoured there and on `LifecycleNode(autostart=...)`,
+  and `play_launch up` configures and activates such a node once it is up,
+  as `ros2 launch` does. A `LifecycleNode` is now modelled as a lifecycle
+  node (`lifecycle: true`) on every distro.
 - **Fix:** `--parser python` no longer RUNS a plain `ExecuteProcess` while
   parsing (#0066). It records it, as the Rust parser does. Before, `resolve
   --parser python` started every command a launch file declared, and the

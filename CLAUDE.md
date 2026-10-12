@@ -670,6 +670,15 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-12**: **A lifecycle node's autostart comes from the launch file
+  (phase 86 W1-W4).** `<lifecycle_node>` is dispatched like `<node>` in XML
+  and YAML; Jazzy's `autostart` and `LifecycleNode(autostart=...)` resolve to
+  `lifecycle_autostart: active`; `up` drives such a node through configure
+  and activate after spawn (`execution/lifecycle_autostart.rs`, lifecycle
+  nodes only). pyexec C ABI 9. Humble has neither the element nor the
+  argument, so the Jazzy halves of the attribute differential and of
+  `parity/lifecycle_autostart` skip on Humble and have not run.
+
 - **2026-10-12**: **The Launch page off a model shows each include under
   its namespace.** `up <model.yaml>` already built the web launch tree from
   the model (Phase 49.B1), but the model's scope table had no namespace, so
