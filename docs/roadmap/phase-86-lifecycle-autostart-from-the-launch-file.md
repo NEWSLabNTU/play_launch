@@ -1,7 +1,7 @@
 # Phase 86 - a lifecycle node's autostart comes from the launch file
 
-Status: **in progress** (2026-10-10, corrected 2026-10-12). W1-W4 landed
-2026-10-12 (see "Done"); W0 and W5 wait on rlm and nano-ros. This is play_launch's part of a
+Status: **in progress** (2026-10-10, corrected 2026-10-12). W0-W5 landed
+2026-10-12 (see "Done"); the Jazzy-side acceptance is not run. This is play_launch's part of a
 cross-repository change. The design of record is rlm's
 `docs/model-boundary.md`; the work items, ordering and retirement live in
 nano-ros phase 486 (`docs/roadmap/phase-486-launch-model-boundary.md`), where
@@ -113,6 +113,34 @@ Measured on Humble (no Jazzy install was available):
   unconfigured. With `/lc_off` set to `configure` in the model, it is
   inactive.
 
+- **W5** (rlm pin `v0.1.55`). `just bump-manifest v0.1.55`; the three
+  manifests and locks move together, the layer-2 lock's unrelated
+  `[[patch.unused]]` churn discarded. `git grep` finds no reader of
+  `execution.features`, `Deploy.target` or `Deploy.extra` here. Field
+  census (`--nano-ros` pointed at a nano-ros checkout): 6 unread fields,
+  all already in the baseline, so the baseline is unchanged.
+- **W0**. The `[lifecycle] autostart` projection loop in
+  `resolve/src/model.rs` is gone. No test asserted the projection; a new
+  one does the opposite: `tests/tests/resolve_system_lifecycle.rs`
+  resolves `lifecycle_autostart.launch.xml` with a `system.toml` setting
+  `autostart = "configure"` and expects the launch file's answers
+  (`/lc_on` active, the others none). Against the old resolver it fails
+  with `configure` on `/lc_on`. `up`'s warning for an autostart request
+  on a non-lifecycle node stays: a contract or another producer can still
+  make one.
+
+Measured for W0/W5 (Humble): `just test` parser unit 507/507,
+play_launch unit 365/365, fast integration 189/190 (20 skipped as above).
+The one failure is `check_dx::a_contract_needing_a_newer_grammar_names_both_releases`:
+rlm v0.1.55 left `GRAMMAR_VERSION` at 0.1.54, so the refusal names
+`v0.1.54` while `--version` names `v0.1.55`. rlm's own
+`the_grammar_version_is_the_release` fails on that tag for the same
+reason; the fix is an rlm release, not a change here. Layer-2 unit
+260/260, run with `NROS_CARGO_FLAGS=` because `--locked` refuses the
+lock without the discarded `[[patch.unused]]` hunks. `just check` passes
+except `check-layer2-isolation` under that same `--locked`; the gate run
+by hand with `NROS_CARGO_FLAGS=` passes.
+
 Two things decided in the code that the design did not spell out:
 
 - **A launch-file `LifecycleNode` on Humble now models as `lifecycle:
@@ -120,9 +148,9 @@ Two things decided in the code that the design did not spell out:
   without one; a file with one changes by exactly that field, which is the
   defect named under "Why".
 - **`up` drives only nodes marked `lifecycle: true`**, and reports any other
-  node with a request. Until W0 lands, `[lifecycle] autostart` is projected
-  onto EVERY node, lifecycle or not; driving those would wait forever for a
-  `change_state` that never appears.
+  node with a request. Before W0, `[lifecycle] autostart` was projected
+  onto EVERY node, lifecycle or not; driving those would have waited
+  forever for a `change_state` that never appears.
 
 ## Acceptance
 

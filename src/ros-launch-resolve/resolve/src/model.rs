@@ -295,13 +295,12 @@ pub fn build_checked_model(
                     .and_then(|n| n.to_str()),
             )
             .map_err(|e| eyre::eyre!(e))?;
-        // `[lifecycle] autostart` lives in the structure layer (per-node), so
-        // it is applied here rather than in the execution-only `apply_to`.
-        if let Some(autostart) = cfg.lifecycle_autostart() {
-            for inst in model.structure.nodes.values_mut() {
-                inst.lifecycle_autostart = Some(autostart);
-            }
-        }
+        // `[lifecycle] autostart` is NOT projected onto the nodes (phase 86
+        // W0). It is one realizer's boot policy (rlm `docs/model-boundary.md`),
+        // and projecting it overwrote the per-node answer the launch file
+        // gives (`<lifecycle_node autostart>`, `LifecycleNode(autostart=)`) on
+        // every node, lifecycle or not. A node's `lifecycle_autostart` comes
+        // from the launch file and the contract only.
         // `[[component]] params` / `params_files` are per-node too, so they are
         // projected here for the same reason. Before this, a deployment-time
         // parameter (a `qos_overrides.…` chosen per system, a parameter FILE)

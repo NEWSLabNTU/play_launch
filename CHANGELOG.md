@@ -14,6 +14,14 @@ allowance heavily.
   and `play_launch up` configures and activates such a node once it is up,
   as `ros2 launch` does. A `LifecycleNode` is now modelled as a lifecycle
   node (`lifecycle: true`) on every distro.
+- **Changed:** a `system.toml` `[lifecycle] autostart` no longer reaches any
+  node (phase 86 W0). The resolver used to copy it onto every node, lifecycle
+  or not, overwriting what the launch file said. It is one realizer's boot
+  policy (`ros-launch-manifest` `docs/model-boundary.md`); a node's
+  `lifecycle_autostart` now comes from the launch file and the contract only.
+- **Visible:** `ros-launch-manifest` v0.1.55. Models no longer carry
+  `execution.features`, `execution.deploy.*.target` or `.extra` from a
+  `system.toml`; nothing here read them. Older models still load.
 - **Fix:** `--parser python` no longer RUNS a plain `ExecuteProcess` while
   parsing (#0066). It records it, as the Rust parser does. Before, `resolve
   --parser python` started every command a launch file declared, and the
