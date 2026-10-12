@@ -74,6 +74,15 @@ jobs:
     # `test-all`, because the parity gates cost seconds while the full
     # integration suite costs minutes, and the Autoware gate self-skips here
     # (no Autoware install on the runner) with a visible SKIP line.
+    # The lifecycle gate (phase 86) launches the `lifecycle` demo package's
+    # lifecycle_talker; the Python parser resolves it through the ament
+    # index, so the package must be installed. The builder image does not
+    # ship it.
+    - name: Install the lifecycle demo package
+      run: |
+        apt-get update
+        apt-get install -y --no-install-recommends ros-humble-lifecycle
+
     - name: Cross-parser parity gates
       run: |
         source /opt/ros/humble/setup.bash
