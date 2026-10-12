@@ -431,6 +431,10 @@ impl ContainerAction {
         Ok(NodeRecord {
             start_delay_secs: None,
             on_exit_shutdown: self.on_exit_shutdown,
+            // The container process itself; a lifecycle composable is
+            // modelled from its contract, not here.
+            lifecycle: None,
+            lifecycle_autostart: None,
             args: arguments,
             cmd,
             env: None,

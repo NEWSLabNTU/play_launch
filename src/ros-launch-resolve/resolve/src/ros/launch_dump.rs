@@ -215,6 +215,16 @@ pub struct NodeRecord {
     /// launch down with it. Absent on records dumped before this was supported.
     #[serde(default)]
     pub on_exit_shutdown: Option<bool>,
+    /// `Some(true)` for `<lifecycle_node>` / `LifecycleNode` (play_launch
+    /// phase 86). Mirrors the parser's `record::NodeRecord::lifecycle`;
+    /// absent for an ordinary node and on records dumped before this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<bool>,
+    /// A lifecycle node's Jazzy `autostart`, resolved. `Some(true)` is what
+    /// becomes `lifecycle_autostart: active` in the model; `Some(false)` and
+    /// absent both mean "the launch file did not ask".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_autostart: Option<bool>,
     /// Global parameters from SetParameter action (scope-aware)
     #[serde(default)]
     pub global_params: Option<Vec<(String, ParameterValue)>>,

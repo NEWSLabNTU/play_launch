@@ -23,6 +23,8 @@ impl NodeCapture {
             cmd.extend(self.arguments.iter().cloned());
             return Ok(NodeRecord {
                 on_exit_shutdown: self.on_exit_shutdown,
+                lifecycle: self.lifecycle,
+                lifecycle_autostart: self.lifecycle_autostart,
                 args: (!self.arguments.is_empty()).then(|| self.arguments.clone()),
                 cmd,
                 env: (!self.env_vars.is_empty()).then(|| self.env_vars.clone()),
@@ -63,6 +65,8 @@ impl NodeCapture {
             // From the frontend: a `.launch.py` `Node(on_exit=Shutdown())`
             // (see NodeRecord::on_exit_shutdown).
             on_exit_shutdown: self.on_exit_shutdown,
+            lifecycle: self.lifecycle,
+            lifecycle_autostart: self.lifecycle_autostart,
             args: if self.arguments.is_empty() {
                 None
             } else {

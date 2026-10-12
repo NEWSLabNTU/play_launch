@@ -747,6 +747,15 @@ pub fn build_system_model(
         (on_exit_shutdown == Some(true)).then_some(model::OnExit::Shutdown)
     }
 
+    /// play_launch phase 86 — a lifecycle node's `autostart` from the launch
+    /// file. Resolved `true` is `Active`: Jazzy `LifecycleNode` requests
+    /// configure then activate. Absent and `false` are both "the launch file
+    /// did not ask", which is not "configure only", so neither produces
+    /// `Configure` — that value is reachable only from another producer.
+    fn lower_autostart(lifecycle_autostart: Option<bool>) -> Option<model::Autostart> {
+        (lifecycle_autostart == Some(true)).then_some(model::Autostart::Active)
+    }
+
     // Phase 46.2 — lower the LaunchDump record's spawn fields into the
     // model's launch-input fields (`NodeInstance::{remaps,ros_args,respawn,
     // respawn_delay,env}`, Phase 46.1b). play_launch's spawn path derives
@@ -797,8 +806,13 @@ pub fn build_system_model(
                 exec: Some(n.executable.clone()),
                 plugin: None,
                 container: None,
-                lifecycle: decl.and_then(|d| d.lifecycle).unwrap_or(false),
-                lifecycle_autostart: None,
+                // A launch-declared lifecycle node (`<lifecycle_node>`,
+                // `LifecycleNode`) is one whatever its contract says; a
+                // contract can additionally mark a plain `Node` whose
+                // executable is managed.
+                lifecycle: n.lifecycle == Some(true)
+                    || decl.and_then(|d| d.lifecycle).unwrap_or(false),
+                lifecycle_autostart: lower_autostart(n.lifecycle_autostart),
                 // GAP-4: global (scope-wide SetParameter) + node-specific,
                 // global first so node-specific overrides on key collision.
                 params: lower_params_merged(n.global_params.as_deref(), &n.params),
@@ -1913,6 +1927,55 @@ mod tests {
             None,
         );
         assert_eq!(model.structure.nodes.len(), 3, "no instance may be dropped");
+    }
+
+    /// play_launch phase 86 — the launch file's lifecycle facts reach the
+    /// model per node. `autostart` resolved true is `Active`; false and
+    /// absent are both no autostart (never `Configure`); a plain node carries
+    /// neither the marker nor an autostart.
+    #[test]
+    fn launch_lifecycle_and_autostart_reach_the_model() {
+        let node = |name: &str, extra: serde_json::Value| {
+            let mut n = serde_json::json!({
+                "executable": "lc", "package": "pkg", "name": name,
+                "namespace": "/", "params_files": [], "cmd": []
+            });
+            n.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            n
+        };
+        let dump: LaunchDump = serde_json::from_value(serde_json::json!({
+            "node": [
+                node("active", serde_json::json!({"lifecycle": true, "lifecycle_autostart": true})),
+                node("off", serde_json::json!({"lifecycle": true, "lifecycle_autostart": false})),
+                node("unsaid", serde_json::json!({"lifecycle": true})),
+                node("plain", serde_json::json!({})),
+            ],
+            "container": [], "load_node": [], "lifecycle_node": [], "file_data": {},
+            "scopes": [{"id": 0, "ns": "/", "parent": null}]
+        }))
+        .expect("valid LaunchDump");
+        let model = build_system_model(
+            &dump,
+            &ManifestIndex::default(),
+            None,
+            BTreeMap::new(),
+            &BTreeSet::new(),
+            None,
+        );
+        let n = |fqn: &str| &model.structure.nodes[fqn];
+        assert!(n("/active").lifecycle);
+        assert_eq!(
+            n("/active").lifecycle_autostart,
+            Some(model::Autostart::Active)
+        );
+        for fqn in ["/off", "/unsaid"] {
+            assert!(n(fqn).lifecycle, "{fqn}");
+            assert_eq!(n(fqn).lifecycle_autostart, None, "{fqn}");
+        }
+        assert!(!n("/plain").lifecycle);
+        assert_eq!(n("/plain").lifecycle_autostart, None);
     }
 
     /// Phase 46.2 — a node, a container, and a composable node each carrying

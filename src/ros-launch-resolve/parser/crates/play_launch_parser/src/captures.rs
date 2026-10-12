@@ -46,6 +46,12 @@ pub struct NodeCapture {
     /// ends the launch. `None` when the frontend did not say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_exit_shutdown: Option<bool>,
+    /// `Some(true)` for `<lifecycle_node>` / `LifecycleNode` (phase 86).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<bool>,
+    /// A lifecycle node's `autostart`, resolved. `None` when not given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_autostart: Option<bool>,
 }
 
 /// Captured container data from Python or XML parsing

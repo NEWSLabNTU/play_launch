@@ -135,6 +135,9 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
         // `play_launch run` builds one node by hand; there is no launch file
         // and so no on_exit handler to honour.
         on_exit_shutdown: None,
+        // `play_launch run` starts a plain process: no lifecycle facts.
+        lifecycle: None,
+        lifecycle_autostart: None,
         executable: args.executable.clone(),
         package: Some(args.package.clone()),
         name: Some(args.executable.clone()),

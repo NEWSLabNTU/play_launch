@@ -81,7 +81,10 @@ impl LaunchTraverser {
                         .set_configuration_literal(declare_arg.name, resolved_default);
                 }
             }
-            "node" => {
+            // `<lifecycle_node>` is `<node>` plus the lifecycle marker and
+            // Jazzy's `autostart` (phase 86); `NodeAction::from_entity` reads
+            // both off the element name.
+            "node" | "lifecycle_node" => {
                 // XML nodes use CommandGenerator for complete parameter file loading
                 let node = NodeAction::from_entity(entity)?;
                 let mut record = CommandGenerator::generate_node_record(&node, &self.context)

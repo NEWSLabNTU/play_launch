@@ -28,8 +28,10 @@
 //!     Jazzy adds `respawn_max_retries`, `sigkill_timeout`, `sigterm_timeout`
 //!   - `<include>`: Jazzy adds a `let` CHILD (`data_type=List[Entity]`)
 //!   - `<node>`: Humble has `node-name`, dropped in Jazzy
-//!   - `lifecycle_node`: Jazzy adds `autostart`, but this parser does not
-//!     dispatch that element at all, so there is no spec to update
+//!   - `lifecycle_node`: Humble does not expose the element at all
+//!     (`Unrecognized entity of the type: lifecycle_node`); Jazzy exposes it
+//!     with `<node>`'s attributes plus `autostart` (a bool substitution).
+//!     Dispatched like `<node>` since play_launch phase 86.
 
 use crate::{
     error::{ParseError, Result},
@@ -109,10 +111,41 @@ const NODE_KNOWN_UNSUPPORTED: &[&str] = &[
 ];
 const NODE_CHILDREN: &[&str] = &["param", "remap", "env"];
 
+/// `<lifecycle_node>` (Jazzy): `LifecycleNode.parse` is `Node.parse` plus
+/// `autostart`, so it is `<node>`'s table with one more entry. The Jazzy
+/// distinction from `<node>` that this cannot express — `node-name` is
+/// already gone from Jazzy's `Node.parse` — does not arise: the element
+/// exists only on Jazzy, and `node-name` stays a warning there as on
+/// `<node>`.
+const LIFECYCLE_NODE_SUPPORTED: &[&str] = &[
+    "if",
+    "unless",
+    "pkg",
+    "exec",
+    "name",
+    "namespace",
+    "args",
+    "ros_args",
+    "output",
+    "respawn",
+    "respawn_delay",
+    "on_exit",
+    // JAZZY: `entity.get_attr('autostart', data_type=bool, optional=True,
+    // can_be_str=True)`. Resolved true gives the model
+    // `lifecycle_autostart: active`; absent or false gives none.
+    "autostart",
+];
+
 static SPECS: &[AttrSpec] = &[
     AttrSpec {
         element: "node",
         supported: NODE_SUPPORTED,
+        known_unsupported: NODE_KNOWN_UNSUPPORTED,
+        children: NODE_CHILDREN,
+    },
+    AttrSpec {
+        element: "lifecycle_node",
+        supported: LIFECYCLE_NODE_SUPPORTED,
         known_unsupported: NODE_KNOWN_UNSUPPORTED,
         children: NODE_CHILDREN,
     },
@@ -647,6 +680,25 @@ fn check_with_values(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `LifecycleNode.parse` is `Node.parse` plus `autostart`, so the two
+    /// tables may differ by exactly that. A `<node>` attribute added later
+    /// and forgotten here would make a valid `<lifecycle_node>` a hard error.
+    #[test]
+    fn lifecycle_node_is_node_plus_autostart() {
+        let mut node: Vec<&str> = NODE_SUPPORTED.to_vec();
+        node.push("autostart");
+        node.sort_unstable();
+        let mut lifecycle: Vec<&str> = LIFECYCLE_NODE_SUPPORTED.to_vec();
+        lifecycle.sort_unstable();
+        assert_eq!(node, lifecycle);
+        let spec = spec_for("lifecycle_node").expect("lifecycle_node has a spec");
+        assert_eq!(spec.known_unsupported, NODE_KNOWN_UNSUPPORTED);
+        assert_eq!(spec.children, NODE_CHILDREN);
+        // `autostart` belongs to the lifecycle form only.
+        assert!(validate_named("node", &["autostart"]).is_err());
+        assert!(validate_named("lifecycle_node", &["autostart"]).is_ok());
+    }
 
     /// A `BEHAVIOUR_MATCHES` row silences a warning, so a row that names an
     /// attribute no spec lists as `known_unsupported` is dead weight that

@@ -6401,6 +6401,8 @@ mod tests {
         dump.node.push(NodeRecord {
             start_delay_secs: None,
             on_exit_shutdown: None,
+            lifecycle: None,
+            lifecycle_autostart: None,
             executable: "talker".to_string(),
             package: Some("demo_nodes_cpp".to_string()),
             name: Some("talker".to_string()),
@@ -6448,6 +6450,8 @@ mod tests {
         dump.node.push(NodeRecord {
             start_delay_secs: None,
             on_exit_shutdown: None,
+            lifecycle: None,
+            lifecycle_autostart: None,
             executable: "cropbox".to_string(),
             package: Some("manifest_pipeline".to_string()),
             name: Some("cropbox".to_string()),
@@ -6566,6 +6570,8 @@ mod tests {
         dump.node.push(NodeRecord {
             start_delay_secs: None,
             on_exit_shutdown: None,
+            lifecycle: None,
+            lifecycle_autostart: None,
             executable: "cropbox".to_string(),
             package: Some("manifest_pipeline".to_string()),
             name: Some("cropbox".to_string()),
@@ -8378,6 +8384,8 @@ paths:
             dump.node.push(NodeRecord {
                 start_delay_secs: None,
                 on_exit_shutdown: None,
+                lifecycle: None,
+                lifecycle_autostart: None,
                 executable: "talker".to_string(),
                 package: Some("demo_nodes_cpp".to_string()),
                 // No `name=` — the #0017 case. The bare identity is the

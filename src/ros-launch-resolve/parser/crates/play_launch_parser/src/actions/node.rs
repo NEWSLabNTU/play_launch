@@ -77,6 +77,31 @@ pub struct NodeAction {
     /// `on_exit="shutdown"`: this process is required, and the launch ends
     /// when it exits (#0064).
     pub on_exit_shutdown: Option<bool>,
+    /// `<lifecycle_node>` rather than `<node>` (play_launch phase 86): the
+    /// process is a managed node. Every other attribute is `<node>`'s, which
+    /// is what Jazzy's `LifecycleNode.parse` does (`super().parse(...)`).
+    pub lifecycle: bool,
+    /// `<lifecycle_node autostart=…>` — Jazzy only, a bool substitution,
+    /// unresolved here. `None` when the attribute is absent (always for a
+    /// plain `<node>`).
+    pub autostart: Option<Vec<Substitution>>,
+}
+
+/// `launch`'s coercion of a resolved string to `bool`
+/// (`launch.utilities.type_utils.coerce_to_type(value, bool)`): `1`/`0`, then
+/// YAML 1.1 — so `true`, `True`, `TRUE`, `yes`, `on` and their negatives.
+/// `None` for anything else, which `launch` refuses with a `ValueError`.
+///
+/// Distinct from [`parse_opt_bool`], which answers a different question
+/// (can this parser decide the value without resolving it?).
+pub fn coerce_launch_bool(value: &str) -> Option<bool> {
+    match value {
+        "1" | "true" | "True" | "TRUE" | "yes" | "Yes" | "YES" | "on" | "On" | "ON" => Some(true),
+        "0" | "false" | "False" | "FALSE" | "no" | "No" | "NO" | "off" | "Off" | "OFF" => {
+            Some(false)
+        }
+        _ => None,
+    }
 }
 
 /// Read `on_exit` the way `ExecuteProcess.parse` does: absent is `None`, the
@@ -101,6 +126,17 @@ pub(crate) fn parse_on_exit_value(value: Option<&str>, element: &str) -> Result<
 
 impl NodeAction {
     pub fn from_entity(entity: &XmlEntity) -> Result<Self> {
+        // `<lifecycle_node>` shares `<node>`'s parse and adds `autostart`
+        // (Jazzy `launch_ros/actions/lifecycle_node.py`).
+        let lifecycle = entity.type_name() == "lifecycle_node";
+        let autostart = if lifecycle {
+            entity
+                .optional_attr_str("autostart")?
+                .map(|s| parse_substitutions(&s))
+                .transpose()?
+        } else {
+            None
+        };
         let package =
             entity
                 .required_attr_str("pkg")?
@@ -213,6 +249,8 @@ impl NodeAction {
                 .map(|s| parse_substitutions(&s))
                 .transpose()?,
             on_exit_shutdown: parse_on_exit(entity, "node")?,
+            lifecycle,
+            autostart,
         })
     }
 
@@ -323,6 +361,30 @@ impl NodeAction {
             scope_id: None,
             start_delay_secs: None,
             on_exit_shutdown: self.on_exit_shutdown,
+            lifecycle: self.lifecycle.then_some(true),
+            lifecycle_autostart: self
+                .resolve_autostart(context)
+                .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?,
+        })
+    }
+
+    /// Resolve `autostart` the way `LifecycleNode.execute` does
+    /// (`perform_typed_substitution(context, autostart, bool)`). `None` when
+    /// the launch file did not say; a value `launch` would refuse is an error
+    /// here too.
+    pub fn resolve_autostart(
+        &self,
+        context: &LaunchContext,
+    ) -> std::result::Result<Option<bool>, crate::error::SubstitutionError> {
+        let Some(subs) = self.autostart.as_ref() else {
+            return Ok(None);
+        };
+        let resolved = resolve_substitutions(subs, context)?;
+        coerce_launch_bool(&resolved).map(Some).ok_or_else(|| {
+            crate::error::SubstitutionError::InvalidSubstitution(format!(
+                "<lifecycle_node autostart='{resolved}'>: not a boolean \
+                 (launch accepts true/false, 1/0 and the YAML 1.1 spellings)"
+            ))
         })
     }
 }

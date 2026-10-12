@@ -1261,6 +1261,8 @@ mod tests {
         let node = NodeCapture {
             start_delay_secs: None,
             on_exit_shutdown: None,
+            lifecycle: None,
+            lifecycle_autostart: None,
             package: "pkg".to_string(),
             executable: "exec".to_string(),
             name: Some("node1".to_string()),
@@ -1288,6 +1290,8 @@ mod tests {
         context.capture_node(NodeCapture {
             start_delay_secs: None,
             on_exit_shutdown: None,
+            lifecycle: None,
+            lifecycle_autostart: None,
             package: "pkg1".to_string(),
             executable: "exec1".to_string(),
             name: None,
@@ -1306,6 +1310,8 @@ mod tests {
         context.capture_node(NodeCapture {
             start_delay_secs: None,
             on_exit_shutdown: None,
+            lifecycle: None,
+            lifecycle_autostart: None,
             package: "pkg2".to_string(),
             executable: "exec2".to_string(),
             name: None,
@@ -1374,6 +1380,8 @@ mod tests {
         context.capture_node(NodeCapture {
             start_delay_secs: None,
             on_exit_shutdown: None,
+            lifecycle: None,
+            lifecycle_autostart: None,
             package: "parent_pkg".to_string(),
             executable: "parent_exec".to_string(),
             name: None,

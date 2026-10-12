@@ -342,6 +342,16 @@ pub struct NodeRecord {
     pub exec_name: Option<String>,
     pub executable: String,
     pub global_params: Option<Vec<(String, String)>>,
+    /// `Some(true)` for a managed node: `<lifecycle_node>` / `LifecycleNode`
+    /// (play_launch phase 86). Omitted otherwise, so a record with no
+    /// lifecycle node is byte-identical to one written before this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<bool>,
+    /// A lifecycle node's `autostart` (Jazzy), resolved to a bool. `None`
+    /// when the launch file did not say — which is not the same as `false`
+    /// only in the record; both mean "no autostart" downstream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_autostart: Option<bool>,
     pub name: Option<String>,
     pub namespace: Option<String>,
     /// `on_exit=Shutdown()` — this node is required, and its exit takes the whole
@@ -493,6 +503,8 @@ mod tests {
         let node = NodeRecord {
             start_delay_secs: None,
             on_exit_shutdown: None,
+            lifecycle: None,
+            lifecycle_autostart: None,
             args: None,
             cmd: vec![
                 "/path/to/talker".to_string(),
@@ -527,6 +539,8 @@ mod tests {
         let node = NodeRecord {
             start_delay_secs: None,
             on_exit_shutdown: None,
+            lifecycle: None,
+            lifecycle_autostart: None,
             args: None,
             cmd: vec![],
             env: None,

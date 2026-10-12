@@ -238,6 +238,9 @@ impl NodeSpec {
             scope_id: None,
             start_delay_secs: None,
             on_exit_shutdown,
+            // The Python `LifecycleNode` carries these from phase 86 W2.
+            lifecycle: None,
+            lifecycle_autostart: None,
         });
         crate::api::visit::stamp_delay(mark);
         Ok(n)

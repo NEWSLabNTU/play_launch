@@ -152,6 +152,8 @@ impl ExecutableAction {
             scope_id: None,
             start_delay_secs: None,
             on_exit_shutdown: self.on_exit_shutdown,
+            lifecycle: None,
+            lifecycle_autostart: None,
         })
     }
 }

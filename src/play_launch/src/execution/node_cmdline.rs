@@ -385,6 +385,12 @@ pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeR
         // `on_exit=Shutdown()` rides on the model (#0063), so a node started
         // by `up <model.yaml>` is as required as one started by `launch`.
         on_exit_shutdown: (inst.on_exit == Some(model::OnExit::Shutdown)).then_some(true),
+        // Informational on the record: `up` drives a lifecycle node's
+        // autostart from the MODEL (`execution::lifecycle_autostart`), never
+        // from here, so nothing on the spawn path reads these.
+        lifecycle: inst.lifecycle.then_some(true),
+        lifecycle_autostart: (inst.lifecycle_autostart == Some(model::Autostart::Active))
+            .then_some(true),
         // The DECLARED name (drives the conditional `__node` remap) —
         // `None` when the launch had `name=None`, NOT the FQN segment.
         name: inst.node_name.clone(),
@@ -464,6 +470,9 @@ impl NodeCommandLine {
             namespace,
             // Consumed by the coordinator, not by command-line construction.
             on_exit_shutdown: _,
+            // Not part of the command line: `up` drives transitions itself.
+            lifecycle: _,
+            lifecycle_autostart: _,
             params,
             params_files: params_file_contents,
             remaps,

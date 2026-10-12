@@ -82,6 +82,14 @@ const FIXTURES: &[(&str, &str)] = &[
         r#"<executable cmd="echo hi"><arg value="v"{ATTR}/></executable>"#,
     ),
     ("unset_env", r#"<unset_env name="A"{ATTR}/>"#),
+    // Jazzy's `LifecycleNode` (play_launch phase 86). `namespace` is in the
+    // baseline because Jazzy's `LifecycleNode.__init__` requires it. Humble
+    // does not expose the element at all — see
+    // `DISTRO_STRUCTURAL_BASELINE_EXCEPTIONS`.
+    (
+        "lifecycle_node",
+        r#"<lifecycle_node pkg="lifecycle" exec="lifecycle_talker" name="lc" namespace=""{ATTR}/>"#,
+    ),
     // Two PARSER EXTENSIONS ROS 2 does not know as elements at all
     // (`Unrecognized entity of the type: …`), so — like `executable-arg` —
     // the oracle never reaches attribute validation for them. Their
@@ -138,6 +146,9 @@ const CANDIDATES: &[&str] = &[
     "node-name",
     // `<timer period=…>` — ROS 2's `TimerAction.parse` reads it (required).
     "period",
+    // Jazzy `<lifecycle_node autostart=…>` (phase 86). Every other element
+    // must reject it on every distro.
+    "autostart",
     "allow_substs",
     // `launch_xml` splits any attribute on `<name>-sep`; `<param value-sep=…>`
     // is the one with a consumer.
@@ -178,7 +189,39 @@ const PERMISSIVE_DIVERGENCES: &[(&str, &str)] = &[
     // Humble-only; Jazzy dropped this deprecated alias.
     ("node", "node-name"),
     ("node_container", "node-name"),
+    // `<lifecycle_node>` exists only on Jazzy, which has no `node-name`; it
+    // shares `<node>`'s warn-not-reject table (phase 86).
+    ("lifecycle_node", "node-name"),
 ];
+
+/// [`STRUCTURAL_BASELINE_EXCEPTIONS`] that hold on ONE distro only: the
+/// element is real ROS 2 elsewhere. `<lifecycle_node>` is exposed by Jazzy
+/// (`@expose_action('lifecycle_node')`) and by nothing in Humble, so on a
+/// Humble oracle its baseline must fail with exactly this message and it sits
+/// out the candidate matrix; on Jazzy it is probed like any element.
+///
+/// Keyed on the oracle's `$ROS_DISTRO`, which `ros2_batch_outcomes` reports.
+/// A distro not listed takes the ordinary path — so a new distro that dropped
+/// the element would fail the baseline loudly rather than be skipped.
+const DISTRO_STRUCTURAL_BASELINE_EXCEPTIONS: &[(&str, &str, &str)] = &[(
+    "humble",
+    "lifecycle_node",
+    "Unrecognized entity of the type: lifecycle_node",
+)];
+
+/// The structural exception for `element` on `distro`, if any.
+fn structural_exception(distro: &str, element: &str) -> Option<&'static str> {
+    STRUCTURAL_BASELINE_EXCEPTIONS
+        .iter()
+        .find(|(e, _)| *e == element)
+        .map(|(_, reason)| *reason)
+        .or_else(|| {
+            DISTRO_STRUCTURAL_BASELINE_EXCEPTIONS
+                .iter()
+                .find(|(d, e, _)| *d == distro && *e == element)
+                .map(|(_, _, reason)| *reason)
+        })
+}
 
 /// Elements whose baseline (zero injected attributes) is REJECTED by real
 /// ROS 2 for a reason that has nothing to do with attributes — a different
@@ -287,8 +330,9 @@ enum Ros2Batch {
     /// that treats this as a skip would make every downstream assertion
     /// vacuously "pass" instead of failing loud on a broken harness.
     Failed(String),
-    /// The batch ran to completion: per-tag verdicts.
-    Outcomes(BTreeMap<String, Ros2Outcome>),
+    /// The batch ran to completion: the oracle's `$ROS_DISTRO` and per-tag
+    /// verdicts.
+    Outcomes(String, BTreeMap<String, Ros2Outcome>),
 }
 
 /// Feed every fixture in `manifest` (tag -> fixture path) to real ROS 2's
@@ -393,6 +437,7 @@ fn ros2_batch_outcomes(run_id: &str, manifest: &BTreeMap<String, PathBuf>) -> Ro
     eprintln!("ROS 2 oracle: {distro}");
 
     Ros2Batch::Outcomes(
+        distro.to_string(),
         results
             .into_iter()
             .map(|(tag, r)| {
@@ -482,7 +527,7 @@ fn every_fixture_has_a_passing_baseline() {
         })
         .collect();
 
-    let results = match ros2_batch_outcomes("baseline", &manifest) {
+    let (distro, results) = match ros2_batch_outcomes("baseline", &manifest) {
         Ros2Batch::NoRos2 => {
             eprintln!("skip: no ROS 2 environment");
             return;
@@ -492,16 +537,13 @@ fn every_fixture_has_a_passing_baseline() {
              instead of skipping, since a skip here would silently pass every baseline \
              assertion this test exists to make:\n{detail}"
         ),
-        Ros2Batch::Outcomes(map) => map,
+        Ros2Batch::Outcomes(distro, map) => (distro, map),
     };
 
     for (element, _) in FIXTURES {
         let outcome = lookup(&results, element);
 
-        if let Some((_, expected_reason)) = STRUCTURAL_BASELINE_EXCEPTIONS
-            .iter()
-            .find(|(e, _)| e == element)
-        {
+        if let Some(expected_reason) = structural_exception(&distro, element) {
             // Documented, structurally-justified exception (see the
             // constant's doc comment) — not a silent skip. Pin the EXACT
             // rejection reason so drift (ROS 2 starts accepting this, or
@@ -556,7 +598,7 @@ fn rust_and_ros2_agree_on_every_candidate_attribute() {
         }
     }
 
-    let results = match ros2_batch_outcomes("candidates", &manifest) {
+    let (distro, results) = match ros2_batch_outcomes("candidates", &manifest) {
         Ros2Batch::NoRos2 => {
             eprintln!("skip: no ROS 2 environment");
             return;
@@ -566,7 +608,7 @@ fn rust_and_ros2_agree_on_every_candidate_attribute() {
              instead of skipping, since a skip here would silently pass every candidate \
              comparison this test exists to make:\n{detail}"
         ),
-        Ros2Batch::Outcomes(map) => map,
+        Ros2Batch::Outcomes(distro, map) => (distro, map),
     };
 
     let mut disagreements: Vec<String> = Vec::new();
@@ -576,10 +618,9 @@ fn rust_and_ros2_agree_on_every_candidate_attribute() {
             spec_for(element).is_some(),
             "<{element}> is in the differential matrix but has no AttrSpec"
         );
-        if STRUCTURAL_BASELINE_EXCEPTIONS
-            .iter()
-            .any(|(e, _)| e == element)
-        {
+        // The distro-specific exceptions are known only now, from the
+        // oracle; their candidates were probed and are not compared.
+        if structural_exception(&distro, element).is_some() {
             continue;
         }
         for attr in CANDIDATES {

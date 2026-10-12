@@ -113,7 +113,14 @@ impl LaunchTraverser {
                     }
                     "node" => {
                         if let Some(map) = action_map {
-                            self.process_yaml_node(map)?;
+                            self.process_yaml_node(map, false)?;
+                        }
+                    }
+                    // Jazzy `LifecycleNode`: `<node>`'s keys plus `autostart`
+                    // (play_launch phase 86).
+                    "lifecycle_node" => {
+                        if let Some(map) = action_map {
+                            self.process_yaml_node(map, true)?;
                         }
                     }
                     "let" => {
@@ -374,8 +381,9 @@ impl LaunchTraverser {
         result
     }
 
-    /// Process a YAML node action
-    fn process_yaml_node(&mut self, map: &Mapping) -> Result<()> {
+    /// Process a YAML node action. `lifecycle` is true for `lifecycle_node`,
+    /// which is also the only form that reads `autostart`.
+    fn process_yaml_node(&mut self, map: &Mapping, lifecycle: bool) -> Result<()> {
         validate_yaml_child_seq(map, "param", "param")?;
         validate_yaml_child_seq(map, "remap", "remap")?;
         validate_yaml_child_seq(map, "env", "env")?;
@@ -463,6 +471,15 @@ impl LaunchTraverser {
         let respawn_delay = yaml_str(map, "respawn_delay")
             .map(parse_substitutions)
             .transpose()?;
+        // A native YAML bool (`autostart: true`) is what `launch_yaml` reads
+        // directly; a string is a substitution resolved like XML's.
+        let autostart = if lifecycle {
+            yaml_value_string(map, "autostart")
+                .map(|s| parse_substitutions(&s))
+                .transpose()?
+        } else {
+            None
+        };
 
         let node = NodeAction {
             package,
@@ -483,6 +500,8 @@ impl LaunchTraverser {
                 yaml_str(map, "on_exit"),
                 "node",
             )?,
+            lifecycle,
+            autostart,
         };
 
         let record = CommandGenerator::generate_node_record(&node, &self.context)

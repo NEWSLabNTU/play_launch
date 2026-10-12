@@ -448,6 +448,10 @@ impl CommandGenerator {
         Ok(NodeRecord {
             start_delay_secs: None,
             on_exit_shutdown: node.on_exit_shutdown,
+            lifecycle: node.lifecycle.then_some(true),
+            lifecycle_autostart: node
+                .resolve_autostart(context)
+                .map_err(GenerationError::Substitution)?,
             args,
             cmd,
             env,
@@ -607,6 +611,8 @@ impl CommandGenerator {
         Ok(NodeRecord {
             start_delay_secs: None,
             on_exit_shutdown: exec.on_exit_shutdown,
+            lifecycle: None,
+            lifecycle_autostart: None,
             args: if exec.arguments.is_empty() {
                 None
             } else {
@@ -663,6 +669,8 @@ mod tests {
             respawn: None,
             respawn_delay: None,
             on_exit_shutdown: None,
+            lifecycle: false,
+            autostart: None,
         };
 
         let context = LaunchContext::new();
@@ -705,6 +713,8 @@ mod tests {
             respawn: None,
             respawn_delay: None,
             on_exit_shutdown: None,
+            lifecycle: false,
+            autostart: None,
         };
 
         let context = LaunchContext::new();
@@ -735,6 +745,8 @@ mod tests {
             respawn: None,
             respawn_delay: None,
             on_exit_shutdown: None,
+            lifecycle: false,
+            autostart: None,
         };
 
         let context = LaunchContext::new();

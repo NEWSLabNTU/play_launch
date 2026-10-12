@@ -316,6 +316,8 @@ fn ir_to_node_action(kind: &ActionKind) -> NodeAction {
         } => NodeAction {
             // The IR does not model on_exit (dormant feature; see CLAUDE.md).
             on_exit_shutdown: None,
+            lifecycle: false,
+            autostart: None,
             package: package.parts.clone(),
             executable: executable.parts.clone(),
             name: name.as_ref().map(|n| n.parts.clone()),
