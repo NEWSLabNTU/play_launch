@@ -1328,6 +1328,17 @@ pub(crate) async fn play(
         }));
     }
 
+    // Phase 86 W4: a lifecycle node whose model asks for `autostart` is driven
+    // through configure (and activate) once it is up, as `ros2 launch` does
+    // for `LifecycleNode(autostart=True)`. Each task waits for its node's
+    // `change_state` service, so spawn order and `<timer>` delays need no
+    // coordination here.
+    crate::execution::lifecycle_autostart::spawn_all(
+        crate::execution::lifecycle_autostart::plan(&system_model),
+        shared_ros_node_for_params.clone(),
+        shutdown_signal.clone(),
+    );
+
     // Phase 61 W2: the task that opens each startup stage as the previous one
     // comes up. Spawned after the handle exists because it reads member state;
     // stage 0 is open from the outset, so nothing waits on this being running.
