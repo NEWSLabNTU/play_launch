@@ -172,8 +172,10 @@ that need it are absent from such a run unless you pass `--interception on`
   system against the model and against itself — but they still need the
   event source, so they do not run.
 - **`interception/events.jsonl`**, the per-message record
-  `play_launch measure` reads. `interception.events` defaults on, but only
-  takes effect on a run that intercepts.
+  `play_launch measure` reads. It is off unless asked for
+  (`--record-events`, `interception.events: true`, or the web UI's "Record
+  events" toggle while the run goes), and only takes effect on a run that
+  intercepts.
 - **`interception/endpoints.tsv`**, which `play_launch contract capture`
   reads to write a first contract for a system that has none. Since such a
   system has no contract by definition, the run you capture from must be made
@@ -208,10 +210,11 @@ library rather than just the mode.
 Interception is not free, and turning a mode on is what asks for it: about
 150 ns per publish or take (0.15% of a core at 10k msg/s, measured in phase
 58 W2 — `CLOCK_THREAD_CPUTIME_ID` at 85 ns against `CLOCK_MONOTONIC`'s 17).
-It also writes `interception/events.jsonl`, one ~110-byte line per message,
-which is on by default; `interception: { events: false }` in a `--config`
-file turns that file off for a long run on a high-rate system without
-disabling enforcement.
+Recording every message to `interception/events.jsonl` (one ~110-byte line
+each) costs more than that — roughly tripling play_launch's own CPU at high
+rates — so it is off by default and enforcement does not need it. Ask for it
+with `--record-events`, or switch it on and off while the run goes from the
+web UI.
 
 ## What `strict` actually does
 
@@ -327,7 +330,7 @@ contract behind it. Use `launch` or `up` with a one-node launch file.
 
 Interception has no such obstacle — it hooks rcl in whatever process is
 spawned, and what it writes is keyed by node and topic rather than by scope —
-so `play_launch run --interception on <pkg> <exec>` records a full bundle:
+so `play_launch run --interception on --record-events <pkg> <exec>` records a full bundle:
 `events.jsonl`, `endpoints.tsv`, `node_identity.tsv` and the summaries. That
 bundle is readable by `play_launch measure` and by
 `play_launch contract capture`, which is the point: `run` is the verb for
@@ -356,7 +359,7 @@ topic's life, by construction — a measured rate over two messages is not a
 rate.
 
 **Interception costs what it costs.** ~150 ns per message, plus
-`events.jsonl` growing with traffic while `interception.events` is on.
+`events.jsonl` growing with traffic while recording is on.
 
 ## Adjacent: blocking instead of reporting
 

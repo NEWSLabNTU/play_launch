@@ -869,6 +869,14 @@ pub struct ContractOptions {
     #[arg(long, value_enum, value_name = "on|off")]
     pub interception: Option<Switch>,
 
+    /// Write `interception/events.jsonl`, the per-message record `play_launch
+    /// measure` reads, from the start of the run. Off by default because it
+    /// costs a JSON line per message; it can also be switched on and off
+    /// while the run is going, from the web UI or `POST
+    /// /api/interception/events`. Needs interception to be on.
+    #[arg(long)]
+    pub record_events: bool,
+
     /// The severity at which a violation ends a `--enforce-rules strict`
     /// run. `error` (the default): warnings such as `graph-deviation-runtime`
     /// are recorded and the run goes on, because that class exists for
@@ -1006,6 +1014,7 @@ impl Default for ContractOptions {
             no_provider_contracts: false,
             enforce_rules: EnforceMode::Warn,
             interception: None,
+            record_events: false,
             strict_on: StrictOn::Error,
             block_unauthorized_endpoints: false,
         }

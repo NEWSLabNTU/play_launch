@@ -105,6 +105,9 @@ pub fn handle_up(args: &cli::options::UpArgs) -> eyre::Result<()> {
     if let Some(switch) = args.common.contract_opts.interception {
         runtime_config.interception.enabled = Some(switch.is_on());
     }
+    if args.common.contract_opts.record_events {
+        runtime_config.interception.events = true;
+    }
 
     // Print configuration summary
     info!("Configuration:");
@@ -237,6 +240,9 @@ pub(crate) async fn play(
     )?;
     if let Some(switch) = common.contract_opts.interception {
         runtime_config.interception.enabled = Some(switch.is_on());
+    }
+    if common.contract_opts.record_events {
+        runtime_config.interception.events = true;
     }
 
     // Phase 66 W2 — compile the limit globs once, rather than per member.
@@ -378,6 +384,22 @@ pub(crate) async fn play(
         }
     }
     runtime_config.interception.enabled = Some(interception_decision.enabled());
+    // Whether `events.jsonl` is being written: shared by the interception task
+    // and the web server, which can switch it while the run goes.
+    let events_switch = std::sync::Arc::new(crate::interception::EventsSwitch::new(
+        runtime_config.interception.events,
+        interception_decision.enabled() && runtime_config.interception.stats,
+    ));
+    // The Entities page's 1 Hz snapshot, when there is traffic to show.
+    let (entities_tx, entities_rx) =
+        if interception_decision.enabled() && runtime_config.interception.stats {
+            let (tx, rx) = tokio::sync::watch::channel(std::sync::Arc::new(
+                crate::interception::EntitySnapshot::default(),
+            ));
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
 
     // Prepare directories
     debug!("Creating log directories...");
@@ -1423,15 +1445,19 @@ pub(crate) async fn play(
         // coordinator used, and the mismatch would be silent.
         let node_scope_map = node_scopes_by_member_id(&member_handle, &fqn_scope_map).await;
 
-        let web_state = std::sync::Arc::new(web::WebState::new(
-            member_handle.clone(),
-            log_dir.clone(),
-            state_broadcaster.clone(),
-            diagnostic_registry.clone(),
-            metrics_broadcaster.clone(),
-            scopes,
-            node_scope_map,
-        ));
+        let web_state = std::sync::Arc::new(
+            web::WebState::new(
+                member_handle.clone(),
+                log_dir.clone(),
+                state_broadcaster.clone(),
+                diagnostic_registry.clone(),
+                metrics_broadcaster.clone(),
+                scopes,
+                node_scope_map,
+            )
+            .with_events_switch(events_switch.clone())
+            .with_entities(entities_rx.clone()),
+        );
         let web_shutdown = shutdown_signal.clone();
 
         // Log web UI URL before spawning (addr will be moved)
@@ -1845,6 +1871,10 @@ pub(crate) async fn play(
             shutdown_signal.clone(),
             rule_engine,
             Some(lifecycle_rx),
+            crate::interception::LiveHandles {
+                events_switch: events_switch.clone(),
+                entities: entities_tx,
+            },
         ));
         named_tasks.push(NamedTask {
             name: "interception",

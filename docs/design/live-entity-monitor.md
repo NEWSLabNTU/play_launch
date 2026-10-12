@@ -1,6 +1,8 @@
 # Live entity monitor
 
-**Status: proposed (design only, no code).** A web page, in the spirit of
+**Status: W1–W3 implemented 2026-10-13** (live snapshot API, QoS check,
+Entities page; W4 external endpoints and W5 counter mode not built). Verified
+on the full Autoware planning simulator — see "Measured on Autoware" below. A web page, in the spirit of
 `htop`, that lists every live publisher and subscription with its message rate
 and byte rate, and flags QoS mismatches — cheap enough to leave on during a
 drive on an AGX Orin.
@@ -230,6 +232,40 @@ emitted by whichever hook first crosses the second boundary.
 Do not build it speculatively: the stats-only numbers above are already
 small at plausible rates. Build it if W0 shows a vehicle above ~50 k events/s
 or if the mutex shows up in a node's latency.
+
+## Measured on Autoware (2026-10-13)
+
+Full planning simulator with the sample map, `--interception on`, x86 host.
+
+- **788 publishers (475 silent), 630 subscriptions (387 silent)**, ~2,200
+  events/s, ~357 KiB/s published. Busiest by bytes:
+  `/system/emergency/hazard_status` (11 KiB at 10 Hz, ~110 KiB/s, no
+  subscriber in the launch); busiest by rate: `/diagnostics`, 247 msg/s from
+  33 publishers.
+- **0 incompatible pairs, 10 take-deficit advisories.** All are real
+  mechanically; most are Autoware's polling pattern — a depth-1 subscriber
+  that takes the latest value at 10 Hz from a 40 Hz publisher
+  (`/vehicle/status/control_mode`) — and the rest are subscribers that take
+  nothing because planning has no route. The advisory text says which reading
+  applies.
+- **play_launch's own CPU, 30 s each arm** (no browser attached):
+
+  | Arm | CPU |
+  |---|---|
+  | everything off (`--disable-monitoring --disable-diagnostics`, no interception) | 1.1% |
+  | + interception and the Entities snapshot | **2.1%** |
+  | + resource monitoring only | 7.7% |
+  | + diagnostics only | **31.5%** |
+
+  The monitor costs ~1% of a core at Autoware's real rate. What burns is
+  play_launch's own `/diagnostics` subscriber: ~250 msg/s for ~30% of a
+  core, about 1 ms per message, on by default. That is the item to fix
+  before an Orin deployment, not anything here.
+
+Two defects the run found, both fixed with tests: a 10-slot ring holds only
+nine complete seconds (rates read 9.0 for 10.0), and "stale" fired on every
+startup burst (`/parameter_events`); stale now needs a stream of at least five
+messages over five seconds and skips `/parameter_events` and `/rosout`.
 
 ## Plan
 

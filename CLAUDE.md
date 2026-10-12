@@ -442,15 +442,19 @@ grouping costs **zero** changes to `play_launch_container`.
 - `frontier: true` — enable per-topic timestamp frontier tracking
 - `stats: true` — enable per-topic message count/rate statistics
 - `ring_capacity: 65536` — SPSC ring buffer capacity per child process
-- `events: true` — write `interception/events.jsonl`, the per-message record
-  `play_launch measure` reads (Phase 58 W2). Like `trace` it is one line per
-  publish/take (~110 bytes), but unlike `trace` it defaults ON: its value is
-  being there *after* a run you then decide to measure, so an opt-in flag
-  would be discovered exactly when it is too late. That holds only on a run
-  that intercepts (see `enabled` above): a contract-free run under the default
-  `--enforce-rules` writes no `events.jsonl`, so a run you mean to measure
-  without a contract needs `--interception on`. Turn it off for long runs on
-  high-rate systems.
+- `events: false` — write `interception/events.jsonl`, the per-message record
+  `play_launch measure` reads (Phase 58 W2). **Off by default since
+  2026-10-13**, and switchable while the run goes: `--record-events` (or
+  `events: true`) starts it on; the web UI's "Record events" toggle, i.e.
+  `POST /api/interception/events {"enabled": bool}`, starts and stops it at
+  runtime (stopping flushes, restarting appends a segment that re-emits its
+  topic names). It used to default ON on the argument that you decide to
+  measure after the run; the runtime switch answers that, and the cost did
+  not justify it — one ~110-byte JSON line per publish and per take, measured
+  at ~145k events/s as play_launch going from 1.9% to 6.3% of a core plus
+  ~15 MB/s of disk (tens of GB per hour on a vehicle). It needs interception
+  (see `enabled` above) and `stats`; on a run with neither the API answers
+  409.
 
 When enabled, play_launch creates a shared memory ring buffer per child, injects `LD_PRELOAD` + fd env vars, and spawns a consumer tokio task that writes `frontier_summary.json` and `stats_summary.json` to `play_log/<ts>/interception/` on shutdown.
 
@@ -482,7 +486,8 @@ play_log/<timestamp>/
 ├── interception/                   # when interception enabled
 │   ├── frontier_summary.json       # per-topic frontier state
 │   ├── stats_summary.json          # per-topic pub/take counts, rates
-│   ├── events.jsonl                # per-message record read by `measure`
+│   ├── events.jsonl                # per-message record read by `measure`; only when
+│                                   #   asked for (--record-events / web UI toggle)
 │   ├── endpoint_stats.json         # every pub/sub created: messages, rate, est. bytes —
 │                                   #   silent endpoints included, busiest first
 │   └── node_identity.tsv           # model key → PID → REAL ROS node name (#0017)
@@ -671,6 +676,24 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-10-13**: **The Entities page** (`docs/design/live-entity-monitor.md`,
+  W1–W3). `interception/live.rs` adds an 11-slot one-second window per
+  endpoint (10 complete seconds plus the one in progress — a 10-slot ring
+  holds nine, which read 9.0 for 10.0 on Autoware), a 1 Hz `EntitySnapshot`
+  on a `watch` channel (`LiveHandles`, handed to the task and to `WebState`),
+  `GET /api/entities` and SSE `/api/entities/stream` (top 200 rows plus every
+  flagged row unless `?all=1`), and `web/assets/js/components/EntitiesView.js`.
+  QoS comes from a new `EndpointQos` event the `.so` sends from
+  `rcl_*_get_actual_qos` at init, keyed like the stats; pairs are checked by
+  DDS's request-versus-offered rule and confirmed by the middleware's own
+  incompatible-QoS events where they arrive. A take-deficit advisory flags a
+  reliable subscriber taking under 90% of its topic's publish rate — on
+  Autoware these are mostly depth-1 latest-value pollers, which the message
+  says. Measured on the full planning simulator (~2,200 events/s, 1,418
+  endpoints): the monitor costs play_launch ~1% of a core, while
+  play_launch's own `/diagnostics` subscriber costs ~30% (~1 ms per message
+  at ~250 msg/s) and is on by default — the item to fix before an Orin.
 
 - **2026-10-13**: **Per-endpoint traffic, and two paths the stats could not
   see.** `interception/endpoint_stats.json` lists every publisher and

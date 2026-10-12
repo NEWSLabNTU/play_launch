@@ -403,6 +403,48 @@ pub async fn stream_system_metrics(State(state): State<Arc<WebState>>) -> Respon
     Sse::new(stream).into_response()
 }
 
+/// Stream the Entities snapshot: one event per second while connected, the
+/// busiest rows plus every flagged one unless `?all=1`.
+pub async fn stream_entities(
+    State(state): State<Arc<WebState>>,
+    axum::extract::Query(q): axum::extract::Query<super::handlers::EntitiesQuery>,
+) -> Response {
+    let Some(rx) = &state.entities else {
+        return super::handlers::entities_unavailable();
+    };
+    let mut rx = rx.clone();
+    let all = q.all();
+    let stream = async_stream::stream! {
+        loop {
+            let json = {
+                let snap = rx.borrow_and_update().clone();
+                let body = if all {
+                    serde_json::to_string(&*snap)
+                } else {
+                    serde_json::to_string(&snap.trimmed(super::handlers::ENTITIES_TOP_ROWS))
+                };
+                match body {
+                    Ok(json) => json,
+                    Err(e) => {
+                        error!("Failed to serialize EntitySnapshot: {}", e);
+                        String::new()
+                    }
+                }
+            };
+            if !json.is_empty() {
+                yield Ok::<_, Infallible>(Event::default().data(json));
+            }
+            if rx.changed().await.is_err() {
+                break;
+            }
+        }
+        debug!("SSE entities stream ended");
+    };
+    Sse::new(stream)
+        .keep_alive(axum::response::sse::KeepAlive::new().interval(SSE_KEEPALIVE_INTERVAL))
+        .into_response()
+}
+
 /// How often the diagnostics stream re-sends a snapshot in the absence of any
 /// level change. See [`stream_diagnostics`].
 const DIAGNOSTICS_TICK: Duration = Duration::from_secs(1);

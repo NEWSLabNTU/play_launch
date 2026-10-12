@@ -99,6 +99,16 @@ impl InterceptionPlugin for TopicNamesPlugin {
         self.announce_type_name(topic_hash, type_identity);
     }
 
+    fn on_endpoint_qos(
+        &self,
+        handle: usize,
+        topic_hash: u64,
+        qos: &rcl_interception_sys::qos::RmwQosProfile,
+    ) {
+        let event = InterceptionEvent::endpoint_qos(handle as u64, topic_hash, qos);
+        crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
+    }
+
     fn on_endpoint_owner(&self, handle: usize, node_fqn: &str, node_hash: u64) {
         if registry::mark_node_name_for_emission(node_hash) {
             self.emit_chunks(EventKind::NodeNameDeclared, node_hash, node_fqn.as_bytes());

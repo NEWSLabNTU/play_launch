@@ -1,7 +1,7 @@
 // Header component — nav tabs, health badges, diagnostic badges, theme toggle.
 
 import { h } from '../vendor/preact.module.js';
-import { useCallback } from '../vendor/hooks.module.js';
+import { useCallback, useEffect, useState } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import { currentView, theme, healthSummary, diagnostics, systemMetrics, graphSelectedElement, statusFacet, nodeList, getStatusString } from '../store.js';
 
@@ -97,6 +97,50 @@ function MetricsBadges() {
     `;
 }
 
+/**
+ * Start or stop writing interception/events.jsonl, the per-message record
+ * `play_launch measure` reads. Off by default because it costs a JSON line
+ * per message. Hidden on a run that has no messages to record.
+ */
+function EventRecordToggle() {
+    const [rec, setRec] = useState(null);
+
+    useEffect(() => {
+        let alive = true;
+        const load = () => fetch('/api/interception/events')
+            .then(r => r.ok ? r.json() : null)
+            .then(s => { if (alive && s) setRec(s); })
+            .catch(() => {});
+        load();
+        const id = setInterval(load, 5000);
+        return () => { alive = false; clearInterval(id); };
+    }, []);
+
+    const toggle = useCallback(() => {
+        if (!rec) return;
+        fetch('/api/interception/events', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: !rec.recording }),
+        })
+            .then(r => r.ok ? r.json() : null)
+            .then(s => { if (s) setRec(s); })
+            .catch(() => {});
+    }, [rec]);
+
+    if (!rec || !rec.available) return null;
+
+    const title = rec.recording
+        ? `Writing every message to interception/events.jsonl (${rec.records} so far). Click to stop.`
+        : 'Record every message to interception/events.jsonl for `play_launch measure`. '
+          + 'Costs a line of disk and some CPU per message.';
+    return html`
+        <button class="record-toggle ${rec.recording ? 'recording' : ''}" title=${title} onClick=${toggle}>
+            ${rec.recording ? `\u25CF REC ${rec.records}` : 'Record events'}
+        </button>
+    `;
+}
+
 function ThemeToggle() {
     const toggleTheme = useCallback(() => {
         const next = theme.value === 'dark' ? 'light' : 'dark';
@@ -135,6 +179,8 @@ export function Header() {
                     onClick=${() => switchView('graph')}>Graph</button>
                 <button class="nav-tab ${view === 'launch-tree' ? 'active' : ''}"
                     onClick=${() => switchView('launch-tree')}>Launch</button>
+                <button class="nav-tab ${view === 'entities' ? 'active' : ''}"
+                    onClick=${() => switchView('entities')}>Entities</button>
                 <button class="nav-tab ${view === 'diagnostics' ? 'active' : ''}"
                     onClick=${() => switchView('diagnostics')}>Diagnostics</button>
             </div>
@@ -142,6 +188,7 @@ export function Header() {
                 <${HealthBar} />
                 <${DiagnosticBadges} />
                 <${MetricsBadges} />
+                <${EventRecordToggle} />
                 <${ThemeToggle} />
             </div>
         </header>

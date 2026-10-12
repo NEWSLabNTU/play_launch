@@ -635,6 +635,100 @@ pub async fn get_diagnostic_counts(
     Ok(Json(counts))
 }
 
+// ===== Entities (live endpoints) =====
+
+/// Rows sent when the client did not ask for `?all=1`: the busiest, plus
+/// every flagged row further down.
+pub const ENTITIES_TOP_ROWS: usize = 200;
+
+#[derive(serde::Deserialize, Default)]
+pub struct EntitiesQuery {
+    #[serde(default)]
+    all: Option<u8>,
+}
+
+impl EntitiesQuery {
+    pub fn all(&self) -> bool {
+        self.all.is_some_and(|v| v != 0)
+    }
+}
+
+pub fn entities_unavailable() -> Response {
+    (
+        StatusCode::CONFLICT,
+        Json(json!({
+            "error": "no live traffic: interception (with stats) is off for this run; \
+                      start it with --interception on",
+        })),
+    )
+        .into_response()
+}
+
+/// The current live snapshot of every publisher and subscription.
+pub async fn get_entities(
+    State(state): State<Arc<WebState>>,
+    axum::extract::Query(q): axum::extract::Query<EntitiesQuery>,
+) -> Response {
+    let Some(rx) = &state.entities else {
+        return entities_unavailable();
+    };
+    let snap = rx.borrow().clone();
+    if q.all() {
+        Json(&*snap).into_response()
+    } else {
+        Json(snap.trimmed(ENTITIES_TOP_ROWS)).into_response()
+    }
+}
+
+// ===== events.jsonl recording =====
+
+fn event_recording_state(state: &WebState) -> serde_json::Value {
+    match &state.events_switch {
+        Some(sw) => json!({
+            "available": sw.available(),
+            "recording": sw.is_on(),
+            "records": sw.records(),
+        }),
+        None => json!({ "available": false, "recording": false, "records": 0 }),
+    }
+}
+
+/// Whether `interception/events.jsonl` is being written, and how many lines
+/// it has. `available: false` means this run has no messages to record
+/// (interception or `stats` is off).
+pub async fn get_event_recording(State(state): State<Arc<WebState>>) -> Response {
+    Json(event_recording_state(&state)).into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct EventRecordingRequest {
+    enabled: bool,
+}
+
+/// Start or stop writing `interception/events.jsonl`. The change takes effect
+/// on the interception task's next poll (10 ms); stopping flushes the file,
+/// and starting again appends to it.
+pub async fn set_event_recording(
+    State(state): State<Arc<WebState>>,
+    Json(req): Json<EventRecordingRequest>,
+) -> Response {
+    let accepted = state
+        .events_switch
+        .as_ref()
+        .is_some_and(|sw| sw.set(req.enabled));
+    if !accepted {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "this run has no messages to record: interception or \
+                          interception.stats is off (restart with --interception on)",
+            })),
+        )
+            .into_response();
+    }
+    Json(event_recording_state(&state)).into_response()
+}
+
 // ===== Graph API (Phase 25) =====
 
 /// Get the full communication graph snapshot (all topics + services).

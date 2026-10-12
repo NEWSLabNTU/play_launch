@@ -8,6 +8,22 @@ allowance heavily.
 
 ## Unreleased
 
+- **New:** an **Entities** page in the web UI, an htop for publishers and
+  subscriptions: every endpoint with its message rate (1 s and 10 s), byte
+  rate, message size, time since its last message and QoS, sortable and
+  filterable, optionally grouped by topic. It flags QoS pairs that can never
+  match (reliability, durability, deadline, liveliness, lease), subscribers
+  taking clearly less than their topic publishes, streams that stopped, and
+  endpoints that never carried a message. Backed by `GET /api/entities` and
+  the SSE stream `/api/entities/stream`; needs interception (`--interception
+  on`). On the Autoware planning simulator it cost play_launch about 1% of a
+  core.
+- **Changed:** `interception/events.jsonl` is no longer written by default.
+  It is one line per message and roughly tripled play_launch's CPU on a busy
+  system. Ask for it with `--record-events` or `interception.events: true`,
+  or switch it on and off while the run goes from the web UI's "Record
+  events" toggle (`POST /api/interception/events`). A run you mean to
+  `play_launch measure` needs one of these now.
 - **New:** `interception/endpoint_stats.json`: every publisher and
   subscription the run created, with message count, rate, mean message size
   and estimated bandwidth, busiest first. Endpoints that never carried a

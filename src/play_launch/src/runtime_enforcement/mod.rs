@@ -599,6 +599,10 @@ impl RuleEngine {
             EventKind::EndpointOwner | EventKind::NodeNameDeclared => {
                 // Returned early above: no topic is involved.
             }
+            EventKind::EndpointQos => {
+                // The live Entities view's QoS; `qos-match-runtime` reads the
+                // rmw-layer QosDeclared events and the DDS verdicts instead.
+            }
             EventKind::RingOverflowReport => {
                 // Phase 42.0: ring-overflow drop-count telemetry, not a
                 // manifest-relevant event. Aggregated by the

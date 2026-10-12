@@ -74,6 +74,16 @@ pub(crate) trait InterceptionPlugin: Send + Sync {
     /// cannot say whose endpoint a handle is.
     fn on_endpoint_owner(&self, _handle: usize, _node_fqn: &str, _node_hash: u64) {}
 
+    /// Called once per publisher/subscription init (cold path) with the QoS
+    /// the middleware actually applied.
+    fn on_endpoint_qos(
+        &self,
+        _handle: usize,
+        _topic_hash: u64,
+        _qos: &rcl_interception_sys::qos::RmwQosProfile,
+    ) {
+    }
+
     /// Called once per (topic_hash, type_identity) pair the .so resolves
     /// via introspection. `type_identity` is the canonical
     /// `"pkg/msg/Name"` string. Default no-op so existing plugins

@@ -13,6 +13,7 @@ import { DiagnosticsView } from './components/DiagnosticsView.js';
 import { GraphView } from './components/GraphView.js';
 import { LaunchTreeView } from './components/LaunchTreeView.js';
 import { LaunchPanel } from './components/LaunchPanel.js';
+import { EntitiesView } from './components/EntitiesView.js';
 
 const html = htm.bind(h);
 
@@ -95,13 +96,18 @@ function App() {
                  style=${{ display: view === 'launch-tree' ? '' : 'none' }}>
                 <${LaunchTreeView} />
             </div>
+            ${view === 'entities' && html`
+                <div class="left-panel ${isOpen ? 'with-sidebar' : ''}">
+                    <${EntitiesView} />
+                </div>
+            `}
             ${view === 'graph' ? html`
                 <${PanelResizer} />
                 <${GraphPanel} />
             ` : view === 'launch-tree' ? html`
                 <${PanelResizer} />
                 <${LaunchPanel} />
-            ` : view === 'nodes' ? html`
+            ` : view === 'nodes' || view === 'entities' ? html`
                 <${PanelResizer} />
                 <${RightPanel} />
             ` : null}

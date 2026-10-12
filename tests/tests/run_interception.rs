@@ -97,6 +97,10 @@ fn run_talker(interception: Option<&str>, seconds: u64) -> Bundle {
     cmd.arg("run").arg("--disable-all");
     if let Some(switch) = interception {
         cmd.args(["--interception", switch]);
+        // `measure` reads events.jsonl, which is off unless asked for.
+        if switch == "on" {
+            cmd.arg("--record-events");
+        }
     }
     cmd.args(["demo_nodes_cpp", "talker"]);
     cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", interception_so_path());

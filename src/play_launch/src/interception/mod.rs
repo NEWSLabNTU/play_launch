@@ -9,6 +9,8 @@
 //! - Writing summary files on shutdown
 
 mod endpoint_stats;
+mod live;
+pub use live::EntitySnapshot;
 pub mod measure;
 pub mod trace;
 
@@ -94,6 +96,9 @@ pub enum EventKind {
     /// A chunk of a node FQN, keyed by its hash. `TopicNameDeclared`'s
     /// encoding, kept out of the topic-name catalog.
     NodeNameDeclared = 18,
+    /// `play_launch_interception::event::EventKind::EndpointQos`: the QoS an
+    /// endpoint actually got, keyed like the stats (see `live::Qos`).
+    EndpointQos = 19,
 }
 
 /// Interception event (56 bytes, matches play_launch_interception::event::InterceptionEvent).
@@ -424,6 +429,55 @@ impl NameCatalog {
 // events.jsonl — the per-message record `play_launch measure` reads
 // ---------------------------------------------------------------------------
 
+/// Whether `events.jsonl` is being written, switchable while the run goes.
+///
+/// Shared by the interception task, which opens and closes the file on its
+/// 10 ms poll, and the web server, which flips it (`POST
+/// /api/interception/events`). Off by default (`interception.events`): a line
+/// per message is the most expensive thing interception does.
+#[derive(Debug)]
+pub struct EventsSwitch {
+    wanted: std::sync::atomic::AtomicBool,
+    /// Messages to record exist only with interception and `stats` on. When
+    /// they do not, the switch reports that rather than accepting a request
+    /// that could never produce a line.
+    available: bool,
+    /// Lines written so far this run, updated by the task.
+    records: std::sync::atomic::AtomicU64,
+}
+
+impl EventsSwitch {
+    pub fn new(initially_on: bool, available: bool) -> Self {
+        Self {
+            wanted: std::sync::atomic::AtomicBool::new(initially_on && available),
+            available,
+            records: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    pub fn available(&self) -> bool {
+        self.available
+    }
+
+    pub fn is_on(&self) -> bool {
+        self.wanted.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Ask for recording on or off. Returns `false`, changing nothing, when
+    /// this run has no events to record.
+    pub fn set(&self, on: bool) -> bool {
+        if !self.available {
+            return false;
+        }
+        self.wanted.store(on, std::sync::atomic::Ordering::Relaxed);
+        true
+    }
+
+    pub fn records(&self) -> u64 {
+        self.records.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 /// Streams every publish and take to `interception/events.jsonl`.
 ///
 /// Written streaming rather than buffered-then-dumped: this is per-message
@@ -446,11 +500,18 @@ struct EventLog {
 }
 
 impl EventLog {
-    fn create(log_dir: &Path) -> eyre::Result<Self> {
+    /// Open `events.jsonl` for appending: recording switched off and on again
+    /// continues the same file. Topic names are re-emitted as each topic's
+    /// first message in the new segment arrives, so every segment is readable
+    /// on its own.
+    fn open(log_dir: &Path) -> eyre::Result<Self> {
         let dir = log_dir.join("interception");
         std::fs::create_dir_all(&dir)?;
-        let file = std::fs::File::create(dir.join("events.jsonl"))
-            .wrap_err("creating interception/events.jsonl")?;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("events.jsonl"))
+            .wrap_err("opening interception/events.jsonl")?;
         Ok(Self {
             writer: std::io::BufWriter::new(file),
             named: Default::default(),
@@ -505,7 +566,7 @@ impl EventLog {
         }
     }
 
-    fn finish(mut self, catalog: &NameCatalog, log_dir: &Path) {
+    fn finish(mut self, catalog: &NameCatalog, log_dir: &Path, records_before: u64) {
         use std::io::Write as _;
         // Names that assembled after the last message on their topic would
         // otherwise never be written, leaving those events unattributable.
@@ -518,7 +579,7 @@ impl EventLog {
         }
         info!(
             "Interception: {} message records written to {}",
-            self.records,
+            records_before + self.records,
             log_dir.join("interception/events.jsonl").display()
         );
     }
@@ -527,6 +588,15 @@ impl EventLog {
 // ---------------------------------------------------------------------------
 // Interception task
 // ---------------------------------------------------------------------------
+
+/// What the interception task shares with the web server while the run goes.
+pub struct LiveHandles {
+    /// Whether `events.jsonl` is being written.
+    pub events_switch: std::sync::Arc<EventsSwitch>,
+    /// Where the Entities page's 1 Hz snapshot goes; `None` when nothing
+    /// reads it.
+    pub entities: Option<tokio::sync::watch::Sender<std::sync::Arc<EntitySnapshot>>>,
+}
 
 /// Run the interception consumer task.
 ///
@@ -546,7 +616,12 @@ pub async fn run_interception_task(
     mut lifecycle_rx: Option<
         tokio::sync::mpsc::UnboundedReceiver<(String, crate::runtime_enforcement::LifecycleState)>,
     >,
+    live: LiveHandles,
 ) -> eyre::Result<()> {
+    let LiveHandles {
+        events_switch,
+        entities,
+    } = live;
     debug!(
         "Interception task started ({} consumers, frontier={}, stats={})",
         consumers.len(),
@@ -569,19 +644,12 @@ pub async fn run_interception_task(
     let mut total_events: u64 = 0;
     let mut tracer = config.trace.then(trace::TraceRecorder::new);
     // Phase 58 W2. Publish/Take events come from StatsPlugin, so without
-    // `stats` there is nothing to record.
-    let mut event_log = match config.stats && config.events {
-        true => match EventLog::create(&log_dir) {
-            Ok(log) => Some(log),
-            Err(e) => {
-                warn!(
-                    "Interception: events.jsonl unavailable ({e:#}); `play_launch measure` will have nothing to read"
-                );
-                None
-            }
-        },
-        false => None,
-    };
+    // `stats` there is nothing to record; `events_switch` was built knowing
+    // that. Opened and closed on the poll below as the switch moves.
+    let mut next_snapshot_ns: u64 = 0;
+    let mut event_log: Option<EventLog> = None;
+    let mut records_before: u64 = 0;
+    let mut events_failed = false;
 
     let poll_interval = tokio::time::Duration::from_millis(10);
 
@@ -598,6 +666,14 @@ pub async fn run_interception_task(
 
         tokio::select! {
             _ = tokio::time::sleep(poll_interval) => {
+                sync_event_log(
+                    &events_switch,
+                    &mut event_log,
+                    &mut records_before,
+                    &mut events_failed,
+                    &names,
+                    &log_dir,
+                );
                 // Drain all consumers
                 for (child_idx, child) in consumers.iter_mut().enumerate() {
                     while let Some(event) = child.consumer.pop() {
@@ -623,6 +699,21 @@ pub async fn run_interception_task(
                         if let Some(re) = rule_engine.as_mut() {
                             re.observe(&event);
                         }
+                    }
+                }
+                // The Entities page: one snapshot a second, built only while
+                // the web server holds a receiver.
+                if let Some(tx) = entities.as_ref() {
+                    let now = crate::runtime_enforcement::monotonic_now_ns();
+                    if now >= next_snapshot_ns && tx.receiver_count() > 0 {
+                        next_snapshot_ns = now + 1_000_000_000;
+                        let snap = endpoints.live_snapshot(
+                            now,
+                            &names.names,
+                            &names.types,
+                            drop_counts.values().sum(),
+                        );
+                        let _ = tx.send(std::sync::Arc::new(snap));
                     }
                 }
                 // Phase 73 — a dead topic produces no event, so silence is
@@ -674,7 +765,7 @@ pub async fn run_interception_task(
     }
 
     if let Some(log) = event_log.take() {
-        log.finish(&names, &log_dir);
+        log.finish(&names, &log_dir, records_before);
     }
 
     // Per-endpoint stats. Needs `stats`: the counts come from StatsPlugin's
@@ -790,8 +881,8 @@ fn process_event(
             // frontier or stats *state*, but folded into the summary
             // JSON at write time via the name/type catalog.
         }
-        EventKind::EndpointOwner | EventKind::NodeNameDeclared => {
-            // Per-endpoint attribution, handled by `EndpointTracker`.
+        EventKind::EndpointOwner | EventKind::NodeNameDeclared | EventKind::EndpointQos => {
+            // Per-endpoint attribution and QoS, handled by `EndpointTracker`.
         }
         EventKind::RingOverflowReport => {
             // Phase 42.0: handled directly in `run_interception_task`'s
@@ -799,6 +890,50 @@ fn process_event(
             // which child's ring is reporting. Not aggregated here.
         }
     }
+}
+
+/// Open or close `events.jsonl` to match the switch. A failure to open is
+/// warned about once and not retried until the switch is turned off and on.
+fn sync_event_log(
+    switch: &EventsSwitch,
+    log: &mut Option<EventLog>,
+    records_before: &mut u64,
+    failed: &mut bool,
+    names: &NameCatalog,
+    log_dir: &Path,
+) {
+    let wanted = switch.is_on();
+    match (wanted, log.is_some()) {
+        (true, false) if !*failed => match EventLog::open(log_dir) {
+            Ok(opened) => {
+                info!(
+                    "Interception: recording every message to {}",
+                    log_dir.join("interception/events.jsonl").display()
+                );
+                *log = Some(opened);
+            }
+            Err(e) => {
+                warn!(
+                    "Interception: events.jsonl unavailable ({e:#}); `play_launch measure` will have nothing to read"
+                );
+                *failed = true;
+            }
+        },
+        (false, true) => {
+            if let Some(closed) = log.take() {
+                let written = closed.records;
+                closed.finish(names, log_dir, *records_before);
+                *records_before += written;
+            }
+        }
+        (false, false) => *failed = false,
+        _ => {}
+    }
+    let current = log.as_ref().map_or(0, |l| l.records);
+    switch.records.store(
+        *records_before + current,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 #[inline]
@@ -985,6 +1120,21 @@ fn insert_meta(value: &mut serde_json::Value, total_dropped: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_events_switch_refuses_a_run_with_nothing_to_record() {
+        let off_run = EventsSwitch::new(true, false);
+        assert!(!off_run.is_on(), "an unavailable switch never starts on");
+        assert!(!off_run.set(true));
+        assert!(!off_run.is_on());
+
+        let run = EventsSwitch::new(false, true);
+        assert!(!run.is_on(), "off unless asked for");
+        assert!(run.set(true));
+        assert!(run.is_on());
+        assert!(run.set(false));
+        assert!(!run.is_on());
+    }
     use crate::cli::config::InterceptionSettings;
 
     /// Build a synthetic event the same way FrontierPlugin's shared-memory

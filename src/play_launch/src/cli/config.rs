@@ -447,18 +447,19 @@ pub struct InterceptionSettings {
     pub trace: bool,
 
     /// Write the per-message record `play_launch measure` reads
-    /// (`interception/events.jsonl`). Default: on, whenever interception
-    /// itself runs (see `InterceptionSettings::decide`) — a contract-free
-    /// run under the default `--enforce-rules` intercepts nothing and writes
-    /// no events file unless `--interception on` was given.
+    /// (`interception/events.jsonl`) from the start of the run. Default: off.
     ///
-    /// Like `trace`, this is one line per publish/take rather than a summary,
-    /// so it grows with traffic (~110 bytes a message). Unlike `trace` it
-    /// defaults ON, because its whole value is being there *after* a run you
-    /// then decide to measure — a flag you had to set beforehand would be
-    /// discovered exactly when it is too late. Turn it off for long runs on
-    /// high-rate systems.
-    #[serde(default = "default_true")]
+    /// It is one JSON line per publish and per take (~110 bytes each), formatted
+    /// and written by play_launch: measured at ~145k events/s it tripled
+    /// play_launch's CPU (1.9% to 6.3% of a core) and wrote ~15 MB/s, which on
+    /// a vehicle running for hours is tens of gigabytes nobody asked for. So it
+    /// is opt-in, and switchable while the run is going: `POST
+    /// /api/interception/events` (the web UI's record toggle) starts or stops
+    /// it, so a run you decide to measure halfway through can still be
+    /// measured from that point. `--record-events` sets this from the command
+    /// line. Needs interception and `stats`; with either off there are no
+    /// events to record.
+    #[serde(default)]
     pub events: bool,
 
     /// SPSC ring buffer capacity per child process (default: 65536)
@@ -529,7 +530,7 @@ impl Default for InterceptionSettings {
             frontier: default_true(),
             stats: default_true(),
             trace: false,
-            events: default_true(),
+            events: false,
             ring_capacity: default_ring_capacity(),
         }
     }

@@ -53,6 +53,12 @@ pub struct WebState {
     pub scopes: Vec<ScopeEntry>,
     /// Node name → scope ID mapping (built from record.json at startup)
     pub node_scope_map: std::collections::HashMap<String, usize>,
+    /// The `events.jsonl` switch (`/api/interception/events`). `None` when
+    /// the caller did not hand one over.
+    pub events_switch: Option<Arc<crate::interception::EventsSwitch>>,
+    /// The Entities page's 1 Hz snapshot. `None` when this run does not
+    /// intercept with `stats`, so there is nothing to show.
+    pub entities: Option<tokio::sync::watch::Receiver<Arc<crate::interception::EntitySnapshot>>>,
 }
 
 impl WebState {
@@ -75,7 +81,24 @@ impl WebState {
             metrics_broadcaster,
             scopes,
             node_scope_map,
+            events_switch: None,
+            entities: None,
         }
+    }
+
+    /// Hand over the receiving end of the Entities snapshot.
+    pub fn with_entities(
+        mut self,
+        rx: Option<tokio::sync::watch::Receiver<Arc<crate::interception::EntitySnapshot>>>,
+    ) -> Self {
+        self.entities = rx;
+        self
+    }
+
+    /// Hand over the run's `events.jsonl` switch.
+    pub fn with_events_switch(mut self, switch: Arc<crate::interception::EventsSwitch>) -> Self {
+        self.events_switch = Some(switch);
+        self
     }
 }
 
@@ -180,6 +203,12 @@ pub fn create_router(state: Arc<WebState>, bind_addr: &str, port: u16) -> Router
         .route("/api/nodes/:name/topics", get(handlers::get_node_topics))
         .route("/api/graph", get(handlers::get_graph))
         .route("/api/launch-tree", get(handlers::get_launch_tree))
+        .route("/api/entities", get(handlers::get_entities))
+        .route("/api/entities/stream", get(sse::stream_entities))
+        .route(
+            "/api/interception/events",
+            get(handlers::get_event_recording).post(handlers::set_event_recording),
+        )
         .route("/api/health", get(handlers::health_summary))
         // Bulk operations
         .route("/api/nodes/start-all", post(handlers::start_all))

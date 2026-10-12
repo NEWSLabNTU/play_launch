@@ -61,6 +61,19 @@ pub(crate) fn dispatch_take(
     }
 }
 
+/// Dispatch the actual QoS of a newly created endpoint to all plugins.
+#[inline]
+pub(crate) fn dispatch_endpoint_qos(
+    plugins: &[Box<dyn InterceptionPlugin>],
+    handle: usize,
+    topic_hash: u64,
+    qos: &rcl_interception_sys::qos::RmwQosProfile,
+) {
+    for p in plugins {
+        p.on_endpoint_qos(handle, topic_hash, qos);
+    }
+}
+
 /// Dispatch the owning node of a newly created endpoint to all plugins.
 #[inline]
 pub(crate) fn dispatch_endpoint_owner(

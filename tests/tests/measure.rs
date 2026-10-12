@@ -168,6 +168,7 @@ fn a_run_without_events_names_the_config_that_produces_them() {
     assert!(!out.status.success(), "should have failed: {out:?}");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("interception.enabled: true"), "{stderr}");
+    assert!(stderr.contains("--record-events"), "{stderr}");
 }
 
 #[test]

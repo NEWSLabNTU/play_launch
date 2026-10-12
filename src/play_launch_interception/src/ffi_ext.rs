@@ -67,6 +67,16 @@ pub type FnRmwSerialize = unsafe extern "C" fn(
     *mut rcutils_uint8_array_t,
 ) -> i32;
 
+/// `rcl_publisher_get_actual_qos(publisher) -> const rmw_qos_profile_t *`: the
+/// profile the middleware actually applied, `SYSTEM_DEFAULT`s resolved.
+pub type FnRclPublisherGetActualQos =
+    unsafe extern "C" fn(*const rcl_publisher_t) -> *const rcl_interception_sys::qos::RmwQosProfile;
+
+/// `rcl_subscription_get_actual_qos(subscription) -> const rmw_qos_profile_t *`
+pub type FnRclSubscriptionGetActualQos = unsafe extern "C" fn(
+    *const rcl_subscription_t,
+) -> *const rcl_interception_sys::qos::RmwQosProfile;
+
 /// `rcutils_uint8_array_init(array, capacity, allocator) -> rcutils_ret_t`
 pub type FnRcutilsUint8ArrayInit =
     unsafe extern "C" fn(*mut rcutils_uint8_array_t, usize, *const rcutils_allocator_t) -> i32;

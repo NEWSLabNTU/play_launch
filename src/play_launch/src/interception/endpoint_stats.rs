@@ -27,7 +27,7 @@ use serde::Serialize;
 
 use super::{EventKind, InterceptionEvent, TopicNameAssembly, decode_topic_name_chunk};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Direction {
     Pub,
@@ -35,22 +35,26 @@ pub(crate) enum Direction {
 }
 
 #[derive(Debug, Clone)]
-struct Endpoint {
+pub(super) struct Endpoint {
     /// Model key of the process whose ring reported it.
-    member: String,
-    node_hash: Option<u64>,
-    direction: Direction,
-    topic_hash: u64,
+    pub(super) member: String,
+    pub(super) node_hash: Option<u64>,
+    pub(super) direction: Direction,
+    pub(super) topic_hash: u64,
     /// Monotonic time of the init event; the first message's when the init
     /// event was lost to ring overflow.
-    created_ns: u64,
+    pub(super) created_ns: u64,
     /// `true` when the endpoint was first seen through traffic rather than
     /// its init event, so `created_ns` is late and the rate is an upper bound.
-    seen_without_init: bool,
-    messages: u64,
-    last_message_ns: u64,
-    sampled_bytes: u64,
-    size_samples: u64,
+    pub(super) seen_without_init: bool,
+    pub(super) messages: u64,
+    pub(super) last_message_ns: u64,
+    pub(super) sampled_bytes: u64,
+    pub(super) size_samples: u64,
+    /// The last ten seconds, for the live view.
+    pub(super) window: super::live::Window,
+    /// The QoS the middleware applied, from `EndpointQos`.
+    pub(super) qos: Option<super::live::Qos>,
 }
 
 impl Endpoint {
@@ -72,6 +76,8 @@ impl Endpoint {
             last_message_ns: 0,
             sampled_bytes: 0,
             size_samples: 0,
+            window: Default::default(),
+            qos: None,
         }
     }
 }
@@ -124,12 +130,18 @@ pub(crate) struct EndpointRow {
 pub(crate) struct EndpointTracker {
     /// `(child index, handle) -> node hash`, from `EndpointOwner`, which
     /// precedes the endpoint's init event.
-    owners: HashMap<(usize, u64), u64>,
-    live: HashMap<(usize, u64), Endpoint>,
+    pub(super) owners: HashMap<(usize, u64), u64>,
+    pub(super) live: HashMap<(usize, u64), Endpoint>,
     /// Endpoints whose handle was later reused by a new endpoint.
-    retired: Vec<Endpoint>,
-    node_names: HashMap<u64, String>,
-    node_chunks: HashMap<u64, TopicNameAssembly>,
+    pub(super) retired: Vec<Endpoint>,
+    pub(super) node_names: HashMap<u64, String>,
+    pub(super) node_chunks: HashMap<u64, TopicNameAssembly>,
+    /// `(child index, handle) -> QoS`, from `EndpointQos`, which also
+    /// precedes the init event.
+    pub(super) pending_qos: HashMap<(usize, u64), super::live::Qos>,
+    /// `(child, topic hash, direction)` the middleware itself reported an
+    /// incompatible-QoS event for.
+    pub(super) dds_incompatible: std::collections::HashSet<(usize, u64, Direction)>,
 }
 
 impl EndpointTracker {
@@ -151,6 +163,24 @@ impl EndpointTracker {
                     self.node_chunks.remove(&event.topic_hash);
                 }
             }
+            EventKind::EndpointQos => {
+                let qos = super::live::Qos::from_event(event);
+                if let Some(ep) = self.live.get_mut(&key)
+                    && ep.topic_hash == event.topic_hash
+                {
+                    ep.qos = Some(qos);
+                } else {
+                    self.pending_qos.insert(key, qos);
+                }
+            }
+            EventKind::OfferedQosIncompatible => {
+                self.dds_incompatible
+                    .insert((child, event.topic_hash, Direction::Pub));
+            }
+            EventKind::RequestedQosIncompatible => {
+                self.dds_incompatible
+                    .insert((child, event.topic_hash, Direction::Sub));
+            }
             EventKind::PublisherInit | EventKind::SubscriptionInit => {
                 let direction = match event.kind {
                     EventKind::PublisherInit => Direction::Pub,
@@ -162,16 +192,15 @@ impl EndpointTracker {
                     self.retired.push(old);
                 }
                 let owner = self.owners.get(&key).copied();
-                self.live.insert(
-                    key,
-                    Endpoint::new(
-                        member,
-                        owner,
-                        direction,
-                        event.topic_hash,
-                        event.monotonic_ns,
-                    ),
+                let mut ep = Endpoint::new(
+                    member,
+                    owner,
+                    direction,
+                    event.topic_hash,
+                    event.monotonic_ns,
                 );
+                ep.qos = self.pending_qos.remove(&key);
+                self.live.insert(key, ep);
             }
             EventKind::Publish | EventKind::Take => {
                 let direction = match event.kind {
@@ -196,6 +225,7 @@ impl EndpointTracker {
                     ep.sampled_bytes += event.payload_bytes as u64;
                     ep.size_samples += 1;
                 }
+                ep.window.add(event.monotonic_ns, event.payload_bytes);
             }
             _ => {}
         }

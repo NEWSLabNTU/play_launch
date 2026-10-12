@@ -162,9 +162,11 @@ measure:
 
     rm -rf out/measure && mkdir -p out/measure && cd out/measure
 
+    # `events: true`: `measure` reads events.jsonl, which is off by default.
     cat > cfg.yaml <<'YAML'
     interception:
       enabled: true
+      events: true
     YAML
 
     share="$(ros2 pkg prefix rt_av_demo)/share/rt_av_demo/launch"
@@ -244,7 +246,7 @@ jitter:
     cd "{{ justfile_directory() }}"
 
     rm -rf out/jitter && mkdir -p out/jitter && cd out/jitter
-    printf 'interception:\n  enabled: true\n' > cfg.yaml
+    printf 'interception:\n  enabled: true\n  events: true\n' > cfg.yaml
 
     share="$(ros2 pkg prefix rt_av_demo)/share/rt_av_demo/launch"
     export PLAY_LAUNCH_INTERCEPTION_SO="{{ interception_so }}"
@@ -340,7 +342,7 @@ fault:
     cd "{{ justfile_directory() }}"
 
     rm -rf out/fault && mkdir -p out/fault && cd out/fault
-    printf 'interception:\n  enabled: true\n' > cfg.yaml
+    printf 'interception:\n  enabled: true\n  events: true\n' > cfg.yaml
 
     share="$(ros2 pkg prefix rt_av_demo)/share/rt_av_demo/launch"
     export PLAY_LAUNCH_INTERCEPTION_SO="{{ interception_so }}"

@@ -264,6 +264,7 @@ interception:
   enabled: true
   frontier: true
   stats: true
+  events: true
   ring_capacity: 4096
 "#;
 
@@ -696,4 +697,185 @@ interception:
         assert_eq!(messages(r), 0, "{r}");
         assert!(r.get("since_last_message_s").is_none(), "{r}");
     }
+}
+
+/// `events.jsonl` is opt-in: interception and `stats` on, `events` unset,
+/// and the summaries are written while the per-message record is not.
+#[test]
+fn test_events_jsonl_is_off_by_default() {
+    let config = r#"
+interception:
+  enabled: true
+  stats: true
+"#;
+
+    let work_dir = run_with_config(config, Duration::from_secs(4));
+    let play_log = work_dir.path().join("play_log/latest");
+    let stats = play_log.join("interception/stats_summary.json");
+    assert!(
+        wait_for_file(&stats, Duration::from_secs(3)),
+        "interception ran, so stats_summary.json must exist: {}",
+        stats.display()
+    );
+    assert!(
+        !play_log.join("interception/events.jsonl").exists(),
+        "events.jsonl written although `events` was never asked for"
+    );
+}
+
+/// One HTTP/1.1 request to the web UI; returns (status, body).
+fn http(port: u16, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
+    use std::io::{Read, Write};
+    let mut stream =
+        std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect to the web UI");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let body = body.unwrap_or("");
+    write!(
+        stream,
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let status = response
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, b)| b.to_string())
+        .unwrap_or_default();
+    (status, body)
+}
+
+fn event_lines(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// Recording switches on, off and on again while the run goes, through
+/// `/api/interception/events` (what the web UI's toggle calls). Off writes
+/// nothing; turning it back on appends, and the new segment carries its own
+/// topic-name records so `measure` can read it alone.
+#[test]
+fn test_event_recording_switches_at_runtime() {
+    let env = fixtures::install_env();
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/pure_nodes.launch.xml");
+    let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
+    let config_path = write_config(
+        work_dir.path(),
+        "interception:\n  enabled: true\n  stats: true\n",
+    );
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--web-addr",
+        &format!("127.0.0.1:{port}"),
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        "--container-mode",
+        "stock",
+        "--config",
+        config_path.to_str().unwrap(),
+        launch.to_str().unwrap(),
+    ]);
+    cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", interception_so_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+
+    let play_log = work_dir.path().join("play_log/latest");
+    fixtures::wait_for_processes(&play_log, 2, Duration::from_secs(15));
+    let events = play_log.join("interception/events.jsonl");
+
+    let (status, state) = http(port, "GET", "/api/interception/events", None);
+    assert_eq!(status, 200, "{state}");
+    let state: serde_json::Value = serde_json::from_str(&state).unwrap();
+    assert_eq!(state["available"], true, "{state}");
+    assert_eq!(state["recording"], false, "off by default: {state}");
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(
+        !events.exists(),
+        "nothing may be recorded before it is asked for"
+    );
+
+    // On.
+    let (status, body) = http(
+        port,
+        "POST",
+        "/api/interception/events",
+        Some(r#"{"enabled":true}"#),
+    );
+    assert_eq!(status, 200, "{body}");
+    std::thread::sleep(Duration::from_secs(3));
+    let (_, state) = http(port, "GET", "/api/interception/events", None);
+    let state: serde_json::Value = serde_json::from_str(&state).unwrap();
+    assert_eq!(state["recording"], true, "{state}");
+    assert!(state["records"].as_u64().unwrap() > 0, "{state}");
+
+    // Off: the file is flushed and stops growing.
+    let (status, body) = http(
+        port,
+        "POST",
+        "/api/interception/events",
+        Some(r#"{"enabled":false}"#),
+    );
+    assert_eq!(status, 200, "{body}");
+    std::thread::sleep(Duration::from_millis(500));
+    let first = event_lines(&events);
+    assert!(
+        first.iter().any(|l| l.contains(r#""r":"e""#)),
+        "the first segment recorded no message: {first:?}"
+    );
+    std::thread::sleep(Duration::from_secs(2));
+    assert_eq!(
+        event_lines(&events).len(),
+        first.len(),
+        "events.jsonl grew while recording was off"
+    );
+
+    // On again: appended, and readable on its own.
+    http(
+        port,
+        "POST",
+        "/api/interception/events",
+        Some(r#"{"enabled":true}"#),
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    drop(proc);
+    std::thread::sleep(Duration::from_millis(500));
+    let all = event_lines(&events);
+    assert!(
+        all.len() > first.len(),
+        "turning recording back on wrote nothing"
+    );
+    assert_eq!(
+        &all[..first.len()],
+        &first[..],
+        "the earlier segment was rewritten"
+    );
+    let second = &all[first.len()..];
+    assert!(
+        second.iter().any(|l| l.contains(r#""r":"t""#)),
+        "the second segment must name its topics again: {second:?}"
+    );
+    assert!(
+        second.iter().any(|l| l.contains(r#""r":"e""#)),
+        "the second segment recorded no message: {second:?}"
+    );
 }

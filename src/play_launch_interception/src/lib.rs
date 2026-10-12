@@ -94,6 +94,9 @@ struct Originals {
     uint8_array_init: Option<ffi_ext::FnRcutilsUint8ArrayInit>,
     uint8_array_fini: Option<ffi_ext::FnRcutilsUint8ArrayFini>,
     sample_allocator: Option<FnRcutilsGetDefaultAllocator>,
+    /// The QoS each endpoint actually got, for the live QoS check.
+    publisher_get_actual_qos: Option<ffi_ext::FnRclPublisherGetActualQos>,
+    subscription_get_actual_qos: Option<ffi_ext::FnRclSubscriptionGetActualQos>,
     /// RMW-layer originals (Phase 36.1). Optional — resolved separately
     /// from rcl symbols because the rmw symbols live in
     /// `librmw_implementation.so`, which may not be loaded under
@@ -252,6 +255,13 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
         _ => (None, None, None, None),
     };
 
+    let publisher_get_actual_qos = sym(c"rcl_publisher_get_actual_qos").map(|p| unsafe {
+        std::mem::transmute::<*mut c_void, ffi_ext::FnRclPublisherGetActualQos>(p)
+    });
+    let subscription_get_actual_qos = sym(c"rcl_subscription_get_actual_qos").map(|p| unsafe {
+        std::mem::transmute::<*mut c_void, ffi_ext::FnRclSubscriptionGetActualQos>(p)
+    });
+
     Some(Originals {
         publisher_init: unsafe {
             std::mem::transmute::<*mut c_void, FnRclPublisherInit>(publisher_init)
@@ -277,6 +287,8 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
         uint8_array_init,
         uint8_array_fini,
         sample_allocator,
+        publisher_get_actual_qos,
+        subscription_get_actual_qos,
         rmw: None, // resolved separately in try_resolve_originals
     })
 }
@@ -961,6 +973,18 @@ pub unsafe extern "C" fn rcl_publisher_init(
         dispatch_owner(rt, node, rcl_id(publisher));
 
         let topic_hash = registry::fnv1a(topic.as_bytes());
+        if let Some(get) = rt.originals.publisher_get_actual_qos {
+            // SAFETY: `publisher` was just initialized successfully.
+            let qos = unsafe { get(publisher) };
+            if !qos.is_null() {
+                plugin_dispatch::dispatch_endpoint_qos(
+                    &rt.plugins,
+                    rcl_id(publisher),
+                    topic_hash,
+                    unsafe { &*qos },
+                );
+            }
+        }
         if let Some(id) = type_identity.as_deref() {
             for p in &rt.plugins {
                 p.on_type_identity_resolved(topic_hash, id);
@@ -1054,6 +1078,18 @@ pub unsafe extern "C" fn rcl_subscription_init(
         dispatch_owner(rt, node, rcl_id(subscription));
 
         let topic_hash = registry::fnv1a(topic.as_bytes());
+        if let Some(get) = rt.originals.subscription_get_actual_qos {
+            // SAFETY: `subscription` was just initialized successfully.
+            let qos = unsafe { get(subscription) };
+            if !qos.is_null() {
+                plugin_dispatch::dispatch_endpoint_qos(
+                    &rt.plugins,
+                    rcl_id(subscription),
+                    topic_hash,
+                    unsafe { &*qos },
+                );
+            }
+        }
         if let Some(id) = type_identity.as_deref() {
             for p in &rt.plugins {
                 p.on_type_identity_resolved(topic_hash, id);

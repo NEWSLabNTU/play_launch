@@ -237,6 +237,9 @@ async fn run_direct(
     if let Some(switch) = common.contract_opts.interception {
         runtime_config.interception.enabled = Some(switch.is_on());
     }
+    if common.contract_opts.record_events {
+        runtime_config.interception.events = true;
+    }
     // `decide` takes the enforcement mode because on `launch`/`up` a non-`off`
     // mode IMPLIES interception — the hooks are the rule engine's only event
     // source (issue #0031). `run` builds no rule engine and refuses every
@@ -263,6 +266,22 @@ async fn run_direct(
         ),
     }
     runtime_config.interception.enabled = Some(interception_decision.enabled());
+    // Whether `events.jsonl` is being written: shared by the interception task
+    // and the web server, which can switch it while the run goes.
+    let events_switch = std::sync::Arc::new(crate::interception::EventsSwitch::new(
+        runtime_config.interception.events,
+        interception_decision.enabled() && runtime_config.interception.stats,
+    ));
+    // The Entities page's 1 Hz snapshot, when there is traffic to show.
+    let (entities_tx, entities_rx) =
+        if interception_decision.enabled() && runtime_config.interception.stats {
+            let (tx, rx) = tokio::sync::watch::channel(std::sync::Arc::new(
+                crate::interception::EntitySnapshot::default(),
+            ));
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
 
     // Create temporary log directory
     info!("Creating log directories...");
@@ -609,15 +628,19 @@ async fn run_direct(
         let state_broadcaster = std::sync::Arc::new(web::StateEventBroadcaster::new());
 
         // Start web server
-        let web_state = Arc::new(web::WebState::new(
-            member_handle.clone(),
-            log_dir.clone(),
-            state_broadcaster.clone(),
-            diagnostic_registry.clone(),
-            None,
-            Vec::new(),
-            std::collections::HashMap::new(),
-        ));
+        let web_state = Arc::new(
+            web::WebState::new(
+                member_handle.clone(),
+                log_dir.clone(),
+                state_broadcaster.clone(),
+                diagnostic_registry.clone(),
+                None,
+                Vec::new(),
+                std::collections::HashMap::new(),
+            )
+            .with_events_switch(events_switch.clone())
+            .with_entities(entities_rx.clone()),
+        );
 
         // Parse web address
         let (addr, port) = common.parse_web_addr()?;
@@ -697,6 +720,10 @@ async fn run_direct(
             shutdown_rx.clone(),
             None,
             None,
+            crate::interception::LiveHandles {
+                events_switch: events_switch.clone(),
+                entities: entities_tx,
+            },
         )));
     }
 

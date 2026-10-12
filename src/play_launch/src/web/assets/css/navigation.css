@@ -99,6 +99,22 @@
     background: var(--border-color);
 }
 
+.record-toggle {
+    padding: 6px 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+}
+
+.record-toggle.recording {
+    background: var(--failed-bg);
+    color: var(--failed-text);
+    border-color: var(--failed-text);
+    font-weight: 600;
+}
+
 .bulk-operations {
     display: flex;
     gap: 8px;
