@@ -47,8 +47,9 @@ allowance heavily.
   now. One test they hid still expected schema 1, and
   `sched_apply_warn_smoke_launch` still expected a composable tier to apply
   under the `observable` default.
-- Internal: the pyexec C ABI is 8. The captures carry `on_exit_shutdown`, and
-  a v7 object would drop it silently.
+- Internal: the pyexec C ABI is 9. The captures carry `on_exit_shutdown` (8)
+  and a `LifecycleNode`'s `lifecycle` / `lifecycle_autostart` (9, phase 86);
+  an older object would drop them silently.
 
 ## 0.15.1
 

@@ -215,10 +215,14 @@ impl NodeSpec {
 
     /// Capture this node as executed now. Every caller passes its own
     /// `on_exit` (#0064): `LifecycleNode` and containers are nodes too.
+    /// `lifecycle` is `Some(autostart)` for a `LifecycleNode` (phase 86) —
+    /// the marker, with its resolved `autostart` (`None` when not given) —
+    /// and `None` for a plain `Node`.
     pub(crate) fn capture_with(
         &self,
         py: Python,
         on_exit_shutdown: Option<bool>,
+        lifecycle: Option<Option<bool>>,
     ) -> PyResult<ExpandedNode> {
         let n = self.expand(py)?;
         let mark = crate::api::visit::lens();
@@ -238,9 +242,8 @@ impl NodeSpec {
             scope_id: None,
             start_delay_secs: None,
             on_exit_shutdown,
-            // The Python `LifecycleNode` carries these from phase 86 W2.
-            lifecycle: None,
-            lifecycle_autostart: None,
+            lifecycle: lifecycle.map(|_| true),
+            lifecycle_autostart: lifecycle.flatten(),
         });
         crate::api::visit::stamp_delay(mark);
         Ok(n)
@@ -381,7 +384,7 @@ impl Node {
         if !crate::api::visit::claim_execution(this.as_any(), &label) {
             return Ok(());
         }
-        let n = spec.capture_with(py, this.borrow().on_exit_shutdown)?;
+        let n = spec.capture_with(py, this.borrow().on_exit_shutdown, None)?;
         this.borrow_mut().executed_fqn = n.name.as_ref().map(|name| {
             let ns = n.namespace.clone().unwrap_or_default();
             if ns.is_empty() || ns == "/" {

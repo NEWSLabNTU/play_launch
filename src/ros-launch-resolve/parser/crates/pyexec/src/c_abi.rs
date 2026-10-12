@@ -378,7 +378,13 @@ pub extern "C" fn play_launch_py_abi_version() -> u32 {
     // Serde-defaulted, so a v7 object reports none, and a launch whose
     // required process exits keeps running: the bug those changes fix, back
     // in silence.
-    8
+    //
+    // 9: the captures carry `lifecycle` and `lifecycle_autostart`
+    // (play_launch phase 86): a `LifecycleNode` is marked as one, with its
+    // Jazzy `autostart`. Serde-defaulted, so a v8 object reports neither, and
+    // a `LifecycleNode(autostart=True)` resolves to a node `up` never
+    // activates — the same accepted-and-answered-wrong pairing 3 was for.
+    9
 }
 
 #[cfg(test)]
@@ -740,7 +746,7 @@ mod tests {
     /// launch tree that silently resolves to nothing.
     #[test]
     fn the_abi_version_moved_with_the_contract() {
-        assert_eq!(play_launch_py_abi_version(), 8);
+        assert_eq!(play_launch_py_abi_version(), 9);
     }
 
     /// `exec_file` on the old entry point is refused by name, not answered

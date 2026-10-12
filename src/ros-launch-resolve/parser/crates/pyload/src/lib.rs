@@ -169,7 +169,10 @@ impl std::error::Error for LoadError {}
 /// 8: the captures carry `on_exit_shutdown` (nodes, containers,
 /// `LifecycleNode`s; play_launch #0064). A v7 object reports none, so a
 /// required process's exit silently stops ending the launch.
-const ABI_VERSION: u32 = 8;
+/// 9: the captures carry `lifecycle` and `lifecycle_autostart` (play_launch
+/// phase 86). A v8 object reports neither, so a `LifecycleNode(autostart=
+/// True)` silently resolves to a node nobody activates.
+const ABI_VERSION: u32 = 9;
 
 /// What `sysconfig` says about an interpreter.
 #[derive(Debug, Clone)]

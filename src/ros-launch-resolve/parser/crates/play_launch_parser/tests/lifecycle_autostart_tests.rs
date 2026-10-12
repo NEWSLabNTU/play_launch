@@ -12,6 +12,7 @@
 //! a plain node, so neither reached the model as a lifecycle node.
 
 use play_launch_parser::parse_launch_file;
+use play_launch_parser_pyexec::python_test_guard;
 use std::{collections::HashMap, io::Write};
 use tempfile::NamedTempFile;
 
@@ -138,5 +139,40 @@ fn yaml_lifecycle_node_reads_a_native_bool_and_a_string() {
     assert_eq!(facts(&json, "native"), (Some(true), Some(true)));
     assert_eq!(facts(&json, "text"), (Some(true), Some(false)));
     assert_eq!(facts(&json, "unsaid"), (Some(true), None));
+    assert_eq!(facts(&json, "plain"), (None, None));
+}
+
+#[test]
+fn python_lifecycle_node_captures_the_marker_and_autostart() {
+    let _guard = python_test_guard();
+    let json = parse(
+        ".launch.py",
+        r#"
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import LifecycleNode, Node
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        DeclareLaunchArgument('go', default_value='true'),
+        LifecycleNode(package='lifecycle', executable='lifecycle_talker',
+                      name='on', namespace='', autostart=True),
+        LifecycleNode(package='lifecycle', executable='lifecycle_talker',
+                      name='off', namespace='', autostart=False),
+        LifecycleNode(package='lifecycle', executable='lifecycle_talker',
+                      name='unsaid', namespace=''),
+        LifecycleNode(package='lifecycle', executable='lifecycle_talker',
+                      name='by_arg', namespace='',
+                      autostart=LaunchConfiguration('go')),
+        Node(package='demo_nodes_cpp', executable='talker', name='plain'),
+    ])
+"#,
+    );
+    assert_eq!(facts(&json, "on"), (Some(true), Some(true)));
+    assert_eq!(facts(&json, "off"), (Some(true), Some(false)));
+    assert_eq!(facts(&json, "unsaid"), (Some(true), None));
+    assert_eq!(facts(&json, "by_arg"), (Some(true), Some(true)));
     assert_eq!(facts(&json, "plain"), (None, None));
 }

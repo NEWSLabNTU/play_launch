@@ -11,6 +11,11 @@ pub struct LifecycleNode {
     /// `on_exit=Shutdown()`, as on `Node` (#0064): a `LifecycleNode` is an
     /// `ExecuteProcess`, so stock launch honours it the same way.
     on_exit_shutdown: Option<bool>,
+    /// `autostart=` (Jazzy; phase 86): a bool or a substitution, resolved
+    /// when the action executes, as `LifecycleNode.execute` does. `None`
+    /// when not passed — Jazzy's default `False`, and Humble has no such
+    /// argument at all.
+    autostart: Option<Py<PyAny>>,
     #[pyo3(get)]
     condition: Option<Py<PyAny>>,
 }
@@ -31,6 +36,7 @@ impl LifecycleNode {
         env=None,
         additional_env=None,
         condition=None,
+        autostart=None,
         **_kwargs
     ))]
     #[allow(clippy::too_many_arguments)]
@@ -46,10 +52,12 @@ impl LifecycleNode {
         env: Option<Py<PyAny>>,
         additional_env: Option<Py<PyAny>>,
         condition: Option<Py<PyAny>>,
+        autostart: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> Self {
         Self {
             on_exit_shutdown: super::node::on_exit_kwarg_shuts_down(_kwargs),
+            autostart,
             spec: NodeSpec {
                 package,
                 executable,
@@ -78,8 +86,31 @@ impl LifecycleNode {
         if !crate::api::visit::claim_execution(this.as_any(), &label) {
             return Ok(());
         }
-        spec.capture_with(py, this.borrow().on_exit_shutdown)
+        let autostart = Self::resolve_autostart(py, this.borrow().autostart.as_ref())?;
+        spec.capture_with(py, this.borrow().on_exit_shutdown, Some(autostart))
             .map(|_| ())
+    }
+
+    /// `perform_typed_substitution(context, autostart, bool)`: a Python bool
+    /// as is, anything else performed to a string and coerced the way
+    /// `launch` coerces to `bool`. A value `launch` would refuse raises here
+    /// too, rather than reading as "no autostart".
+    fn resolve_autostart(py: Python, autostart: Option<&Py<PyAny>>) -> PyResult<Option<bool>> {
+        let Some(obj) = autostart else {
+            return Ok(None);
+        };
+        if let Ok(b) = obj.bind(py).cast::<pyo3::types::PyBool>() {
+            return Ok(Some(b.is_true()));
+        }
+        let text =
+            crate::api::utils::resolve_tokens(&crate::api::utils::pyobject_to_string(py, obj)?);
+        play_launch_parser::actions::node::coerce_launch_bool(&text)
+            .map(Some)
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "LifecycleNode(autostart={text:?}): cannot convert to bool"
+                ))
+            })
     }
 }
 
