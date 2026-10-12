@@ -108,7 +108,7 @@ fn wait_for_all_loaded(output_path: &std::path::Path, count: usize, timeout: Dur
 
 /// Call the play_launch web API. Returns (status_code, body).
 fn web_api_post(port: u16, path: &str) -> (u32, String) {
-    let url = format!("http://127.0.0.1:{}{}", port, path);
+    let url = format!("http://127.0.0.1:{port}{path}");
     let output = std::process::Command::new("curl")
         .args([
             "-s",
@@ -181,8 +181,7 @@ fn test_resolve_parallel_loading() {
     assert_eq!(
         args,
         vec!["--isolated".to_string()],
-        "expected --isolated in container args, got: {:?}",
-        args
+        "expected --isolated in container args, got: {args:?}"
     );
 }
 
@@ -418,7 +417,7 @@ fn spawn_lifecycle_play_launch(
         "--disable-monitoring",
         "--disable-diagnostics",
         "--web-addr",
-        &format!("127.0.0.1:{}", port),
+        &format!("127.0.0.1:{port}"),
         launch_file,
     ]);
     cmd.stdout(Stdio::from(output_file));
@@ -570,10 +569,7 @@ fn test_unload_and_reload() {
     eprintln!("--- stdout (last 3000 chars) ---");
     let snippet = stdout_final.len().saturating_sub(3000);
     eprintln!("{}", &stdout_final[snippet..]);
-    eprintln!(
-        "LOADED events for fast_talker: before={}, after={}",
-        loaded_before, loaded_after
-    );
+    eprintln!("LOADED events for fast_talker: before={loaded_before}, after={loaded_after}");
 
     assert!(
         loaded_after > loaded_before,

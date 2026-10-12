@@ -76,8 +76,7 @@ fn test_resolve_isolated_has_args() {
     assert_eq!(
         args,
         vec!["--isolated".to_string()],
-        "expected --isolated in container args, got: {:?}",
-        args
+        "expected --isolated in container args, got: {args:?}"
     );
 }
 

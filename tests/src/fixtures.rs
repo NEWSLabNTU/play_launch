@@ -334,7 +334,7 @@ pub fn autoware_expected_counts(
 pub fn autoware_map_path() -> String {
     std::env::var("MAP_PATH").unwrap_or_else(|_| {
         let home = std::env::var("HOME").expect("HOME not set");
-        format!("{}/autoware_map/sample-map-planning", home)
+        format!("{home}/autoware_map/sample-map-planning")
     })
 }
 

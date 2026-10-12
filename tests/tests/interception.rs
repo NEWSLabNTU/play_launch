@@ -140,8 +140,7 @@ interception:
     // Should be an object with at least one topic
     assert!(
         stats.as_object().is_some_and(|m| !m.is_empty()),
-        "stats_summary.json should have at least one topic entry, got: {}",
-        stats_content
+        "stats_summary.json should have at least one topic entry, got: {stats_content}"
     );
 
     // Each entry should have pub_count > 0 (talker publishes ~1Hz for 5 seconds).

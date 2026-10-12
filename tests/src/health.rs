@@ -352,7 +352,7 @@ impl fmt::Display for HealthReport {
                 if stderr_tail != "(file not found)" && !stderr_tail.is_empty() {
                     writeln!(f, "    Stderr ({}, last 10 lines):", err_path.display())?;
                     for line in stderr_tail.lines() {
-                        writeln!(f, "      {}", line)?;
+                        writeln!(f, "      {line}")?;
                     }
                 }
             }
