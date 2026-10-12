@@ -57,7 +57,12 @@ def _classify_on_exit(handlers):
 
 
 def visit_node(
-    node: Node, context: LaunchContext, dump: LaunchDump
+    node: Node,
+    context: LaunchContext,
+    dump: LaunchDump,
+    *,
+    lifecycle: bool | None = None,
+    lifecycle_autostart: bool | None = None,
 ) -> list[LaunchDescriptionEntity] | None:
     # Skip ComposableNodeContainers - they are handled by visit_composable_node_container
     # and should only appear in container[] array, not node[]
@@ -346,6 +351,8 @@ def visit_node(
         respawn=respawn,
         respawn_delay=respawn_delay,
         on_exit_shutdown=on_exit_shutdown,
+        lifecycle=lifecycle,
+        lifecycle_autostart=lifecycle_autostart,
         global_params=global_params if global_params else None,
         scope=dump.current_scope_id,
     )

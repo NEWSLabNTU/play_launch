@@ -929,24 +929,37 @@ test-parity:
     fi
 
     gate() {
-        local name="$1" dir="$2"
+        local name="$1" dir="$2" recipe="${3:-compare-dumps}"
         ran=$((ran + 1))
         echo "--- parity/$name"
-        if (cd "$dir" && just compare-dumps) > "/tmp/parity_$name.log" 2>&1; then
+        if (cd "$dir" && just "$recipe") > "/tmp/parity_$name.log" 2>&1; then
             grep -E "^  (Result|  total)" "/tmp/parity_$name.log" | sed 's/^/  /' || true
         else
             echo "  FAILED — full output:"
             sed 's/^/    /' "/tmp/parity_$name.log"
             failed=1
         fi
-        # The recipes leave their two models behind; they are build output.
-        rm -f "$dir/model_rust.yaml" "$dir/model_python.yaml"
+        # The recipes leave their models behind; they are build output.
+        rm -f "$dir"/model_rust*.yaml "$dir"/model_python*.yaml
     }
 
     echo "=== Cross-parser parity (SystemModel: Rust vs Python) ==="
 
     gate simple_test      tests/fixtures/simple_test
     gate container_events tests/fixtures/container_events
+
+    # Phase 86. A `LifecycleNode` with no `autostart` is valid everywhere; the
+    # `autostart` half needs a `launch_ros` that has it (Jazzy), because the
+    # Python parser runs the installed one. Asked of `launch_ros` itself, not
+    # inferred from $ROS_DISTRO.
+    gate lifecycle tests/fixtures/lifecycle
+    if (. /opt/ros/{{ros_distro}}/setup.bash && python3 -c \
+          'import inspect, sys; from launch_ros.actions import LifecycleNode; sys.exit(0 if "autostart" in inspect.signature(LifecycleNode.__init__).parameters else 1)') \
+          >/dev/null 2>&1; then
+        gate lifecycle_autostart tests/fixtures/lifecycle compare-dumps-autostart
+    else
+        echo "  SKIP: parity/lifecycle_autostart: the installed launch_ros (${ROS_DISTRO:-{{ros_distro}}}) has no LifecycleNode autostart — Jazzy or later"
+    fi
 
     if [ -d tests/fixtures/rt_workspace/install ]; then
         gate rt_workspace tests/fixtures/rt_workspace

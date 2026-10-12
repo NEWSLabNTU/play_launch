@@ -1,0 +1,7 @@
+<!-- `<lifecycle_node autostart=...>` - Jazzy only (phase 86). Humble does not
+     expose the element. The XML twin of lifecycle_autostart.launch.py. -->
+<launch>
+  <lifecycle_node pkg="lifecycle" exec="lifecycle_talker" name="lc_on" namespace="" autostart="true"/>
+  <lifecycle_node pkg="lifecycle" exec="lifecycle_talker" name="lc_off" namespace="" autostart="false"/>
+  <lifecycle_node pkg="lifecycle" exec="lifecycle_talker" name="lc_unsaid" namespace=""/>
+</launch>

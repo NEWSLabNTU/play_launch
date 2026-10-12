@@ -1,0 +1,81 @@
+# Lifecycle node parity (play_launch phase 86)
+#
+# A lifecycle node and its `autostart` must reach the SystemModel the same way
+# from both parsers. Two recipes, because the two halves need different ROS:
+#
+# - `compare-dumps`: `LifecycleNode` with no `autostart`. Valid on Humble and
+#   Jazzy, so `just test-parity` runs it everywhere.
+# - `compare-dumps-autostart`: `<lifecycle_node autostart=...>` and
+#   `LifecycleNode(autostart=...)`. Jazzy only — Humble exposes neither the
+#   element nor the argument, so the Python parser (which runs the installed
+#   `launch_ros`) cannot read them there. `just test-parity` reports it as a
+#   SKIP on any other distro.
+
+# Variables
+ros_distro := env_var_or_default('ROS_DISTRO', 'humble')
+
+# The binary that owns resolve: play_launch itself (see simple_test/justfile).
+resolve_bin := `
+    for p in ../../../install/play_launch/lib/play_launch/play_launch; do
+        [ -x "$p" ] && { echo "$p"; exit 0; }
+    done
+    echo play_launch
+`
+
+# Show help
+default:
+    @just --list
+
+# Rust vs Python on the Humble-valid lifecycle file.
+compare-dumps:
+    #!/usr/bin/env bash
+    set -e
+    REPO_ROOT="$(cd ../../.. && pwd)"
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . "$REPO_ROOT/install/setup.bash"
+    export PATH="$REPO_ROOT/install/play_launch/lib/play_launch:$PATH"
+    export PYTHONPATH="$REPO_ROOT/python:$PYTHONPATH"
+
+    echo "=== Rust parser ==="
+    {{resolve_bin}} resolve --parser rust -o model_rust.yaml launch/lifecycle.launch.py
+    echo "=== Python parser ==="
+    {{resolve_bin}} resolve --parser python -o model_python.yaml launch/lifecycle.launch.py
+    echo "=== Expected facts ==="
+    for m in model_rust.yaml model_python.yaml; do
+        python3 "$REPO_ROOT/tests/fixtures/lifecycle/expect.py" "$m" \
+            /lc_talker=lifecycle /talker=plain
+    done
+    echo "=== Diff ==="
+    python3 "$REPO_ROOT/scripts/compare_models.py" model_rust.yaml model_python.yaml
+
+# Rust vs Python on `autostart`, XML and Python, and XML vs Python. Jazzy only.
+compare-dumps-autostart:
+    #!/usr/bin/env bash
+    set -e
+    REPO_ROOT="$(cd ../../.. && pwd)"
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . "$REPO_ROOT/install/setup.bash"
+    export PATH="$REPO_ROOT/install/play_launch/lib/play_launch:$PATH"
+    export PYTHONPATH="$REPO_ROOT/python:$PYTHONPATH"
+
+    for ext in xml py; do
+        echo "=== Rust parser ($ext) ==="
+        {{resolve_bin}} resolve --parser rust -o model_rust_$ext.yaml launch/lifecycle_autostart.launch.$ext
+        echo "=== Python parser ($ext) ==="
+        {{resolve_bin}} resolve --parser python -o model_python_$ext.yaml launch/lifecycle_autostart.launch.$ext
+    done
+    echo "=== Expected facts ==="
+    for m in model_rust_xml.yaml model_python_xml.yaml model_rust_py.yaml model_python_py.yaml; do
+        python3 "$REPO_ROOT/tests/fixtures/lifecycle/expect.py" "$m" \
+            /lc_on=active /lc_off=lifecycle /lc_unsaid=lifecycle
+    done
+    echo "=== Diff (xml) ==="
+    python3 "$REPO_ROOT/scripts/compare_models.py" model_rust_xml.yaml model_python_xml.yaml
+    echo "=== Diff (py) ==="
+    python3 "$REPO_ROOT/scripts/compare_models.py" model_rust_py.yaml model_python_py.yaml
+    echo "=== Diff (xml vs py) ==="
+    python3 "$REPO_ROOT/scripts/compare_models.py" model_rust_xml.yaml model_rust_py.yaml
+
+# Clean generated files
+clean:
+    rm -f model_*.yaml

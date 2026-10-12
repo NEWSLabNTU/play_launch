@@ -68,6 +68,9 @@ class NodeRecord:
     respawn_delay: float | None = None
     # on_exit=Shutdown(): when this node exits, the whole launch goes with it.
     on_exit_shutdown: bool | None = None
+    # LifecycleNode (phase 86): the marker, and its resolved Jazzy `autostart`.
+    lifecycle: bool | None = None
+    lifecycle_autostart: bool | None = None
     global_params: list[tuple[str, str]] | None = None  # From SetParameter action
     scope: int | None = None
 
