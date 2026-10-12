@@ -6,7 +6,10 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.16.0
+
+A lifecycle node starts as the launch file says, and a timer's release
+jitter is charged wherever its period is.
 
 - **New:** a lifecycle node's `autostart` comes from the launch file (phase
   86). `<lifecycle_node>` is read in XML and YAML (it used to be dropped),
