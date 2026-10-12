@@ -31,6 +31,7 @@
 mod allowlist;
 mod drop_counter;
 mod event;
+mod ffi_ext;
 mod introspection;
 mod endpoints;
 mod node_identity;
@@ -80,6 +81,19 @@ struct Originals {
     /// `rcl_node_resolve_name` — expansion AND remapping in the one call rcl
     /// makes itself. Optional only because a non-ROS process has no rcl.
     node_resolve_name: Option<FnRclNodeResolveName>,
+    /// The serialized and loaned publish/take paths. Optional so a missing
+    /// one degrades to an error from that call alone, never a dead
+    /// interceptor; all four exist from Foxy on.
+    publish_serialized: Option<ffi_ext::FnRclPublishSerialized>,
+    publish_loaned: Option<ffi_ext::FnRclPublishLoaned>,
+    take_serialized: Option<ffi_ext::FnRclTakeSerialized>,
+    take_loaned: Option<ffi_ext::FnRclTakeLoaned>,
+    /// Size sampling: `rmw_serialize` plus the rcutils buffer it fills.
+    /// Optional together; without them typed messages report no size.
+    rmw_serialize: Option<ffi_ext::FnRmwSerialize>,
+    uint8_array_init: Option<ffi_ext::FnRcutilsUint8ArrayInit>,
+    uint8_array_fini: Option<ffi_ext::FnRcutilsUint8ArrayFini>,
+    sample_allocator: Option<FnRcutilsGetDefaultAllocator>,
     /// RMW-layer originals (Phase 36.1). Optional — resolved separately
     /// from rcl symbols because the rmw symbols live in
     /// `librmw_implementation.so`, which may not be loaded under
@@ -204,6 +218,40 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
         Some(unsafe { std::mem::transmute::<*mut c_void, FnRclNodeResolveName>(resolve) })
     };
 
+    // `dlsym` on a library handle searches its dependencies too, so the rmw
+    // and rcutils symbols resolve from rcl's handle as well as RTLD_NEXT.
+    let sym = |name: &CStr| {
+        let p = unsafe { libc::dlsym(source, name.as_ptr()) };
+        (!p.is_null()).then_some(p)
+    };
+    let publish_serialized = sym(c"rcl_publish_serialized_message").map(|p| unsafe {
+        std::mem::transmute::<*mut c_void, ffi_ext::FnRclPublishSerialized>(p)
+    });
+    let publish_loaned = sym(c"rcl_publish_loaned_message").map(|p| unsafe {
+        std::mem::transmute::<*mut c_void, ffi_ext::FnRclPublishLoaned>(p)
+    });
+    let take_serialized = sym(c"rcl_take_serialized_message").map(|p| unsafe {
+        std::mem::transmute::<*mut c_void, ffi_ext::FnRclTakeSerialized>(p)
+    });
+    let take_loaned = sym(c"rcl_take_loaned_message").map(|p| unsafe {
+        std::mem::transmute::<*mut c_void, ffi_ext::FnRclTakeLoaned>(p)
+    });
+    let (rmw_serialize, uint8_array_init, uint8_array_fini, sample_allocator) = match (
+        sym(c"rmw_serialize"),
+        sym(c"rcutils_uint8_array_init"),
+        sym(c"rcutils_uint8_array_fini"),
+    ) {
+        (Some(ser), Some(init), Some(fini)) if !alloc.is_null() => unsafe {
+            (
+                Some(std::mem::transmute::<*mut c_void, ffi_ext::FnRmwSerialize>(ser)),
+                Some(std::mem::transmute::<*mut c_void, ffi_ext::FnRcutilsUint8ArrayInit>(init)),
+                Some(std::mem::transmute::<*mut c_void, ffi_ext::FnRcutilsUint8ArrayFini>(fini)),
+                Some(std::mem::transmute::<*mut c_void, FnRcutilsGetDefaultAllocator>(alloc)),
+            )
+        },
+        _ => (None, None, None, None),
+    };
+
     Some(Originals {
         publisher_init: unsafe {
             std::mem::transmute::<*mut c_void, FnRclPublisherInit>(publisher_init)
@@ -221,6 +269,14 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
         string_map_init,
         string_map_fini,
         node_resolve_name,
+        publish_serialized,
+        publish_loaned,
+        take_serialized,
+        take_loaned,
+        rmw_serialize,
+        uint8_array_init,
+        uint8_array_fini,
+        sample_allocator,
         rmw: None, // resolved separately in try_resolve_originals
     })
 }
@@ -295,21 +351,12 @@ unsafe fn record_endpoint(
     topic_name: *const c_char,
     direction: &str,
 ) {
-    let (Some(get_name), Some(get_ns)) = (originals.node_get_name, originals.node_get_namespace)
-    else {
+    if topic_name.is_null() {
+        return;
+    }
+    let Some(fqn) = node_fqn(originals, node) else {
         return;
     };
-    if node.is_null() || topic_name.is_null() {
-        return;
-    }
-    let name_ptr = unsafe { get_name(node) };
-    let ns_ptr = unsafe { get_ns(node) };
-    if name_ptr.is_null() || ns_ptr.is_null() {
-        return;
-    }
-    let name = unsafe { CStr::from_ptr(name_ptr) }.to_string_lossy();
-    let ns = unsafe { CStr::from_ptr(ns_ptr) }.to_string_lossy();
-    let fqn = format!("{}/{}", ns.trim_end_matches('/'), name);
     let raw = unsafe { CStr::from_ptr(topic_name) }.to_string_lossy();
     let topic = expand_topic_name(originals, node, raw.as_ref());
     let msg_type = if type_support.is_null() {
@@ -318,6 +365,150 @@ unsafe fn record_endpoint(
         unsafe { introspection::find_type_identity(type_support) }
     };
     endpoints::observe(&fqn, direction, &topic, msg_type.as_deref().unwrap_or(""));
+}
+
+/// The identity of an rcl publisher or subscription: its `impl` pointer,
+/// not the address of the handle struct.
+///
+/// `rcl_publisher_t` and `rcl_subscription_t` are one pointer to the
+/// endpoint's state, and C code may copy them by value. rcl's own rosout
+/// support does: it initializes the publisher in a stack variable and copies
+/// it into a hash map, so every `/rosout` publish arrives with a handle
+/// address no init call ever saw, and keying on that address lost all of
+/// them. The `impl` pointer is the same in every copy. 0 for a null handle.
+fn rcl_id<T>(handle: *const T) -> usize {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: both handle types are `#[repr(C)] struct { impl *; }`.
+    unsafe { *(handle as *const usize) }
+}
+
+/// The node's fully-qualified name, `None` when rcl cannot say.
+fn node_fqn(originals: &Originals, node: *const rcl_node_t) -> Option<String> {
+    let (get_name, get_ns) = (originals.node_get_name?, originals.node_get_namespace?);
+    if node.is_null() {
+        return None;
+    }
+    let name_ptr = unsafe { get_name(node) };
+    let ns_ptr = unsafe { get_ns(node) };
+    if name_ptr.is_null() || ns_ptr.is_null() {
+        return None;
+    }
+    let name = unsafe { CStr::from_ptr(name_ptr) }.to_string_lossy();
+    let ns = unsafe { CStr::from_ptr(ns_ptr) }.to_string_lossy();
+    Some(format!("{}/{}", ns.trim_end_matches('/'), name))
+}
+
+/// Tell the plugins which node created `handle`. Called before the init
+/// dispatch so the consumer knows the owner when the init event arrives.
+fn dispatch_owner(rt: &Runtime, node: *const rcl_node_t, handle: usize) {
+    if let Some(fqn) = node_fqn(&rt.originals, node) {
+        let node_hash = registry::fnv1a(fqn.as_bytes());
+        plugin_dispatch::dispatch_endpoint_owner(&rt.plugins, handle, &fqn, node_hash);
+    }
+}
+
+/// Serialize one message to learn its size on the wire, through the same
+/// `rmw_serialize` rosbag2 uses, so the answer holds for any middleware.
+/// Returns 0 (not measured) when the functions are missing or it fails.
+///
+/// Called only on sampled messages (see `registry::size_sample_interval_ns`);
+/// the buffer is allocated and freed per sample, so a large message is not
+/// kept resident between samples.
+///
+/// # Safety
+///
+/// `ros_message` must be a valid message of the type `type_support` describes.
+unsafe fn sample_payload_bytes(
+    originals: &Originals,
+    ros_message: *const c_void,
+    type_support: usize,
+) -> u32 {
+    let (Some(serialize), Some(init), Some(fini), Some(get_allocator)) = (
+        originals.rmw_serialize,
+        originals.uint8_array_init,
+        originals.uint8_array_fini,
+        originals.sample_allocator,
+    ) else {
+        return 0;
+    };
+    if ros_message.is_null() {
+        return 0;
+    }
+    let allocator = unsafe { get_allocator() };
+    let mut buf: ffi_ext::rcutils_uint8_array_t = unsafe { std::mem::zeroed() };
+    if unsafe { init(&mut buf, 0, &allocator) } != 0 {
+        return 0;
+    }
+    let ret = unsafe {
+        serialize(
+            ros_message,
+            type_support as *const rosidl_message_type_support_t,
+            &mut buf,
+        )
+    };
+    let len = if ret == 0 { buf.buffer_length } else { 0 };
+    unsafe { fini(&mut buf) };
+    u32::try_from(len).unwrap_or(u32::MAX)
+}
+
+/// Read `header.stamp` at `offset` within `ros_message`.
+///
+/// # Safety
+///
+/// `offset` must come from introspection of this message's type.
+unsafe fn read_stamp(ros_message: *const c_void, offset: Option<usize>) -> Option<Stamp> {
+    let offset = offset?;
+    if ros_message.is_null() {
+        return None;
+    }
+    let stamp = unsafe { &*((ros_message as *const u8).add(offset) as *const BuiltinTime) };
+    Some(Stamp {
+        sec: stamp.sec,
+        nanosec: stamp.nanosec,
+    })
+}
+
+/// Dispatch one published TYPED message (`rcl_publish` and the loaned path).
+///
+/// # Safety
+///
+/// `ros_message` must be the message being published on `publisher`.
+unsafe fn on_typed_publish(rt: &Runtime, publisher: usize, ros_message: *const c_void) {
+    if let Some(entry) = registry::lookup_publisher(publisher, monotonic_ns()) {
+        let stamp = unsafe { read_stamp(ros_message, entry.stamp_offset) };
+        let bytes = entry
+            .sample_with
+            .map(|ts| unsafe { sample_payload_bytes(&rt.originals, ros_message, ts) })
+            .unwrap_or(0);
+        plugin_dispatch::dispatch_publish(&rt.plugins, publisher, entry.topic_hash, stamp, bytes);
+    }
+}
+
+/// Take-side counterpart of [`on_typed_publish`]; call only after a take
+/// that returned a message.
+///
+/// # Safety
+///
+/// `ros_message` must be the message just taken from `subscription`.
+unsafe fn on_typed_take(rt: &Runtime, subscription: usize, ros_message: *const c_void) {
+    if let Some(entry) = registry::lookup_subscription(subscription, monotonic_ns()) {
+        let stamp = unsafe { read_stamp(ros_message, entry.stamp_offset) };
+        let bytes = entry
+            .sample_with
+            .map(|ts| unsafe { sample_payload_bytes(&rt.originals, ros_message, ts) })
+            .unwrap_or(0);
+        plugin_dispatch::dispatch_take(&rt.plugins, subscription, entry.topic_hash, stamp, bytes);
+    }
+}
+
+/// Size of a serialized message, every message: it is already in hand.
+fn serialized_len(msg: *const ffi_ext::rcutils_uint8_array_t) -> u32 {
+    if msg.is_null() {
+        return 0;
+    }
+    u32::try_from(unsafe { (*msg).buffer_length }).unwrap_or(u32::MAX)
 }
 
 fn expand_topic_name(originals: &Originals, node: *const rcl_node_t, topic: &str) -> String {
@@ -766,7 +957,8 @@ pub unsafe extern "C" fn rcl_publisher_init(
             .map(|id| registry::fnv1a(id.as_bytes()));
 
         // Register in the shared registry (used for hot-path lookups).
-        registry::register_publisher(publisher as usize, &topic, stamp_offset);
+        registry::register_publisher(rcl_id(publisher), &topic, stamp_offset, type_support as usize);
+        dispatch_owner(rt, node, rcl_id(publisher));
 
         let topic_hash = registry::fnv1a(topic.as_bytes());
         if let Some(id) = type_identity.as_deref() {
@@ -776,7 +968,7 @@ pub unsafe extern "C" fn rcl_publisher_init(
         }
         plugin_dispatch::dispatch_publisher_init(
             &rt.plugins,
-            publisher as usize,
+            rcl_id(publisher),
             &topic,
             topic_hash,
             stamp_offset,
@@ -801,26 +993,7 @@ pub unsafe extern "C" fn rcl_publish(
     };
 
     if !rt.plugins.is_empty() {
-        // Try stamp-aware lookup first; fall back to full lookup for no-stamp messages.
-        let dispatch_info = if let Some(info) = registry::lookup_publisher(publisher as usize) {
-            let stamp_ptr =
-                unsafe { (ros_message as *const u8).add(info.stamp_offset) as *const BuiltinTime };
-            let stamp = unsafe { &*stamp_ptr };
-            Some((
-                info.topic_hash,
-                Some(Stamp {
-                    sec: stamp.sec,
-                    nanosec: stamp.nanosec,
-                }),
-            ))
-        } else {
-            // No stamp_offset — still dispatch with stamp=None for StatsPlugin.
-            registry::lookup_publisher_full(publisher as usize).map(|(hash, _)| (hash, None))
-        };
-
-        if let Some((topic_hash, stamp)) = dispatch_info {
-            plugin_dispatch::dispatch_publish(&rt.plugins, publisher as usize, topic_hash, stamp);
-        }
+        unsafe { on_typed_publish(rt, rcl_id(publisher), ros_message) };
     }
 
     unsafe { (rt.originals.publish)(publisher, ros_message, allocation) }
@@ -877,7 +1050,8 @@ pub unsafe extern "C" fn rcl_subscription_init(
             .map(|id| registry::fnv1a(id.as_bytes()));
 
         // Register in the shared registry.
-        registry::register_subscription(subscription as usize, &topic, stamp_offset);
+        registry::register_subscription(rcl_id(subscription), &topic, stamp_offset, type_support as usize);
+        dispatch_owner(rt, node, rcl_id(subscription));
 
         let topic_hash = registry::fnv1a(topic.as_bytes());
         if let Some(id) = type_identity.as_deref() {
@@ -887,7 +1061,7 @@ pub unsafe extern "C" fn rcl_subscription_init(
         }
         plugin_dispatch::dispatch_subscription_init(
             &rt.plugins,
-            subscription as usize,
+            rcl_id(subscription),
             &topic,
             topic_hash,
             stamp_offset,
@@ -915,27 +1089,136 @@ pub unsafe extern "C" fn rcl_take(
     let ret = unsafe { (rt.originals.take)(subscription, ros_message, message_info, allocation) };
 
     if ret == 0 && !rt.plugins.is_empty() {
-        let dispatch_info = if let Some(info) = registry::lookup_subscription(subscription as usize)
-        {
-            let stamp_ptr =
-                unsafe { (ros_message as *const u8).add(info.stamp_offset) as *const BuiltinTime };
-            let stamp = unsafe { &*stamp_ptr };
-            Some((
-                info.topic_hash,
-                Some(Stamp {
-                    sec: stamp.sec,
-                    nanosec: stamp.nanosec,
-                }),
-            ))
-        } else {
-            registry::lookup_subscription_full(subscription as usize).map(|(hash, _)| (hash, None))
-        };
-
-        if let Some((topic_hash, stamp)) = dispatch_info {
-            plugin_dispatch::dispatch_take(&rt.plugins, subscription as usize, topic_hash, stamp);
-        }
+        unsafe { on_typed_take(rt, rcl_id(subscription), ros_message) };
     }
 
+    ret
+}
+
+// ---------------------------------------------------------------------------
+// Serialized and loaned message paths
+// ---------------------------------------------------------------------------
+//
+// rcl moves a message three ways, and counting only `rcl_publish`/`rcl_take`
+// left the other two silent: rclcpp's GenericPublisher/GenericSubscription,
+// a `SerializedMessage` callback and rosbag2 use the serialized pair, and
+// zero-copy transports use the loaned pair. Each path dispatches the same
+// publish/take event as the typed one, so the stats see one stream.
+
+/// `RCL_RET_ERROR`, for a path whose original could not be resolved.
+const RCL_RET_ERROR: rcl_ret_t = 1;
+
+/// # Safety
+///
+/// Called by the dynamic linker as an override for
+/// `rcl_publish_serialized_message`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rcl_publish_serialized_message(
+    publisher: *const rcl_publisher_t,
+    serialized_message: *const ffi_ext::rcutils_uint8_array_t,
+    allocation: *mut rmw_publisher_allocation_t,
+) -> rcl_ret_t {
+    let Some(rt) = runtime() else {
+        return RCL_RET_ERROR;
+    };
+    let Some(original) = rt.originals.publish_serialized else {
+        return RCL_RET_ERROR;
+    };
+    if !rt.plugins.is_empty()
+        // `now_ns` 0 never claims a size sample: this path has the exact size.
+        && let Some(entry) = registry::lookup_publisher(rcl_id(publisher), 0)
+    {
+        // Already serialized: no stamp to read without deserializing.
+        plugin_dispatch::dispatch_publish(
+            &rt.plugins,
+            rcl_id(publisher),
+            entry.topic_hash,
+            None,
+            serialized_len(serialized_message),
+        );
+    }
+    unsafe { original(publisher, serialized_message, allocation) }
+}
+
+/// # Safety
+///
+/// Called by the dynamic linker as an override for
+/// `rcl_publish_loaned_message`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rcl_publish_loaned_message(
+    publisher: *const rcl_publisher_t,
+    ros_message: *mut c_void,
+    allocation: *mut rmw_publisher_allocation_t,
+) -> rcl_ret_t {
+    let Some(rt) = runtime() else {
+        return RCL_RET_ERROR;
+    };
+    let Some(original) = rt.originals.publish_loaned else {
+        return RCL_RET_ERROR;
+    };
+    // Before the original: publishing hands the loan back to the
+    // middleware, after which the message may no longer be read.
+    if !rt.plugins.is_empty() {
+        unsafe { on_typed_publish(rt, rcl_id(publisher), ros_message) };
+    }
+    unsafe { original(publisher, ros_message, allocation) }
+}
+
+/// # Safety
+///
+/// Called by the dynamic linker as an override for
+/// `rcl_take_serialized_message`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rcl_take_serialized_message(
+    subscription: *const rcl_subscription_t,
+    serialized_message: *mut ffi_ext::rcutils_uint8_array_t,
+    message_info: *mut rmw_message_info_t,
+    allocation: *mut rmw_subscription_allocation_t,
+) -> rcl_ret_t {
+    let Some(rt) = runtime() else {
+        return RCL_RET_ERROR;
+    };
+    let Some(original) = rt.originals.take_serialized else {
+        return RCL_RET_ERROR;
+    };
+    let ret = unsafe { original(subscription, serialized_message, message_info, allocation) };
+    if ret == 0
+        && !rt.plugins.is_empty()
+        // `now_ns` 0: see `rcl_publish_serialized_message`.
+        && let Some(entry) = registry::lookup_subscription(rcl_id(subscription), 0)
+    {
+        plugin_dispatch::dispatch_take(
+            &rt.plugins,
+            rcl_id(subscription),
+            entry.topic_hash,
+            None,
+            serialized_len(serialized_message),
+        );
+    }
+    ret
+}
+
+/// # Safety
+///
+/// Called by the dynamic linker as an override for `rcl_take_loaned_message`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rcl_take_loaned_message(
+    subscription: *const rcl_subscription_t,
+    loaned_message: *mut *mut c_void,
+    message_info: *mut rmw_message_info_t,
+    allocation: *mut rmw_subscription_allocation_t,
+) -> rcl_ret_t {
+    let Some(rt) = runtime() else {
+        return RCL_RET_ERROR;
+    };
+    let Some(original) = rt.originals.take_loaned else {
+        return RCL_RET_ERROR;
+    };
+    let ret = unsafe { original(subscription, loaned_message, message_info, allocation) };
+    if ret == 0 && !rt.plugins.is_empty() && !loaned_message.is_null() {
+        let msg = unsafe { *loaned_message };
+        unsafe { on_typed_take(rt, rcl_id(subscription), msg) };
+    }
     ret
 }
 

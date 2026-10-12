@@ -46,7 +46,7 @@ impl InterceptionPlugin for StatsPlugin {
             monotonic_ns: monotonic_ns(),
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         };
         crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
@@ -70,12 +70,26 @@ impl InterceptionPlugin for StatsPlugin {
             monotonic_ns: monotonic_ns(),
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         };
         crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
 
     fn on_publish(&self, handle: usize, topic_hash: u64, stamp: Option<Stamp>) {
+        self.on_publish_sized(handle, topic_hash, stamp, 0);
+    }
+
+    fn on_take(&self, handle: usize, topic_hash: u64, stamp: Option<Stamp>) {
+        self.on_take_sized(handle, topic_hash, stamp, 0);
+    }
+
+    fn on_publish_sized(
+        &self,
+        handle: usize,
+        topic_hash: u64,
+        stamp: Option<Stamp>,
+        payload_bytes: u32,
+    ) {
         let (sec, nanosec) = stamp
             .map(|s| (s.sec, s.nanosec))
             .unwrap_or((0, 0));
@@ -93,12 +107,18 @@ impl InterceptionPlugin for StatsPlugin {
             // `monotonic_ns`, whose difference carries preemption too.
             cpu_ns: thread_cpu_ns(),
             tid: tid(),
-            _pad2: [0; 4],
+            payload_bytes,
         };
         crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
 
-    fn on_take(&self, handle: usize, topic_hash: u64, stamp: Option<Stamp>) {
+    fn on_take_sized(
+        &self,
+        handle: usize,
+        topic_hash: u64,
+        stamp: Option<Stamp>,
+        payload_bytes: u32,
+    ) {
         let (sec, nanosec) = stamp
             .map(|s| (s.sec, s.nanosec))
             .unwrap_or((0, 0));
@@ -110,11 +130,11 @@ impl InterceptionPlugin for StatsPlugin {
             stamp_nanosec: nanosec,
             handle: handle as u64,
             monotonic_ns: monotonic_ns(),
-            // Phase 58 W2: see `on_publish`. This is the "start" reading a
-            // path's cost is measured from.
+            // Phase 58 W2: see `on_publish_sized`. This is the "start"
+            // reading a path's cost is measured from.
             cpu_ns: thread_cpu_ns(),
             tid: tid(),
-            _pad2: [0; 4],
+            payload_bytes,
         };
         crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
@@ -145,6 +165,30 @@ mod tests {
         assert_eq!(ev.stamp_nanosec, 500);
         assert_eq!(ev.handle, 0x100);
         assert!(ev.monotonic_ns > 0);
+
+        unsafe {
+            libc::close(shm_fd);
+            libc::close(event_fd);
+        }
+    }
+
+    #[test]
+    fn sized_events_carry_the_payload_size() {
+        let (plugin, mut consumer, shm_fd, event_fd) = setup();
+
+        plugin.on_publish_sized(0x100, 0xAAAA, None, 4096);
+        plugin.on_take_sized(0x200, 0xAAAA, None, 4096);
+        plugin.on_publish(0x100, 0xAAAA, None);
+
+        assert_eq!(consumer.pop().unwrap().payload_bytes, 4096);
+        let take = consumer.pop().unwrap();
+        assert_eq!(take.kind, EventKind::Take);
+        assert_eq!(take.payload_bytes, 4096);
+        assert_eq!(
+            consumer.pop().unwrap().payload_bytes,
+            0,
+            "unsized means unmeasured"
+        );
 
         unsafe {
             libc::close(shm_fd);

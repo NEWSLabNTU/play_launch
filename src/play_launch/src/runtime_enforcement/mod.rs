@@ -364,6 +364,14 @@ impl RuleEngine {
         if matches!(self.mode, EnforceMode::Off) {
             return;
         }
+        // Per-endpoint attribution for `endpoint_stats.json`. These carry a
+        // NODE hash in `topic_hash`, which must not create topic state below.
+        if matches!(
+            event.kind,
+            EventKind::EndpointOwner | EventKind::NodeNameDeclared
+        ) {
+            return;
+        }
         self.observe_hazards(event);
 
         let entry = self.state.entry(event.topic_hash).or_default();
@@ -587,6 +595,9 @@ impl RuleEngine {
                         event.monotonic_ns,
                     );
                 }
+            }
+            EventKind::EndpointOwner | EventKind::NodeNameDeclared => {
+                // Returned early above: no topic is involved.
             }
             EventKind::RingOverflowReport => {
                 // Phase 42.0: ring-overflow drop-count telemetry, not a
@@ -1771,7 +1782,7 @@ mod tests {
             monotonic_ns: 1_000_000_000,
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         };
         re.observe(&pub_event);
         // Subscriber with reliability=reliable
@@ -1785,7 +1796,7 @@ mod tests {
             monotonic_ns: 1_000_000_100,
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         };
         re.observe(&sub_event);
         re.flush();
@@ -1833,7 +1844,7 @@ mod tests {
             monotonic_ns: 1_000_000,
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         };
         re.observe(&event);
         re.flush();
@@ -1944,7 +1955,7 @@ mod tests {
                 monotonic_ns: (i as u64) * 1_000_000_000,
                 cpu_ns: 0,
                 tid: 0,
-                _pad2: [0; 4],
+                payload_bytes: 0,
             });
         }
         re.flush();
@@ -2005,7 +2016,7 @@ mod tests {
             monotonic_ns: 1_000_000,
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         };
         re.observe(&event);
         re.flush();
@@ -2094,7 +2105,7 @@ mod tests {
             monotonic_ns: 1_000_000,
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         };
         re.observe(&event);
         re.flush();
@@ -2186,7 +2197,7 @@ mod tests {
             monotonic_ns: 1_000_000,
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         });
         assert_eq!(re.violation_count, 1, "the warning is still a violation");
         assert!(
@@ -2209,7 +2220,7 @@ mod tests {
                 monotonic_ns: 2_000_000 + i * 1_000_000_000,
                 cpu_ns: 0,
                 tid: 0,
-                _pad2: [0; 4],
+                payload_bytes: 0,
             });
         }
         re.flush();
@@ -2261,7 +2272,7 @@ mod tests {
             monotonic_ns: 1_000_000,
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         });
         assert!(handle.load(Ordering::Acquire));
         assert_eq!(
@@ -2305,7 +2316,7 @@ mod tests {
                 monotonic_ns: 1_000_000,
                 cpu_ns: 0,
                 tid: 0,
-                _pad2: [0; 4],
+                payload_bytes: 0,
             });
         }
         assert_eq!(
@@ -2363,7 +2374,7 @@ mod tests {
             monotonic_ns: t,
             cpu_ns: 0,
             tid: 1,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         };
         // 20ms cadence; the brake answers each scan 7ms later with its stamp.
         for i in 0..20u64 {
@@ -2452,7 +2463,7 @@ mod tests {
             monotonic_ns: t,
             cpu_ns: 0,
             tid: 1,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         };
         for i in 0..20u64 {
             re.observe(&ev(
@@ -2526,7 +2537,7 @@ mod tests {
             monotonic_ns: t,
             cpu_ns: 0,
             tid: 1,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         };
         for i in 0..20u64 {
             let t = 1_000_000_000 + i * 20_000_000;
@@ -2590,7 +2601,7 @@ mod tests {
             monotonic_ns: t,
             cpu_ns: 0,
             tid: 1,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         };
         re.observe(&publish(1_000_000_000));
         re.observe(&publish(1_020_000_000));
@@ -2605,7 +2616,7 @@ mod tests {
             monotonic_ns: 1_119_000_000,
             cpu_ns: 0,
             tid: 1,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         });
         // Two lines for one event: phase 36's `liveliness-runtime` (the DDS
         // fact) and phase 74's `hazard-detected` (what it means).
@@ -2673,7 +2684,7 @@ mod tests {
             monotonic_ns: t,
             cpu_ns: 0,
             tid: 1,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         };
         for i in 0..10u64 {
             re.observe(&pubev(1_000_000_000 + i * 20_000_000, 100 + i as u32));

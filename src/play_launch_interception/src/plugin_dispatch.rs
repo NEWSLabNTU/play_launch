@@ -32,28 +32,44 @@ pub(crate) fn dispatch_subscription_init(
     }
 }
 
-/// Dispatch a publish event to all plugins.
+/// Dispatch a publish event to all plugins. `payload_bytes` is the
+/// message's serialized size, 0 when not measured.
 #[inline]
 pub(crate) fn dispatch_publish(
     plugins: &[Box<dyn InterceptionPlugin>],
     handle: usize,
     topic_hash: u64,
     stamp: Option<Stamp>,
+    payload_bytes: u32,
 ) {
     for p in plugins {
-        p.on_publish(handle, topic_hash, stamp);
+        p.on_publish_sized(handle, topic_hash, stamp, payload_bytes);
     }
 }
 
-/// Dispatch a take event to all plugins.
+/// Dispatch a take event to all plugins. See [`dispatch_publish`].
 #[inline]
 pub(crate) fn dispatch_take(
     plugins: &[Box<dyn InterceptionPlugin>],
     handle: usize,
     topic_hash: u64,
     stamp: Option<Stamp>,
+    payload_bytes: u32,
 ) {
     for p in plugins {
-        p.on_take(handle, topic_hash, stamp);
+        p.on_take_sized(handle, topic_hash, stamp, payload_bytes);
+    }
+}
+
+/// Dispatch the owning node of a newly created endpoint to all plugins.
+#[inline]
+pub(crate) fn dispatch_endpoint_owner(
+    plugins: &[Box<dyn InterceptionPlugin>],
+    handle: usize,
+    node_fqn: &str,
+    node_hash: u64,
+) {
+    for p in plugins {
+        p.on_endpoint_owner(handle, node_fqn, node_hash);
     }
 }

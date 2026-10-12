@@ -93,6 +93,17 @@ pub enum EventKind {
     /// count); `Publish` only feeds `stats.pub_count`. Same field
     /// layout as `Publish` (stamp_sec/stamp_nanosec/handle).
     FrontierPublish = 16,
+    /// Names the node that created an endpoint, so per-endpoint stats can
+    /// tell apart composables sharing one container process. Emitted once
+    /// per publisher/subscription init, BEFORE its `PublisherInit` /
+    /// `SubscriptionInit`. Field overload: `handle` = the rcl endpoint
+    /// handle, `topic_hash` = FNV-1a hash of the node's FQN, whose string
+    /// arrives as `NodeNameDeclared` chunks keyed by that hash.
+    EndpointOwner = 17,
+    /// A chunk of a node FQN string, keyed by its hash in `topic_hash`.
+    /// Same chunking and field overload as `TopicNameDeclared`; a separate
+    /// kind so node names never enter the topic-name catalog.
+    NodeNameDeclared = 18,
 }
 
 /// A single interception event (56 bytes, `#[repr(C)]`).
@@ -138,7 +149,11 @@ pub struct InterceptionEvent {
     /// exactly the case where the declared take→publish path isn't what
     /// actually happened.
     pub tid: u32,
-    pub _pad2: [u8; 4],
+    /// Serialized size of this message in bytes, on `Publish` / `Take` only.
+    /// 0 means not measured: the serialized paths report every message's
+    /// size, a typed message is serialized only when its endpoint is due a
+    /// size sample (once a second by default), so most typed events carry 0.
+    pub payload_bytes: u32,
 }
 
 const _: () = assert!(size_of::<InterceptionEvent>() == 56);
@@ -176,7 +191,7 @@ impl InterceptionEvent {
             monotonic_ns: monotonic_ns(),
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         }
     }
 }
@@ -208,7 +223,7 @@ impl InterceptionEvent {
             monotonic_ns: monotonic_ns(),
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         }
     }
 
@@ -238,7 +253,7 @@ impl InterceptionEvent {
             monotonic_ns: monotonic_ns(),
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         }
     }
 
@@ -266,7 +281,7 @@ impl InterceptionEvent {
             monotonic_ns: monotonic_ns(),
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         }
     }
 
@@ -288,7 +303,7 @@ impl InterceptionEvent {
             monotonic_ns: monotonic_ns(),
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         }
     }
 }
@@ -337,7 +352,7 @@ impl InterceptionEvent {
             monotonic_ns,
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         }
     }
 
@@ -393,7 +408,7 @@ impl InterceptionEvent {
             monotonic_ns: dropped_count,
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         }
     }
 }

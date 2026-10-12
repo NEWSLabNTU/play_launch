@@ -43,6 +43,37 @@ pub(crate) trait InterceptionPlugin: Send + Sync {
     /// message has no `header.stamp`.
     fn on_take(&self, handle: usize, topic_hash: u64, stamp: Option<Stamp>);
 
+    /// [`on_publish`](Self::on_publish) with the message's serialized size
+    /// in bytes, 0 when this message was not measured. Every publish path
+    /// (typed, serialized, loaned) arrives here. The default forwards to
+    /// `on_publish`, so only a plugin that records sizes overrides it.
+    fn on_publish_sized(
+        &self,
+        handle: usize,
+        topic_hash: u64,
+        stamp: Option<Stamp>,
+        _payload_bytes: u32,
+    ) {
+        self.on_publish(handle, topic_hash, stamp);
+    }
+
+    /// Take-side counterpart of [`on_publish_sized`](Self::on_publish_sized).
+    fn on_take_sized(
+        &self,
+        handle: usize,
+        topic_hash: u64,
+        stamp: Option<Stamp>,
+        _payload_bytes: u32,
+    ) {
+        self.on_take(handle, topic_hash, stamp);
+    }
+
+    /// Called once per publisher/subscription init (cold path), BEFORE the
+    /// init callback, naming the node that created the endpoint. In a
+    /// container process several nodes share one ring, so the ring alone
+    /// cannot say whose endpoint a handle is.
+    fn on_endpoint_owner(&self, _handle: usize, _node_fqn: &str, _node_hash: u64) {}
+
     /// Called once per (topic_hash, type_identity) pair the .so resolves
     /// via introspection. `type_identity` is the canonical
     /// `"pkg/msg/Name"` string. Default no-op so existing plugins

@@ -47,15 +47,46 @@ Roadmap: `docs/roadmap/phase-29-rcl_interception.md`
 
 ## Hooked Functions
 
-Four RCL functions are intercepted. Init hooks are cold path (once per
-endpoint). Publish/take hooks are hot path (every message).
+rcl moves a message three ways — typed, serialized and loaned — and each has
+a publish and a take. All six are intercepted, plus the two init hooks. Init
+hooks are cold path (once per endpoint); publish/take hooks are hot path
+(every message).
 
-| Hook                    | Path | Action                                                                 |
-|-------------------------|------|------------------------------------------------------------------------|
-| `rcl_publisher_init`    | Cold | Call original → register in registry → dispatch `on_publisher_init`    |
-| `rcl_publish`           | Hot  | Lookup registry → read stamp → dispatch `on_publish` → call original   |
-| `rcl_subscription_init` | Cold | Call original → register in registry → dispatch `on_subscription_init` |
-| `rcl_take`              | Hot  | Call original → if success, lookup → read stamp → dispatch `on_take`   |
+| Hook                             | Path | Action                                                                   |
+|----------------------------------|------|--------------------------------------------------------------------------|
+| `rcl_publisher_init`             | Cold | Call original → register → dispatch `on_endpoint_owner`, `on_publisher_init` |
+| `rcl_subscription_init`          | Cold | Same, for a subscription                                                 |
+| `rcl_publish`                    | Hot  | Lookup → read stamp → maybe sample size → dispatch publish → call original |
+| `rcl_publish_loaned_message`     | Hot  | Same as `rcl_publish` (before the original: publishing returns the loan) |
+| `rcl_publish_serialized_message` | Hot  | Lookup → dispatch publish with the exact size, no stamp → call original  |
+| `rcl_take`                       | Hot  | Call original → if a message: lookup → read stamp → maybe sample size → dispatch take |
+| `rcl_take_loaned_message`        | Hot  | Same as `rcl_take`, on the loaned message                                |
+| `rcl_take_serialized_message`    | Hot  | Call original → if a message: dispatch take with the exact size          |
+
+The serialized pair carries rclcpp's `GenericPublisher`/`GenericSubscription`,
+`SerializedMessage` callbacks and rosbag2; until it was hooked, traffic there
+read as silence in every stats file. Under Fast DDS on Humble the loaned pair
+is mostly unreached — the middleware declines the loan and rclcpp falls back to
+`rcl_publish` — but a middleware that does loan (Cyclone DDS with iceoryx)
+would otherwise hide its zero-copy topics the same way.
+
+**An endpoint is keyed by the `impl` pointer inside its handle, not the
+handle's address.** `rcl_publisher_t` and `rcl_subscription_t` are one pointer
+to the endpoint's state, and C code may copy them by value. rcl's own rosout
+support does exactly that — it initializes the publisher in a stack variable
+and copies it into a hash map — so every `/rosout` publish arrived with an
+address no init call had registered, and `/rosout` was missing from every
+stats file. The `impl` pointer is the same in every copy (`lib.rs::rcl_id`).
+
+**Message size is measured by serializing.** A serialized message's size is in
+hand, so those paths report it on every message. A typed or loaned message has
+no size until it is serialized, so each endpoint serializes ONE message per
+interval through `rmw_serialize` — the call rosbag2 uses, implemented by every
+middleware — and reports its CDR length on that event
+(`InterceptionEvent.payload_bytes`, 0 meaning not measured). The interval is
+`PLAY_LAUNCH_INTERCEPTION_SIZE_SAMPLE_MS` (default 1000, 0 = off), so the cost
+is bounded per endpoint however fast the topic runs. The buffer is allocated
+and freed per sample, so a large message is not kept resident.
 
 Original function pointers resolved lazily via `OnceLock<Option<Runtime>>`.
 Two resolution strategies for Python support:
@@ -73,6 +104,12 @@ pub(crate) trait InterceptionPlugin: Send + Sync {
     fn on_subscription_init(&self, handle: usize, topic: &str, topic_hash: u64, stamp_offset: Option<usize>);
     fn on_publish(&self, handle: usize, topic_hash: u64, stamp: Option<Stamp>);
     fn on_take(&self, handle: usize, topic_hash: u64, stamp: Option<Stamp>);
+    // Every publish/take path arrives through these; the default forwards to
+    // on_publish/on_take, so only a plugin that records sizes overrides them.
+    fn on_publish_sized(&self, handle: usize, topic_hash: u64, stamp: Option<Stamp>, payload_bytes: u32);
+    fn on_take_sized(&self, handle: usize, topic_hash: u64, stamp: Option<Stamp>, payload_bytes: u32);
+    fn on_endpoint_owner(&self, handle: usize, node_fqn: &str, node_hash: u64) {}
+    // ... plus the rmw-layer and type-identity hooks (Phase 36), all default no-ops
 }
 ```
 
@@ -86,8 +123,41 @@ Each plugin's constructor checks activation env vars and returns
 `AtomicU64` per topic (CAS max-update, ~40-50ns per publish).
 
 **StatsPlugin** — writes every publish/take event to SPSC ring with
-monotonic timestamp. play_launch computes per-topic counts, rates,
-inter-message latency, and pub-to-take ratio.
+monotonic timestamp and, where measured, the message's serialized size.
+play_launch computes per-topic counts, rates, inter-message latency, and
+pub-to-take ratio (`stats_summary.json`), and per-ENDPOINT traffic
+(`endpoint_stats.json`, below).
+
+**TopicNamesPlugin** — ships topic FQNs, message types and, per endpoint, the
+FQN of the node that created it (`EndpointOwner` + `NodeNameDeclared`), so a
+consumer can name what a hash means.
+
+## Per-endpoint stats
+
+`play_log/<ts>/interception/endpoint_stats.json` has one row for every
+publisher and subscription the run created, busiest first, including those
+that never carried a message — which a traffic-keyed summary cannot list,
+since an endpoint with no messages produces no event that would put it there.
+
+The consumer keys an endpoint by `(ring, impl pointer)`: each process has its
+own ring and the pointer is unique within a process. It is seeded by the init
+event, so an endpoint exists in the table from the moment it was created. The
+`EndpointOwner` event that precedes the init event names the node, which is
+what tells apart composables sharing one container process.
+
+Each row: `node`, `member` (the process's model key), `direction`, `topic`,
+`msg_type`, `messages`, `lifetime_s`, `rate_hz` (over the whole lifetime,
+silences included), `since_last_message_s` (absent if none — a large value on
+a busy endpoint means it went quiet), `mean_message_bytes` over `size_samples`
+measured messages, `est_total_bytes` = messages × mean, and `est_bytes_per_s`.
+Totals are exact on the serialized paths and an estimate otherwise; a type
+whose size varies a lot between messages (a point cloud) makes it rougher.
+At shutdown play_launch logs how many publishers never published and
+subscriptions never received, and the three busiest publishers.
+
+Blind spot: rclcpp's intra-process transport hands a message between endpoints
+in one process without going through rcl, so with intra-process comms on, an
+endpoint reported silent may not be.
 
 ### Inert mode
 
@@ -101,7 +171,7 @@ The library is inert (hooks pass through with zero extra work) when:
 
 ```rust
 #[repr(C)]
-pub struct InterceptionEvent {  // 40 bytes
+pub struct InterceptionEvent {  // 56 bytes
     pub kind: EventKind,        // u8
     pub _pad: [u8; 3],
     pub topic_hash: u64,
@@ -109,6 +179,9 @@ pub struct InterceptionEvent {  // 40 bytes
     pub stamp_nanosec: u32,
     pub handle: u64,
     pub monotonic_ns: u64,
+    pub cpu_ns: u64,            // thread CPU time (Phase 58 W2)
+    pub tid: u32,
+    pub payload_bytes: u32,     // serialized size, 0 = not measured
 }
 ```
 

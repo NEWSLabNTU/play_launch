@@ -606,3 +606,94 @@ interception:
         "the exercised topic should be in the traffic summary: {stats_body}"
     );
 }
+
+/// `endpoint_stats.json` has a row for every publisher and subscription the
+/// run created, counted over every path rcl moves a message on.
+///
+/// `message_paths.launch.xml` exercises:
+/// - the SERIALIZED pair (`demo_nodes_cpp`'s `*_serialized_message`), which
+///   the interceptor used not to hook at all, so `/serialized/chatter` was
+///   absent from every stats file on both ends;
+/// - `/rosout`, which rcl publishes through a by-value COPY of the publisher
+///   handle, so a registry keyed on the handle's address lost every message;
+/// - endpoints that never carry a message, which a traffic-keyed summary
+///   cannot list at all.
+///
+/// The loaned talker's `chatter_pod` is asserted counted whichever path it
+/// took: Fast DDS on Humble declines the loan and rclcpp falls back to
+/// `rcl_publish`, so the loaned hooks themselves are not reached here.
+#[test]
+fn test_endpoint_stats_cover_every_message_path() {
+    let config = r#"
+interception:
+  enabled: true
+  stats: true
+"#;
+
+    let work_dir = run_launch_with_config(
+        "launch/message_paths.launch.xml",
+        config,
+        Duration::from_secs(8),
+    );
+    let play_log = work_dir.path().join("play_log/latest");
+
+    let path = play_log.join("interception/endpoint_stats.json");
+    assert!(
+        wait_for_file(&path, Duration::from_secs(5)),
+        "endpoint_stats.json not found at {}",
+        path.display()
+    );
+    let body = std::fs::read_to_string(&path).expect("failed to read endpoint_stats.json");
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&body).expect("invalid JSON");
+
+    let row = |node: &str, direction: &str, topic: &str| -> &serde_json::Value {
+        rows.iter()
+            .find(|r| r["node"] == node && r["direction"] == direction && r["topic"] == topic)
+            .unwrap_or_else(|| panic!("no {direction} row for {node} on {topic}: {body}"))
+    };
+    let messages = |r: &serde_json::Value| r["messages"].as_u64().unwrap();
+
+    // Serialized: counted on both ends, and sized exactly on every message.
+    let ser_pub = row("/serialized/talker", "pub", "/serialized/chatter");
+    let ser_sub = row("/serialized/listener", "sub", "/serialized/chatter");
+    assert!(
+        messages(ser_pub) >= 3,
+        "serialized publishes not counted: {ser_pub}"
+    );
+    assert!(
+        messages(ser_sub) >= 3,
+        "serialized takes not counted: {ser_sub}"
+    );
+    assert_eq!(
+        ser_pub["size_samples"], ser_pub["messages"],
+        "a serialized message's size is in hand, so every one is measured: {ser_pub}"
+    );
+    assert!(
+        ser_pub["mean_message_bytes"].as_f64().unwrap() > 0.0,
+        "{ser_pub}"
+    );
+
+    // Typed: counted, and sized by sampling.
+    let typed = row("/loaned/talker", "pub", "/loaned/chatter_pod");
+    assert!(messages(typed) >= 3, "{typed}");
+    let sampled = typed["size_samples"].as_u64().unwrap();
+    assert!(
+        sampled >= 1 && sampled <= messages(typed),
+        "a typed endpoint is sized by sampling: {typed}"
+    );
+    assert!(typed["est_bytes_per_s"].as_f64().unwrap() > 0.0, "{typed}");
+
+    // /rosout: rcl publishes through a copy of the handle.
+    let rosout = row("/loaned/talker", "pub", "/rosout");
+    assert!(
+        messages(rosout) >= 3,
+        "the talker logs every publish, so its /rosout must carry them: {rosout}"
+    );
+
+    // Silent endpoints are listed, with nothing through them.
+    for (direction, topic) in [("pub", "/silent_topic"), ("sub", "/silent_input")] {
+        let r = row("/silent_pub", direction, topic);
+        assert_eq!(messages(r), 0, "{r}");
+        assert!(r.get("since_last_message_s").is_none(), "{r}");
+    }
+}

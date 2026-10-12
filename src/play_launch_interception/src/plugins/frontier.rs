@@ -134,7 +134,7 @@ impl FrontierPlugin {
                     // `Publish`/`Take` (Phase 58 W2).
                     cpu_ns: 0,
                     tid: 0,
-                    _pad2: [0; 4],
+                    payload_bytes: 0,
                 };
                 crate::drop_counter::push_or_count(&mut prod.lock(), &event);
             }

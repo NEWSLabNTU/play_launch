@@ -483,6 +483,8 @@ play_log/<timestamp>/
 │   ├── frontier_summary.json       # per-topic frontier state
 │   ├── stats_summary.json          # per-topic pub/take counts, rates
 │   ├── events.jsonl                # per-message record read by `measure`
+│   ├── endpoint_stats.json         # every pub/sub created: messages, rate, est. bytes —
+│                                   #   silent endpoints included, busiest first
 │   └── node_identity.tsv           # model key → PID → REAL ROS node name (#0017)
 ├── system_stats.csv, diagnostics.csv
 └── node/<node_name>/{metadata.json, metrics.csv, out, err, pid, status, cmdline}
@@ -669,6 +671,36 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-10-13**: **Per-endpoint traffic, and two paths the stats could not
+  see.** `interception/endpoint_stats.json` lists every publisher and
+  subscription a run created with its message count, rate and estimated
+  bytes, busiest first and silent ones included; the shutdown log names how
+  many never carried a message and the three busiest publishers. Keyed by
+  `(ring, endpoint)`, seeded by the init event, and attributed to a node by
+  a new `EndpointOwner` event, so composables in one container are told
+  apart. Size is exact on the serialized paths and sampled elsewhere: each
+  endpoint serializes one message a second through `rmw_serialize`
+  (`PLAY_LAUNCH_INTERCEPTION_SIZE_SAMPLE_MS`), carried in the event's former
+  padding as `payload_bytes`. Building it found two holes in the existing
+  stats. The serialized publish/take pair was not hooked, so traffic through
+  rclcpp's generic endpoints, `SerializedMessage` callbacks and rosbag2 read
+  as silence; the loaned pair is hooked too. And the registry keyed an
+  endpoint by its handle's ADDRESS, while rcl's rosout code copies the
+  handle by value into a hash map, so every `/rosout` publish was looked up
+  under an address no init call saw and `/rosout` was absent from every
+  stats file. Keyed now by the `impl` pointer inside the handle, which every
+  copy shares. Both verified by negative controls on
+  `test_endpoint_stats_cover_every_message_path`. Not seen: rclcpp's
+  intra-process transport, which bypasses rcl. Design:
+  `docs/design/rcl-interception.md`.
+  Found on the way, #0020's family again: `runtime_enforcement.rs` ran
+  `target/release/play_launch` in preference to the install, and nothing
+  writes there since the colcon config redirected cargo, so its seventeen
+  tests had been exercising a binary from 2026-09-24. It surfaced only
+  because the new `.so` sends event kinds that binary does not know. It and
+  `contract_eject.rs` (an unused copy of the same helper) now use
+  `fixtures::play_launch_bin()`.
 
 - **2026-10-12**: **A lifecycle node's autostart comes from the launch file
   (phase 86 W1-W4).** `<lifecycle_node>` is dispatched like `<node>` in XML

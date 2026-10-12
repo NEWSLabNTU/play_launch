@@ -1,11 +1,13 @@
 //! Publisher / subscription registry.
 //!
 //! Maps opaque `rcl_publisher_t*` / `rcl_subscription_t*` pointer values to
-//! the metadata needed on the hot path: topic hash and stamp offset.
+//! the metadata needed on the hot path: topic hash, stamp offset, and when
+//! the next message is due a size sample.
 //! Frontier tracking is now handled by plugins, not the registry.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::RwLock;
 
@@ -26,100 +28,127 @@ pub fn fnv1a(bytes: &[u8]) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// Publisher registry
+// Publisher / subscription registries
 // ---------------------------------------------------------------------------
 
-/// Info stored per publisher for the hot path.
+/// What the publish/take hooks need about an endpoint, per message.
 #[derive(Clone, Copy)]
-pub struct PubEntry {
+pub struct MsgEntry {
     pub topic_hash: u64,
-    pub stamp_offset: usize,
+    /// Byte offset of `header.stamp` (or a top-level `stamp`), when the
+    /// message type has one.
+    pub stamp_offset: Option<usize>,
+    /// The endpoint's `rosidl_message_type_support_t*`, present only when
+    /// THIS message is due a size sample (see [`size_sample_interval_ns`]).
+    pub sample_with: Option<usize>,
 }
 
-struct PubRecord {
+struct EndpointRecord {
     topic_hash: u64,
     stamp_offset: Option<usize>,
+    /// `rosidl_message_type_support_t*` as passed to `rcl_*_init`. rcl keeps
+    /// it for the endpoint's lifetime, so it stays valid while the handle is.
+    type_support: usize,
+    /// Monotonic time before which no further size sample is taken.
+    next_sample_ns: AtomicU64,
 }
 
-static PUB_REGISTRY: LazyLock<RwLock<HashMap<usize, PubRecord>>> =
+static PUB_REGISTRY: LazyLock<RwLock<HashMap<usize, EndpointRecord>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
-/// Register a publisher. Called from `rcl_publisher_init` hook (cold path).
-pub fn register_publisher(ptr: usize, topic_name: &str, stamp_offset: Option<usize>) {
-    let topic_hash = fnv1a(topic_name.as_bytes());
-    let mut map = PUB_REGISTRY.write();
-    map.insert(
+static SUB_REGISTRY: LazyLock<RwLock<HashMap<usize, EndpointRecord>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// How often each endpoint serializes one message to learn its size, from
+/// `PLAY_LAUNCH_INTERCEPTION_SIZE_SAMPLE_MS` (default 1000; 0 turns sampling
+/// off). One sample a second per endpoint keeps the cost bounded however fast
+/// the topic runs — a 30 Hz point cloud is serialized once, not thirty times.
+pub fn size_sample_interval_ns() -> Option<u64> {
+    static INTERVAL: LazyLock<Option<u64>> = LazyLock::new(|| {
+        let ms = std::env::var("PLAY_LAUNCH_INTERCEPTION_SIZE_SAMPLE_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(1000);
+        (ms > 0).then(|| ms * 1_000_000)
+    });
+    *INTERVAL
+}
+
+fn register(
+    map: &RwLock<HashMap<usize, EndpointRecord>>,
+    ptr: usize,
+    topic_name: &str,
+    stamp_offset: Option<usize>,
+    type_support: usize,
+) {
+    map.write().insert(
         ptr,
-        PubRecord {
-            topic_hash,
+        EndpointRecord {
+            topic_hash: fnv1a(topic_name.as_bytes()),
             stamp_offset,
+            type_support,
+            next_sample_ns: AtomicU64::new(0),
         },
     );
 }
 
-/// Look up a publisher by pointer. Returns `Some(PubEntry)` only if the
-/// publisher is registered AND its message type has a `header.stamp`.
-/// Returns `None` otherwise — the hot path should skip this message.
-pub fn lookup_publisher(ptr: usize) -> Option<PubEntry> {
-    let map = PUB_REGISTRY.read();
+fn lookup(
+    map: &RwLock<HashMap<usize, EndpointRecord>>,
+    ptr: usize,
+    now_ns: u64,
+) -> Option<MsgEntry> {
+    let map = map.read();
     let record = map.get(&ptr)?;
-    Some(PubEntry {
+    let sample_with = match size_sample_interval_ns() {
+        Some(interval) if record.type_support != 0 => {
+            let due = record.next_sample_ns.load(Ordering::Relaxed);
+            // The exchange makes the claim exclusive: of several threads
+            // publishing on one endpoint at the due moment, one samples.
+            (now_ns >= due
+                && record
+                    .next_sample_ns
+                    .compare_exchange(due, now_ns + interval, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok())
+            .then_some(record.type_support)
+        }
+        _ => None,
+    };
+    Some(MsgEntry {
         topic_hash: record.topic_hash,
-        stamp_offset: record.stamp_offset?,
+        stamp_offset: record.stamp_offset,
+        sample_with,
     })
 }
 
-/// Look up a publisher by pointer, returning topic info even if no stamp.
-/// Used by the publish dispatch path for messages without `header.stamp`.
-pub fn lookup_publisher_full(ptr: usize) -> Option<(u64, Option<usize>)> {
-    let map = PUB_REGISTRY.read();
-    let record = map.get(&ptr)?;
-    Some((record.topic_hash, record.stamp_offset))
-}
-
-// ---------------------------------------------------------------------------
-// Subscription registry
-// ---------------------------------------------------------------------------
-
-/// Info stored per subscription for the hot path.
-#[derive(Clone, Copy)]
-pub struct SubEntry {
-    pub topic_hash: u64,
-    pub stamp_offset: usize,
-}
-
-struct SubRecord {
-    topic_hash: u64,
+/// Register a publisher. Called from `rcl_publisher_init` hook (cold path).
+pub fn register_publisher(
+    ptr: usize,
+    topic_name: &str,
     stamp_offset: Option<usize>,
+    type_support: usize,
+) {
+    register(&PUB_REGISTRY, ptr, topic_name, stamp_offset, type_support);
 }
 
-static SUB_REGISTRY: LazyLock<RwLock<HashMap<usize, SubRecord>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+/// Look up a publisher for one message, claiming a size sample if one is
+/// due at `now_ns`. `None` when the publisher was never registered.
+pub fn lookup_publisher(ptr: usize, now_ns: u64) -> Option<MsgEntry> {
+    lookup(&PUB_REGISTRY, ptr, now_ns)
+}
 
 /// Register a subscription. Called from `rcl_subscription_init` hook (cold path).
-pub fn register_subscription(ptr: usize, topic_name: &str, stamp_offset: Option<usize>) {
-    let topic_hash = fnv1a(topic_name.as_bytes());
-    let mut map = SUB_REGISTRY.write();
-    map.insert(ptr, SubRecord { topic_hash, stamp_offset });
+pub fn register_subscription(
+    ptr: usize,
+    topic_name: &str,
+    stamp_offset: Option<usize>,
+    type_support: usize,
+) {
+    register(&SUB_REGISTRY, ptr, topic_name, stamp_offset, type_support);
 }
 
-/// Look up a subscription by pointer. Returns `Some(SubEntry)` only if the
-/// subscription is registered AND its message type has a `header.stamp`.
-pub fn lookup_subscription(ptr: usize) -> Option<SubEntry> {
-    let map = SUB_REGISTRY.read();
-    let record = map.get(&ptr)?;
-    Some(SubEntry {
-        topic_hash: record.topic_hash,
-        stamp_offset: record.stamp_offset?,
-    })
-}
-
-/// Look up a subscription by pointer, returning topic info even if no stamp.
-/// Used by the take dispatch path for messages without `header.stamp`.
-pub fn lookup_subscription_full(ptr: usize) -> Option<(u64, Option<usize>)> {
-    let map = SUB_REGISTRY.read();
-    let record = map.get(&ptr)?;
-    Some((record.topic_hash, record.stamp_offset))
+/// Subscription counterpart of [`lookup_publisher`].
+pub fn lookup_subscription(ptr: usize, now_ns: u64) -> Option<MsgEntry> {
+    lookup(&SUB_REGISTRY, ptr, now_ns)
 }
 
 // ---------------------------------------------------------------------------
@@ -213,6 +242,14 @@ pub fn mark_type_name_for_emission(topic_hash: u64) -> bool {
     TYPE_NAME_EMITTED.write().insert(topic_hash)
 }
 
+static NODE_NAME_EMITTED: LazyLock<RwLock<HashSet<u64>>> =
+    LazyLock::new(|| RwLock::new(HashSet::new()));
+
+/// Same as [`mark_topic_name_for_emission`] for a node FQN keyed by its hash.
+pub fn mark_node_name_for_emission(node_hash: u64) -> bool {
+    NODE_NAME_EMITTED.write().insert(node_hash)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,31 +262,60 @@ mod tests {
 
     #[test]
     fn publisher_round_trip() {
-        register_publisher(0x1000, "/test_pub", Some(16));
-        let entry = lookup_publisher(0x1000).unwrap();
-        assert_eq!(entry.stamp_offset, 16);
+        register_publisher(0x1000, "/test_pub", Some(16), 0);
+        let entry = lookup_publisher(0x1000, 1).unwrap();
+        assert_eq!(entry.stamp_offset, Some(16));
         assert_eq!(entry.topic_hash, fnv1a(b"/test_pub"));
     }
 
     #[test]
-    fn publisher_without_stamp_returns_none() {
-        register_publisher(0x2000, "/no_stamp", None);
-        assert!(lookup_publisher(0x2000).is_none());
+    fn publisher_without_stamp_is_still_found() {
+        // A message type with no stamp is still traffic: the stats count it.
+        register_publisher(0x2000, "/no_stamp", None, 0);
+        let entry = lookup_publisher(0x2000, 1).unwrap();
+        assert_eq!(entry.topic_hash, fnv1a(b"/no_stamp"));
+        assert!(entry.stamp_offset.is_none());
     }
 
     #[test]
-    fn publisher_full_lookup_includes_no_stamp() {
-        register_publisher(0x4000, "/no_stamp_full", None);
-        let (hash, offset) = lookup_publisher_full(0x4000).unwrap();
-        assert_eq!(hash, fnv1a(b"/no_stamp_full"));
-        assert!(offset.is_none());
+    fn unregistered_endpoint_is_not_found() {
+        assert!(lookup_publisher(0xdead_0000, 1).is_none());
+        assert!(lookup_subscription(0xdead_0000, 1).is_none());
     }
 
     #[test]
     fn subscription_round_trip() {
-        register_subscription(0x3000, "/test_sub", Some(8));
-        let entry = lookup_subscription(0x3000).unwrap();
-        assert_eq!(entry.stamp_offset, 8);
+        register_subscription(0x3000, "/test_sub", Some(8), 0);
+        let entry = lookup_subscription(0x3000, 1).unwrap();
+        assert_eq!(entry.stamp_offset, Some(8));
         assert_eq!(entry.topic_hash, fnv1a(b"/test_sub"));
+    }
+
+    #[test]
+    fn a_size_sample_is_due_once_per_interval() {
+        // Default interval is 1 s (the env override is not set under test).
+        let second = 1_000_000_000;
+        register_publisher(0x5000, "/sampled", None, 0xabc);
+        assert_eq!(
+            lookup_publisher(0x5000, 10).unwrap().sample_with,
+            Some(0xabc)
+        );
+        assert_eq!(lookup_publisher(0x5000, 11).unwrap().sample_with, None);
+        assert_eq!(
+            lookup_publisher(0x5000, 10 + second - 1)
+                .unwrap()
+                .sample_with,
+            None
+        );
+        assert_eq!(
+            lookup_publisher(0x5000, 10 + second).unwrap().sample_with,
+            Some(0xabc)
+        );
+    }
+
+    #[test]
+    fn an_endpoint_without_type_support_is_never_sampled() {
+        register_subscription(0x6000, "/untyped", None, 0);
+        assert_eq!(lookup_subscription(0x6000, 10).unwrap().sample_with, None);
     }
 }

@@ -8,6 +8,7 @@
 //! - Aggregating frontier state and message statistics
 //! - Writing summary files on shutdown
 
+mod endpoint_stats;
 pub mod measure;
 pub mod trace;
 
@@ -86,6 +87,13 @@ pub enum EventKind {
     /// `play_launch_interception::event::EventKind::FrontierPublish`
     /// for the full rationale (fixes the stamped-topic 2x rate bug).
     FrontierPublish = 16,
+    /// `play_launch_interception::event::EventKind::EndpointOwner`:
+    /// `handle` = rcl endpoint handle, `topic_hash` = hash of the FQN of the
+    /// node that created it. Precedes that endpoint's init event.
+    EndpointOwner = 17,
+    /// A chunk of a node FQN, keyed by its hash. `TopicNameDeclared`'s
+    /// encoding, kept out of the topic-name catalog.
+    NodeNameDeclared = 18,
 }
 
 /// Interception event (56 bytes, matches play_launch_interception::event::InterceptionEvent).
@@ -111,7 +119,11 @@ pub struct InterceptionEvent {
     /// Producing thread (`gettid`), 0 when no CPU reading was taken.
     /// `cpu_ns` is per-thread, so a delta is only meaningful within one tid.
     pub tid: u32,
-    pub _pad2: [u8; 4],
+    /// Serialized size of this message in bytes, on `Publish` / `Take` only.
+    /// 0 means not measured: the serialized paths report every message's
+    /// size, a typed message is serialized only when its endpoint is due a
+    /// size sample (once a second by default), so most typed events carry 0.
+    pub payload_bytes: u32,
 }
 
 const _: () = assert!(size_of::<InterceptionEvent>() == 56);
@@ -545,6 +557,7 @@ pub async fn run_interception_task(
     let mut frontiers: HashMap<u64, FrontierState> = HashMap::new();
     let mut stats: HashMap<u64, TopicStats> = HashMap::new();
     let mut names = NameCatalog::default();
+    let mut endpoints = endpoint_stats::EndpointTracker::default();
     // Phase 42.0: per-child (per-process) latest reported cumulative
     // drop count, keyed by index into `consumers`. `RingOverflowReport`
     // carries a cumulative-since-process-start count, so later reports
@@ -597,6 +610,7 @@ pub async fn run_interception_task(
                         );
                         process_event(&event, &config, &mut frontiers, &mut stats);
                         names.observe(&event);
+                        endpoints.observe(child_idx, &child.node_name, &event);
                         if let Some(t) = tracer.as_mut() {
                             t.observe(&child.node_name, &event, names.name_of(event.topic_hash));
                         }
@@ -631,6 +645,7 @@ pub async fn run_interception_task(
             total_events += 1;
             process_event(&event, &config, &mut frontiers, &mut stats);
             names.observe(&event);
+            endpoints.observe(child_idx, &child.node_name, &event);
             if let Some(t) = tracer.as_mut() {
                 t.observe(&child.node_name, &event, names.name_of(event.topic_hash));
             }
@@ -660,6 +675,23 @@ pub async fn run_interception_task(
 
     if let Some(log) = event_log.take() {
         log.finish(&names, &log_dir);
+    }
+
+    // Per-endpoint stats. Needs `stats`: the counts come from StatsPlugin's
+    // Publish/Take events. The run's end is read on the children's clock.
+    if config.stats && !endpoints.is_empty() {
+        let interception_dir = log_dir.join("interception");
+        let rows = endpoints.rows(
+            crate::runtime_enforcement::monotonic_now_ns(),
+            &names.names,
+            &names.types,
+        );
+        if let Err(e) = std::fs::create_dir_all(&interception_dir)
+            .map_err(eyre::Report::from)
+            .and_then(|()| endpoint_stats::write(&interception_dir, &rows))
+        {
+            warn!("Interception: endpoint_stats.json not written: {e:#}");
+        }
     }
 
     // Write summaries
@@ -757,6 +789,9 @@ fn process_event(
             // also forwarded to the RuleEngine. Not aggregated into
             // frontier or stats *state*, but folded into the summary
             // JSON at write time via the name/type catalog.
+        }
+        EventKind::EndpointOwner | EventKind::NodeNameDeclared => {
+            // Per-endpoint attribution, handled by `EndpointTracker`.
         }
         EventKind::RingOverflowReport => {
             // Phase 42.0: handled directly in `run_interception_task`'s
@@ -970,7 +1005,7 @@ mod tests {
             monotonic_ns: mono,
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         }
     }
 
@@ -992,7 +1027,7 @@ mod tests {
             monotonic_ns: mono,
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         }
     }
 
@@ -1007,7 +1042,7 @@ mod tests {
             monotonic_ns: mono,
             cpu_ns: 0,
             tid: 0,
-            _pad2: [0; 4],
+            payload_bytes: 0,
         }
     }
 

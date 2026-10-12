@@ -6,6 +6,23 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **New:** `interception/endpoint_stats.json`: every publisher and
+  subscription the run created, with message count, rate, mean message size
+  and estimated bandwidth, busiest first. Endpoints that never carried a
+  message are listed too, and the shutdown log says how many there were.
+  Composables sharing a container are reported per node. Size is exact for
+  serialized messages and sampled once a second per endpoint otherwise
+  (`PLAY_LAUNCH_INTERCEPTION_SIZE_SAMPLE_MS`, 0 to turn it off). Needs
+  interception with `stats` (the default when interception is on).
+- **Fix:** traffic through rcl's serialized publish/take (rclcpp generic
+  endpoints, `SerializedMessage` callbacks, rosbag2) and its loaned
+  publish/take was not counted; topics carried only that way read as silent.
+- **Fix:** `/rosout` was missing from the interception stats. rcl publishes
+  it through a copy of the publisher handle, which the interceptor did not
+  recognise.
+
 ## 0.16.0
 
 A lifecycle node starts as the launch file says, and a timer's release

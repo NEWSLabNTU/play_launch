@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<!--
+  Every way rcl moves a message, for the interception stats.
+
+  rcl has three publish and three take entry points: typed (`rcl_publish` /
+  `rcl_take`), serialized (`rcl_publish_serialized_message` /
+  `rcl_take_serialized_message`, used by rosbag2 and rclcpp's generic and
+  SerializedMessage endpoints) and loaned (`rcl_publish_loaned_message` /
+  `rcl_take_loaned_message`, zero-copy where the middleware supports it).
+  The interceptor counted only the first pair, so traffic on the other two
+  read as silence.
+
+  - `/serialized`: a talker and a listener that both use serialized messages.
+  - `/loaned`: a talker that borrows loaned messages (`chatter_pod` is plain
+    data, the case a middleware can actually loan) and a typed listener.
+  - `silent_publisher.py`: endpoints that never carry a message, so the
+    per-endpoint stats have a zero-count row to report.
+-->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker_serialized_message" name="talker" namespace="/serialized" output="screen"/>
+  <node pkg="demo_nodes_cpp" exec="listener_serialized_message" name="listener" namespace="/serialized" output="screen"/>
+
+  <node pkg="demo_nodes_cpp" exec="talker_loaned_message" name="talker" namespace="/loaned" output="screen"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="listener" namespace="/loaned" output="screen"/>
+
+  <executable cmd="python3 $(dirname)/../scripts/silent_publisher.py" output="screen"/>
+</launch>

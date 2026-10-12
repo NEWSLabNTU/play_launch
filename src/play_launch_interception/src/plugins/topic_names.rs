@@ -5,6 +5,10 @@
 //! can identify topics by name instead of just by hash. Each topic
 //! string is emitted exactly once per process via one-or-more
 //! `TopicNameDeclared` chunk events.
+//!
+//! It also names the node behind each endpoint (`EndpointOwner`, with the
+//! node FQN shipped once as `NodeNameDeclared` chunks), so per-endpoint
+//! stats can be attributed inside a container that hosts several nodes.
 
 use std::sync::Arc;
 
@@ -93,5 +97,24 @@ impl InterceptionPlugin for TopicNamesPlugin {
 
     fn on_type_identity_resolved(&self, topic_hash: u64, type_identity: &str) {
         self.announce_type_name(topic_hash, type_identity);
+    }
+
+    fn on_endpoint_owner(&self, handle: usize, node_fqn: &str, node_hash: u64) {
+        if registry::mark_node_name_for_emission(node_hash) {
+            self.emit_chunks(EventKind::NodeNameDeclared, node_hash, node_fqn.as_bytes());
+        }
+        let event = InterceptionEvent {
+            kind: EventKind::EndpointOwner,
+            _pad: [0; 3],
+            topic_hash: node_hash,
+            stamp_sec: 0,
+            stamp_nanosec: 0,
+            handle: handle as u64,
+            monotonic_ns: crate::event::monotonic_ns(),
+            cpu_ns: 0,
+            tid: 0,
+            payload_bytes: 0,
+        };
+        crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
 }
