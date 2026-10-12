@@ -19,17 +19,6 @@ use std::{path::PathBuf, process::Command};
 
 use play_launch_tests::fixtures;
 
-/// Find the play_launch binary, preferring the cargo debug build (mirrors
-/// `manifest_check.rs`).
-#[allow(dead_code)]
-fn play_launch_bin() -> PathBuf {
-    let cargo_bin = fixtures::repo_root().join("target/debug/play_launch");
-    if cargo_bin.is_file() {
-        return cargo_bin;
-    }
-    fixtures::play_launch_bin()
-}
-
 /// `fixtures::play_launch_cmd`'s equivalent for the relocated CLI: same
 /// cleared-and-repopulated environment, different binary.
 fn resolve_cli_cmd(env: &std::collections::HashMap<String, String>) -> Option<Command> {

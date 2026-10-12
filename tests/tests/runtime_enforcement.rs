@@ -13,23 +13,8 @@ use std::{
     time::Duration,
 };
 
-/// Prefer the cargo-built binary so Phase 36 CLI flags are present.
-/// The install/ binary may be older than the workspace if `just build`
-/// hasn't been re-run since Phase 36 landed.
-fn play_launch_bin_with_cargo_fallback() -> PathBuf {
-    let release = fixtures::repo_root().join("target/release/play_launch");
-    if release.is_file() {
-        return release;
-    }
-    let debug = fixtures::repo_root().join("target/debug/play_launch");
-    if debug.is_file() {
-        return debug;
-    }
-    fixtures::repo_root().join("install/play_launch/lib/play_launch/play_launch")
-}
-
 fn play_launch_cmd_with_cargo(env: &std::collections::HashMap<String, String>) -> Command {
-    let mut cmd = Command::new(play_launch_bin_with_cargo_fallback());
+    let mut cmd = Command::new(fixtures::play_launch_bin());
     cmd.env_clear();
     cmd.envs(env);
     cmd.env("ROS_DOMAIN_ID", (std::process::id() % 200 + 30).to_string());
