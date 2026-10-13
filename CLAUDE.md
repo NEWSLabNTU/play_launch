@@ -481,6 +481,8 @@ play_log/<timestamp>/
 ├── play_launch.log                 # the launcher's OWN log (#0023): header (version, argv,
 │                                   #   config), then play_launch=debug regardless of RUST_LOG
 ├── run_info.json                   # version, argv, cwd, pid, config path — what produced the bundle
+├── health.jsonl                    # every Health issue opened and closed
+├── startup_timeline.json           # per member: spawn, first endpoint/publish, load, ready
 ├── config.yaml                     # copy of --config, when one was given
 ├── params_files/
 ├── interception/                   # when interception enabled
@@ -664,7 +666,7 @@ play_launch context system_model.yaml --tree    # Launch tree inspection
 
 Two crates: parser unit tests (`src/play_launch_parser/`) and integration tests (`tests/`, excluded from workspace). Integration tests use `ManagedProcess` RAII guard (`tests/src/process.rs`) for guaranteed cleanup via `setsid()` + `PR_SET_PDEATHSIG` + PGID kill on Drop.
 
-**DDS isolation**: `play_launch_cmd()` in `tests/src/fixtures.rs` assigns a `ROS_DOMAIN_ID` per invocation that no other running test holds: `next_domain_id()` claims it with an exclusive `flock` on `tmp/ros_domains/<id>.lock`, released by the kernel when the test process exits. It used to hash PID + counter into 232 slots unclaimed, which with ~16 concurrent tests shares a domain roughly 40% of the time; the Health page's foreign-node check found it (another test's `play_launch` on its domain).
+**DDS isolation**: `play_launch_cmd()` in `tests/src/fixtures.rs` assigns a `ROS_DOMAIN_ID` per invocation that no other running test holds: `next_domain_id()` claims it with an exclusive `flock` on `tmp/ros_domains/<id>.lock`, released by the kernel when the test process exits. It used to hash PID + counter into 232 slots unclaimed, which with ~16 concurrent tests shares a domain roughly 40% of the time; the Health page's foreign-node check found it (another test's `play_launch` on its domain), and on its next run found `runtime_enforcement.rs` still choosing `pid % 200 + 30` for itself. A suite that builds its own `Command` must still take its domain from `next_domain_id()`.
 
 Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concurrent_loading,container_events,parallel_loading,rt_workspace}/` — 4 of them (`autoware`, `simple_test`, `container_events`, `rt_workspace`) have a `just compare-dumps` recipe (model-based parser parity, self-contained — resolves both parsers itself; Phase 47.B5 removed the `dump-rust`/`dump-python`/`dump-both`/`compare-dumps-record` record.json-based recipes). **`just test-all` runs the parity gates** (`just test-parity`), because a gate
 nobody runs is a gate that rots: in that state one of them found #0021 — the
@@ -677,6 +679,21 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-10-13**: **The startup timeline** (`health-page.md` W7,
+  `health/startup.rs`). Per member: spawn, load start, load (from state
+  events) and, when intercepting, first endpoint and first publish per node
+  (`EndpointTracker::startup_marks`, joined by node FQN, else by model key —
+  member ids carry a `node:`/`composable:` prefix the ring key does not).
+  State-event times are taken AS EMITTED, through
+  `member_actor::events::set_emit_hook`: taken where the forwarder receives
+  them they read ~250 ms late, since it drains only after the spawn burst.
+  `GET /api/startup`, `startup_timeline.json` at startup complete, a Gantt
+  on the Health page, `never_ready` at 60 s (warning; not for a member with
+  recent exits). Running it on Autoware found two things elsewhere:
+  `/parameter_events` subscribers raised W5's `delivery_latency` through
+  startup (excluded now, with the deficit rule), and a tab with the pre-W6
+  JS kept the graph cost at 3.2% of a core against 0.33% reloaded.
 
 - **2026-10-13**: **The graph against the run** (`health-page.md` W6,
   `health/graph.rs`). Every 10 s the health task reads node names and each
@@ -708,8 +725,10 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   coverage. 64 log buckets, 10 µs to 10 s (~25% wide); a percentile reports
   its bucket's upper edge, capped at the largest sample. Entities gains a
   latency column, `endpoint_stats.json` a `latency` block, Health a
-  `delivery_latency` warning (p99 over the last 10–20 s > max(100 ms, 2 ×
-  the topic's period), ≥20 samples). Fixture `latency_probe.launch.xml`:
+  `delivery_latency` warning (p95 over the last 10–20 s > max(100 ms, 2 ×
+  the topic's period), ≥20 samples; p95 because with a few dozen samples
+  the p99 is the single largest, and one late message after discovery
+  flagged a subscriber that keeps up). Fixture `latency_probe.launch.xml`:
   fast subscriber p99 1 ms, one sleeping 150 ms at depth 10 p99 467 ms.
   Blind to unstamped types and rclcpp intra-process.
 

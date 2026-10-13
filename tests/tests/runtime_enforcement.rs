@@ -17,7 +17,9 @@ fn play_launch_cmd_with_cargo(env: &std::collections::HashMap<String, String>) -
     let mut cmd = Command::new(fixtures::play_launch_bin());
     cmd.env_clear();
     cmd.envs(env);
-    cmd.env("ROS_DOMAIN_ID", (std::process::id() % 200 + 30).to_string());
+    // Claimed like every other suite's (`fixtures::next_domain_id`): a bare
+    // `pid % 200 + 30` put this suite's nodes on other tests' domains.
+    cmd.env("ROS_DOMAIN_ID", fixtures::next_domain_id().to_string());
     let fastdds_profile = fixtures::repo_root().join("tests/fixtures/fastdds_no_shm.xml");
     if fastdds_profile.is_file() {
         cmd.env("FASTRTPS_DEFAULT_PROFILES_FILE", &fastdds_profile);

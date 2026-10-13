@@ -1,6 +1,11 @@
 # Health page (Tier 1 observability)
 
-**Status: W0–W6 done (2026-10-13); W7 next.** W6: `health/graph.rs`
+**Status: W0–W7 done (2026-10-13).** W7: `health/startup.rs` records
+each member's spawn, load start and load (timestamped as the actor emits
+them) and, from the interceptor, each node's first endpoint and first
+publish; `GET /api/startup`, `startup_timeline.json` at startup complete,
+a Gantt on the Health page with the last-ready member highlighted, and a
+`never_ready` warning at 60 s. W6: `health/graph.rs`
 reads the graph every 10 s on `spawn_blocking` and reports nodes the run
 expects and the graph lacks, nodes on the domain the run did not start,
 names two nodes share, and subscriptions whose topic is a typo of a
@@ -144,6 +149,39 @@ member that finished last highlighted: the one that set the startup time.
 **Rule.** NeverReady: a member not ready 60 s after spawn, or whatever
 `startup` config says (error).
 
+As built (W7):
+
+- **Times are taken where events are emitted**, through a hook in
+  `events::emit`. The first version took them where the forwarder receives
+  them, and on Autoware nodes "spawned" ~250 ms after their first endpoint:
+  the receiver drains only after the spawn burst. Even at emission a fast
+  node can create an endpoint a few ms before its `Started` (post-fork setup
+  sits between); the data keeps both and the chart starts at the earlier.
+- **Ready** is per kind: a ROS node at its first endpoint when intercepting,
+  else at spawn; an `<executable>` and a container at spawn; a composable
+  at its load. Lifecycle activation is not a milestone yet (it is a log
+  line, not an event).
+- **Interceptor marks join by node FQN** through the FQN map, else by the
+  process: the ring is keyed by model key and the member id carries a kind
+  prefix (`node:/system/aggregator_node-1`), which the first Autoware run
+  missed for all eleven unnamed nodes. `/rosout` and `/parameter_events`
+  publishes are not a node's first publish.
+- **NeverReady is a warning**, at 60 s, and skips a member with recent exits
+  (a crash loop is reported as one; rviz2 without a display was both).
+- The chart is HTML, not SVG: one grid row per member, segments positioned
+  in percent.
+
+Autoware (planning simulator, intercepting): complete at 6–11 s depending
+on host load, 33 of 34 nodes ready by first endpoint (rviz2 crash-loops),
+all 70 composables; last ready a `topic_state_monitor` or `glog_component`.
+The page also showed `/parameter_events` subscribers raising
+`delivery_latency` through startup (W5): `ParameterEvent` has a top-level
+stamp and the burst queues behind constructors. Event topics are now
+excluded from both the latency and the take-deficit rule. And it measured
+W6's fetch change: a tab still running the old JS kept play_launch's graph
+cost at 3.2% of a core (one 34 ms, 500 KB snapshot per state event, and
+rviz2's crash loop makes one every few seconds); reloaded, 0.33%.
+
 ### D. Delivery latency per subscription
 
 For a stamped message the interceptor reports the publish (monotonic time,
@@ -183,7 +221,11 @@ As built (W5), four departures from the sketch above:
   publishers sharing stamps.
 - **"For 10 s"** is the window, not a debounce: the live histogram covers
   the current 10 s epoch and the one before, and the rule needs ≥20 matched
-  takes in it. The Health book's two-absent-reports rule does the rest.
+  takes in it.
+- **Judged on p95, not p99** (W7): with a few dozen samples the p99 is the
+  largest one, and in the fixture a single message delivered 114 ms late
+  after discovery flagged the subscriber that keeps up. Event topics
+  (`/parameter_events`, `/rosout`) are not judged at all. The Health book's two-absent-reports rule does the rest.
 
 The fixture (`latency_probe.launch.xml`: 20 Hz `std_msgs/Header`, a
 subscriber that returns at once and one that sleeps 150 ms with depth 10)

@@ -61,6 +61,8 @@ pub struct WebState {
     pub entities: Option<tokio::sync::watch::Receiver<Arc<crate::interception::EntitySnapshot>>>,
     /// The Health page's snapshot. `None` when the caller runs no health task.
     pub health: Option<tokio::sync::watch::Receiver<Arc<crate::health::HealthSnapshot>>>,
+    /// The startup timeline (`GET /api/startup`). `None` without a health task.
+    pub startup: Option<tokio::sync::watch::Receiver<Arc<crate::health::startup::StartupTimeline>>>,
 }
 
 impl WebState {
@@ -86,6 +88,7 @@ impl WebState {
             events_switch: None,
             entities: None,
             health: None,
+            startup: None,
         }
     }
 
@@ -95,6 +98,15 @@ impl WebState {
         rx: Option<tokio::sync::watch::Receiver<Arc<crate::health::HealthSnapshot>>>,
     ) -> Self {
         self.health = rx;
+        self
+    }
+
+    /// Hand over the receiving end of the startup timeline.
+    pub fn with_startup(
+        mut self,
+        rx: Option<tokio::sync::watch::Receiver<Arc<crate::health::startup::StartupTimeline>>>,
+    ) -> Self {
+        self.startup = rx;
         self
     }
 
@@ -216,6 +228,7 @@ pub fn create_router(state: Arc<WebState>, bind_addr: &str, port: u16) -> Router
         .route("/api/graph", get(handlers::get_graph))
         .route("/api/launch-tree", get(handlers::get_launch_tree))
         .route("/api/health/issues", get(handlers::get_health))
+        .route("/api/startup", get(handlers::get_startup))
         .route("/api/health/issues/stream", get(sse::stream_health))
         .route("/api/entities", get(handlers::get_entities))
         .route("/api/entities/stream", get(sse::stream_entities))

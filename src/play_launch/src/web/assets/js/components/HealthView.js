@@ -90,6 +90,145 @@ function followLink(link) {
     currentView.value = link.view;
 }
 
+// --- startup timeline -----------------------------------------------------
+
+/** Poll `/api/startup` every 2 s until startup completes, then every 30 s. */
+function useStartupTimeline() {
+    const [t, setT] = useState(null);
+    useEffect(() => {
+        let live = true;
+        let timer = null;
+        const poll = async () => {
+            let done = false;
+            try {
+                const r = await fetch('/api/startup');
+                if (r.ok) {
+                    const body = await r.json();
+                    if (!live) return;
+                    setT(body);
+                    done = body.complete_ms != null;
+                }
+            } catch (_) { /* retried below */ }
+            if (live) timer = setTimeout(poll, done ? 30000 : 2000);
+        };
+        poll();
+        return () => { live = false; if (timer) clearTimeout(timer); };
+    }, []);
+    return t;
+}
+
+const KIND_TAG = { node: 'node', executable: 'exec', container: 'cont', composable: 'comp' };
+
+function fmtMs(ms) {
+    if (ms == null) return '—';
+    return ms < 10000 ? (ms / 1000).toFixed(2) + 's' : (ms / 1000).toFixed(1) + 's';
+}
+
+/** Segments of one member's bar, as [from, to, class, title]. */
+function startupSegments(r, end) {
+    const seg = [];
+    if (r.kind === 'composable') {
+        if (r.load_started_ms != null) {
+            const to = r.loaded_ms ?? r.failed_ms ?? end;
+            seg.push([r.load_started_ms, to, r.loaded_ms != null ? 'st-load' : (r.failed_ms != null ? 'st-failed' : 'st-wait'),
+                'loading ' + fmtMs(r.load_started_ms) + ' → ' + (r.loaded_ms != null ? fmtMs(r.loaded_ms) : 'not loaded')]);
+        }
+    } else if (r.spawned_ms != null) {
+        if (r.kind === 'node' && r.first_endpoint_ms != null) {
+            // The actor reports a spawn after its post-fork setup, and a fast
+            // node can create its first endpoint inside that window.
+            const from = Math.min(r.spawned_ms, r.first_endpoint_ms);
+            seg.push([from, r.first_endpoint_ms, 'st-start',
+                'process start to first endpoint: ' + fmtMs(r.first_endpoint_ms - from)]);
+            if (r.first_publish_ms != null && r.first_publish_ms > r.first_endpoint_ms) {
+                seg.push([r.first_endpoint_ms, r.first_publish_ms, 'st-wired',
+                    'first endpoint to first publish: ' + fmtMs(r.first_publish_ms - r.first_endpoint_ms)]);
+            }
+        } else if (r.ready_ms == null && r.failed_ms == null) {
+            seg.push([r.spawned_ms, end, 'st-wait', 'spawned at ' + fmtMs(r.spawned_ms) + ', not ready']);
+        } else {
+            seg.push([r.spawned_ms, r.spawned_ms, 'st-start', 'spawned at ' + fmtMs(r.spawned_ms)]);
+        }
+    }
+    return seg;
+}
+
+function StartupTimeline() {
+    const t = useStartupTimeline();
+    const [order, setOrder] = useState('spawn');
+    const [open, setOpen] = useState(true);
+    if (!t || !t.rows || t.rows.length === 0) return null;
+
+    const end = Math.max(t.complete_ms ?? t.now_ms, 1);
+    const span = end * 1.02;
+    const pct = (ms) => Math.min(100, Math.max(0, (ms / span) * 100));
+    const rows = t.rows.slice();
+    if (order === 'ready') {
+        const key = (r) => r.ready_ms ?? (r.failed_ms != null ? -1 : Infinity);
+        rows.sort((a, b) => key(b) - key(a));
+    }
+    const last = t.rows.find(r => r.id === t.last_ready);
+    const pending = t.rows.filter(r => r.ready_ms == null && r.failed_ms == null).length;
+    const ticks = [];
+    const step = [100, 250, 500, 1000, 2000, 5000, 10000, 20000, 30000, 60000, 120000]
+        .find(s => end / s <= 8) || 300000;
+    for (let x = 0; x <= end; x += step) ticks.push(x);
+
+    return html`
+        <section class="hl-section">
+            <h3 class="hl-heading hl-toggle" onClick=${() => setOpen(!open)}>
+                <span class="hl-caret">${open ? '▾' : '▸'}</span>
+                Startup${' '}
+                <span class="hl-muted hl-heading-count">
+                    ${t.complete_ms != null
+                        ? html`complete at <b>${fmtMs(t.complete_ms)}</b>${last ? html`; last ready: <b>${last.name}</b> at ${fmtMs(last.ready_ms)}` : ''}`
+                        : html`in progress, ${fmtMs(t.now_ms)}; ${pending} not ready`}
+                </span>
+            </h3>
+            ${open && html`
+                <div class="st-controls">
+                    <label>order <select value=${order} onChange=${(e) => setOrder(e.target.value)}>
+                        <option value="spawn">by spawn</option>
+                        <option value="ready">last ready first</option>
+                    </select></label>
+                    <span class="st-legend"><i class="st-start"></i>${t.intercepting ? 'start → node up' : 'spawned'}</span>
+                    ${t.intercepting && html`<span class="st-legend"><i class="st-wired"></i>up → first publish</span>`}
+                    <span class="st-legend"><i class="st-load"></i>composable load</span>
+                    <span class="st-legend"><i class="st-wait"></i>not ready</span>
+                    <span class="st-legend"><i class="st-failed"></i>failed</span>
+                    ${!t.intercepting && html`<span class="hl-muted">nodes count as ready at spawn; --interception on shows when each node came up</span>`}
+                </div>
+                <div class="st-chart">
+                    <div class="st-row st-axis">
+                        <div class="st-label"></div>
+                        <div class="st-track">
+                            ${ticks.map(x => html`<span class="st-tick" style=${{ left: pct(x) + '%' }}>${fmtMs(x)}</span>`)}
+                        </div>
+                    </div>
+                    ${rows.map(r => html`
+                        <div key=${r.id} class=${'st-row' + (r.id === t.last_ready ? ' st-last' : '')}>
+                            <div class="st-label" title=${r.id + ' (' + r.kind + (r.container ? ' in ' + r.container : '') + ')'}>
+                                <span class=${'st-kind st-kind-' + r.kind}>${KIND_TAG[r.kind] || '?'}</span>${r.name}
+                            </div>
+                            <div class="st-track">
+                                ${t.complete_ms != null && html`<span class="st-complete" style=${{ left: pct(t.complete_ms) + '%' }}></span>`}
+                                ${startupSegments(r, end).map(([a, b, cls, title], i) => html`
+                                    <span key=${i} class=${'st-seg ' + cls} title=${r.name + ': ' + title}
+                                        style=${{ left: pct(a) + '%', width: Math.max(0.3, pct(b) - pct(a)) + '%' }}></span>`)}
+                                ${r.first_publish_ms != null && html`<span class="st-pub" title=${'first publish at ' + fmtMs(r.first_publish_ms)}
+                                    style=${{ left: pct(r.first_publish_ms) + '%' }}></span>`}
+                                ${r.failed_ms != null && html`<span class="st-fail" title=${'failed at ' + fmtMs(r.failed_ms) + (r.error ? ': ' + r.error : '')}
+                                    style=${{ left: pct(r.failed_ms) + '%' }}>✕</span>`}
+                            </div>
+                            <div class="st-when">${r.ready_ms != null ? fmtMs(r.ready_ms) : (r.failed_ms != null ? 'failed' : 'waiting')}</div>
+                        </div>
+                    `)}
+                </div>
+            `}
+        </section>
+    `;
+}
+
 // --- pieces ---------------------------------------------------------------
 
 function SeverityBadge({ severity }) {
@@ -385,6 +524,8 @@ export function HealthView() {
                     `}
                 </section>
             `}
+
+            <${StartupTimeline} />
 
             ${snap && snap.logs && html`<${Logs} logs=${snap.logs} />`}
 

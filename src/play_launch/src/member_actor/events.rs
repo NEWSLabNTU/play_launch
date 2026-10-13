@@ -164,6 +164,19 @@ pub enum StateEvent {
     },
 }
 
+type EmitHook = Box<dyn Fn(&StateEvent) + Send + Sync>;
+static EMIT_HOOK: std::sync::OnceLock<EmitHook> = std::sync::OnceLock::new();
+
+/// Observe every state event at the moment an actor emits it, before the
+/// channel. For the startup timeline (`health::startup`): the receiving end
+/// starts draining only once every member has been handed its spawn, so the
+/// time an event is RECEIVED can be hundreds of milliseconds after the time
+/// it happened — measured on Autoware as nodes "spawned" after their first
+/// endpoint existed. Set once per process; later calls are ignored.
+pub fn set_emit_hook(hook: impl Fn(&StateEvent) + Send + Sync + 'static) {
+    let _ = EMIT_HOOK.set(Box::new(hook));
+}
+
 /// Send a state event, logging instead of silently dropping on failure
 /// (phase-51.3: the reducer derives the web mirror from this stream, so a
 /// dropped event is a lost web transition — a real defect, not noise).
@@ -171,6 +184,9 @@ pub enum StateEvent {
 /// gone (shutdown teardown), so this logs at debug during normal exit
 /// paths would be noise — error is right: it should never happen mid-run.
 pub async fn emit(tx: &tokio::sync::mpsc::Sender<StateEvent>, event: StateEvent) {
+    if let Some(hook) = EMIT_HOOK.get() {
+        hook(&event);
+    }
     if let Err(e) = tx.send(event).await {
         tracing::error!(
             "StateEvent for '{}' dropped — receiver gone: {:?}",

@@ -8,6 +8,16 @@ allowance heavily.
 
 ## Unreleased
 
+- **New:** a startup timeline on the Health page: one bar per member from
+  spawn to ready (a node's first publisher or subscription when
+  intercepting, a composable's load), with the first publish marked and the
+  member that finished last highlighted. Also `GET /api/startup` and
+  `startup_timeline.json` in the log directory. A member not ready 60 s
+  after it was started is reported.
+- **Fix:** subscribers of `/parameter_events` were reported as taking
+  messages late during startup, when every node publishes its parameters
+  at once. Event topics are no longer judged for delivery latency or for
+  taking fewer messages than published.
 - **New:** the Health page compares the ROS graph with the run, every 10 s:
   a node the launch named that has been up 30 s but is not discoverable; a
   node on the same `ROS_DOMAIN_ID` this run did not start (another launch, a
@@ -24,7 +34,7 @@ allowance heavily.
   page has a latency column (p99, p50 below; the tooltip gives the max,
   sample count and the share of stamped takes matched), `endpoint_stats.json`
   gives the same over the whole run, and the Health page warns about a
-  subscription whose p99 over the last 10–20 s is above both 100 ms and
+  subscription whose p95 over the last 10–20 s is above both 100 ms and
   twice the topic's period. Needs interception (`--interception on`).
 - **New:** the Health page watches logs. Per member: lines and bytes per
   second, ERROR and WARN lines per minute, and the most frequent messages

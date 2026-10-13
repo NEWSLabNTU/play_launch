@@ -51,6 +51,8 @@ pub(super) struct Endpoint {
     /// its init event, so `created_ns` is late and the rate is an upper bound.
     pub(super) seen_without_init: bool,
     pub(super) messages: u64,
+    /// Monotonic time of the first message; 0 before one.
+    pub(super) first_message_ns: u64,
     pub(super) last_message_ns: u64,
     pub(super) sampled_bytes: u64,
     pub(super) size_samples: u64,
@@ -78,6 +80,7 @@ impl Endpoint {
             created_ns: at_ns,
             seen_without_init: false,
             messages: 0,
+            first_message_ns: 0,
             last_message_ns: 0,
             sampled_bytes: 0,
             size_samples: 0,
@@ -86,6 +89,17 @@ impl Endpoint {
             latency: None,
         }
     }
+}
+
+/// A node's first endpoint and first publish, on `CLOCK_MONOTONIC`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StartupMark {
+    /// Model key of the process.
+    pub member: String,
+    /// The node's FQN, when the interceptor named it.
+    pub node: Option<String>,
+    pub first_endpoint_ns: u64,
+    pub first_publish_ns: Option<u64>,
 }
 
 /// One row of `endpoint_stats.json`.
@@ -139,6 +153,7 @@ pub(crate) struct EndpointRow {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub(crate) struct LatencySummary {
     pub p50_ms: Option<f64>,
+    pub p95_ms: Option<f64>,
     pub p99_ms: Option<f64>,
     pub max_ms: Option<f64>,
     /// Takes matched to their publish.
@@ -152,6 +167,7 @@ impl LatencySummary {
     pub(crate) fn of(h: &super::latency::Histogram, lat: &Latency) -> Option<Self> {
         Some(Self {
             p50_ms: h.quantile_ms(0.5),
+            p95_ms: h.quantile_ms(0.95),
             p99_ms: h.quantile_ms(0.99),
             max_ms: h.max_ms(),
             samples: h.samples(),
@@ -256,6 +272,9 @@ impl EndpointTracker {
                     ep.seen_without_init = true;
                     ep
                 });
+                if ep.messages == 0 {
+                    ep.first_message_ns = event.monotonic_ns;
+                }
                 ep.messages += 1;
                 ep.last_message_ns = ep.last_message_ns.max(event.monotonic_ns);
                 if event.payload_bytes > 0 {
@@ -297,6 +316,38 @@ impl EndpointTracker {
                 lat.add(take_ns, latency_ns);
             }
         }
+    }
+
+    /// When each node of each process first created an endpoint and first
+    /// published, for the startup timeline. Publishes on `/rosout` and
+    /// `/parameter_events` are left out: every node makes them while it
+    /// initialises, and the question is when it first published its data.
+    pub(crate) fn startup_marks(&self, topic_names: &HashMap<u64, String>) -> Vec<StartupMark> {
+        let mut marks: HashMap<(&str, Option<u64>), StartupMark> = HashMap::new();
+        for ep in self.retired.iter().chain(self.live.values()) {
+            if ep.seen_without_init {
+                continue;
+            }
+            let m = marks
+                .entry((ep.member.as_str(), ep.node_hash))
+                .or_insert_with(|| StartupMark {
+                    member: ep.member.clone(),
+                    node: ep.node_hash.and_then(|h| self.node_names.get(&h).cloned()),
+                    first_endpoint_ns: ep.created_ns,
+                    first_publish_ns: None,
+                });
+            m.first_endpoint_ns = m.first_endpoint_ns.min(ep.created_ns);
+            let infrastructure = topic_names
+                .get(&ep.topic_hash)
+                .is_some_and(|t| t == "/rosout" || t == "/parameter_events");
+            if ep.direction == Direction::Pub && ep.messages > 0 && !infrastructure {
+                m.first_publish_ns = Some(
+                    m.first_publish_ns
+                        .map_or(ep.first_message_ns, |f| f.min(ep.first_message_ns)),
+                );
+            }
+        }
+        marks.into_values().collect()
     }
 
     pub(crate) fn is_empty(&self) -> bool {

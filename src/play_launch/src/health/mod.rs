@@ -27,6 +27,7 @@ use crate::{interception::EntitySnapshot, util::self_cost};
 
 pub mod graph;
 pub mod logs;
+pub mod startup;
 
 /// FNV-1a, for stable issue keys built from free text.
 pub(crate) fn fnv(s: &str) -> u64 {
@@ -554,6 +555,32 @@ pub fn self_cost_condition(window: &self_cost::Usage) -> Option<Condition> {
     })
 }
 
+/// `startup_timeline.json`, written once, when the run reaches startup
+/// complete.
+fn write_startup_timeline(log_dir: &Path, t: &startup::StartupTimeline) {
+    let path = log_dir.join("startup_timeline.json");
+    match serde_json::to_string_pretty(t) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&path, json) {
+                tracing::warn!("could not write {}: {e}", path.display());
+            }
+        }
+        Err(e) => tracing::warn!("could not serialize the startup timeline: {e}"),
+    }
+    if let Some(last) = t
+        .last_ready
+        .as_ref()
+        .and_then(|id| t.rows.iter().find(|r| &r.id == id))
+    {
+        tracing::debug!(
+            "startup timeline: complete at {} ms; last ready {} at {} ms",
+            t.complete_ms.unwrap_or(0),
+            last.name,
+            last.ready_ms.unwrap_or(0)
+        );
+    }
+}
+
 fn is_up(state: &crate::member_actor::model::member_view::MemberState) -> bool {
     use crate::member_actor::model::member_view::MemberState;
     matches!(
@@ -596,6 +623,8 @@ pub async fn run_health_task(
     entities: Option<watch::Receiver<Arc<EntitySnapshot>>>,
     members: Arc<std::sync::OnceLock<Arc<crate::member_actor::MemberHandle>>>,
     tx: watch::Sender<Arc<HealthSnapshot>>,
+    startup_book: Arc<std::sync::Mutex<startup::StartupBook>>,
+    startup_tx: watch::Sender<Arc<startup::StartupTimeline>>,
     mut shutdown: watch::Receiver<bool>,
 ) {
     let mut book = HealthBook::with_journal(&log_dir);
@@ -694,6 +723,38 @@ pub async fn run_health_task(
                 }));
             }
             conditions.extend(graph_conds.iter().cloned());
+
+            // The startup timeline: rebuilt every tick (O(members + nodes)),
+            // judged and written only until startup completes.
+            let complete = startup_book.lock().unwrap().is_complete();
+            {
+                let fqns = handle.node_fqn_map().read().await.clone();
+                let summary_done = handle.get_health_summary().await.startup_complete();
+                let marks = entities
+                    .as_ref()
+                    .map(|rx| rx.borrow().startup.clone())
+                    .unwrap_or_default();
+                let timeline = {
+                    let mut book = startup_book.lock().unwrap();
+                    if summary_done {
+                        book.mark_complete();
+                    }
+                    book.timeline(
+                        &list,
+                        &fqns,
+                        &marks,
+                        entities.is_some(),
+                        crate::runtime_enforcement::monotonic_now_ns(),
+                    )
+                };
+                if !complete {
+                    conditions.extend(startup::startup_conditions(&timeline));
+                    if timeline.complete_ms.is_some() {
+                        write_startup_timeline(&log_dir, &timeline);
+                    }
+                }
+                let _ = startup_tx.send(Arc::new(timeline));
+            }
         }
         if let Some(rx) = entities.as_ref() {
             let snap = rx.borrow().clone();

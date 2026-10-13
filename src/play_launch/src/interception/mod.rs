@@ -12,6 +12,7 @@ mod endpoint_stats;
 mod latency;
 mod live;
 pub(crate) use endpoint_stats::Direction;
+pub use endpoint_stats::StartupMark;
 pub use live::EntitySnapshot;
 pub mod measure;
 pub mod trace;

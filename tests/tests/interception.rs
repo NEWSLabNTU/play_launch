@@ -1187,7 +1187,11 @@ fn test_delivery_latency_separates_a_slow_subscriber_from_a_fast_one() {
     let fast = sub_row(&rows, "/latency_fast").unwrap_or_else(|| panic!("no fast row: {rows:?}"));
     let p99 = |r: &serde_json::Value| r["latency"]["p99_ms"].as_f64();
     assert!(p99(&slow).is_some_and(|p| p >= 100.0), "slow: {slow}");
-    assert!(p99(&fast).is_some_and(|p| p < 100.0), "fast: {fast}");
+    // Its p50: one late message right after discovery can be its p99.
+    assert!(
+        fast["latency"]["p50_ms"].as_f64().is_some_and(|p| p < 20.0),
+        "fast: {fast}"
+    );
     let codes = |r: &serde_json::Value| -> Vec<String> {
         r["flags"]
             .as_array()
@@ -1329,4 +1333,81 @@ fn test_health_counts_unnamed_nodes_by_namespace_without_interception() {
         "{foreign:?}"
     );
     assert_eq!(issues_of(&issues, "near_miss_topic").len(), 1, "{issues:?}");
+}
+
+/// The startup timeline (W7): in a container loading a composable whose
+/// constructor takes 3 s beside one that loads at once, the slow one is the
+/// last ready — the member that set the startup time — and the timeline is
+/// written to the bundle at startup complete.
+#[test]
+fn test_startup_timeline_names_the_slow_constructor() {
+    let env = fixtures::install_env();
+    let launch =
+        fixtures::test_workspace_path("parallel_loading").join("launch/mixed_fast_slow.launch.xml");
+    let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--interception",
+        "on",
+        "--web-addr",
+        &format!("127.0.0.1:{port}"),
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        "--container-mode",
+        "isolated",
+        launch.to_str().unwrap(),
+    ]);
+    cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", interception_so_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(40);
+    let t = loop {
+        std::thread::sleep(Duration::from_millis(1000));
+        let (status, body) = http(port, "GET", "/api/startup", None);
+        if status != 200 {
+            continue;
+        }
+        let t: serde_json::Value = serde_json::from_str(&body).unwrap();
+        if !t["complete_ms"].is_null() || std::time::Instant::now() > deadline {
+            break t;
+        }
+    };
+    let play_log = work_dir.path().join("play_log/latest");
+    let written = std::fs::read_to_string(play_log.join("startup_timeline.json"));
+    drop(proc);
+
+    assert!(!t["complete_ms"].is_null(), "startup never completed: {t}");
+    let rows = t["rows"].as_array().unwrap();
+    let row = |name: &str| {
+        rows.iter()
+            .find(|r| r["name"].as_str().is_some_and(|n| n.contains(name)))
+            .unwrap_or_else(|| panic!("no {name} row: {t}"))
+    };
+    let slow = row("slow_node");
+    let fast = row("fast_talker");
+    assert_eq!(t["last_ready"], slow["id"], "{t}");
+    assert_eq!(slow["kind"], "composable");
+    let load = |r: &serde_json::Value| {
+        r["loaded_ms"].as_u64().unwrap() - r["load_started_ms"].as_u64().unwrap()
+    };
+    assert!(load(slow) >= 3000, "SlowLoader waits 3 s: {slow}");
+    assert!(load(fast) < 3000, "{fast}");
+    assert!(
+        row("mixed_container")["spawned_ms"].as_u64().is_some(),
+        "{t}"
+    );
+
+    let written: serde_json::Value =
+        serde_json::from_str(&written.expect("startup_timeline.json")).unwrap();
+    assert_eq!(written["last_ready"], slow["id"]);
 }

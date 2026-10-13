@@ -79,7 +79,7 @@ function fmtMs(ms) {
 function latencyCell(row) {
     const l = row.latency;
     if (!l) return html`<td class="ent-num ent-muted" title=${row.direction === 'sub' ? 'No stamped traffic: nothing to match a take to its publish' : ''}>—</td>`;
-    const title = `publish to take, last 10–20 s: p50 ${fmtMs(l.p50_ms)} ms, p99 ${fmtMs(l.p99_ms)} ms, max ${fmtMs(l.max_ms)} ms; `
+    const title = `publish to take, last 10–20 s: p50 ${fmtMs(l.p50_ms)} ms, p95 ${fmtMs(l.p95_ms)} ms, p99 ${fmtMs(l.p99_ms)} ms, max ${fmtMs(l.max_ms)} ms; `
         + `${l.samples} samples, ${Math.round(l.coverage * 100)}% of stamped takes matched`;
     return html`<td class="ent-num" title=${title}>${fmtMs(l.p99_ms)}<span class="ent-sub">${fmtMs(l.p50_ms)}</span></td>`;
 }

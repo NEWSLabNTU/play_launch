@@ -655,6 +655,16 @@ pub async fn get_health(State(state): State<Arc<WebState>>) -> Response {
     Json(&*snap).into_response()
 }
 
+/// The startup timeline: per member, spawn, first endpoint, first publish,
+/// load and readiness, in ms since the run started.
+pub async fn get_startup(State(state): State<Arc<WebState>>) -> Response {
+    let Some(rx) = &state.startup else {
+        return health_unavailable();
+    };
+    let snap = rx.borrow().clone();
+    Json(&*snap).into_response()
+}
+
 // ===== Entities (live endpoints) =====
 
 /// Rows sent when the client did not ask for `?all=1`: the busiest, plus

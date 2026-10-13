@@ -434,11 +434,25 @@ pub(crate) async fn play(
     debug!("Creating log directories...");
     let log_dir = create_log_dir(&common.log_dir)?;
     let health_members = std::sync::Arc::new(std::sync::OnceLock::new());
+    // The startup timeline's zero, and its milestones as the state-event
+    // forwarder sees them (`health::startup`).
+    let startup_book = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::health::startup::StartupBook::new(),
+    ));
+    {
+        let book = startup_book.clone();
+        crate::member_actor::events::set_emit_hook(move |e| book.lock().unwrap().observe(e));
+    }
+    let (startup_tx, startup_rx) = tokio::sync::watch::channel(std::sync::Arc::new(
+        crate::health::startup::StartupTimeline::default(),
+    ));
     tokio::spawn(crate::health::run_health_task(
         log_dir.clone(),
         entities_rx.clone(),
         health_members.clone(),
         health_tx,
+        startup_book.clone(),
+        startup_tx,
         shutdown_signal.clone(),
     ));
     debug!("Log directory created: {}", log_dir.display());
@@ -1550,7 +1564,8 @@ pub(crate) async fn play(
             )
             .with_events_switch(events_switch.clone())
             .with_entities(entities_rx.clone())
-            .with_health(Some(health_rx.clone())),
+            .with_health(Some(health_rx.clone()))
+            .with_startup(Some(startup_rx.clone())),
         );
         let web_shutdown = shutdown_signal.clone();
 

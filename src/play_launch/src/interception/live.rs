@@ -298,6 +298,10 @@ pub struct EntitySnapshot {
     /// the Health page's graph comparison. Not sent to the page.
     #[serde(skip)]
     pub(crate) nodes: Vec<String>,
+    /// Each node's first endpoint and first publish, for the startup
+    /// timeline. Not sent to the page.
+    #[serde(skip)]
+    pub(crate) startup: Vec<super::endpoint_stats::StartupMark>,
 }
 
 impl EntitySnapshot {
@@ -320,6 +324,7 @@ impl EntitySnapshot {
             truncated: self.rows.len() - rows.len(),
             rows,
             nodes: Vec::new(),
+            startup: Vec::new(),
         }
     }
 }
@@ -338,7 +343,7 @@ const STALE_MIN_MESSAGES: u64 = 5;
 const STALE_MIN_ACTIVE_S: f64 = 5.0;
 /// Topics that carry events rather than streams: quiet is their normal state.
 const EVENT_TOPICS: [&str; 2] = ["/parameter_events", "/rosout"];
-/// Delivery latency is judged against the larger of this and
+/// Delivery latency (its p95) is judged against the larger of this and
 /// [`LATENCY_PERIODS`] periods of the topic.
 const LATENCY_FLOOR_MS: f64 = 100.0;
 const LATENCY_PERIODS: f64 = 2.0;
@@ -401,7 +406,7 @@ impl EndpointTracker {
                 .and_then(|h| self.node_names.get(&h).cloned())
                 .unwrap_or_else(|| ep.member.clone())
         };
-        for (pubs, subs) in by_topic.values() {
+        for (topic, (pubs, subs)) in &by_topic {
             // Pairwise QoS. One flag per policy per endpoint, naming the first
             // counterpart and how many more there are.
             let mut found: HashMap<(usize, &'static str), (String, usize)> = HashMap::new();
@@ -436,7 +441,13 @@ impl EndpointTracker {
             // Take deficit: a reliable subscription taking clearly less than
             // the topic's publishers send.
             let published: f64 = pubs.iter().map(|&p| rates[p].rate_10s).sum();
-            if published >= DEFICIT_MIN_HZ {
+            // Event channels arrive in bursts (every node declaring its
+            // parameters at once), which a subscriber still constructing
+            // queues: not a stream to keep up with.
+            let event_channel = topic_names
+                .get(topic)
+                .is_some_and(|t| EVENT_TOPICS.contains(&t.as_str()));
+            if published >= DEFICIT_MIN_HZ && !event_channel {
                 for &s in subs {
                     let sub = eps[s].1;
                     let reliable = sub
@@ -478,22 +489,37 @@ impl EndpointTracker {
                 LatencySummary::of(&l.recent(now_ns), l)
             })
             .collect();
-        for (pubs, subs) in by_topic.values() {
+        for (topic, (pubs, subs)) in &by_topic {
+            // Event channels: `ParameterEvent` carries a stamp, and the
+            // startup burst of parameter declarations queues behind every
+            // node still constructing. Measured on Autoware: one issue per
+            // subscriber of `/parameter_events`, each open 15-20 s.
+            if topic_names
+                .get(topic)
+                .is_some_and(|t| EVENT_TOPICS.contains(&t.as_str()))
+            {
+                continue;
+            }
             let published: f64 = pubs.iter().map(|&p| rates[p].rate_10s).sum();
             let period_ms = (published > 0.0).then(|| 1000.0 / published);
             let limit = LATENCY_FLOOR_MS.max(period_ms.map_or(0.0, |p| LATENCY_PERIODS * p));
             for &s in subs {
                 let Some(l) = &latencies[s] else { continue };
-                let Some(p99) = l.p99_ms else { continue };
-                if l.samples >= LATENCY_MIN_SAMPLES && p99 > limit {
+                // Judged on p95, shown with p99: with a few dozen samples the
+                // p99 IS the largest one, and a single late message (the
+                // first after discovery) flagged a subscriber that keeps up.
+                let Some(p95) = l.p95_ms else { continue };
+                if l.samples >= LATENCY_MIN_SAMPLES && p95 > limit {
                     let p50 = l.p50_ms.unwrap_or(0.0);
+                    let p99 = l.p99_ms.unwrap_or(p95);
                     flags[s].push(Flag {
                         kind: "advisory",
                         code: "delivery_latency",
                         message: format!(
-                            "messages wait {p50:.0} ms (p50) to {p99:.0} ms (p99) between \
-                             publish and take, over {limit:.0} ms; the subscriber's \
-                             executor is behind or its queue is holding old messages"
+                            "messages wait {p50:.0} ms (p50), {p95:.0} ms (p95), {p99:.0} ms \
+                             (p99) between publish and take, over {limit:.0} ms; the \
+                             subscriber's executor is behind or its queue is holding old \
+                             messages"
                         ),
                     });
                 }
@@ -602,6 +628,7 @@ impl EndpointTracker {
             truncated: 0,
             rows,
             nodes: self.node_names.values().cloned().collect(),
+            startup: self.startup_marks(topic_names),
         }
     }
 }
@@ -840,7 +867,9 @@ mod tests {
                 t.observe(2, "slow", &stamped(EventKind::Take, 3, i, at + 300 * ms));
             }
             t.observe(0, "talker", &stamped(EventKind::Publish, 1, i, at));
-            t.observe(1, "fast", &stamped(EventKind::Take, 2, i, at + ms));
+            // One late take among prompt ones: the first after discovery.
+            let late = if i == 300 { 150 * ms } else { ms };
+            t.observe(1, "fast", &stamped(EventKind::Take, 2, i, at + late));
             if i % 2 == 1 {
                 t.observe(2, "slow", &stamped(EventKind::Take, 3, i, at + 300 * ms));
             }
@@ -850,12 +879,43 @@ mod tests {
         let row = |m: &str| snap.rows.iter().find(|r| r.member == m).unwrap();
         let fast = row("fast").latency.clone().unwrap();
         let slow = row("slow").latency.clone().unwrap();
-        assert!(fast.p99_ms.unwrap() <= 1.25, "{fast:?}");
+        assert!(fast.p50_ms.unwrap() <= 1.25, "{fast:?}");
+        assert!(
+            fast.max_ms.unwrap() >= 150.0,
+            "the outlier is in the window: {fast:?}"
+        );
         assert!((300.0..=375.0).contains(&slow.p99_ms.unwrap()), "{slow:?}");
         assert_eq!(slow.coverage, 1.0, "every take matched: {slow:?}");
         assert!(row("fast").flags.is_empty(), "{:?}", row("fast").flags);
         assert_eq!(row("slow").flags[0].code, "delivery_latency");
         assert!(row("talker").latency.is_none(), "a publisher has none");
+    }
+
+    #[test]
+    fn event_channels_are_judged_for_neither_latency_nor_deficit() {
+        let mut t = EndpointTracker::default();
+        let mut n = HashMap::new();
+        n.insert(0xA, "/parameter_events".to_string());
+        t.observe(0, "p", &ev(EventKind::PublisherInit, 1, 0xA, 0));
+        t.observe(1, "s", &ev(EventKind::SubscriptionInit, 2, 0xA, 0));
+        let ms = NS / 1000;
+        for i in 1..=400u64 {
+            let at = i * 50 * ms;
+            let mut p = ev(EventKind::Publish, 1, 0xA, at);
+            p.stamp_sec = 7;
+            p.stamp_nanosec = i as u32;
+            t.observe(0, "p", &p);
+            if i % 2 == 0 {
+                let mut k = ev(EventKind::Take, 2, 0xA, at + 400 * ms);
+                k.stamp_sec = 7;
+                k.stamp_nanosec = i as u32;
+                t.observe(1, "s", &k);
+            }
+        }
+        let snap = t.live_snapshot(20 * NS + NS / 2, &n, &HashMap::new(), 0);
+        let s = snap.rows.iter().find(|r| r.member == "s").unwrap();
+        assert!(s.latency.is_some(), "measured, shown");
+        assert!(s.flags.is_empty(), "but not judged: {:?}", s.flags);
     }
 
     #[test]
