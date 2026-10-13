@@ -2415,4 +2415,14 @@ Entity counts match between parsers (100% functional equivalence). Remaining cos
 
 ## Distribution
 
-PyPI: `pip install play_launch` (x86_64 + aarch64, Ubuntu 22.04+). Build: `just build`. Publish: `just publish-pypi`.
+PyPI: `pip install "play_launch[<distro>]"` (x86_64 + aarch64). One package
+per ROS distribution, `play_launch_<distro>` (module and command
+`play_launch`), because the binaries link that distribution's libraries and
+Python and no wheel tag tells Jazzy from Kilted or Lyrical from Rolling;
+`play_launch` itself is a code-free meta package whose extras pin
+`play_launch_<distro>==<version>` (`packaging/meta/`). All are built by
+`.github/workflows/release-wheel.yml` (matrix: distro x arch, plus
+`build-meta`) and published from it on a `v*` tag through PyPI trusted
+publishing. A new distribution = one matrix row + one extra in
+`packaging/meta/pyproject.toml.in`. Local: `just build` targets the sourced
+`$ROS_DISTRO`; `just publish-pypi` refuses a local `play_launch-*` wheel.

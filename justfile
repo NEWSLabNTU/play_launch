@@ -1,5 +1,9 @@
-# Detect ROS2 distro based on Ubuntu version
-ros_distro := if `lsb_release -rs 2>/dev/null || echo "22.04"` == "24.04" { "jazzy" } else { "humble" }
+# The ROS 2 distribution to build against: the sourced one ($ROS_DISTRO), or
+# a guess from the Ubuntu version when none is sourced. The guess cannot tell
+# Jazzy from Kilted (24.04) or Lyrical from Rolling (26.04): source the one
+# you want.
+_ubuntu := `lsb_release -rs 2>/dev/null || echo "22.04"`
+ros_distro := if env_var_or_default("ROS_DISTRO", "") != "" { env_var("ROS_DISTRO") } else if _ubuntu == "26.04" { "lyrical" } else if _ubuntu == "24.04" { "jazzy" } else { "humble" }
 colcon_flags := "--symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --cargo-args --release"
 
 # The binary that owns resolve/dump/check/plot/contract: play_launch itself.
@@ -245,7 +249,10 @@ build-interception:
     #!/usr/bin/env bash
     set -e
     (cd src/spsc_shm && cargo build --release)
-    (cd src/play_launch_interception && cargo build --release --features {{ros_distro}})
+    # rcl_interception_sys generates its struct layouts from the sourced
+    # distribution's headers (its build.rs), so no distro feature here.
+    [ -n "${AMENT_PREFIX_PATH:-}" ] || source /opt/ros/{{ros_distro}}/setup.bash
+    (cd src/play_launch_interception && cargo build --release)
     # ASK cargo where it put the artifact; do not assume.
     #
     # This used to be a bare `echo "Built: <hardcoded path>"`, which printed
@@ -544,7 +551,7 @@ install-wheel:
     #!/usr/bin/env bash
     set -e
     # Install the newest wheel in dist/
-    whl=$(ls -t dist/play_launch-*.whl | head -1)
+    whl=$(ls -t dist/play_launch*.whl | head -1)
     echo "Installing $whl"
     pip install "$whl" --force-reinstall
 
@@ -564,6 +571,18 @@ publish-pypi:
         exit 1
     fi
 
+    # `play_launch` on PyPI is the code-free meta package; the binaries ship
+    # as play_launch_<distro>, built by the release workflow on a v* tag. A
+    # local `just build` wheel is still named play_launch and would replace it.
+    for whl in dist/*.whl; do
+        if [[ $(basename "$whl") == play_launch-* ]] \
+            && python3 -m zipfile -l "$whl" | grep -q 'play_launch/bin/'; then
+            echo "Error: $whl is a local build named play_launch, which PyPI reserves" >&2
+            echo "       for the meta package. Release from CI: push a v* tag." >&2
+            exit 1
+        fi
+    done
+
     pip install twine
     twine upload dist/*.whl -u __token__ -p "$PYPI_TOKEN"
 
@@ -582,6 +601,18 @@ publish-testpypi:
         echo "Error: No wheel found in dist/. Run 'just build' first."
         exit 1
     fi
+
+    # `play_launch` on PyPI is the code-free meta package; the binaries ship
+    # as play_launch_<distro>, built by the release workflow on a v* tag. A
+    # local `just build` wheel is still named play_launch and would replace it.
+    for whl in dist/*.whl; do
+        if [[ $(basename "$whl") == play_launch-* ]] \
+            && python3 -m zipfile -l "$whl" | grep -q 'play_launch/bin/'; then
+            echo "Error: $whl is a local build named play_launch, which PyPI reserves" >&2
+            echo "       for the meta package. Release from CI: push a v* tag." >&2
+            exit 1
+        fi
+    done
 
     pip install twine
     twine upload --repository testpypi dist/*.whl -u __token__ -p "$TESTPYPI_TOKEN"

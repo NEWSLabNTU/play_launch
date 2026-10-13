@@ -7,20 +7,34 @@ on:
   workflow_dispatch:
 
 jobs:
-  # One wheel per ROS distribution: the binaries link that distribution's
-  # libraries and its Python (3.10 on Humble, 3.12 on Jazzy), so a Humble
-  # wheel cannot run on Jazzy. The glibc in the platform tag keeps them
-  # apart: pip on 24.04 prefers manylinux_2_39 (Jazzy), and 22.04 cannot
-  # install it, so it takes manylinux_2_35 (Humble).
+  # One package per ROS distribution, play_launch_<distro>: the binaries
+  # link that distribution's libraries and Python, and nothing in a wheel tag
+  # tells Jazzy from Kilted (both Ubuntu 24.04, Python 3.12), or Lyrical
+  # from Rolling (both 26.04, Python 3.14).
+  # Each wheel is still tagged with the Python and glibc it needs, so pip
+  # refuses it on the wrong system. `play_launch` itself is a meta package
+  # (build-meta below): `pip install "play_launch[jazzy]"`.
+  #
+  # A new distribution is one more matrix row: rcl_interception_sys
+  # generates its struct layouts from the distribution's headers.
   build-wheel:
     runs-on: ubuntu-22.04
     strategy:
+      fail-fast: false
       matrix:
         arch: [amd64, arm64]
-        ros: [humble, jazzy]
+        ros: [humble, jazzy, kilted, lyrical, rolling]
+        # Rolling follows the newest Ubuntu LTS: when it moves, its row moves
+        # with it (its old-platform packages stop updating but stay
+        # installable, so a stale row still builds, against a stale Rolling).
         include:
-          - {ros: humble, ubuntu: "22.04", codename: jammy, glibc: "2_35"}
-          - {ros: jazzy, ubuntu: "24.04", codename: noble, glibc: "2_39"}
+          - {ros: humble, ubuntu: "22.04", codename: jammy, glibc: "2_35", python: cp310}
+          - {ros: jazzy, ubuntu: "24.04", codename: noble, glibc: "2_39", python: cp312}
+          - {ros: kilted, ubuntu: "24.04", codename: noble, glibc: "2_39", python: cp312}
+          - {ros: lyrical, ubuntu: "26.04", codename: resolute, glibc: "2_43", python: cp314}
+          # Rolling on 26.04 is only in ros2-testing so far (as in the
+          # official ros:rolling image); ros2 still carries Lyrical alone.
+          - {ros: rolling, ubuntu: "26.04", codename: resolute, glibc: "2_43", python: cp314, repo: ros2-testing}
 
     steps:
     - name: Checkout code
@@ -45,6 +59,10 @@ jobs:
         fi
         echo "Building version $VERSION for ${{ matrix.ros }} on ${{ matrix.arch }}"
         ROS=${{ matrix.ros }}
+        PYTAG=${{ matrix.python }}
+        # The distribution's package name; the module stays `play_launch`.
+        sed -i "0,/^name = \"play_launch\"/s//name = \"play_launch_${ROS}\"/" pyproject.toml
+        grep -m1 '^name = ' pyproject.toml
 
         # Set up architecture-specific variables
         if [ "${{ matrix.arch }}" = "arm64" ]; then
@@ -74,7 +92,7 @@ jobs:
             # Add ROS 2 repository
             curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
               -o /usr/share/keyrings/ros-archive-keyring.gpg
-            echo \"deb [arch=${DEB_ARCH} signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu ${{ matrix.codename }} main\" \
+            echo \"deb [arch=${DEB_ARCH} signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/${{ matrix.repo || 'ros2' }}/ubuntu ${{ matrix.codename }} main\" \
               > /etc/apt/sources.list.d/ros2.list
 
             apt-get update
@@ -114,14 +132,19 @@ jobs:
             # could differ from any developer machine with no commit to show it.
             python3 -c \"import importlib.metadata as m; print('colcon-cargo-ros2', m.version('colcon-cargo-ros2'))\"
 
-            # Install just
-            curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+            # Install just: a pinned GitHub release, retried. The just.systems
+            # installer queries the GitHub API and is rate-limited (403).
+            JUST_VERSION=1.40.0
+            curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors \
+              https://github.com/casey/just/releases/download/\${JUST_VERSION}/just-\${JUST_VERSION}-\$(uname -m)-unknown-linux-musl.tar.gz \
+              | tar -xz -C /usr/local/bin just
+            just --version
 
             # Build
             source /opt/ros/${ROS}/setup.bash
             just build
             for whl in dist/*.whl; do
-              python3 -m wheel tags --platform-tag=${WHEEL_PLATFORM} --remove \"\$whl\"
+              python3 -m wheel tags --python-tag=${PYTAG} --platform-tag=${WHEEL_PLATFORM} --remove \"\$whl\"
             done
             ls -lh dist/
             chown -R \$(stat -c '%u:%g' /workspace) dist/ build/ install/ || true
@@ -136,8 +159,32 @@ jobs:
         path: dist/*.whl
         retention-days: 7
 
+  # The `play_launch` meta package: extras naming each distribution's build.
+  build-meta:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v5
+    - name: Build the meta package
+      run: |
+        VERSION=$(grep -m1 '^version = ' pyproject.toml | sed 's/.*"\(.*\)".*/\1/')
+        if [ "${GITHUB_REF#refs/tags/v}" != "$GITHUB_REF" ] && [ "${GITHUB_REF#refs/tags/v}" != "$VERSION" ]; then
+          echo "tag ${GITHUB_REF#refs/tags/} does not match pyproject version $VERSION" >&2
+          exit 1
+        fi
+        mkdir -p /tmp/meta dist
+        sed "s/@VERSION@/$VERSION/g" packaging/meta/pyproject.toml.in > /tmp/meta/pyproject.toml
+        cp packaging/meta/README.md /tmp/meta/
+        python3 -m pip wheel --no-deps -w dist /tmp/meta
+        ls -l dist
+        python3 -m zipfile -l dist/play_launch-*.whl
+    - uses: actions/upload-artifact@v5
+      with:
+        name: wheel-meta
+        path: dist/*.whl
+        retention-days: 7
+
   release:
-    needs: build-wheel
+    needs: [build-wheel, build-meta]
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -171,7 +218,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-pypi:
-    needs: build-wheel
+    needs: [build-wheel, build-meta]
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/v')
     environment: pypi

@@ -8,13 +8,34 @@ allowance heavily.
 
 ## Unreleased
 
+- **Breaking (install):** one PyPI package per ROS distribution,
+  `play_launch_humble`, `play_launch_jazzy`, `play_launch_kilted`,
+  `play_launch_lyrical` and `play_launch_rolling`, all providing the
+  `play_launch` command; install with `pip install "play_launch[<distro>]"`.
+  `play_launch` itself is now a meta package without code. The wheels link
+  one distribution's libraries, and no wheel tag can tell Jazzy from Kilted
+  (both Ubuntu 24.04, Python 3.12) or Lyrical from Rolling (both 26.04,
+  Python 3.14). Each wheel is tagged with the Python it needs (`cp310`,
+  `cp312`, `cp314`) and its glibc, so pip refuses it on the wrong system.
+  Upgrading from 0.16 with `pip install -U "play_launch[<distro>]"` works.
+- **New:** Kilted, Lyrical and Rolling (on Ubuntu 26.04). `rcl_interception_sys`
+  generates its struct layouts from the headers of the distribution being
+  built against (Rolling changed `MessageMember`), so a new distribution is
+  one more row in the release matrix. `just` builds for the sourced
+  `$ROS_DISTRO`. The vendored `rclrs` generates its rcl bindings the same
+  way for any distribution without checked-in ones (Lyrical, Rolling).
+  `play_launch_container` links modern CMake targets (Rolling removed
+  `ament_target_dependencies`) and reads the ament index itself (Rolling
+  changed `ament_index_cpp::get_resource`).
+- **Fix:** with its bundled binary missing or not executable, the
+  `play_launch` Python wrapper found itself on `PATH` and re-ran itself until
+  it failed with "Argument list too long". It now skips its own entry point.
 - **New:** data-flow chains without a contract. When a node publishes a
   message carrying the stamp of one it took on another topic, play_launch
   records that hop and the node's time for it, and joins the hops into
   chains (`GET /api/chains`, `interception/chains.json`). A node that keeps
   re-sending a stamp it took long ago is reported on the Health page as
   info. Needs `--interception on`.
-
 - **New:** lifecycle activation on the startup timeline: when each lifecycle
   node was configured and activated, whoever drove it (with interception,
   from the node's own transition events; otherwise from play_launch's
@@ -65,9 +86,8 @@ allowance heavily.
 - **Fix:** Jazzy. `rcl_interception_sys` had no Jazzy bindings, so nothing
   built there, and the published wheels were Humble builds that pip also
   installed on Jazzy, where they cannot run (they link Python 3.10 and
-  Humble's libraries). The release now builds one wheel per distribution:
-  `manylinux_2_35` (Ubuntu 22.04, Humble) and `manylinux_2_39`
-  (Ubuntu 24.04, Jazzy); pip picks the right one by the system's glibc.
+  Humble's libraries). The release now builds one package per
+  distribution (see the install entry above).
 - **Fix:** `pip install play_launch` failed on Jazzy (Ubuntu 24.04) with
   "Cannot uninstall lark 1.1.9, RECORD file not found": the `lark>=1.2`
   requirement made pip replace the Debian package, which it cannot remove.

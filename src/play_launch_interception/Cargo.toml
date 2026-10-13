@@ -12,6 +12,8 @@ crate-type = ["cdylib"]
 [workspace]
 
 [features]
+# Checked-in struct layouts, only for building with no ROS sourced; normally
+# rcl_interception_sys generates them from the sourced distribution.
 humble = ["rcl_interception_sys/humble"]
 jazzy = ["rcl_interception_sys/jazzy"]
 

@@ -9,18 +9,25 @@ several, and a few of them change behaviour rather than erroring.
 
 ## Installation
 
-Requires Ubuntu 22.04+ with ROS 2 (Humble or Jazzy), Python 3.10+, and:
+Requires Ubuntu 22.04+ with ROS 2 (Humble, Jazzy, Kilted, Lyrical or Rolling), Python 3.10+, and:
 
 ```bash
 sudo apt install libz3-dev
 sudo apt install ros-${ROS_DISTRO}-rclcpp-components ros-${ROS_DISTRO}-class-loader
 ```
 
-Install from PyPI:
+Install from PyPI, naming your ROS distribution:
 
 ```bash
-pip install play_launch
+pip install "play_launch[${ROS_DISTRO}]"     # humble, jazzy, kilted, lyrical, rolling
 ```
+
+play_launch is built against one ROS distribution and uses its libraries at
+run time, so each distribution has its own package (`play_launch_humble`,
+`play_launch_jazzy`, ...); the extra picks it. A plain `pip install
+play_launch` installs nothing usable. On Ubuntu 24.04 and later add
+`--break-system-packages` (or use a virtual environment with
+`--system-site-packages`, so ROS's Python packages stay visible).
 
 This installs the `play_launch` command, which carries the whole surface:
 `launch`, `run`, `up`, `resolve`, `dump`, `check`, `plot`, `contract`,
@@ -292,7 +299,8 @@ play_launch plot --list-metrics
 
 ### Prerequisites
 
-- ROS 2 (Humble on Ubuntu 22.04, Jazzy on 24.04)
+- ROS 2 (Humble on Ubuntu 22.04; Jazzy or Kilted on 24.04; Lyrical or Rolling on 26.04), sourced: the build targets `$ROS_DISTRO`
+- libclang (`libclang-dev`): rcl_interception_sys generates its bindings from the ROS headers
 - Rust toolchain (stable)
 - Python 3.10+
 - [just](https://github.com/casey/just) command runner

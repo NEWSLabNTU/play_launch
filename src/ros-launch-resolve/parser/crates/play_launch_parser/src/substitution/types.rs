@@ -183,7 +183,10 @@ impl Substitution {
 }
 
 /// Common ROS 2 distribution names, tried as fallback when `ROS_DISTRO` is unset.
-pub const KNOWN_ROS_DISTROS: &[&str] = &["jazzy", "iron", "humble", "galactic", "foxy"];
+/// Releases newest first; Rolling last, since it is the development branch.
+pub const KNOWN_ROS_DISTROS: &[&str] = &[
+    "lyrical", "kilted", "jazzy", "iron", "humble", "galactic", "foxy", "rolling",
+];
 
 /// Global package resolution cache
 ///
