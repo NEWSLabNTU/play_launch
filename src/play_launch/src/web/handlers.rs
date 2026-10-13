@@ -665,6 +665,16 @@ pub async fn get_startup(State(state): State<Arc<WebState>>) -> Response {
     Json(&*snap).into_response()
 }
 
+/// Carried edges and the chains they form (`interception/chains.rs`), as of
+/// the last Entities snapshot. Empty until a node republishes a stamp it took.
+pub async fn get_chains(State(state): State<Arc<WebState>>) -> Response {
+    let Some(rx) = &state.entities else {
+        return entities_unavailable();
+    };
+    let snap = rx.borrow().chains.clone().unwrap_or_default();
+    Json(snap).into_response()
+}
+
 // ===== Entities (live endpoints) =====
 
 /// Rows sent when the client did not ask for `?all=1`: the busiest, plus

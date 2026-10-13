@@ -490,6 +490,8 @@ play_log/<timestamp>/
 │   ├── stats_summary.json          # per-topic pub/take counts, rates
 │   ├── events.jsonl                # per-message record read by `measure`; only when
 │                                   #   asked for (--record-events / web UI toggle)
+│   ├── chains.json                 # carried edges (a node re-sent a stamp it took)
+│   │                               #   and the chains they form (phase 88)
 │   ├── endpoint_stats.json         # every pub/sub created: messages, rate, est. bytes,
 │                                   #   publish-to-take latency per subscription —
 │                                   #   silent endpoints included, busiest first
@@ -679,6 +681,19 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-10-14**: **Data-flow chains without a contract, C1: carried
+  edges** (phase 88, `interception/chains.rs`, `health/chains.rs`). A node
+  that took stamp `s` on A and published `s` on B is a real edge A →N→ B,
+  timed take to publish; a node is `(ring, EndpointOwner hash)`, so
+  composables in one container stay apart, and its takes and publishes
+  share one ring, so unlike W5 no pending queue. Edges seen 20 times join
+  into chains. `GET /api/chains`, `interception/chains.json`, and
+  `stale_stamp` (info): a stamp taken once and re-sent at rate past ten
+  periods. Autoware driven to a goal: the 8-topic planning chain live, and
+  three stale stamps all of that shape (gear command, operation mode, the
+  emergency stop operator's 47.7 s control command) — right for a state,
+  wrong for data, which is why it is info. 84 ns per event.
 
 - **2026-10-14**: **Lifecycle activation on the startup timeline.** The
   interceptor reads each `lifecycle_msgs/TransitionEvent` a node publishes

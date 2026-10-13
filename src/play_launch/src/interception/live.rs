@@ -310,6 +310,10 @@ pub struct EntitySnapshot {
     /// TF edges as published; for the Health page, not sent with Entities.
     #[serde(skip)]
     pub(crate) tf: Option<super::tf::TfSnapshot>,
+    /// Carried edges and the chains they form (`chains.rs`); served by
+    /// `/api/chains` and read by Health, not sent with Entities.
+    #[serde(skip)]
+    pub(crate) chains: Option<super::chains::ChainSnapshot>,
 }
 
 /// `/clock` as the Health page judges it.
@@ -351,6 +355,7 @@ impl EntitySnapshot {
             lifecycle: Vec::new(),
             clock: self.clock.clone(),
             tf: self.tf.clone(),
+            chains: self.chains.clone(),
         }
     }
 }
@@ -663,6 +668,7 @@ impl EndpointTracker {
                         .and_then(|h| self.node_names.get(h).cloned())
                 })
             }),
+            chains: (!self.chains.is_empty()).then(|| self.chains_snapshot(now_ns, topic_names)),
             clock: (self.clock.messages > 0).then(|| {
                 let c = &self.clock;
                 let secs = |ns: u64| ns as f64 / 1e9;

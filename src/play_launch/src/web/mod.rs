@@ -229,6 +229,7 @@ pub fn create_router(state: Arc<WebState>, bind_addr: &str, port: u16) -> Router
         .route("/api/launch-tree", get(handlers::get_launch_tree))
         .route("/api/health/issues", get(handlers::get_health))
         .route("/api/startup", get(handlers::get_startup))
+        .route("/api/chains", get(handlers::get_chains))
         .route("/api/health/issues/stream", get(sse::stream_health))
         .route("/api/entities", get(handlers::get_entities))
         .route("/api/entities/stream", get(sse::stream_entities))

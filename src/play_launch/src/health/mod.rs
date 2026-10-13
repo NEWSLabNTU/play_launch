@@ -25,6 +25,7 @@ use tokio::sync::watch;
 
 use crate::{interception::EntitySnapshot, util::self_cost};
 
+pub mod chains;
 pub mod discovery;
 pub mod graph;
 pub mod host;
@@ -1054,6 +1055,9 @@ pub async fn run_health_task(inputs: HealthInputs) {
             if let Some(t) = snap.tf.as_ref() {
                 conditions.extend(tf::tf_conditions(t));
                 tf_view = Some(t.clone());
+            }
+            if let Some(c) = snap.chains.as_ref() {
+                conditions.extend(chains::chain_conditions(c));
             }
         }
         if host_job.as_ref().is_some_and(|j| j.is_finished()) {

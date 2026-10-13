@@ -8,10 +8,12 @@
 //! - Aggregating frontier state and message statistics
 //! - Writing summary files on shutdown
 
+mod chains;
 mod endpoint_stats;
 mod latency;
 mod live;
 mod tf;
+pub use chains::{CarriedEdge, Chain, ChainSnapshot};
 pub(crate) use endpoint_stats::Direction;
 pub use endpoint_stats::{LifecycleMark, StartupMark};
 pub use live::{ClockStatus, EntitySnapshot};
@@ -813,6 +815,17 @@ pub async fn run_interception_task(
             .and_then(|()| endpoint_stats::write(&interception_dir, &rows))
         {
             warn!("Interception: endpoint_stats.json not written: {e:#}");
+        }
+        // Carried edges and chains (`chains.rs`), when any stamp crossed a node.
+        if !endpoints.chains.is_empty() {
+            let snap = endpoints
+                .chains_snapshot(crate::runtime_enforcement::monotonic_now_ns(), &names.names);
+            if let Err(e) = serde_json::to_vec_pretty(&snap)
+                .map_err(eyre::Report::from)
+                .and_then(|b| Ok(std::fs::write(interception_dir.join("chains.json"), b)?))
+            {
+                warn!("Interception: chains.json not written: {e:#}");
+            }
         }
     }
 

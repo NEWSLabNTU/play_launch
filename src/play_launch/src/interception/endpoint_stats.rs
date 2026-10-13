@@ -213,6 +213,8 @@ pub(crate) struct EndpointTracker {
     /// Per node hash: when it first reached inactive (2) and active (3),
     /// from its `TransitionEvent`s.
     pub(super) lifecycle: HashMap<u64, (Option<u64>, Option<u64>)>,
+    /// Stamps carried across nodes (`chains.rs`).
+    pub(super) chains: super::chains::ChainBook,
 }
 
 /// `/clock` as published: its value (the interceptor reads a
@@ -352,12 +354,17 @@ impl EndpointTracker {
                         .observe(event.stamp_sec, event.stamp_nanosec, event.monotonic_ns);
                 }
                 if let Some(stamp) = stamp_key(event.stamp_sec, event.stamp_nanosec) {
+                    let node = (child, owner.unwrap_or(0));
                     match direction {
                         Direction::Pub => {
                             self.matcher
-                                .publish(event.topic_hash, stamp, event.monotonic_ns)
+                                .publish(event.topic_hash, stamp, event.monotonic_ns);
+                            self.chains
+                                .publish(node, event.topic_hash, stamp, event.monotonic_ns);
                         }
                         Direction::Sub => {
+                            self.chains
+                                .take(node, event.topic_hash, stamp, event.monotonic_ns);
                             let lat = ep.latency.get_or_insert_with(Default::default);
                             self.matcher.take(
                                 key,
@@ -431,6 +438,26 @@ impl EndpointTracker {
                 })
             })
             .collect()
+    }
+
+    /// Carried edges, each node named by its FQN, else by its process.
+    pub(crate) fn chains_snapshot(
+        &self,
+        now_ns: u64,
+        topic_names: &HashMap<u64, String>,
+    ) -> super::chains::ChainSnapshot {
+        let members: HashMap<usize, &str> = self
+            .live
+            .iter()
+            .map(|((child, _), ep)| (*child, ep.member.as_str()))
+            .collect();
+        self.chains.snapshot(now_ns, topic_names, |(child, hash)| {
+            self.node_names
+                .get(&hash)
+                .cloned()
+                .or_else(|| members.get(&child).map(|m| m.to_string()))
+                .unwrap_or_else(|| format!("ring {child}"))
+        })
     }
 
     pub(crate) fn is_empty(&self) -> bool {

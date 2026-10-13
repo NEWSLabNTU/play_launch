@@ -8,6 +8,13 @@ allowance heavily.
 
 ## Unreleased
 
+- **New:** data-flow chains without a contract. When a node publishes a
+  message carrying the stamp of one it took on another topic, play_launch
+  records that hop and the node's time for it, and joins the hops into
+  chains (`GET /api/chains`, `interception/chains.json`). A node that keeps
+  re-sending a stamp it took long ago is reported on the Health page as
+  info. Needs `--interception on`.
+
 - **New:** lifecycle activation on the startup timeline: when each lifecycle
   node was configured and activated, whoever drove it (with interception,
   from the node's own transition events; otherwise from play_launch's

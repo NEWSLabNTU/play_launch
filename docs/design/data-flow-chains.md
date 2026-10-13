@@ -89,7 +89,8 @@ here requires one.
 
 **Findings worth raising as issues** (contract-free):
 - `stale_stamp`: a node publishes a stamp it took more than 10× the topic's
-  period ago (the 25.9 s gear command).
+  period ago (the 25.9 s gear command). Built in C1 as info: every case on
+  Autoware re-sends an input taken once, right for a state, wrong for data.
 - `data_age`: a topic's p99 age above a threshold the user sets per sink (no
   default: there is no universal number).
 
