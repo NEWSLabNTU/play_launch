@@ -384,7 +384,12 @@ pub extern "C" fn play_launch_py_abi_version() -> u32 {
     // Jazzy `autostart`. Serde-defaulted, so a v8 object reports neither, and
     // a `LifecycleNode(autostart=True)` resolves to a node `up` never
     // activates — the same accepted-and-answered-wrong pairing 3 was for.
-    9
+    //
+    // 10: the captures carry `respawn` and `respawn_delay` on nodes,
+    // `ExecuteProcess`es and containers (play_launch #0070). Serde-defaulted,
+    // so a v9 object reports neither, and a `.launch.py` process declared to
+    // respawn stays dead when it exits — silently, as 8 and 9 would have.
+    10
 }
 
 #[cfg(test)]
@@ -746,7 +751,7 @@ mod tests {
     /// launch tree that silently resolves to nothing.
     #[test]
     fn the_abi_version_moved_with_the_contract() {
-        assert_eq!(play_launch_py_abi_version(), 9);
+        assert_eq!(play_launch_py_abi_version(), 10);
     }
 
     /// `exec_file` on the old entry point is refused by name, not answered

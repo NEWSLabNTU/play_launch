@@ -172,7 +172,11 @@ impl std::error::Error for LoadError {}
 /// 9: the captures carry `lifecycle` and `lifecycle_autostart` (play_launch
 /// phase 86). A v8 object reports neither, so a `LifecycleNode(autostart=
 /// True)` silently resolves to a node nobody activates.
-const ABI_VERSION: u32 = 9;
+/// 10: the captures carry `respawn` and `respawn_delay` (play_launch #0070),
+/// on nodes, `ExecuteProcess`es and containers. A v9 object reports
+/// neither, so a `.launch.py` process declared to respawn silently stays
+/// dead.
+const ABI_VERSION: u32 = 10;
 
 /// What `sysconfig` says about an interpreter.
 #[derive(Debug, Clone)]

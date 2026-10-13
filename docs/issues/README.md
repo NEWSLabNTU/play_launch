@@ -17,15 +17,16 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0070** -- the Python frontend drops `respawn` / `respawn_delay` on `Node`
-and `ExecuteProcess`: `bridge.rs` writes `respawn: None` for every captured
-process, so a `.launch.py` process declared to respawn stays dead. See
-`0070-*`.
-
-`just check-issue-index` fails if this section and the per-file `status:`
+*None.* `just check-issue-index` fails if this section and the per-file `status:`
 frontmatter disagree.
 
 ## Resolved
+
+**#0070** -- the Python frontend dropped `respawn` / `respawn_delay` on
+`Node`, `ExecuteProcess` and `ComposableNodeContainer`: the mocks swallowed
+them and `bridge.rs` wrote `respawn: None`, so a `.launch.py` process declared
+to respawn stayed dead. The mocks now resolve both when the action executes
+and the captures carry them (C ABI 10). See `archived/0070-*`.
 
 **#0069** -- `<executable respawn="true">` (XML and YAML) was accepted by the
 attribute allowlist and dropped, so the process stayed dead after it exited.

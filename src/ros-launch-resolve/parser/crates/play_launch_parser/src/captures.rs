@@ -52,6 +52,14 @@ pub struct NodeCapture {
     /// A lifecycle node's `autostart`, resolved. `None` when not given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_autostart: Option<bool>,
+    /// `respawn=` (`Node`, `ExecuteProcess`; #0070), resolved when the
+    /// action executed. `Some(true)` only when it is true: false and unset
+    /// are both `None`, as the Python dumper records them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub respawn: Option<bool>,
+    /// `respawn_delay=` in seconds, as given. `None` when not given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub respawn_delay: Option<f64>,
 }
 
 /// Captured container data from Python or XML parsing
@@ -88,6 +96,12 @@ pub struct ContainerCapture {
     /// `on_exit=Shutdown()` on the container (#0064).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_exit_shutdown: Option<bool>,
+    /// `respawn=` / `respawn_delay=` on the container (#0070): a container
+    /// is a `Node`. As on [`NodeCapture::respawn`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub respawn: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub respawn_delay: Option<f64>,
     /// Scope ID from the launch tree (set by traverser after capture)
     pub scope_id: Option<usize>,
     /// Seconds to wait after launch start before this member is spawned,

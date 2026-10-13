@@ -345,6 +345,11 @@ impl NodeAction {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let (respawn, respawn_delay) = crate::actions::container::resolve_respawn(
+            self.respawn.as_ref(),
+            self.respawn_delay.as_ref(),
+            context,
+        )?;
         Ok(NodeCapture {
             package,
             executable,
@@ -365,6 +370,8 @@ impl NodeAction {
             lifecycle_autostart: self
                 .resolve_autostart(context)
                 .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?,
+            respawn,
+            respawn_delay,
         })
     }
 

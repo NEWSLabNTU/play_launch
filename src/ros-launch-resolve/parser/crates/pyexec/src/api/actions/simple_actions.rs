@@ -122,6 +122,8 @@ impl UnsetEnvironmentVariable {
 pub struct ExecuteProcess {
     cmd: Py<PyAny>,
     on_exit_shutdown: Option<bool>,
+    /// `respawn=` / `respawn_delay=` (#0070).
+    respawn: crate::api::launch_ros::RespawnArgs,
     name: Option<Py<PyAny>>,
     additional_env: Option<Py<PyAny>>,
     #[pyo3(get)]
@@ -142,6 +144,7 @@ impl ExecuteProcess {
         Self {
             cmd,
             on_exit_shutdown: crate::api::launch_ros::on_exit_kwarg_shuts_down(_kwargs),
+            respawn: crate::api::launch_ros::RespawnArgs::from_kwargs(_kwargs),
             name,
             additional_env,
             condition,
@@ -180,6 +183,11 @@ impl ExecuteProcess {
                 env.push((pyobject_to_string(py, &k)?, pyobject_to_string(py, &v)?));
             }
         }
+        let (respawn, respawn_delay) = me.respawn.resolve(py, "ExecuteProcess")?;
+        // The Python dumper keeps a bare process's delay only alongside
+        // `respawn` (`bare_execute_process.py`); without it the delay means
+        // nothing, and the models must compare equal.
+        let respawn_delay = respawn_delay.filter(|_| respawn.is_some());
         let mark = crate::api::visit::lens();
         play_launch_parser::bridge::capture_node(play_launch_parser::captures::NodeCapture {
             executable: parts[0].clone(),
@@ -187,6 +195,8 @@ impl ExecuteProcess {
             name,
             env_vars: env,
             on_exit_shutdown: me.on_exit_shutdown,
+            respawn,
+            respawn_delay,
             ..Default::default()
         });
         crate::api::visit::stamp_delay(mark);

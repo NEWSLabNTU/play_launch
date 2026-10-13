@@ -28,6 +28,81 @@ pub(crate) struct NodeSpec {
     pub ros_arguments: Option<Py<PyAny>>,
     pub env: Option<Py<PyAny>>,
     pub additional_env: Option<Py<PyAny>>,
+    /// `respawn=` / `respawn_delay=` (#0070), from the constructor's
+    /// `**kwargs`: `launch_ros.actions.Node` forwards them to
+    /// `ExecuteProcess`. See [`RespawnArgs`].
+    pub respawn: RespawnArgs,
+}
+
+/// `respawn=` and `respawn_delay=` as an `ExecuteProcess` (and so every
+/// `Node`, `LifecycleNode` and `ComposableNodeContainer`) was constructed
+/// with them, performed only when the action executes (#0070).
+#[derive(Clone, Default)]
+pub(crate) struct RespawnArgs {
+    respawn: Option<Py<PyAny>>,
+    respawn_delay: Option<Py<PyAny>>,
+}
+
+impl RespawnArgs {
+    /// Read both from a constructor's `**kwargs`. A Python `None` is the
+    /// same as not passing the argument.
+    pub(crate) fn from_kwargs(kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+        let get = |key: &str| {
+            kwargs
+                .and_then(|k| k.get_item(key).ok().flatten())
+                .filter(|v| !v.is_none())
+                .map(Bound::unbind)
+        };
+        Self {
+            respawn: get("respawn"),
+            respawn_delay: get("respawn_delay"),
+        }
+    }
+
+    /// `(respawn, respawn_delay)` as the record carries them.
+    ///
+    /// `respawn` is `perform_typed_substitution(context, respawn, bool)`: a
+    /// Python bool as is, anything else performed and coerced the way
+    /// `launch` coerces to `bool`, and a value `launch` would refuse raises.
+    /// Only `true` is kept -- false and unset are both `None`, as the Python
+    /// dumper and the XML container record them, so the two parsers'
+    /// models compare equal. `respawn_delay` is a float in `launch` (no
+    /// substitution); it is kept as given.
+    pub(crate) fn resolve(&self, py: Python, what: &str) -> PyResult<(Option<bool>, Option<f64>)> {
+        let respawn = match &self.respawn {
+            None => None,
+            Some(obj) => {
+                let value = if let Ok(b) = obj.bind(py).cast::<pyo3::types::PyBool>() {
+                    b.is_true()
+                } else {
+                    let text = crate::api::utils::resolve_tokens(&pyobject_to_string(py, obj)?);
+                    play_launch_parser::actions::node::coerce_launch_bool(text.trim()).ok_or_else(
+                        || {
+                            pyo3::exceptions::PyValueError::new_err(format!(
+                                "{what}(respawn={text:?}): cannot convert to bool"
+                            ))
+                        },
+                    )?
+                };
+                value.then_some(true)
+            }
+        };
+        let respawn_delay = match &self.respawn_delay {
+            None => None,
+            Some(obj) => Some(match obj.bind(py).extract::<f64>() {
+                Ok(f) => f,
+                Err(_) => {
+                    let text = crate::api::utils::resolve_tokens(&pyobject_to_string(py, obj)?);
+                    text.trim().parse::<f64>().map_err(|_| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "{what}(respawn_delay={text:?}): not a number"
+                        ))
+                    })?
+                }
+            }),
+        };
+        Ok((respawn, respawn_delay))
+    }
 }
 
 /// A node's identity and command-line contents, performed.
@@ -225,6 +300,12 @@ impl NodeSpec {
         lifecycle: Option<Option<bool>>,
     ) -> PyResult<ExpandedNode> {
         let n = self.expand(py)?;
+        let what = if lifecycle.is_some() {
+            "LifecycleNode"
+        } else {
+            "Node"
+        };
+        let (respawn, respawn_delay) = self.respawn.resolve(py, what)?;
         let mark = crate::api::visit::lens();
         play_launch_parser::bridge::capture_node(NodeCapture {
             package: n.package.clone(),
@@ -244,6 +325,8 @@ impl NodeSpec {
             on_exit_shutdown,
             lifecycle: lifecycle.map(|_| true),
             lifecycle_autostart: lifecycle.flatten(),
+            respawn,
+            respawn_delay,
         });
         crate::api::visit::stamp_delay(mark);
         Ok(n)
@@ -360,6 +443,7 @@ impl Node {
                 ros_arguments,
                 env,
                 additional_env,
+                respawn: RespawnArgs::from_kwargs(_kwargs),
             },
             condition,
             executed_fqn: None,

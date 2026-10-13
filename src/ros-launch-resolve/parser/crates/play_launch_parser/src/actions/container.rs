@@ -51,7 +51,7 @@ pub struct ContainerAction {
 /// dump does (`composable_node_container.py`): `respawn` is `Some(true)` only
 /// when it is true — false and unset are both `None` — and a delay is kept
 /// as given.
-fn resolve_respawn(
+pub(crate) fn resolve_respawn(
     respawn: Option<&Vec<Substitution>>,
     respawn_delay: Option<&Vec<Substitution>>,
     context: &LaunchContext,
@@ -71,7 +71,7 @@ fn resolve_respawn(
                 .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
             v.trim().parse::<f64>().map_err(|_| {
                 ParseError::InvalidSubstitution(format!(
-                    "Failed to parse node_container respawn_delay value '{v}' as number"
+                    "Failed to parse respawn_delay value '{v}' as number"
                 ))
             })
         })

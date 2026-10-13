@@ -147,6 +147,11 @@ impl ExecutableAction {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let (respawn, respawn_delay) = crate::actions::container::resolve_respawn(
+            self.respawn.as_ref(),
+            self.respawn_delay.as_ref(),
+            context,
+        )?;
         Ok(NodeCapture {
             package: String::new(), // Executables don't have packages
             executable,
@@ -167,6 +172,8 @@ impl ExecutableAction {
             on_exit_shutdown: self.on_exit_shutdown,
             lifecycle: None,
             lifecycle_autostart: None,
+            respawn,
+            respawn_delay,
         })
     }
 }

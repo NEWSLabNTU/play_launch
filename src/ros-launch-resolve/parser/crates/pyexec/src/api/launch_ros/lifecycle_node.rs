@@ -69,6 +69,7 @@ impl LifecycleNode {
                 ros_arguments,
                 env,
                 additional_env,
+                respawn: super::node::RespawnArgs::from_kwargs(_kwargs),
             },
             condition,
         }

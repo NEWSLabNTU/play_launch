@@ -73,6 +73,7 @@ impl ComposableNodeContainer {
                 ros_arguments,
                 env,
                 additional_env,
+                respawn: super::node::RespawnArgs::from_kwargs(_kwargs),
             },
             composable_node_descriptions,
             condition,
@@ -110,6 +111,7 @@ impl ComposableNodeContainer {
             return Ok(());
         }
         let n = spec.expand(py)?;
+        let (respawn, respawn_delay) = spec.respawn.resolve(py, "ComposableNodeContainer")?;
         let name = n.name.clone().unwrap_or_default();
         let namespace = n.namespace.clone().unwrap_or_else(|| "/".to_string());
         let fqn = fqn_of(&n.namespace, &name);
@@ -139,6 +141,8 @@ impl ComposableNodeContainer {
             scope_id: None,
             start_delay_secs: None,
             on_exit_shutdown: this.borrow().on_exit_shutdown,
+            respawn,
+            respawn_delay,
         });
         crate::api::visit::stamp_delay(mark);
         this.borrow_mut().executed_fqn = Some(fqn.clone());
