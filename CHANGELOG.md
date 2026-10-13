@@ -27,6 +27,10 @@ allowance heavily.
   `play_launch_container` links modern CMake targets (Rolling removed
   `ament_target_dependencies`) and reads the ament index itself (Rolling
   changed `ament_index_cpp::get_resource`).
+- **Fix:** the aarch64 wheels needed `ros-<distro>-example-interfaces` and
+  `ros-<distro>-test-msgs`, which a ROS base install lacks, and failed to
+  start without them. Those interfaces serve only `rclrs`'s own tests and
+  are no longer linked.
 - **Fix:** with its bundled binary missing or not executable, the
   `play_launch` Python wrapper found itself on `PATH` and re-ran itself until
   it failed with "Argument list too long". It now skips its own entry point.
