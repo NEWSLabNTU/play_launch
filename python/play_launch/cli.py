@@ -8,6 +8,14 @@ import sys
 from pathlib import Path
 
 
+def _is_self(path: str) -> bool:
+    """Whether `path` is the script running now (the console entry point)."""
+    try:
+        return os.path.samefile(path, sys.argv[0])
+    except OSError:
+        return False
+
+
 def _find_binary(name: str) -> str:
     """Find bundled binary with fallback to PATH.
 
@@ -32,9 +40,11 @@ def _find_binary(name: str) -> str:
         if ros2_path.exists() and os.access(ros2_path, os.X_OK):
             return str(ros2_path)
 
-    # 3. Fall back to PATH
+    # 3. Fall back to PATH, skipping this wrapper's own entry point: the
+    # console script is also called `play_launch`, and exec'ing it re-enters
+    # here until the environment overflows ("Argument list too long").
     path_binary = shutil.which(name)
-    if path_binary:
+    if path_binary and not _is_self(path_binary):
         return path_binary
 
     raise FileNotFoundError(
