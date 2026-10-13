@@ -179,6 +179,31 @@ pub(crate) async fn play(
 
     // Install cleanup guard to ensure children are killed even if we're interrupted
     let cleanup_guard = CleanupGuard::new();
+    // What play_launch itself costs: logged every 30 s at debug (so it lands
+    // in the run's play_launch.log) and as a total at the end.
+    let self_cost_start = crate::util::self_cost::read();
+    tokio::spawn(async {
+        let mut last = crate::util::self_cost::read();
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            let now = crate::util::self_cost::read();
+            let u = crate::util::self_cost::usage(&last, &now);
+            let parts: Vec<String> = u
+                .subsystems
+                .iter()
+                .map(|(n, p)| format!("{n} {p:.2}%"))
+                .collect();
+            debug!(
+                "self cost (30 s): {:.1}% of a core; rclrs executor {:.2}%; {}",
+                u.cpu_percent,
+                u.rclrs_percent,
+                parts.join(", ")
+            );
+            last = now;
+        }
+    });
     debug!("CleanupGuard installed");
 
     // Phase 66 — one cgroup per node and per container, so memory is accounted
@@ -449,68 +474,119 @@ pub(crate) async fn play(
 
     // Create ONE shared ROS node for all ROS operations (service discovery, LoadNode calls, etc.)
     debug!("Creating shared ROS node and executor...");
-    let shared_ros_node = {
+    let want_diagnostics_node = runtime_config.diagnostics.enabled;
+    let (shared_ros_node, diagnostics_ros_node) = {
         use std::sync::mpsc as std_mpsc;
         let (node_tx, node_rx) = std_mpsc::channel();
         let shutdown_rx_executor = shutdown_signal.clone();
+        let shutdown_rx_diag = shutdown_signal.clone();
 
         // Spawn a dedicated thread for the ROS executor
         // This thread will spin the executor continuously
-        let executor_thread = std::thread::spawn(move || {
-            use rclrs::CreateBasicExecutor;
-            use tracing::{debug, error};
+        let executor_thread = std::thread::Builder::new()
+            .name(crate::util::self_cost::RCLRS_THREAD_NAME.to_string())
+            .spawn(move || {
+                use rclrs::CreateBasicExecutor;
+                use tracing::{debug, error};
 
-            debug!("Starting ROS executor thread for all ROS operations");
+                debug!("Starting ROS executor thread for all ROS operations");
 
-            // Create ROS context, executor, and node
-            let context = match rclrs::Context::new(
-                vec!["play_launch".to_string()],
-                rclrs::InitOptions::default(),
-            ) {
-                Ok(ctx) => ctx,
-                Err(e) => {
-                    error!("Failed to create ROS context: {:#}", e);
+                // Create ROS context, executor, and node
+                let context = match rclrs::Context::new(
+                    vec!["play_launch".to_string()],
+                    rclrs::InitOptions::default(),
+                ) {
+                    Ok(ctx) => ctx,
+                    Err(e) => {
+                        error!("Failed to create ROS context: {:#}", e);
+                        return;
+                    }
+                };
+
+                let mut executor = context.create_basic_executor();
+                // Unique per process: two play_launch instances in one ROS domain (e.g. an
+                // Autoware stack and a scenario runner) with identical node names trip
+                // Autoware's duplicated_node_checker, which gates autonomous-mode
+                // availability through the diagnostic graph.
+                let node_name = format!("play_launch_{}", std::process::id());
+                let node = match executor.create_node(node_name.as_str()) {
+                    Ok(n) => Arc::new(n),
+                    Err(e) => {
+                        error!("Failed to create ROS node: {:#}", e);
+                        return;
+                    }
+                };
+
+                // `/diagnostics` gets its own executor on this context: its own
+                // wait set, spun on its own thread. Every wakeup of an rclrs wait
+                // set runs `rcl_wait` over every entity in it and re-registers
+                // them all, and the shared node holds a client or subscription per
+                // container and lifecycle node. At Autoware's ~250 diagnostics
+                // messages a second that was 250 walks of the whole set, on the
+                // thread every other ROS callback shares. Same context, so the same
+                // DDS participant: no extra discovery.
+                let diagnostics_node = if want_diagnostics_node {
+                    let mut diag_executor = context.create_basic_executor();
+                    let diag_name = format!("play_launch_{}_diagnostics", std::process::id());
+                    match diag_executor.create_node(diag_name.as_str()) {
+                        Ok(n) => {
+                            let spawned = std::thread::Builder::new()
+                                .name(crate::util::self_cost::RCLRS_DIAG_THREAD_NAME.to_string())
+                                .spawn(move || {
+                                    loop {
+                                        if shutdown_rx_diag.has_changed().is_ok()
+                                            && *shutdown_rx_diag.borrow()
+                                        {
+                                            break;
+                                        }
+                                        diag_executor.spin(
+                                            rclrs::SpinOptions::new()
+                                                .timeout(EXECUTOR_SPIN_TIMEOUT),
+                                        );
+                                    }
+                                });
+                            match spawned {
+                                Ok(_) => Some(Arc::new(n)),
+                                Err(e) => {
+                                    error!("Failed to spawn the diagnostics executor thread: {e}");
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to create the diagnostics ROS node: {:#}", e);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                // Send node back to main thread
+                if node_tx.send((node, diagnostics_node)).is_err() {
+                    error!("Failed to send node to main thread");
                     return;
                 }
-            };
 
-            let mut executor = context.create_basic_executor();
-            // Unique per process: two play_launch instances in one ROS domain (e.g. an
-            // Autoware stack and a scenario runner) with identical node names trip
-            // Autoware's duplicated_node_checker, which gates autonomous-mode
-            // availability through the diagnostic graph.
-            let node_name = format!("play_launch_{}", std::process::id());
-            let node = match executor.create_node(node_name.as_str()) {
-                Ok(n) => Arc::new(n),
-                Err(e) => {
-                    error!("Failed to create ROS node: {:#}", e);
-                    return;
-                }
-            };
+                debug!("ROS executor thread: node created, starting spin loop");
 
-            // Send node back to main thread
-            if node_tx.send(node).is_err() {
-                error!("Failed to send node to main thread");
-                return;
-            }
+                // Spin the executor until shutdown
+                loop {
+                    // Check for shutdown signal (non-blocking)
+                    if shutdown_rx_executor.has_changed().is_ok() && *shutdown_rx_executor.borrow()
+                    {
+                        debug!("ROS executor thread received shutdown signal");
+                        break;
+                    }
 
-            debug!("ROS executor thread: node created, starting spin loop");
-
-            // Spin the executor until shutdown
-            loop {
-                // Check for shutdown signal (non-blocking)
-                if shutdown_rx_executor.has_changed().is_ok() && *shutdown_rx_executor.borrow() {
-                    debug!("ROS executor thread received shutdown signal");
-                    break;
+                    // Spin with timeout (waits up to 50ms for work, processes it, then returns)
+                    // This allows ROS to process messages during the wait, unlike sleep()
+                    executor.spin(rclrs::SpinOptions::new().timeout(EXECUTOR_SPIN_TIMEOUT));
                 }
 
-                // Spin with timeout (waits up to 50ms for work, processes it, then returns)
-                // This allows ROS to process messages during the wait, unlike sleep()
-                executor.spin(rclrs::SpinOptions::new().timeout(EXECUTOR_SPIN_TIMEOUT));
-            }
-
-            debug!("ROS executor thread shutting down");
-        });
+                debug!("ROS executor thread shutting down");
+            })
+            .expect("spawn the rclrs executor thread");
 
         // Detach the executor thread — dropping a JoinHandle does not join.
         // The thread will run until the shutdown signal is received.
@@ -518,14 +594,14 @@ pub(crate) async fn play(
 
         // Wait for the node to be created
         match node_rx.recv() {
-            Ok(node) => {
+            Ok((node, diagnostics_node)) => {
                 debug!("Shared ROS node created: /play_launch");
-                Some(node)
+                (Some(node), diagnostics_node)
             }
             Err(e) => {
                 error!("Failed to receive node from executor thread: {:#}", e);
                 error!("ROS operations (service discovery, LoadNode) will not be available");
-                None
+                (None, None)
             }
         }
     };
@@ -601,7 +677,11 @@ pub(crate) async fn play(
         // Spawn async diagnostic monitoring task
         let task = tokio::spawn(crate::diagnostics::run_diagnostic_task(
             runtime_config.diagnostics.clone(),
-            shared_ros_node.clone().unwrap(),
+            // Its own node and executor when that was created; the shared one
+            // otherwise, which works and costs what it used to.
+            diagnostics_ros_node
+                .clone()
+                .unwrap_or_else(|| shared_ros_node.clone().unwrap()),
             log_dir.clone(),
             diagnostic_registry.clone(),
             shutdown_signal.clone(),
@@ -1953,6 +2033,7 @@ pub(crate) async fn play(
         ));
     }
 
+    crate::util::self_cost::log_totals(&self_cost_start);
     debug!("play() function completed, returning");
     Ok(())
 }

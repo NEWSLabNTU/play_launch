@@ -135,6 +135,7 @@ pub fn build_graph_snapshot(
     ros_node: &Node,
     fqn_to_member: &HashMap<String, String>,
 ) -> eyre::Result<GraphSnapshot> {
+    let _cost = crate::util::self_cost::section(crate::util::self_cost::Subsystem::Graph);
     let topic_names_and_types = ros_node.get_topic_names_and_types()?;
 
     let mut topics = Vec::with_capacity(topic_names_and_types.len());

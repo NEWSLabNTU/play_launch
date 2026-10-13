@@ -119,6 +119,7 @@ pub async fn list_nodes(
 ) -> Json<Vec<super::web_types::NodeSummary>> {
     let coordinator = &state.member_handle;
     let nodes = coordinator.list_members().await;
+    let _cost = crate::util::self_cost::section(crate::util::self_cost::Subsystem::Web);
 
     let container_lookup = build_container_lookup(&nodes);
 

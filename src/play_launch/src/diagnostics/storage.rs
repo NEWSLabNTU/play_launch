@@ -2,8 +2,7 @@ use super::diagnostic_data::DiagnosticStatus;
 use chrono::{DateTime, Utc};
 use csv::Writer;
 use eyre::{Result, WrapErr};
-use std::{fs::File, path::Path};
-use tokio::sync::Mutex;
+use std::{fs::File, path::Path, sync::Mutex};
 
 /// CSV writer for diagnostic data
 pub struct DiagnosticCsvWriter {
@@ -42,9 +41,15 @@ impl DiagnosticCsvWriter {
     }
 
     /// Write a diagnostic status to CSV
-    /// Each key-value pair gets its own row for normalized format
-    pub async fn write_diagnostic(&self, status: &DiagnosticStatus) -> Result<()> {
-        let mut writer = self.writer.lock().await;
+    /// Each key-value pair gets its own row for normalized format.
+    ///
+    /// Buffered: rows reach the file on [`Self::flush`], which the monitor
+    /// calls once a second and at shutdown.
+    pub fn write_diagnostic(&self, status: &DiagnosticStatus) -> Result<()> {
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|_| eyre::eyre!("diagnostics CSV writer lock poisoned"))?;
 
         let timestamp: DateTime<Utc> = status.timestamp.into();
         let timestamp_str = timestamp.to_rfc3339();
@@ -81,8 +86,15 @@ impl DiagnosticCsvWriter {
             }
         }
 
-        writer.flush().wrap_err("Failed to flush CSV writer")?;
-
         Ok(())
+    }
+
+    /// Push buffered rows to the file.
+    pub fn flush(&self) -> Result<()> {
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|_| eyre::eyre!("diagnostics CSV writer lock poisoned"))?;
+        writer.flush().wrap_err("Failed to flush CSV writer")
     }
 }

@@ -207,6 +207,7 @@ impl ResourceMonitor {
     }
 
     fn collect_metrics(&mut self, pid: u32) -> Result<ResourceMetrics> {
+        let _cost = crate::util::self_cost::section(crate::util::self_cost::Subsystem::Monitor);
         let pid_obj = Pid::from_u32(pid);
 
         // Get process from system
@@ -480,6 +481,9 @@ pub async fn run_monitoring_task(
                     continue;
                 }
 
+                // Self-cost: the synchronous sampling up to the first await.
+                let cost = crate::util::self_cost::section(crate::util::self_cost::Subsystem::Monitor);
+
                 // Refresh only the specific processes we're monitoring
                 let pids_to_refresh: Vec<Pid> =
                     processes.keys().map(|&pid| Pid::from_u32(pid)).collect();
@@ -529,6 +533,8 @@ pub async fn run_monitoring_task(
                     }
                     monitor.subprocess_cache_last_refresh = std::time::Instant::now();
                 }
+
+                drop(cost);
 
                 // Batch read I/O stats for all PIDs
                 if let Some(ref mut helper) = monitor.io_helper {

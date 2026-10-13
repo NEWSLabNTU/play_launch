@@ -11,7 +11,11 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tokio::sync::watch;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
+
+/// How often buffered `diagnostics.csv` rows reach the file. A killed run
+/// loses at most this much.
+const CSV_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Main diagnostic monitoring task
 pub async fn run_diagnostic_task(
@@ -48,7 +52,11 @@ pub async fn run_diagnostic_task(
         // Note: We use a closure that sends messages to the async task via channel
         let _subscription = shared_ros_node
             .create_subscription(topic, move |msg: diagnostic_msgs::msg::DiagnosticArray| {
-                debug!(
+                // trace, not debug: one line per message, and the run log
+                // records debug. On Autoware (~250 msg/s) the two per-message
+                // lines here were 44k lines in 100 s, 270 MB an hour, each
+                // formatted and written on the shared rclrs executor thread.
+                trace!(
                     "Received DiagnosticArray on topic '{}' with {} statuses",
                     topic_name,
                     msg.status.len()
@@ -80,34 +88,43 @@ pub async fn run_diagnostic_task(
     let mut last_levels: HashMap<String, DiagnosticLevel> = HashMap::new();
     let debounce_duration = Duration::from_millis(config.debounce_ms);
 
+    // The CSV is flushed once a second rather than once per status: at
+    // Autoware's ~250 msg/s that was a write syscall per status.
+    let mut flush_tick = tokio::time::interval(CSV_FLUSH_INTERVAL);
+
     // Process messages until shutdown
     loop {
         tokio::select! {
             Some(msg) = rx.recv() => {
-                // Process each diagnostic status in the array
+                // Self-cost. Nothing below awaits.
+                let _cost = crate::util::self_cost::section(
+                    crate::util::self_cost::Subsystem::Diagnostics,
+                );
+                // Process each diagnostic status in the array. The message is
+                // owned, so its strings move into the status rather than being
+                // cloned.
                 for status_msg in msg.status {
-                    // Convert ROS message to our DiagnosticStatus
-                    let diagnostic_status = DiagnosticStatus {
-                        hardware_id: status_msg.hardware_id.clone(),
-                        name: status_msg.name.clone(),
-                        level: DiagnosticLevel::from_u8(status_msg.level),
-                        message: status_msg.message.clone(),
-                        values: status_msg
-                            .values
-                            .iter()
-                            .map(|kv| (kv.key.clone(), kv.value.clone()))
-                            .collect(),
-                        timestamp: SystemTime::now(),
-                    };
-
-                    // Apply filter if configured. Before the debounce, so a
+                    // Apply filter if configured. Before anything else, so a
                     // filtered-out diagnostic costs nothing and cannot leave
                     // bookkeeping behind for a key that is never recorded.
                     if !config.filter_hardware_ids.is_empty()
-                        && !config.filter_hardware_ids.contains(&diagnostic_status.hardware_id)
+                        && !config.filter_hardware_ids.contains(&status_msg.hardware_id)
                     {
                         continue;
                     }
+
+                    let diagnostic_status = DiagnosticStatus {
+                        hardware_id: status_msg.hardware_id,
+                        name: status_msg.name,
+                        level: DiagnosticLevel::from_u8(status_msg.level),
+                        message: status_msg.message,
+                        values: status_msg
+                            .values
+                            .into_iter()
+                            .map(|kv| (kv.key, kv.value))
+                            .collect(),
+                        timestamp: SystemTime::now(),
+                    };
 
                     let key = diagnostic_status.key();
 
@@ -138,8 +155,8 @@ pub async fn run_diagnostic_task(
                         // Update registry
                         registry.update(diagnostic_status.clone());
 
-                        // Write to CSV
-                        if let Err(e) = csv_writer.write_diagnostic(&diagnostic_status).await {
+                        // Write to CSV (buffered; flushed on the tick below)
+                        if let Err(e) = csv_writer.write_diagnostic(&diagnostic_status) {
                             error!("Failed to write diagnostic to CSV: {:#}", e);
                         }
 
@@ -147,13 +164,18 @@ pub async fn run_diagnostic_task(
                         last_write_times.insert(key.clone(), diagnostic_status.timestamp);
                         last_levels.insert(key, diagnostic_status.level);
 
-                        debug!(
+                        trace!(
                             "Logged diagnostic: {}/{} [{}]",
                             diagnostic_status.hardware_id,
                             diagnostic_status.name,
                             diagnostic_status.level.as_str()
                         );
                     }
+                }
+            }
+            _ = flush_tick.tick() => {
+                if let Err(e) = csv_writer.flush() {
+                    error!("Failed to flush diagnostics CSV: {:#}", e);
                 }
             }
             _ = shutdown_signal.changed() => {
@@ -165,6 +187,9 @@ pub async fn run_diagnostic_task(
         }
     }
 
+    if let Err(e) = csv_writer.flush() {
+        error!("Failed to flush diagnostics CSV: {:#}", e);
+    }
     info!("Diagnostic monitoring task stopped");
     Ok(())
 }

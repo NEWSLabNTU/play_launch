@@ -675,6 +675,9 @@ pub async fn run_interception_task(
                     &log_dir,
                 );
                 // Drain all consumers
+                let drain_cost = crate::util::self_cost::section(
+                    crate::util::self_cost::Subsystem::Interception,
+                );
                 for (child_idx, child) in consumers.iter_mut().enumerate() {
                     while let Some(event) = child.consumer.pop() {
                         total_events += 1;
@@ -701,11 +704,15 @@ pub async fn run_interception_task(
                         }
                     }
                 }
+                drop(drain_cost);
                 // The Entities page: one snapshot a second, built only while
                 // the web server holds a receiver.
                 if let Some(tx) = entities.as_ref() {
                     let now = crate::runtime_enforcement::monotonic_now_ns();
                     if now >= next_snapshot_ns && tx.receiver_count() > 0 {
+                        let _cost = crate::util::self_cost::section(
+                            crate::util::self_cost::Subsystem::Entities,
+                        );
                         next_snapshot_ns = now + 1_000_000_000;
                         let snap = endpoints.live_snapshot(
                             now,

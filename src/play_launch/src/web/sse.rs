@@ -417,6 +417,7 @@ pub async fn stream_entities(
     let stream = async_stream::stream! {
         loop {
             let json = {
+                let _cost = crate::util::self_cost::section(crate::util::self_cost::Subsystem::Web);
                 let snap = rx.borrow_and_update().clone();
                 let body = if all {
                     serde_json::to_string(&*snap)
@@ -476,12 +477,15 @@ pub async fn stream_diagnostics(State(state): State<Arc<WebState>>) -> Response 
         let mut tick = tokio::time::interval(DIAGNOSTICS_TICK);
 
         loop {
-            let payload = serde_json::json!({
-                "diagnostics": registry.list_all(),
-                "counts": registry.get_counts(),
-            });
-
-            match serde_json::to_string(&payload) {
+            let json = {
+                let _cost = crate::util::self_cost::section(crate::util::self_cost::Subsystem::Web);
+                let payload = serde_json::json!({
+                    "diagnostics": registry.list_all(),
+                    "counts": registry.get_counts(),
+                });
+                serde_json::to_string(&payload)
+            };
+            match json {
                 Ok(json) => yield Ok::<_, Infallible>(Event::default().data(json)),
                 Err(e) => error!("Failed to serialize diagnostics snapshot: {}", e),
             }
