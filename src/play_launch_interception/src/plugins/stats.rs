@@ -9,8 +9,10 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::event::{EventKind, InterceptionEvent, monotonic_ns, thread_cpu_ns, tid};
-use crate::plugin::{InterceptionPlugin, Stamp};
+use crate::{
+    event::{EventKind, InterceptionEvent, monotonic_ns, thread_cpu_ns, tid},
+    plugin::{InterceptionPlugin, Stamp},
+};
 use spsc_shm::Producer;
 
 pub(crate) struct StatsPlugin {
@@ -90,9 +92,7 @@ impl InterceptionPlugin for StatsPlugin {
         stamp: Option<Stamp>,
         payload_bytes: u32,
     ) {
-        let (sec, nanosec) = stamp
-            .map(|s| (s.sec, s.nanosec))
-            .unwrap_or((0, 0));
+        let (sec, nanosec) = stamp.map(|s| (s.sec, s.nanosec)).unwrap_or((0, 0));
         let event = InterceptionEvent {
             kind: EventKind::Publish,
             _pad: [0; 3],
@@ -119,9 +119,7 @@ impl InterceptionPlugin for StatsPlugin {
         stamp: Option<Stamp>,
         payload_bytes: u32,
     ) {
-        let (sec, nanosec) = stamp
-            .map(|s| (s.sec, s.nanosec))
-            .unwrap_or((0, 0));
+        let (sec, nanosec) = stamp.map(|s| (s.sec, s.nanosec)).unwrap_or((0, 0));
         let event = InterceptionEvent {
             kind: EventKind::Take,
             _pad: [0; 3],
@@ -147,7 +145,8 @@ mod tests {
     fn setup() -> (StatsPlugin, spsc_shm::Consumer<InterceptionEvent>, i32, i32) {
         let (shm_fd, event_fd) = spsc_shm::create::<InterceptionEvent>(64).unwrap();
         let producer = unsafe { spsc_shm::Producer::from_raw_fd(shm_fd) }.unwrap();
-        let consumer = unsafe { spsc_shm::Consumer::<InterceptionEvent>::from_raw_fd(shm_fd) }.unwrap();
+        let consumer =
+            unsafe { spsc_shm::Consumer::<InterceptionEvent>::from_raw_fd(shm_fd) }.unwrap();
         let plugin = StatsPlugin::new(Arc::new(Mutex::new(producer)));
         (plugin, consumer, shm_fd, event_fd)
     }
@@ -156,7 +155,14 @@ mod tests {
     fn publish_writes_event() {
         let (plugin, mut consumer, shm_fd, event_fd) = setup();
 
-        plugin.on_publish(0x100, 0xAAAA, Some(Stamp { sec: 10, nanosec: 500 }));
+        plugin.on_publish(
+            0x100,
+            0xAAAA,
+            Some(Stamp {
+                sec: 10,
+                nanosec: 500,
+            }),
+        );
 
         let ev = consumer.pop().expect("should receive publish event");
         assert_eq!(ev.kind, EventKind::Publish);
@@ -200,7 +206,14 @@ mod tests {
     fn take_writes_event() {
         let (plugin, mut consumer, shm_fd, event_fd) = setup();
 
-        plugin.on_take(0x200, 0xBBBB, Some(Stamp { sec: 5, nanosec: 100 }));
+        plugin.on_take(
+            0x200,
+            0xBBBB,
+            Some(Stamp {
+                sec: 5,
+                nanosec: 100,
+            }),
+        );
 
         let ev = consumer.pop().expect("should receive take event");
         assert_eq!(ev.kind, EventKind::Take);
@@ -325,7 +338,10 @@ mod tests {
 
         let ev1 = consumer.pop().unwrap();
         let ev2 = consumer.pop().unwrap();
-        assert!(ev2.monotonic_ns >= ev1.monotonic_ns, "monotonic timestamps should not go backwards");
+        assert!(
+            ev2.monotonic_ns >= ev1.monotonic_ns,
+            "monotonic timestamps should not go backwards"
+        );
 
         unsafe {
             libc::close(shm_fd);

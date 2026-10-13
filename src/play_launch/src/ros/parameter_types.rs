@@ -33,7 +33,7 @@ pub struct FloatRange {
 ///   `{ "type": "Double", "value": 3.14 }`
 ///   `{ "type": "Bool", "value": true }`
 ///   `{ "type": "NotSet" }`
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(TS))]
 #[cfg_attr(test, ts(export))]
 #[serde(tag = "type", content = "value")]

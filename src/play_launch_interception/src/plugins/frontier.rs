@@ -8,14 +8,20 @@
 //! var is set. Sends 17-byte `FrontierEvent` datagrams over a Unix socket.
 //! Useful for standalone debugging without play_launch.
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use parking_lot::{Mutex, RwLock};
 
-use crate::event::{EventKind, InterceptionEvent, monotonic_ns};
-use crate::plugin::{InterceptionPlugin, Stamp};
+use crate::{
+    event::{EventKind, InterceptionEvent, monotonic_ns},
+    plugin::{InterceptionPlugin, Stamp},
+};
 use spsc_shm::Producer;
 
 // ---------------------------------------------------------------------------
@@ -287,7 +293,8 @@ mod tests {
     fn shm_publish_sends_event_when_frontier_advances() {
         let (shm_fd, _event_fd) = spsc_shm::create::<InterceptionEvent>(64).unwrap();
         let producer = unsafe { spsc_shm::Producer::from_raw_fd(shm_fd) }.unwrap();
-        let mut consumer = unsafe { spsc_shm::Consumer::<InterceptionEvent>::from_raw_fd(shm_fd) }.unwrap();
+        let mut consumer =
+            unsafe { spsc_shm::Consumer::<InterceptionEvent>::from_raw_fd(shm_fd) }.unwrap();
 
         let plugin = FrontierPlugin::with_producer(Arc::new(Mutex::new(producer)));
         let hash = 0xDEAD_BEEF;
@@ -312,7 +319,8 @@ mod tests {
     fn shm_publish_suppressed_when_frontier_does_not_advance() {
         let (shm_fd, event_fd) = spsc_shm::create::<InterceptionEvent>(64).unwrap();
         let producer = unsafe { spsc_shm::Producer::from_raw_fd(shm_fd) }.unwrap();
-        let mut consumer = unsafe { spsc_shm::Consumer::<InterceptionEvent>::from_raw_fd(shm_fd) }.unwrap();
+        let mut consumer =
+            unsafe { spsc_shm::Consumer::<InterceptionEvent>::from_raw_fd(shm_fd) }.unwrap();
 
         let plugin = FrontierPlugin::with_producer(Arc::new(Mutex::new(producer)));
         let hash = 0xCAFE;
@@ -322,7 +330,14 @@ mod tests {
         let _ = consumer.pop(); // consume
 
         // Older stamp — suppressed
-        plugin.on_publish(0x100, hash, Some(Stamp { sec: 1, nanosec: 999 }));
+        plugin.on_publish(
+            0x100,
+            hash,
+            Some(Stamp {
+                sec: 1,
+                nanosec: 999,
+            }),
+        );
         assert!(consumer.pop().is_none(), "older stamp should be suppressed");
 
         // Same stamp — suppressed
@@ -351,12 +366,20 @@ mod tests {
         // docs for the parallel publish-side rationale).
         let (shm_fd, event_fd) = spsc_shm::create::<InterceptionEvent>(64).unwrap();
         let producer = unsafe { spsc_shm::Producer::from_raw_fd(shm_fd) }.unwrap();
-        let mut consumer = unsafe { spsc_shm::Consumer::<InterceptionEvent>::from_raw_fd(shm_fd) }.unwrap();
+        let mut consumer =
+            unsafe { spsc_shm::Consumer::<InterceptionEvent>::from_raw_fd(shm_fd) }.unwrap();
 
         let plugin = FrontierPlugin::with_producer(Arc::new(Mutex::new(producer)));
         let hash = 0xBEEF;
 
-        plugin.on_take(0x200, hash, Some(Stamp { sec: 5, nanosec: 100 }));
+        plugin.on_take(
+            0x200,
+            hash,
+            Some(Stamp {
+                sec: 5,
+                nanosec: 100,
+            }),
+        );
         assert!(
             consumer.pop().is_none(),
             "shared-memory take should not emit any event"
@@ -372,7 +395,8 @@ mod tests {
     fn shm_none_stamp_is_ignored() {
         let (shm_fd, event_fd) = spsc_shm::create::<InterceptionEvent>(64).unwrap();
         let producer = unsafe { spsc_shm::Producer::from_raw_fd(shm_fd) }.unwrap();
-        let mut consumer = unsafe { spsc_shm::Consumer::<InterceptionEvent>::from_raw_fd(shm_fd) }.unwrap();
+        let mut consumer =
+            unsafe { spsc_shm::Consumer::<InterceptionEvent>::from_raw_fd(shm_fd) }.unwrap();
 
         let plugin = FrontierPlugin::with_producer(Arc::new(Mutex::new(producer)));
 
@@ -408,11 +432,7 @@ mod tests {
     fn setup_socket() -> (UnixDatagram, FrontierPlugin) {
         let id = TEST_ID.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir();
-        let sock_path = dir.join(format!(
-            "frontier_test_{}_{}.sock",
-            std::process::id(),
-            id,
-        ));
+        let sock_path = dir.join(format!("frontier_test_{}_{}.sock", std::process::id(), id,));
         let _ = std::fs::remove_file(&sock_path);
 
         let receiver = UnixDatagram::bind(&sock_path).expect("bind receiver");
@@ -452,7 +472,14 @@ mod tests {
         let (receiver, plugin) = setup_socket();
         let hash = 0xBEEF;
 
-        plugin.on_take(0x200, hash, Some(Stamp { sec: 5, nanosec: 100 }));
+        plugin.on_take(
+            0x200,
+            hash,
+            Some(Stamp {
+                sec: 5,
+                nanosec: 100,
+            }),
+        );
         let ev = recv_event(&receiver).expect("take should always send");
         assert_eq!(ev.0, hash);
         assert_eq!(ev.1, 5);
@@ -486,14 +513,22 @@ mod tests {
     fn multiple_topics_independent_frontiers() {
         let (shm_fd, event_fd) = spsc_shm::create::<InterceptionEvent>(64).unwrap();
         let producer = unsafe { spsc_shm::Producer::from_raw_fd(shm_fd) }.unwrap();
-        let mut consumer = unsafe { spsc_shm::Consumer::<InterceptionEvent>::from_raw_fd(shm_fd) }.unwrap();
+        let mut consumer =
+            unsafe { spsc_shm::Consumer::<InterceptionEvent>::from_raw_fd(shm_fd) }.unwrap();
 
         let plugin = FrontierPlugin::with_producer(Arc::new(Mutex::new(producer)));
         let hash_a = 0x1111;
         let hash_b = 0x2222;
 
         // Advance topic A to (10, 0).
-        plugin.on_publish(0x100, hash_a, Some(Stamp { sec: 10, nanosec: 0 }));
+        plugin.on_publish(
+            0x100,
+            hash_a,
+            Some(Stamp {
+                sec: 10,
+                nanosec: 0,
+            }),
+        );
         let _ = consumer.pop();
 
         // Advance topic B to (5, 0) — should send (independent frontier).

@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!-- Parameters against the launch, and the time base (Health page J, I):
+     `publish_frequncy` is a misspelling the talker never declares; the test
+     sets the talker's `use_sim_time` at runtime, against its launch value. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="talker_p">
+    <param name="use_sim_time" value="false"/>
+    <param name="publish_frequncy" value="5"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="listener" name="listener_p">
+    <param name="use_sim_time" value="false"/>
+  </node>
+</launch>

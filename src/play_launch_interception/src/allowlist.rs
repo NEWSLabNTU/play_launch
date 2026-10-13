@@ -15,8 +15,7 @@
 //!
 //! Inert when either env var is unset: hooks pass through unchanged.
 
-use std::collections::HashSet;
-use std::sync::OnceLock;
+use std::{collections::HashSet, sync::OnceLock};
 
 use crate::registry::fnv1a;
 
@@ -27,30 +26,36 @@ static ALLOWLIST: OnceLock<Option<HashSet<u64>>> = OnceLock::new();
 /// if blocking is not active (env vars not set, file unreadable, or
 /// blocking mode disabled).
 pub fn try_load() -> Option<&'static HashSet<u64>> {
-    ALLOWLIST.get_or_init(|| {
-        if std::env::var("PLAY_LAUNCH_INTERCEPTION_BLOCK_GRAPH").ok().as_deref() != Some("1") {
-            return None;
-        }
-        let path = std::env::var("PLAY_LAUNCH_INTERCEPTION_GRAPH_FILE").ok()?;
-        let contents = std::fs::read_to_string(&path).ok()?;
-        let mut set = HashSet::new();
-        for line in contents.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
+    ALLOWLIST
+        .get_or_init(|| {
+            if std::env::var("PLAY_LAUNCH_INTERCEPTION_BLOCK_GRAPH")
+                .ok()
+                .as_deref()
+                != Some("1")
+            {
+                return None;
             }
-            set.insert(fnv1a(trimmed.as_bytes()));
-        }
-        if set.is_empty() {
-            return None;
-        }
-        eprintln!(
-            "[play_launch_interception] blocking allowlist loaded: {} entries from {}",
-            set.len(),
-            path
-        );
-        Some(set)
-    }).as_ref()
+            let path = std::env::var("PLAY_LAUNCH_INTERCEPTION_GRAPH_FILE").ok()?;
+            let contents = std::fs::read_to_string(&path).ok()?;
+            let mut set = HashSet::new();
+            for line in contents.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                set.insert(fnv1a(trimmed.as_bytes()));
+            }
+            if set.is_empty() {
+                return None;
+            }
+            eprintln!(
+                "[play_launch_interception] blocking allowlist loaded: {} entries from {}",
+                set.len(),
+                path
+            );
+            Some(set)
+        })
+        .as_ref()
 }
 
 /// Check whether `topic_hash` is in the allowlist. Returns `true` when
@@ -74,10 +79,8 @@ mod tests {
         // Standalone parse logic test — bypasses try_load to avoid the
         // OnceLock global. Verifies file format: newline-separated,
         // comment lines ignored, blank lines ignored.
-        let dir = std::env::temp_dir().join(format!(
-            "play_launch_allowlist_test_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("play_launch_allowlist_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("graph.txt");
         let mut f = std::fs::File::create(&path).unwrap();

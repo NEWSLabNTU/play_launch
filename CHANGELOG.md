@@ -8,6 +8,15 @@ allowance heavily.
 
 ## Unreleased
 
+- **New:** parameters against the launch, on the Health page. Once startup
+  completes and every 10 minutes, play_launch asks each node for the
+  parameters its launch file sets and reports values that differ (set at
+  runtime, or overridden by the node) and values the node never declared,
+  which ROS drops without a word — a misspelled name looks exactly like a
+  launch that worked.
+- **New:** time consistency: nodes split between simulated and wall-clock
+  time, nodes on simulated time with nothing publishing `/clock`, and, with
+  interception, a `/clock` that stops or goes backwards.
 - **New:** resource trends on the Health page: each member's memory and
   open files fitted over the last 30 minutes, with a warning for steady
   growth (over 1 MiB a minute, or 20 more open files), plus thread counts

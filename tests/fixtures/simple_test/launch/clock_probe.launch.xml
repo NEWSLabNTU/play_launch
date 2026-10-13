@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!-- /clock that goes back, then stops, with a node on sim time (Health page I). -->
+<launch>
+  <executable cmd="python3 $(dirname)/../scripts/clock_probe.py" name="clock_probe" output="screen"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="sim_listener">
+    <param name="use_sim_time" value="true"/>
+  </node>
+</launch>

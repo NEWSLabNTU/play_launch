@@ -195,6 +195,41 @@ pub(crate) struct EndpointTracker {
     pub(super) dds_incompatible: std::collections::HashSet<(usize, u64, Direction)>,
     /// Stamped publishes, for matching the takes of them.
     pub(super) matcher: Matcher<(usize, u64)>,
+    /// The topic hash of `/clock`, once its name is known.
+    pub(crate) clock_topic: Option<u64>,
+    /// Values published on `/clock`.
+    pub(super) clock: ClockTrack,
+}
+
+/// `/clock` as published: its value (the interceptor reads a
+/// `rosgraph_msgs/Clock`'s `clock` field as the stamp), and whether it ever
+/// went back. Two simulators, or a bag looping beside one, interleave values
+/// and go back on every other message.
+#[derive(Debug, Default)]
+pub(super) struct ClockTrack {
+    pub(super) messages: u64,
+    pub(super) first_mono: u64,
+    pub(super) last_mono: u64,
+    pub(super) last_value_ns: i128,
+    pub(super) backward_jumps: u64,
+    pub(super) last_backward_mono: u64,
+    pub(super) last_backward_ns: i128,
+}
+
+impl ClockTrack {
+    fn observe(&mut self, sec: i32, nanosec: u32, mono: u64) {
+        let v = sec as i128 * 1_000_000_000 + nanosec as i128;
+        if self.messages == 0 {
+            self.first_mono = mono;
+        } else if v < self.last_value_ns {
+            self.backward_jumps += 1;
+            self.last_backward_mono = mono;
+            self.last_backward_ns = self.last_value_ns - v;
+        }
+        self.messages += 1;
+        self.last_mono = mono;
+        self.last_value_ns = v;
+    }
 }
 
 impl EndpointTracker {
@@ -282,6 +317,10 @@ impl EndpointTracker {
                     ep.size_samples += 1;
                 }
                 ep.window.add(event.monotonic_ns, event.payload_bytes);
+                if direction == Direction::Pub && self.clock_topic == Some(event.topic_hash) {
+                    self.clock
+                        .observe(event.stamp_sec, event.stamp_nanosec, event.monotonic_ns);
+                }
                 if let Some(stamp) = stamp_key(event.stamp_sec, event.stamp_nanosec) {
                     match direction {
                         Direction::Pub => {

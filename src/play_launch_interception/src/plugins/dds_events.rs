@@ -21,8 +21,10 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::event::{EventKind, InterceptionEvent};
-use crate::plugin::{InterceptionPlugin, Stamp};
+use crate::{
+    event::{EventKind, InterceptionEvent},
+    plugin::{InterceptionPlugin, Stamp},
+};
 use rcl_interception_sys::events::{
     RmwDeadlineMissedStatus, RmwLivelinessChangedStatus, RmwLivelinessLostStatus,
     RmwMessageLostStatus, RmwQosIncompatibleEventStatus, event_type,

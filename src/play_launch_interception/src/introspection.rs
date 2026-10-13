@@ -1,7 +1,7 @@
 //! Resolves the byte offset of `header.stamp` within a ROS message using
 //! rosidl introspection. Called once per publisher/subscriber (cold path).
 
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 
 use rcl_interception_sys::*;
 
@@ -39,7 +39,8 @@ unsafe fn find_header_offset(members: *const MessageMembers) -> Option<usize> {
 }
 
 /// Walk a `MessageMembers` array looking for a *top-level* field named
-/// "stamp" whose type is exactly `builtin_interfaces/msg/Time`. This covers
+/// "stamp" (or "clock", for `rosgraph_msgs/Clock`) whose type is exactly
+/// `builtin_interfaces/msg/Time`. This covers
 /// messages that carry a bare `stamp` field as their first member instead of
 /// a nested `header.stamp` (e.g. `autoware_control_msgs/Control` and other
 /// vehicle command/report types) — `find_header_offset` alone misses these,
@@ -68,7 +69,10 @@ unsafe fn find_bare_stamp_offset(members: *const MessageMembers) -> Option<usize
             continue;
         }
         let name = unsafe { CStr::from_ptr(member.name_) };
-        if name.to_bytes() != b"stamp" || member.type_id_ != ROS_TYPE_MESSAGE {
+        // `clock` too: `rosgraph_msgs/Clock` is `builtin_interfaces/Time
+        // clock` and nothing else, and its value is what the Health page
+        // judges `/clock` stalls and backward jumps by.
+        if !matches!(name.to_bytes(), b"stamp" | b"clock") || member.type_id_ != ROS_TYPE_MESSAGE {
             continue;
         }
         if member.members_.is_null() {
@@ -96,9 +100,8 @@ pub unsafe fn find_type_identity(
     type_support: *const rosidl_message_type_support_t,
 ) -> Option<String> {
     unsafe {
-        try_type_identity(type_support, TYPESUPPORT_INTROSPECTION_C_IDENTIFIER).or_else(|| {
-            try_type_identity(type_support, TYPESUPPORT_INTROSPECTION_CPP_IDENTIFIER)
-        })
+        try_type_identity(type_support, TYPESUPPORT_INTROSPECTION_C_IDENTIFIER)
+            .or_else(|| try_type_identity(type_support, TYPESUPPORT_INTROSPECTION_CPP_IDENTIFIER))
     }
 }
 
@@ -170,9 +173,7 @@ pub unsafe fn find_stamp_offset(
     // memory layout across both.
     unsafe {
         try_introspection(type_support, TYPESUPPORT_INTROSPECTION_C_IDENTIFIER)
-            .or_else(|| {
-                try_introspection(type_support, TYPESUPPORT_INTROSPECTION_CPP_IDENTIFIER)
-            })
+            .or_else(|| try_introspection(type_support, TYPESUPPORT_INTROSPECTION_CPP_IDENTIFIER))
     }
 }
 
@@ -330,6 +331,35 @@ mod tests {
 
             let mut msg_members: MessageMembers = std::mem::zeroed();
             msg_members.member_count_ = 2;
+            msg_members.members_ = fields.as_ptr();
+
+            assert_eq!(
+                find_bare_stamp_offset(&msg_members as *const MessageMembers),
+                Some(0)
+            );
+        }
+    }
+
+    #[test]
+    fn finds_the_clock_field_of_a_clock_message() {
+        let ns = c"builtin_interfaces__msg";
+        let name = c"Time";
+        let clock_name = c"clock";
+        unsafe {
+            let mut time_members: MessageMembers = std::mem::zeroed();
+            time_members.message_namespace_ = ns.as_ptr();
+            time_members.message_name_ = name.as_ptr();
+            let mut time_ts: rosidl_message_type_support_t = std::mem::zeroed();
+            let time_ts_ptr = make_type_support(&time_members, &mut time_ts);
+
+            let mut fields: [MessageMember; 1] = std::mem::zeroed();
+            fields[0].name_ = clock_name.as_ptr();
+            fields[0].type_id_ = ROS_TYPE_MESSAGE;
+            fields[0].offset_ = 0;
+            fields[0].members_ = time_ts_ptr;
+
+            let mut msg_members: MessageMembers = std::mem::zeroed();
+            msg_members.member_count_ = 1;
             msg_members.members_ = fields.as_ptr();
 
             assert_eq!(

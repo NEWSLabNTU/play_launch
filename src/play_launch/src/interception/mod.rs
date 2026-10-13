@@ -13,7 +13,7 @@ mod latency;
 mod live;
 pub(crate) use endpoint_stats::Direction;
 pub use endpoint_stats::StartupMark;
-pub use live::EntitySnapshot;
+pub use live::{ClockStatus, EntitySnapshot};
 pub mod measure;
 pub mod trace;
 
@@ -718,6 +718,15 @@ pub async fn run_interception_task(
                             crate::util::self_cost::Subsystem::Entities,
                         );
                         next_snapshot_ns = now + 1_000_000_000;
+                        // Once a second, not per poll: until something
+                        // publishes `/clock`, this scans every topic name.
+                        if endpoints.clock_topic.is_none() {
+                            endpoints.clock_topic = names
+                                .names
+                                .iter()
+                                .find(|(_, n)| n.as_str() == "/clock")
+                                .map(|(h, _)| *h);
+                        }
                         let snap = endpoints.live_snapshot(
                             now,
                             &names.names,

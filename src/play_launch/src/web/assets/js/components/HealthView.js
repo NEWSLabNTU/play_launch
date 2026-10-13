@@ -361,6 +361,42 @@ function Resources({ res }) {
     `;
 }
 
+/** The parameter probe (launched values against running ones) and the
+ * time base the nodes run on. */
+function Params({ p }) {
+    const nodes = p.nodes || [];
+    const answered = nodes.filter(n => !n.error);
+    const drift = answered.reduce((a, n) => a + n.drift.length, 0);
+    const ignored = answered.reduce((a, n) => a + n.ignored.length, 0);
+    const checked = answered.reduce((a, n) => a + n.checked, 0);
+    const sim = answered.filter(n => n.use_sim_time === true).length;
+    const wall = answered.filter(n => n.use_sim_time === false).length;
+    const c = p.clock;
+    const rows = [
+        ['probed', html`${answered.length} of ${nodes.length} nodes answered, ${checked} launched values checked${' '}
+            <span class="hl-muted">(${new Date(p.probed_ms).toLocaleTimeString()}; again every 10 min)</span>`],
+        ['differ', html`<b class=${drift ? 'hl-count-warning' : ''}>${drift}</b> running values differ from the launch;${' '}
+            <b>${ignored}</b> launched values the nodes never declared`],
+        ...((p.broadcast || []).length ? [['broadcast', html`<span class="hl-muted" title="Set for many nodes, declared by few: not counted above">
+            ${p.broadcast.slice(0, 6).map(([n, c]) => `${n} (${c})`).join(', ')}${p.broadcast.length > 6 ? `, and ${p.broadcast.length - 6} more` : ''}</span>`]] : []),
+        ['time base', sim && wall ? html`<b class="hl-count-warning">mixed</b>: ${sim} on sim time, ${wall} on wall clock`
+            : sim ? html`${sim} node(s) on sim time` : html`wall clock (${wall} nodes)`],
+        ['/clock', c ? html`${c.value_s.toFixed(3)} s, ${Math.round(c.rate_hz)} Hz, last ${c.since_last_s.toFixed(1)} s ago${c.backward_jumps ? html`, <b class="hl-count-warning">went back ${c.backward_jumps}×</b>` : ''}`
+            : p.clock_published === false ? html`<span class="hl-muted">not published</span>`
+            : p.clock_published ? html`published <span class="hl-muted">(value needs --interception on)</span>` : html`<span class="hl-muted">—</span>`],
+    ];
+    const silent = nodes.filter(n => n.error);
+    return html`
+        <section class="hl-section">
+            <h3 class="hl-heading">Parameters and time</h3>
+            <table class="hl-kv"><tbody>
+                ${rows.map(([k, v]) => html`<tr key=${k}><th>${k}</th><td>${v}</td></tr>`)}
+                ${silent.length > 0 && html`<tr><th>no answer</th><td class="hl-muted">${silent.slice(0, 8).map(n => n.fqn).join(', ')}${silent.length > 8 ? ', …' : ''}</td></tr>`}
+            </tbody></table>
+        </section>
+    `;
+}
+
 function Host({ host }) {
     const used = (u, t) => (u != null && t) ? `${fmtBytes(u)} of ${fmtBytes(t)} (${Math.round(u * 100 / t)}%)` : '—';
     const rows = [
@@ -590,6 +626,8 @@ export function HealthView() {
             <${StartupTimeline} />
 
             ${snap && snap.logs && html`<${Logs} logs=${snap.logs} />`}
+
+            ${snap && snap.params && html`<${Params} p=${snap.params} />`}
 
             ${snap && snap.resources && html`<${Resources} res=${snap.resources} />`}
 

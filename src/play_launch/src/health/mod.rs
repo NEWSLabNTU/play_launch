@@ -28,6 +28,7 @@ use crate::{interception::EntitySnapshot, util::self_cost};
 pub mod graph;
 pub mod host;
 pub mod logs;
+pub mod params;
 pub mod startup;
 
 /// FNV-1a, for stable issue keys built from free text.
@@ -125,6 +126,9 @@ pub struct HealthSnapshot {
     /// Members' resources and trends, fastest-growing first (top
     /// [`RESOURCES_SENT`]).
     pub resources: Option<crate::monitoring::trends::ResourceSnapshot>,
+    /// The last parameter probe: per node, values that differ from the
+    /// launch, overrides it never declared, and its `use_sim_time`.
+    pub params: Option<params::ParamsReport>,
 }
 
 fn unix_ms(t: SystemTime) -> u64 {
@@ -258,6 +262,7 @@ impl HealthBook {
             logs,
             host: None,
             resources: None,
+            params: None,
         }
     }
 }
@@ -563,6 +568,41 @@ pub fn self_cost_condition(window: &self_cost::Usage) -> Option<Condition> {
     })
 }
 
+/// Ask every node whose name the run knows for the parameters its launch
+/// sets, one at a time (one short-lived client each, so the probe adds one
+/// pair of endpoints to discovery at a time, not one per node).
+async fn probe_parameters(
+    node: &Arc<rclrs::Node>,
+    model: &ros_launch_manifest_model::SystemModel,
+    fqns: &HashMap<String, String>,
+) -> params::ParamsReport {
+    let mut nodes = Vec::new();
+    for (member, fqn, inst) in params::probe_targets(model, fqns) {
+        let expected = params::expected_params(inst, fqn);
+        let names = params::probe_names(&expected);
+        match crate::ros::parameter_proxy::get_values(node, fqn, &names, Duration::from_secs(2))
+            .await
+        {
+            Ok(values) => nodes.push(params::compare(fqn, member, &expected, &names, &values)),
+            Err(e) => nodes.push(params::NodeParams {
+                fqn: fqn.to_string(),
+                member: member.to_string(),
+                error: Some(format!("{e:#}")),
+                ..Default::default()
+            }),
+        }
+    }
+    let mut report = params::ParamsReport {
+        probed_ms: unix_ms(SystemTime::now()),
+        nodes,
+        clock_published: None,
+        clock: None,
+        broadcast: Vec::new(),
+    };
+    report.separate_broadcasts();
+    report
+}
+
 /// Members sent to the page in the Resources section.
 pub const RESOURCES_SENT: usize = 15;
 /// A trend counts once it covers this share of the window…
@@ -755,17 +795,32 @@ fn expected_members(
 
 /// The Health task: once a second, gather conditions from every source,
 /// update the book, and publish a snapshot.
-#[allow(clippy::too_many_arguments)] // one call site, `up`, handing over its channels
-pub async fn run_health_task(
-    log_dir: PathBuf,
-    entities: Option<watch::Receiver<Arc<EntitySnapshot>>>,
-    members: Arc<std::sync::OnceLock<Arc<crate::member_actor::MemberHandle>>>,
-    tx: watch::Sender<Arc<HealthSnapshot>>,
-    startup_book: Arc<std::sync::Mutex<startup::StartupBook>>,
-    startup_tx: watch::Sender<Arc<startup::StartupTimeline>>,
-    trends: watch::Receiver<Arc<crate::monitoring::trends::ResourceSnapshot>>,
-    mut shutdown: watch::Receiver<bool>,
-) {
+/// What the Health task reads and writes, handed over by `up`.
+pub struct HealthInputs {
+    pub log_dir: PathBuf,
+    pub entities: Option<watch::Receiver<Arc<EntitySnapshot>>>,
+    pub members: Arc<std::sync::OnceLock<Arc<crate::member_actor::MemberHandle>>>,
+    pub tx: watch::Sender<Arc<HealthSnapshot>>,
+    pub startup_book: Arc<std::sync::Mutex<startup::StartupBook>>,
+    pub startup_tx: watch::Sender<Arc<startup::StartupTimeline>>,
+    pub trends: watch::Receiver<Arc<crate::monitoring::trends::ResourceSnapshot>>,
+    /// The model the run was launched from: the parameters it sets.
+    pub model: Arc<ros_launch_manifest_model::SystemModel>,
+    pub shutdown: watch::Receiver<bool>,
+}
+
+pub async fn run_health_task(inputs: HealthInputs) {
+    let HealthInputs {
+        log_dir,
+        entities,
+        members,
+        tx,
+        startup_book,
+        startup_tx,
+        trends,
+        model,
+        mut shutdown,
+    } = inputs;
     let mut book = HealthBook::with_journal(&log_dir);
     let mut log_watcher = logs::LogWatcher::default();
     let mut ticks: u64 = 0;
@@ -782,6 +837,12 @@ pub async fn run_health_task(
     // the clock again.
     let mut up_since: HashMap<String, (Option<u32>, std::time::Instant)> = HashMap::new();
     let own_prefix = format!("/play_launch_{}", std::process::id());
+    // Parameters against the launch (J) and the time base (I): a probe once
+    // startup completes, then every PROBE_PERIOD.
+    let mut params_job: Option<tokio::task::JoinHandle<params::ParamsReport>> = None;
+    let mut params_report: Option<params::ParamsReport> = None;
+    let mut next_probe: Option<std::time::Instant> = None;
+    let mut clock_published: Option<bool> = None;
     // Host checks: a read every HOST_PERIOD on a blocking thread.
     let mut host_state = Some(host::HostState::default());
     let mut host_job: Option<tokio::task::JoinHandle<(host::HostFacts, host::HostState)>> = None;
@@ -851,6 +912,12 @@ pub async fn run_health_task(
                             own_prefix: own_prefix.clone(),
                         };
                         graph_conds = graph::graph_conditions(&facts, &expected, &ours, &dangling);
+                        clock_published = Some(
+                            facts
+                                .topics
+                                .iter()
+                                .any(|t| t.name == "/clock" && !t.pubs.is_empty()),
+                        );
                         dangling = graph::dangling_subscribed(&facts);
                     }
                     Ok(Err(e)) => tracing::debug!("health: graph read failed: {e:#}"),
@@ -898,6 +965,56 @@ pub async fn run_health_task(
                 }
                 let _ = startup_tx.send(Arc::new(timeline));
             }
+
+            let now_i = std::time::Instant::now();
+            if next_probe.is_none() && startup_book.lock().unwrap().is_complete() {
+                next_probe = Some(now_i + params::probe_delay());
+            }
+            if params_job.as_ref().is_some_and(|j| j.is_finished()) {
+                match params_job.take().unwrap().await {
+                    Ok(r) => params_report = Some(r),
+                    Err(e) => tracing::debug!("health: parameter probe panicked: {e}"),
+                }
+            }
+            if params_job.is_none()
+                && next_probe.is_some_and(|t| now_i >= t)
+                && let Some(node) = handle.ros_node()
+            {
+                next_probe = Some(now_i + params::PROBE_PERIOD);
+                // Only members whose ROS name the run knows: an unnamed node's
+                // key (`aggregator_node-1`, #0017) is not a name a service has.
+                // Not containers: a component manager starts no parameter
+                // services (upstream's, and so ours), so asking one waits out
+                // the timeout and learns nothing.
+                let known: std::collections::HashSet<&str> = list
+                    .iter()
+                    .filter(|m| m.ros_name_known && !m.is_container)
+                    .map(|m| m.id.as_str())
+                    .collect();
+                let fqns: HashMap<String, String> = handle
+                    .node_fqn_map()
+                    .read()
+                    .await
+                    .iter()
+                    .filter(|(id, _)| known.contains(id.as_str()))
+                    .map(|(a, b)| (a.clone(), b.clone()))
+                    .collect();
+                let model = model.clone();
+                params_job = Some(tokio::spawn(async move {
+                    probe_parameters(&node, &model, &fqns).await
+                }));
+            }
+            if let Some(r) = params_report.as_mut() {
+                r.clock_published = clock_published;
+                conditions.extend(params::param_conditions(r));
+                let sim_users = r
+                    .nodes
+                    .iter()
+                    .filter(|n| n.use_sim_time == Some(true))
+                    .count();
+                r.clock = entities.as_ref().and_then(|rx| rx.borrow().clock.clone());
+                conditions.extend(params::clock_conditions(r.clock.as_ref(), sim_users));
+            }
         }
         if let Some(rx) = entities.as_ref() {
             let snap = rx.borrow().clone();
@@ -943,6 +1060,7 @@ pub async fn run_health_task(
         let mut snap = book.snapshot(now, shown, log_watcher.views(10));
         snap.host = host_facts.clone();
         snap.resources = Some(resources_view(&resources));
+        snap.params = params_report.clone();
         let _ = tx.send(Arc::new(snap));
     }
 }

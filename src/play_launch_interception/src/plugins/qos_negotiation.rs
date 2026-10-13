@@ -15,8 +15,10 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::event::{EventKind, InterceptionEvent};
-use crate::plugin::{InterceptionPlugin, Stamp};
+use crate::{
+    event::{EventKind, InterceptionEvent},
+    plugin::{InterceptionPlugin, Stamp},
+};
 use rcl_interception_sys::qos::RmwQosProfile;
 use spsc_shm::Producer;
 

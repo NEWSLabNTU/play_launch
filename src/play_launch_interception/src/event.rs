@@ -169,7 +169,11 @@ const _: () = assert!(size_of::<InterceptionEvent>() == 56);
 
 impl InterceptionEvent {
     /// Build an `EndpointQos` event. See `EventKind::EndpointQos`.
-    pub fn endpoint_qos(handle: u64, topic_hash: u64, qos: &rcl_interception_sys::qos::RmwQosProfile) -> Self {
+    pub fn endpoint_qos(
+        handle: u64,
+        topic_hash: u64,
+        qos: &rcl_interception_sys::qos::RmwQosProfile,
+    ) -> Self {
         fn ns(t: rcl_interception_sys::qos::RmwTime) -> u64 {
             // RMW_DURATION_INFINITE is {9223372036, 854775807}: i64::MAX ns.
             if t.sec >= 9_223_372_036 {
@@ -180,7 +184,11 @@ impl InterceptionEvent {
         let small = |v: i32| u8::try_from(v).unwrap_or(u8::MAX);
         Self {
             kind: EventKind::EndpointQos,
-            _pad: [small(qos.reliability), small(qos.durability), small(qos.history)],
+            _pad: [
+                small(qos.reliability),
+                small(qos.durability),
+                small(qos.history),
+            ],
             topic_hash,
             stamp_sec: i32::try_from(qos.depth).unwrap_or(i32::MAX),
             stamp_nanosec: u32::try_from(qos.liveliness).unwrap_or(0),
@@ -416,12 +424,7 @@ impl InterceptionEvent {
         buf[4..8].copy_from_slice(&self.stamp_nanosec.to_ne_bytes());
         buf[8..16].copy_from_slice(&self.handle.to_ne_bytes());
         buf[16..24].copy_from_slice(&self.monotonic_ns.to_ne_bytes());
-        (
-            self._pad[0],
-            self._pad[1],
-            self._pad[2] as usize,
-            buf,
-        )
+        (self._pad[0], self._pad[1], self._pad[2] as usize, buf)
     }
 }
 

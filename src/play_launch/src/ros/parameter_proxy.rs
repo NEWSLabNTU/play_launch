@@ -168,3 +168,83 @@ impl ParameterProxy {
         })
     }
 }
+
+/// Read named parameters of one node, waiting at most `ready_timeout` for
+/// its services to be discovered so a request is not sent into a match that
+/// does not exist yet. A name the node never declared comes back
+/// [`ParamValue::NotSet`].
+///
+/// Two calls, not one: rclcpp's `get_parameters` answers an EMPTY response
+/// when any requested name is undeclared (it logs "Failed to get
+/// parameters: <name>"), so one misspelled launch parameter would hide every
+/// other value. `list_parameters` with the names as prefixes says which are
+/// declared; only those are fetched. Both clients are dropped on return.
+pub async fn get_values(
+    ros_node: &Arc<rclrs::Node>,
+    target_fqn: &str,
+    names: &[String],
+    ready_timeout: Duration,
+) -> Result<Vec<ParamValue>> {
+    let list_client: rclrs::Client<rcl_interfaces::srv::ListParameters> = ros_node
+        .create_client(&format!("{target_fqn}/list_parameters"))
+        .context("Failed to create list_parameters client")?;
+    let get_client: rclrs::Client<rcl_interfaces::srv::GetParameters> = ros_node
+        .create_client(&format!("{target_fqn}/get_parameters"))
+        .context("Failed to create get_parameters client")?;
+    for ready in [
+        list_client.notify_on_service_ready(),
+        get_client.notify_on_service_ready(),
+    ] {
+        tokio::time::timeout(ready_timeout, ready)
+            .await
+            .context("parameter services not available")?
+            .context("waiting for parameter services failed")?;
+    }
+
+    let list: rclrs::Promise<rcl_interfaces::srv::ListParameters_Response> = list_client
+        .call(&rcl_interfaces::srv::ListParameters_Request {
+            prefixes: names.to_vec(),
+            depth: 0,
+        })
+        .context("Failed to call list_parameters")?;
+    let declared: std::collections::HashSet<String> =
+        tokio::time::timeout(PARAM_SERVICE_TIMEOUT, list)
+            .await
+            .context("list_parameters timed out")?
+            .context("list_parameters call failed")?
+            .result
+            .names
+            .into_iter()
+            .collect();
+    let wanted: Vec<String> = names
+        .iter()
+        .filter(|n| declared.contains(*n))
+        .cloned()
+        .collect();
+    let mut got: std::collections::HashMap<String, ParamValue> = Default::default();
+    if !wanted.is_empty() {
+        let promise: rclrs::Promise<rcl_interfaces::srv::GetParameters_Response> = get_client
+            .call(&rcl_interfaces::srv::GetParameters_Request {
+                names: wanted.clone(),
+            })
+            .context("Failed to call get_parameters")?;
+        let response = tokio::time::timeout(PARAM_SERVICE_TIMEOUT, promise)
+            .await
+            .context("get_parameters timed out")?
+            .context("get_parameters call failed")?;
+        if response.values.len() != wanted.len() {
+            eyre::bail!(
+                "get_parameters answered {} values for {} names",
+                response.values.len(),
+                wanted.len()
+            );
+        }
+        for (n, v) in wanted.into_iter().zip(response.values.iter()) {
+            got.insert(n, ParamValue::from_ros(v));
+        }
+    }
+    Ok(names
+        .iter()
+        .map(|n| got.remove(n).unwrap_or(ParamValue::NotSet))
+        .collect())
+}

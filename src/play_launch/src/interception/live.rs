@@ -302,6 +302,23 @@ pub struct EntitySnapshot {
     /// timeline. Not sent to the page.
     #[serde(skip)]
     pub(crate) startup: Vec<super::endpoint_stats::StartupMark>,
+    /// `/clock`, when something publishes it.
+    pub(crate) clock: Option<ClockStatus>,
+}
+
+/// `/clock` as the Health page judges it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ClockStatus {
+    /// The last value, seconds.
+    pub value_s: f64,
+    pub since_last_s: f64,
+    /// Messages per second over its whole life.
+    pub rate_hz: f64,
+    pub messages: u64,
+    pub backward_jumps: u64,
+    /// Seconds since the last backward jump, and by how much it went back.
+    pub last_backward_ago_s: Option<f64>,
+    pub last_backward_by_s: Option<f64>,
 }
 
 impl EntitySnapshot {
@@ -325,6 +342,7 @@ impl EntitySnapshot {
             rows,
             nodes: Vec::new(),
             startup: Vec::new(),
+            clock: self.clock.clone(),
         }
     }
 }
@@ -629,6 +647,26 @@ impl EndpointTracker {
             rows,
             nodes: self.node_names.values().cloned().collect(),
             startup: self.startup_marks(topic_names),
+            clock: (self.clock.messages > 0).then(|| {
+                let c = &self.clock;
+                let secs = |ns: u64| ns as f64 / 1e9;
+                let life = secs(c.last_mono.saturating_sub(c.first_mono));
+                ClockStatus {
+                    value_s: c.last_value_ns as f64 / 1e9,
+                    since_last_s: secs(now_ns.saturating_sub(c.last_mono)),
+                    rate_hz: if life > 0.0 {
+                        (c.messages - 1) as f64 / life
+                    } else {
+                        0.0
+                    },
+                    messages: c.messages,
+                    backward_jumps: c.backward_jumps,
+                    last_backward_ago_s: (c.backward_jumps > 0)
+                        .then(|| secs(now_ns.saturating_sub(c.last_backward_mono))),
+                    last_backward_by_s: (c.backward_jumps > 0)
+                        .then(|| c.last_backward_ns as f64 / 1e9),
+                }
+            }),
         }
     }
 }

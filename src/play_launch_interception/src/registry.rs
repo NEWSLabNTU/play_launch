@@ -5,9 +5,13 @@
 //! the next message is due a size sample.
 //! Frontier tracking is now handled by plugins, not the registry.
 
-use std::collections::HashMap;
-use std::sync::LazyLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    collections::HashMap,
+    sync::{
+        LazyLock,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use parking_lot::RwLock;
 

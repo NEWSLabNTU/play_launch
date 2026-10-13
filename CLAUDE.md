@@ -680,6 +680,23 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-13**: **Parameters against the launch, and one time base**
+  (`big-system-observability.md` §J, §I; `health/params.rs`). A probe, not
+  `/parameter_events` (volatile, and subscribed after the nodes start):
+  once startup completes and every 10 min, each named non-container node
+  is asked for the names its launch sets plus `use_sim_time`, through
+  `parameter_proxy::get_values`, which LISTS before it GETS — Humble's
+  `get_parameters` returns an empty response when any requested name is
+  undeclared, so one typo hid every value of that node. Expected values
+  fold the model's `param_sources` in order, files matched by rcl's key
+  rules. Issues: `param_drift`, `param_ignored` (info; names undeclared on
+  3+ nodes are broadcasts, counted apart — Autoware sends its vehicle
+  description to 72 nodes), `sim_time_mixed`, `sim_time_no_clock`,
+  `clock_stalled`, `clock_backwards`. The interceptor now reads a top-level
+  `clock: builtin_interfaces/Time` like a bare `stamp`, so `/clock`'s value
+  reaches the consumer (`EndpointTracker::clock`). `run_health_task` takes
+  a `HealthInputs` struct now. Autoware: no drift in 3970 values.
+
 - **2026-10-13**: **Resource trends, and the monitor at 1/25th of its
   cost** (`big-system-observability.md` §K). The resource monitor was
   play_launch's largest own cost apart from the Fast DDS listener: 8.9% of

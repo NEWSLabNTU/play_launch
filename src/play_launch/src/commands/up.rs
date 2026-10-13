@@ -451,14 +451,17 @@ pub(crate) async fn play(
         crate::health::startup::StartupTimeline::default(),
     ));
     tokio::spawn(crate::health::run_health_task(
-        log_dir.clone(),
-        entities_rx.clone(),
-        health_members.clone(),
-        health_tx,
-        startup_book.clone(),
-        startup_tx,
-        trends_rx,
-        shutdown_signal.clone(),
+        crate::health::HealthInputs {
+            log_dir: log_dir.clone(),
+            entities: entities_rx.clone(),
+            members: health_members.clone(),
+            tx: health_tx,
+            startup_book: startup_book.clone(),
+            startup_tx,
+            trends: trends_rx,
+            model: system_model.clone(),
+            shutdown: shutdown_signal.clone(),
+        },
     ));
     debug!("Log directory created: {}", log_dir.display());
     // Issue #0023: from here on, play_launch's own account of the run lives

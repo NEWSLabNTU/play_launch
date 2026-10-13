@@ -14,9 +14,11 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::event::{EventKind, InterceptionEvent, TOPIC_NAME_CHUNK_BYTES};
-use crate::plugin::{InterceptionPlugin, Stamp};
-use crate::registry;
+use crate::{
+    event::{EventKind, InterceptionEvent, TOPIC_NAME_CHUNK_BYTES},
+    plugin::{InterceptionPlugin, Stamp},
+    registry,
+};
 use spsc_shm::Producer;
 
 pub(crate) struct TopicNamesPlugin {
@@ -39,8 +41,13 @@ impl TopicNamesPlugin {
         for idx in 0..total {
             let start = idx * TOPIC_NAME_CHUNK_BYTES;
             let end = (start + TOPIC_NAME_CHUNK_BYTES).min(payload.len());
-            let event =
-                InterceptionEvent::name_chunk(kind, topic_hash, idx as u8, total as u8, &payload[start..end]);
+            let event = InterceptionEvent::name_chunk(
+                kind,
+                topic_hash,
+                idx as u8,
+                total as u8,
+                &payload[start..end],
+            );
             crate::drop_counter::push_or_count(&mut producer, &event);
         }
     }

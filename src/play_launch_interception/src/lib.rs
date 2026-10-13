@@ -30,19 +30,21 @@
 
 mod allowlist;
 mod drop_counter;
+mod endpoints;
 mod event;
 mod ffi_ext;
 mod introspection;
-mod endpoints;
 mod node_identity;
 mod plugin;
 mod plugin_dispatch;
 mod plugins;
 mod registry;
 
-use std::ffi::{CStr, c_char, c_void};
-use std::os::fd::RawFd;
-use std::sync::{Arc, OnceLock};
+use std::{
+    ffi::{CStr, c_char, c_void},
+    os::fd::RawFd,
+    sync::{Arc, OnceLock},
+};
 
 use parking_lot::Mutex;
 use plugin::{InterceptionPlugin, Stamp};
@@ -227,18 +229,14 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
         let p = unsafe { libc::dlsym(source, name.as_ptr()) };
         (!p.is_null()).then_some(p)
     };
-    let publish_serialized = sym(c"rcl_publish_serialized_message").map(|p| unsafe {
-        std::mem::transmute::<*mut c_void, ffi_ext::FnRclPublishSerialized>(p)
-    });
-    let publish_loaned = sym(c"rcl_publish_loaned_message").map(|p| unsafe {
-        std::mem::transmute::<*mut c_void, ffi_ext::FnRclPublishLoaned>(p)
-    });
-    let take_serialized = sym(c"rcl_take_serialized_message").map(|p| unsafe {
-        std::mem::transmute::<*mut c_void, ffi_ext::FnRclTakeSerialized>(p)
-    });
-    let take_loaned = sym(c"rcl_take_loaned_message").map(|p| unsafe {
-        std::mem::transmute::<*mut c_void, ffi_ext::FnRclTakeLoaned>(p)
-    });
+    let publish_serialized = sym(c"rcl_publish_serialized_message")
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, ffi_ext::FnRclPublishSerialized>(p) });
+    let publish_loaned = sym(c"rcl_publish_loaned_message")
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, ffi_ext::FnRclPublishLoaned>(p) });
+    let take_serialized = sym(c"rcl_take_serialized_message")
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, ffi_ext::FnRclTakeSerialized>(p) });
+    let take_loaned = sym(c"rcl_take_loaned_message")
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, ffi_ext::FnRclTakeLoaned>(p) });
     let (rmw_serialize, uint8_array_init, uint8_array_fini, sample_allocator) = match (
         sym(c"rmw_serialize"),
         sym(c"rcutils_uint8_array_init"),
@@ -246,10 +244,21 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
     ) {
         (Some(ser), Some(init), Some(fini)) if !alloc.is_null() => unsafe {
             (
-                Some(std::mem::transmute::<*mut c_void, ffi_ext::FnRmwSerialize>(ser)),
-                Some(std::mem::transmute::<*mut c_void, ffi_ext::FnRcutilsUint8ArrayInit>(init)),
-                Some(std::mem::transmute::<*mut c_void, ffi_ext::FnRcutilsUint8ArrayFini>(fini)),
-                Some(std::mem::transmute::<*mut c_void, FnRcutilsGetDefaultAllocator>(alloc)),
+                Some(std::mem::transmute::<*mut c_void, ffi_ext::FnRmwSerialize>(
+                    ser,
+                )),
+                Some(std::mem::transmute::<
+                    *mut c_void,
+                    ffi_ext::FnRcutilsUint8ArrayInit,
+                >(init)),
+                Some(std::mem::transmute::<
+                    *mut c_void,
+                    ffi_ext::FnRcutilsUint8ArrayFini,
+                >(fini)),
+                Some(std::mem::transmute::<
+                    *mut c_void,
+                    FnRcutilsGetDefaultAllocator,
+                >(alloc)),
             )
         },
         _ => (None, None, None, None),
@@ -597,11 +606,7 @@ fn expand_topic_name(originals: &Originals, node: *const rcl_node_t, topic: &str
 /// was subscribed to `/localization/kinematic_state`. Every plugin keyed by
 /// topic -- frontier, stats, the Chrome trace, `play_launch measure` -- was
 /// therefore naming remapped topics wrongly, and nothing said so.
-fn try_rcl_resolve(
-    originals: &Originals,
-    node: *const rcl_node_t,
-    topic: &str,
-) -> Option<String> {
+fn try_rcl_resolve(originals: &Originals, node: *const rcl_node_t, topic: &str) -> Option<String> {
     let resolve = originals.node_resolve_name?;
     let get_alloc = originals.get_default_allocator?;
     if node.is_null() {
@@ -969,7 +974,12 @@ pub unsafe extern "C" fn rcl_publisher_init(
             .map(|id| registry::fnv1a(id.as_bytes()));
 
         // Register in the shared registry (used for hot-path lookups).
-        registry::register_publisher(rcl_id(publisher), &topic, stamp_offset, type_support as usize);
+        registry::register_publisher(
+            rcl_id(publisher),
+            &topic,
+            stamp_offset,
+            type_support as usize,
+        );
         dispatch_owner(rt, node, rcl_id(publisher));
 
         let topic_hash = registry::fnv1a(topic.as_bytes());
@@ -1074,7 +1084,12 @@ pub unsafe extern "C" fn rcl_subscription_init(
             .map(|id| registry::fnv1a(id.as_bytes()));
 
         // Register in the shared registry.
-        registry::register_subscription(rcl_id(subscription), &topic, stamp_offset, type_support as usize);
+        registry::register_subscription(
+            rcl_id(subscription),
+            &topic,
+            stamp_offset,
+            type_support as usize,
+        );
         dispatch_owner(rt, node, rcl_id(subscription));
 
         let topic_hash = registry::fnv1a(topic.as_bytes());

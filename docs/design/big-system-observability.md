@@ -129,14 +129,37 @@ is cheap. `/tf` is not: hundreds of messages a second. Two options:
    publish, in the publishing process.
 Prefer 2. Cost: a few hundred ns per `/tf` publish.
 
-**I. Time consistency** (pain 12). Per node: `use_sim_time` (parameter
+**I. Time consistency** (pain 12). **Done 2026-10-13**, with J below:
+`use_sim_time` comes from the same parameter probe; `sim_time_mixed`
+(nodes on both time bases), `sim_time_no_clock` (sim time and no `/clock`
+publisher at the last graph read), `clock_stalled` (no `/clock` for 1 s
+while a node runs on sim time) and `clock_backwards` (within the last
+minute). The `/clock` VALUE needed one change in the interceptor: its
+bare-stamp fallback now also takes a top-level `clock` field of type
+`builtin_interfaces/Time`, which is `rosgraph_msgs/Clock`; the consumer
+tracks it once the topic's name is known. Original proposal: Per node: `use_sim_time` (parameter
 query, once at start and on `/parameter_events`); flag a mix. `/clock`: rate,
 last value, jumps backwards, stalls over 1 s while nodes are running. Data:
 parameters (have the client, phase 24); `/clock` rate via Entities. A stall
 needs the value: take it from the interceptor's frontier on `/clock`
 (have). Cost: none.
 
-**J. Parameter drift** (pain 14). List every parameter whose running value
+**J. Parameter drift** (pain 14). **Done 2026-10-13** (`health/params.rs`),
+not from `/parameter_events`: it is volatile and play_launch subscribes
+after the nodes start, so constructor-time declarations are lost. Instead a
+probe once startup completes (+15 s) and every 10 min asks each named,
+non-container node for exactly the names its launch sets plus
+`use_sim_time`, one short-lived client at a time; expected values are the
+model's `param_sources` folded in order, files applied by rcl's key match.
+Two calls per node: Humble's `get_parameters` answers an EMPTY response if
+any name is undeclared, so `list_parameters` (the names as prefixes) says
+which are declared first. `param_drift` (warning) and `param_ignored`
+(info: launched, never declared). Containers are skipped: a component
+manager starts no parameter services. Autoware: 3970 values on 93 nodes,
+no drift; 1163 undeclared names, 857 of them broadcasts (a name undeclared
+on 3+ nodes, e.g. the vehicle description sent to 72) counted separately,
+306 on 16 nodes left, mostly parameter files written for modules this
+configuration does not enable — hence info. Original proposal: List every parameter whose running value
 differs from the model's, with when it changed and from which node. Data:
 `/parameter_events` (already subscribed for the web UI) against the model's
 `param_sources`. Cost: none beyond today.

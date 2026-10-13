@@ -1551,3 +1551,182 @@ fn test_health_reports_a_member_that_keeps_growing() {
     // 2 MiB every 0.4 s is 300 MiB a minute.
     assert!(per_min > 150.0 * 1048576.0, "{leaker}");
 }
+
+/// Parameters against the launch (J) and the time base (I): a launched value
+/// the node never declared is reported as ignored; a value set at runtime
+/// against the launch is drift; and with that `use_sim_time` flipped, the
+/// run has nodes on two time bases and none publishing `/clock`.
+#[test]
+fn test_health_compares_running_parameters_with_the_launch() {
+    let env = fixtures::install_env();
+    let launch =
+        fixtures::test_workspace_path("simple_test").join("launch/params_probe.launch.xml");
+    let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--web-addr",
+        &format!("127.0.0.1:{port}"),
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        launch.to_str().unwrap(),
+    ]);
+    cmd.env("PLAY_LAUNCH_PARAM_PROBE_DELAY_S", "4");
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+
+    // Flip the talker's use_sim_time through play_launch's own API, once its
+    // parameter service answers.
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let body = r#"{"name":"use_sim_time","value":{"type":"Bool","value":true}}"#;
+    loop {
+        std::thread::sleep(Duration::from_millis(500));
+        let (status, _) = http(
+            port,
+            "POST",
+            "/api/nodes/node%3A%2Ftalker_p/parameters",
+            Some(body),
+        );
+        if status == 200 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "could not set use_sim_time: {status}"
+        );
+    }
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(40);
+    let snap = loop {
+        std::thread::sleep(Duration::from_millis(1000));
+        let (status, body) = http(port, "GET", "/api/health/issues", None);
+        if status != 200 {
+            continue;
+        }
+        let snap: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let kinds: Vec<String> = snap["open"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|i| i["kind"].as_str().map(String::from))
+            .collect();
+        let want = [
+            "param_ignored",
+            "param_drift",
+            "sim_time_mixed",
+            "sim_time_no_clock",
+        ];
+        if want.iter().all(|k| kinds.iter().any(|x| x == k)) || std::time::Instant::now() > deadline
+        {
+            break snap;
+        }
+    };
+    drop(proc);
+
+    let open = snap["open"].as_array().unwrap();
+    let issue = |kind: &str| {
+        open.iter()
+            .find(|i| i["kind"] == kind)
+            .unwrap_or_else(|| panic!("no {kind}: {snap}"))
+    };
+    let ignored = issue("param_ignored");
+    assert_eq!(ignored["subject"]["name"], "/talker_p", "{ignored}");
+    assert!(
+        ignored["detail"]
+            .as_str()
+            .unwrap()
+            .contains("publish_frequncy"),
+        "{ignored}"
+    );
+    let drift = issue("param_drift");
+    assert!(
+        drift["detail"].as_str().unwrap().contains("use_sim_time"),
+        "{drift}"
+    );
+    issue("sim_time_mixed");
+    issue("sim_time_no_clock");
+    assert!(
+        open.iter()
+            .all(|i| !(i["kind"] == "param_ignored" && i["subject"]["name"] == "/listener_p")),
+        "the listener declares use_sim_time: {snap}"
+    );
+}
+
+/// `/clock` (I): read through the interceptor, a clock that jumps back is
+/// reported, and one that stops while a node runs on sim time is a stall.
+#[test]
+fn test_health_reports_a_clock_that_goes_back_and_stops() {
+    let env = fixtures::install_env();
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/clock_probe.launch.xml");
+    let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--interception",
+        "on",
+        "--web-addr",
+        &format!("127.0.0.1:{port}"),
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        launch.to_str().unwrap(),
+    ]);
+    cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", interception_so_path());
+    cmd.env("PLAY_LAUNCH_PARAM_PROBE_DELAY_S", "1");
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(40);
+    let snap = loop {
+        std::thread::sleep(Duration::from_millis(1000));
+        let (status, body) = http(port, "GET", "/api/health/issues", None);
+        if status != 200 {
+            continue;
+        }
+        let snap: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let kinds: Vec<String> = snap["open"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|i| i["kind"].as_str().map(String::from))
+            .collect();
+        if (kinds.iter().any(|k| k == "clock_backwards")
+            && kinds.iter().any(|k| k == "clock_stalled"))
+            || std::time::Instant::now() > deadline
+        {
+            break snap;
+        }
+    };
+    drop(proc);
+
+    let open = snap["open"].as_array().unwrap();
+    let back = open
+        .iter()
+        .find(|i| i["kind"] == "clock_backwards")
+        .unwrap_or_else(|| panic!("no clock_backwards: {snap}"));
+    assert!(
+        back["title"].as_str().unwrap().contains("went back 9.98"),
+        "a 10 s jump less one 20 ms step: {back}"
+    );
+    assert!(
+        open.iter().any(|i| i["kind"] == "clock_stalled"),
+        "no clock_stalled: {snap}"
+    );
+    let clock = &snap["params"]["clock"];
+    assert!(clock["value_s"].as_f64().unwrap() > 90.0, "{clock}");
+}

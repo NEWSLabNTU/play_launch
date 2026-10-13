@@ -73,9 +73,10 @@ pub type FnRclPublisherGetActualQos =
     unsafe extern "C" fn(*const rcl_publisher_t) -> *const rcl_interception_sys::qos::RmwQosProfile;
 
 /// `rcl_subscription_get_actual_qos(subscription) -> const rmw_qos_profile_t *`
-pub type FnRclSubscriptionGetActualQos = unsafe extern "C" fn(
-    *const rcl_subscription_t,
-) -> *const rcl_interception_sys::qos::RmwQosProfile;
+pub type FnRclSubscriptionGetActualQos =
+    unsafe extern "C" fn(
+        *const rcl_subscription_t,
+    ) -> *const rcl_interception_sys::qos::RmwQosProfile;
 
 /// `rcutils_uint8_array_init(array, capacity, allocator) -> rcutils_ret_t`
 pub type FnRcutilsUint8ArrayInit =
