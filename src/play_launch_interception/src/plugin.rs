@@ -90,6 +90,10 @@ pub(crate) trait InterceptionPlugin: Send + Sync {
     /// (Frontier, Stats) compile unchanged.
     fn on_type_identity_resolved(&self, _topic_hash: u64, _type_identity: &str) {}
 
+    /// Called on every publish of a `tf2_msgs/TFMessage`, with its
+    /// transforms (`crate::tf`). `is_static` for a `tf_static` topic.
+    fn on_tf(&self, _handle: usize, _is_static: bool, _transforms: &[crate::tf::TfSample<'_>]) {}
+
     // -----------------------------------------------------------------
     // RMW-layer hooks (Phase 36.1). Default no-op so existing plugins
     // (FrontierPlugin, StatsPlugin) compile unchanged. New plugins

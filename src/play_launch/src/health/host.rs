@@ -71,12 +71,97 @@ pub struct HostFacts {
     pub swap_used: Option<u64>,
     /// Pages swapped in plus out per second since the previous read.
     pub swap_pages_per_s: Option<f64>,
+    /// `ROS_DOMAIN_ID`, 0 when unset.
+    pub domain_id: u32,
+    /// UDP datagrams the kernel dropped for a full receive buffer, host-wide
+    /// (`/proc/net/snmp` `RcvbufErrors`), per minute since the last read.
+    pub udp_rcvbuf_errors_per_min: Option<f64>,
+    /// Drops on sockets bound to this domain's DDS ports (`/proc/net/udp`,
+    /// `udp6`), per minute since the last read, and how many such sockets.
+    pub domain_udp_drops_per_min: Option<f64>,
+    pub domain_udp_sockets: usize,
+    /// Cyclone's `ParticipantIndex` and `MaxAutoParticipantIndex`, when its
+    /// config sets them.
+    pub cyclone_participant_index: Option<String>,
+    pub cyclone_max_auto_index: Option<u32>,
+}
+
+/// The UDP port range of a DDS domain under the RTPS default mapping:
+/// `7400 + 250 * domain`, 250 ports wide.
+pub fn domain_ports(domain: u32) -> std::ops::Range<u32> {
+    let base = 7400 + 250 * domain;
+    base..base + 250
+}
+
+/// (sockets, total drops) on local ports in `ports`, from `/proc/net/udp`
+/// and `udp6`: the port is the hex after the colon of `local_address`, the
+/// drop count the last column.
+fn udp_drops(ports: &std::ops::Range<u32>) -> (usize, u64) {
+    let mut sockets = 0;
+    let mut drops = 0u64;
+    for file in ["/proc/net/udp", "/proc/net/udp6"] {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        for line in text.lines().skip(1) {
+            let mut f = line.split_whitespace();
+            let Some(local) = f.nth(1) else { continue };
+            let Some(port) = local
+                .rsplit(':')
+                .next()
+                .and_then(|p| u32::from_str_radix(p, 16).ok())
+            else {
+                continue;
+            };
+            if ports.contains(&port) {
+                sockets += 1;
+                drops += line
+                    .split_whitespace()
+                    .last()
+                    .and_then(|d| d.parse::<u64>().ok())
+                    .unwrap_or(0);
+            }
+        }
+    }
+    (sockets, drops)
+}
+
+fn udp_rcvbuf_errors() -> Option<u64> {
+    let text = std::fs::read_to_string("/proc/net/snmp").ok()?;
+    let mut lines = text.lines().filter(|l| l.starts_with("Udp:"));
+    let names: Vec<&str> = lines.next()?.split_whitespace().collect();
+    let values: Vec<&str> = lines.next()?.split_whitespace().collect();
+    let i = names.iter().position(|n| *n == "RcvbufErrors")?;
+    values.get(i)?.parse().ok()
+}
+
+/// An element's text in Cyclone XML: `<Name>value</Name>`.
+fn xml_text(text: &str, name: &str) -> Option<String> {
+    let open = format!("<{name}>");
+    let start = text.find(&open)? + open.len();
+    let end = text[start..].find('<')? + start;
+    Some(text[start..end].trim().to_string())
+}
+
+fn cyclone_texts(uri: &str) -> Vec<String> {
+    uri.split(',')
+        .filter_map(|part| {
+            let part = part.trim();
+            if part.starts_with('<') {
+                Some(part.to_string())
+            } else {
+                std::fs::read_to_string(part.strip_prefix("file://").unwrap_or(part)).ok()
+            }
+        })
+        .collect()
 }
 
 /// What `read` needs to carry from one call to the next.
 #[derive(Debug, Default)]
 pub struct HostState {
     last_swap: Option<(std::time::Instant, u64)>,
+    last_domain_drops: Option<(std::time::Instant, u64)>,
+    last_rcvbuf: Option<(std::time::Instant, u64)>,
 }
 
 fn read_u64(path: &str) -> Option<u64> {
@@ -234,6 +319,29 @@ pub fn read(log_dir: &Path, state: &mut HostState) -> HostFacts {
     });
     state.last_swap = Some((now, pages));
 
+    let domain_id = env("ROS_DOMAIN_ID")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let (domain_udp_sockets, drops) = udp_drops(&domain_ports(domain_id));
+    let rcvbuf = udp_rcvbuf_errors();
+    let per_min = |prev: Option<(std::time::Instant, u64)>, cur: u64| {
+        prev.map(|(t, p)| {
+            cur.saturating_sub(p) as f64 * 60.0 / now.duration_since(t).as_secs_f64().max(1.0)
+        })
+    };
+    let domain_udp_drops_per_min = per_min(state.last_domain_drops, drops);
+    state.last_domain_drops = Some((now, drops));
+    let udp_rcvbuf_errors_per_min = rcvbuf.and_then(|r| per_min(state.last_rcvbuf, r));
+    state.last_rcvbuf = rcvbuf.map(|r| (now, r));
+    let cyclone = env("CYCLONEDDS_URI")
+        .map(|u| cyclone_texts(&u))
+        .unwrap_or_default();
+    let cyclone_participant_index = cyclone.iter().find_map(|t| xml_text(t, "ParticipantIndex"));
+    let cyclone_max_auto_index = cyclone
+        .iter()
+        .find_map(|t| xml_text(t, "MaxAutoParticipantIndex"))
+        .and_then(|v| v.parse().ok());
+
     HostFacts {
         rmw_is_default: rmw_env.is_none(),
         rmw_env,
@@ -254,6 +362,12 @@ pub fn read(log_dir: &Path, state: &mut HostState) -> HostFacts {
         swap_total,
         swap_used,
         swap_pages_per_s,
+        domain_id,
+        udp_rcvbuf_errors_per_min,
+        domain_udp_drops_per_min,
+        domain_udp_sockets,
+        cyclone_participant_index,
+        cyclone_max_auto_index,
     }
 }
 

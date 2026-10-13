@@ -680,6 +680,23 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-14**: **TF and discovery load on the Health page**
+  (`big-system-observability.md` §H, §N). TF is read IN the publishing
+  process: `play_launch_interception/src/tf.rs` resolves a `TFMessage`'s
+  layout once per publisher from introspection (sequences through the
+  member's `size_function`/`get_const_function`, strings as pointer +
+  length — identical first words in `rosidl_runtime_c__String` and
+  libstdc++'s `std::string` — so C and C++ messages read alike), and
+  `plugins/tf.rs` ships one `TfEdge` per (publisher, frame pair) a second
+  (event kinds 20/21; the consumer's `EventKind` must list them, since a
+  kind it does not know is undefined behaviour on `pop`). `health/tf.rs`
+  rules; `health/discovery.rs` counts participants as PROCESSES (an
+  `isolated` composable is one) against Fast DDS's 120-per-domain port
+  mapping or Cyclone's `MaxAutoParticipantIndex`, and reads datagram drops
+  on the domain's ports from `/proc/net/udp`. Autoware under `isolated`:
+  119 participants, and ~5.2 M discovery datagrams dropped in its first
+  minute.
+
 - **2026-10-13**: **Parameters against the launch, and one time base**
   (`big-system-observability.md` §J, §I; `health/params.rs`). A probe, not
   `/parameter_events` (volatile, and subscribed after the nodes start):

@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<!-- TF checks (Health page H): base_link under two parents (two static
+     publishers, C++), so the tree has two roots; and a /tf edge from rclpy
+     that stops after 3 s. -->
+<launch>
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="static_map_base"
+        args="--frame-id map --child-frame-id base_link"/>
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="static_odom_base"
+        args="--frame-id odom --child-frame-id base_link"/>
+  <executable cmd="python3 $(dirname)/../scripts/tf_probe.py" name="tf_probe" output="screen"/>
+</launch>

@@ -39,6 +39,7 @@ mod plugin;
 mod plugin_dispatch;
 mod plugins;
 mod registry;
+mod tf;
 
 use std::{
     ffi::{CStr, c_char, c_void},
@@ -497,6 +498,12 @@ unsafe fn read_stamp(ros_message: *const c_void, offset: Option<usize>) -> Optio
 ///
 /// `ros_message` must be the message being published on `publisher`.
 unsafe fn on_typed_publish(rt: &Runtime, publisher: usize, ros_message: *const c_void) {
+    if let Some((layout, is_static)) = tf::lookup(publisher) {
+        let samples = unsafe { tf::samples(&layout, ros_message) };
+        for p in &rt.plugins {
+            p.on_tf(publisher, is_static, &samples);
+        }
+    }
     if let Some(entry) = registry::lookup_publisher(publisher, monotonic_ns()) {
         let stamp = unsafe { read_stamp(ros_message, entry.stamp_offset) };
         let bytes = entry
@@ -877,6 +884,11 @@ fn build_plugins() -> Vec<Box<dyn InterceptionPlugin>> {
         ));
     }
 
+    // TfPlugin (big-system-observability §H): TF edges read on publish.
+    if let Some(ref prod) = producer {
+        plugins.push(Box::new(plugins::tf::TfPlugin::new(prod.clone())));
+    }
+
     // DdsEventsPlugin (Phase 36 DDS events): requires shared memory.
     if let Some(ref prod) = producer {
         plugins.push(Box::new(plugins::dds_events::DdsEventsPlugin::new(
@@ -998,6 +1010,11 @@ pub unsafe extern "C" fn rcl_publisher_init(
         if let Some(id) = type_identity.as_deref() {
             for p in &rt.plugins {
                 p.on_type_identity_resolved(topic_hash, id);
+            }
+            if id == "tf2_msgs/msg/TFMessage"
+                && let Some(layout) = unsafe { tf::tf_layout(type_support) }
+            {
+                tf::register(rcl_id(publisher), layout, topic.ends_with("tf_static"));
             }
         }
         plugin_dispatch::dispatch_publisher_init(

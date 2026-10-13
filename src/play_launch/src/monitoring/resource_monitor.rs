@@ -583,6 +583,7 @@ pub async fn run_monitoring_task(
                                         rss_bytes: metrics.rss_bytes,
                                         threads: metrics.num_threads,
                                         fds: metrics.num_fds,
+                                        processes: metrics.num_processes,
                                     },
                                     group.as_deref(),
                                     std::time::Instant::now(),

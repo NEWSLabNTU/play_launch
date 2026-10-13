@@ -199,6 +199,8 @@ pub(crate) struct EndpointTracker {
     pub(crate) clock_topic: Option<u64>,
     /// Values published on `/clock`.
     pub(super) clock: ClockTrack,
+    /// TF edges as published (`tf.rs`).
+    pub(super) tf: super::tf::TfBook,
 }
 
 /// `/clock` as published: its value (the interceptor reads a
@@ -236,6 +238,8 @@ impl EndpointTracker {
     pub(crate) fn observe(&mut self, child: usize, member: &str, event: &InterceptionEvent) {
         let key = (child, event.handle);
         match event.kind {
+            EventKind::TfEdge => self.tf.observe_edge(child, event),
+            EventKind::TfFramesDeclared => self.tf.observe_names(event),
             EventKind::EndpointOwner => {
                 self.owners.insert(key, event.topic_hash);
             }

@@ -304,6 +304,9 @@ pub struct EntitySnapshot {
     pub(crate) startup: Vec<super::endpoint_stats::StartupMark>,
     /// `/clock`, when something publishes it.
     pub(crate) clock: Option<ClockStatus>,
+    /// TF edges as published; for the Health page, not sent with Entities.
+    #[serde(skip)]
+    pub(crate) tf: Option<super::tf::TfSnapshot>,
 }
 
 /// `/clock` as the Health page judges it.
@@ -343,6 +346,7 @@ impl EntitySnapshot {
             nodes: Vec::new(),
             startup: Vec::new(),
             clock: self.clock.clone(),
+            tf: self.tf.clone(),
         }
     }
 }
@@ -647,6 +651,13 @@ impl EndpointTracker {
             rows,
             nodes: self.node_names.values().cloned().collect(),
             startup: self.startup_marks(topic_names),
+            tf: (!self.tf.is_empty()).then(|| {
+                self.tf.snapshot(now_ns, |child, handle| {
+                    self.owners
+                        .get(&(child, handle))
+                        .and_then(|h| self.node_names.get(h).cloned())
+                })
+            }),
             clock: (self.clock.messages > 0).then(|| {
                 let c = &self.clock;
                 let secs = |ns: u64| ns as f64 / 1e9;

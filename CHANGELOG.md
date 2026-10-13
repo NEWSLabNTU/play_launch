@@ -8,6 +8,16 @@ allowance heavily.
 
 ## Unreleased
 
+- **New:** TF on the Health page, read where it is published (no
+  subscription to `/tf`): the frame tree with each edge's publisher, rate
+  and last message, and issues for a frame under two parents, an edge sent
+  by two nodes, a tree with more than one root, a dynamic transform that
+  stopped, a static one sent at rate, and a dynamic one that never changes.
+  Needs `--interception on`.
+- **New:** discovery load: the DDS participants a run creates (processes,
+  so each composable under `--container-mode isolated` counts) against the
+  middleware's limit, and UDP datagrams the kernel dropped on the domain's
+  ports.
 - **New:** parameters against the launch, on the Health page. Once startup
   completes and every 10 minutes, play_launch asks each node for the
   parameters its launch file sets and reports values that differ (set at

@@ -603,6 +603,9 @@ impl RuleEngine {
                 // The live Entities view's QoS; `qos-match-runtime` reads the
                 // rmw-layer QosDeclared events and the DDS verdicts instead.
             }
+            EventKind::TfEdge | EventKind::TfFramesDeclared => {
+                // TF edges for the Health page; no contract rule reads them.
+            }
             EventKind::RingOverflowReport => {
                 // Phase 42.0: ring-overflow drop-count telemetry, not a
                 // manifest-relevant event. Aggregated by the

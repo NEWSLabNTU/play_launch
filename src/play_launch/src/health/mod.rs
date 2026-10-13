@@ -25,11 +25,13 @@ use tokio::sync::watch;
 
 use crate::{interception::EntitySnapshot, util::self_cost};
 
+pub mod discovery;
 pub mod graph;
 pub mod host;
 pub mod logs;
 pub mod params;
 pub mod startup;
+pub mod tf;
 
 /// FNV-1a, for stable issue keys built from free text.
 pub(crate) fn fnv(s: &str) -> u64 {
@@ -129,6 +131,10 @@ pub struct HealthSnapshot {
     /// The last parameter probe: per node, values that differ from the
     /// launch, overrides it never declared, and its `use_sim_time`.
     pub params: Option<params::ParamsReport>,
+    /// TF edges as published, when the run intercepts.
+    pub tf: Option<crate::interception::TfSnapshot>,
+    /// Participants on the domain against the middleware's limit, and drops.
+    pub discovery: Option<discovery::DiscoveryView>,
 }
 
 fn unix_ms(t: SystemTime) -> u64 {
@@ -263,6 +269,8 @@ impl HealthBook {
             host: None,
             resources: None,
             params: None,
+            tf: None,
+            discovery: None,
         }
     }
 }
@@ -843,6 +851,8 @@ pub async fn run_health_task(inputs: HealthInputs) {
     let mut params_report: Option<params::ParamsReport> = None;
     let mut next_probe: Option<std::time::Instant> = None;
     let mut clock_published: Option<bool> = None;
+    let mut graph_nodes: Option<usize> = None;
+    let mut discovery_view: Option<discovery::DiscoveryView> = None;
     // Host checks: a read every HOST_PERIOD on a blocking thread.
     let mut host_state = Some(host::HostState::default());
     let mut host_job: Option<tokio::task::JoinHandle<(host::HostFacts, host::HostState)>> = None;
@@ -912,6 +922,7 @@ pub async fn run_health_task(inputs: HealthInputs) {
                             own_prefix: own_prefix.clone(),
                         };
                         graph_conds = graph::graph_conditions(&facts, &expected, &ours, &dangling);
+                        graph_nodes = Some(facts.nodes.len());
                         clock_published = Some(
                             facts
                                 .topics
@@ -1016,9 +1027,14 @@ pub async fn run_health_task(inputs: HealthInputs) {
                 conditions.extend(params::clock_conditions(r.clock.as_ref(), sim_users));
             }
         }
+        let mut tf_view = None;
         if let Some(rx) = entities.as_ref() {
             let snap = rx.borrow().clone();
             conditions.extend(entity_conditions(&snap));
+            if let Some(t) = snap.tf.as_ref() {
+                conditions.extend(tf::tf_conditions(t));
+                tf_view = Some(t.clone());
+            }
         }
         if host_job.as_ref().is_some_and(|j| j.is_finished()) {
             match host_job.take().unwrap().await {
@@ -1048,6 +1064,17 @@ pub async fn run_health_task(inputs: HealthInputs) {
         }
         let resources = trends.borrow().clone();
         conditions.extend(resource_conditions(&resources));
+        if let Some(handle) = members.get() {
+            let list = handle.list_members().await;
+            let processes: HashMap<String, u32> = resources
+                .members
+                .iter()
+                .map(|m| (m.name.clone(), m.processes))
+                .collect();
+            let v = discovery::view(&list, &processes, host_facts.as_ref(), graph_nodes);
+            conditions.extend(discovery::discovery_conditions(&v));
+            discovery_view = Some(v);
+        }
         if readings.len() > SELF_COST_WINDOW.as_secs() as usize
             && let Some(c) = self_cost_condition(&self_cost::usage(
                 readings.front().unwrap(),
@@ -1061,6 +1088,8 @@ pub async fn run_health_task(inputs: HealthInputs) {
         snap.host = host_facts.clone();
         snap.resources = Some(resources_view(&resources));
         snap.params = params_report.clone();
+        snap.tf = tf_view;
+        snap.discovery = discovery_view.clone();
         let _ = tx.send(Arc::new(snap));
     }
 }

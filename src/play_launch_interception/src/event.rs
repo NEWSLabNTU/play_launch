@@ -113,6 +113,20 @@ pub enum EventKind {
     ///   `monotonic_ns` = deadline, `cpu_ns` = liveliness lease duration —
     ///   both in ns, 0 = unspecified (none), `u64::MAX` = infinite.
     EndpointQos = 19,
+    /// One TF edge as one publisher sends it, at most once a second per
+    /// (publisher, frame pair) — the `.so` reads `tf2_msgs/TFMessage` on
+    /// publish, so play_launch never subscribes to `/tf`. Field overload:
+    ///   `handle` = the rcl publisher id, `topic_hash` = FNV-1a hash of
+    ///   "parent\nchild" (its string arrives as `TfFramesDeclared` chunks),
+    ///   `_pad[0]` = 1 when published on a `tf_static` topic,
+    ///   `stamp_*` = the latest transform's stamp,
+    ///   `payload_bytes` = transforms of this pair since the last event,
+    ///   `cpu_ns` = a hash of the latest transform's seven doubles,
+    ///   `tid` = how many times that hash changed since the last event.
+    TfEdge = 20,
+    /// A chunk of "parent\nchild", keyed by its hash in `topic_hash`; same
+    /// chunking as `TopicNameDeclared`.
+    TfFramesDeclared = 21,
 }
 
 /// A single interception event (56 bytes, `#[repr(C)]`).

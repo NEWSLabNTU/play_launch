@@ -1658,6 +1658,12 @@ fn test_health_compares_running_parameters_with_the_launch() {
             .all(|i| !(i["kind"] == "param_ignored" && i["subject"]["name"] == "/listener_p")),
         "the listener declares use_sim_time: {snap}"
     );
+
+    // Discovery (N): two ROS processes, two participants, against Fast DDS's
+    // 120 a domain.
+    let d = &snap["discovery"];
+    assert_eq!(d["participants"], 2, "{d}");
+    assert_eq!(d["limit"], 120, "{d}");
 }
 
 /// `/clock` (I): read through the interceptor, a clock that jumps back is
@@ -1729,4 +1735,79 @@ fn test_health_reports_a_clock_that_goes_back_and_stops() {
     );
     let clock = &snap["params"]["clock"];
     assert!(clock["value_s"].as_f64().unwrap() > 90.0, "{clock}");
+}
+
+/// TF (H): read on publish by the interceptor, from C++ (tf2_ros's static
+/// publisher) and from rclpy. A frame under two parents is an error, the
+/// tree then has two roots, and a /tf edge that stops is stale.
+#[test]
+fn test_health_reads_the_tf_tree_as_published() {
+    let env = fixtures::install_env();
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/tf_probe.launch.xml");
+    let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--interception",
+        "on",
+        "--web-addr",
+        &format!("127.0.0.1:{port}"),
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        launch.to_str().unwrap(),
+    ]);
+    cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", interception_so_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+
+    let want = ["tf_two_parents", "tf_disconnected", "tf_stale"];
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let snap = loop {
+        std::thread::sleep(Duration::from_millis(1000));
+        let (status, body) = http(port, "GET", "/api/health/issues", None);
+        if status != 200 {
+            continue;
+        }
+        let snap: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let kinds: Vec<String> = snap["open"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|i| i["kind"].as_str().map(String::from))
+            .collect();
+        if want.iter().all(|w| kinds.iter().any(|k| k == w)) || std::time::Instant::now() > deadline
+        {
+            break snap;
+        }
+    };
+    drop(proc);
+
+    let open = snap["open"].as_array().unwrap();
+    for w in want {
+        assert!(open.iter().any(|i| i["kind"] == w), "no {w}: {snap}");
+    }
+    let edges = snap["tf"]["edges"].as_array().unwrap();
+    let edge = |p: &str, c: &str| {
+        edges
+            .iter()
+            .find(|e| e["parent"] == p && e["child"] == c)
+            .unwrap_or_else(|| panic!("no {p} -> {c}: {edges:?}"))
+    };
+    let from_cpp = edge("map", "base_link");
+    assert_eq!(from_cpp["is_static"], true, "{from_cpp}");
+    assert_eq!(from_cpp["publisher"], "/static_map_base", "{from_cpp}");
+    let from_py = edge("base_link", "lidar");
+    assert_eq!(from_py["is_static"], false, "{from_py}");
+    assert!(
+        from_py["changes"].as_u64().unwrap() > 10,
+        "the value moves: {from_py}"
+    );
 }

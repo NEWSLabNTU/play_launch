@@ -397,6 +397,80 @@ function Params({ p }) {
     `;
 }
 
+/** The TF tree as published: each frame under its parent, with who sends
+ * it, how often, and whether it moves. */
+function TfTree({ tf }) {
+    const edges = tf.edges || [];
+    if (edges.length === 0) return null;
+    const byParent = new Map();
+    const children = new Set();
+    for (const e of edges) {
+        if (!byParent.has(e.parent)) byParent.set(e.parent, []);
+        byParent.get(e.parent).push(e);
+        children.add(e.child);
+    }
+    const roots = [...byParent.keys()].filter(p => !children.has(p)).sort();
+    /** @type {Array<{root?: string, e?: any, depth?: number}>} */
+    const rows = [];
+    const seen = new Set();
+    const walk = (frame, depth) => {
+        for (const e of (byParent.get(frame) || []).slice().sort((a, b) => a.child.localeCompare(b.child))) {
+            const key = e.parent + '>' + e.child + '>' + (e.publisher || '');
+            if (seen.has(key)) continue;
+            seen.add(key);
+            rows.push({ e, depth });
+            if (depth < 32) walk(e.child, depth + 1);
+        }
+    };
+    roots.forEach(r => { rows.push({ root: r }); walk(r, 1); });
+    // Cycles leave edges no root reaches; list them after.
+    for (const e of edges) {
+        const key = e.parent + '>' + e.child + '>' + (e.publisher || '');
+        if (!seen.has(key)) { seen.add(key); rows.push({ e, depth: 1 }); }
+    }
+    const fmtHz = (h) => h >= 10 ? Math.round(h) : h.toFixed(1);
+    return html`
+        <section class="hl-section">
+            <h3 class="hl-heading">TF <span class="hl-muted hl-heading-count">(${edges.length} edges, ${roots.length} root${roots.length === 1 ? '' : 's'}; as published, read by the interceptor)</span></h3>
+            <table class="hl-table">
+                <thead><tr><th>frame</th><th>publisher</th><th></th><th class="hl-num">rate</th><th class="hl-num">last</th><th class="hl-num">changes</th></tr></thead>
+                <tbody>
+                    ${rows.map((r, i) => r.root ? html`
+                        <tr class="hl-row" key=${'r' + i}><td><b>${r.root}</b></td><td></td><td></td><td></td><td></td><td></td></tr>` : html`
+                        <tr class="hl-row" key=${'e' + i}>
+                            <td style=${{ paddingLeft: (r.depth * 18 + 8) + 'px' }}><span class="hl-muted">└ </span>${r.e.child}</td>
+                            <td class="hl-muted">${r.e.publisher || '?'}</td>
+                            <td>${r.e.is_static ? html`<span class="hl-muted">static</span>` : ''}</td>
+                            <td class="hl-num">${r.e.is_static && r.e.rate_hz < 0.5 ? '—' : fmtHz(r.e.rate_hz) + ' Hz'}</td>
+                            <td class="hl-num">${r.e.since_last_s < 10 ? r.e.since_last_s.toFixed(1) + ' s' : Math.round(r.e.since_last_s) + ' s'}</td>
+                            <td class="hl-num">${r.e.is_static ? '' : r.e.changes}</td>
+                        </tr>`)}
+                </tbody>
+            </table>
+        </section>
+    `;
+}
+
+/** DDS participants this run holds against the middleware's limit, and
+ * datagrams the domain's sockets dropped. */
+function Discovery({ d }) {
+    const rate = (r) => r == null ? '—' : (r < 10 ? r.toFixed(1) : Math.round(r)) + '/min';
+    const rows = [
+        ['participants', html`<b>${d.participants}</b>${d.executables ? html` <span class="hl-muted">(+${d.executables} if the executables are ROS processes)</span>` : ''}${d.participants_observable < d.participants ? html`; <span class="hl-muted">${d.participants_observable} under --container-mode observable</span>` : ''}`],
+        ['limit', d.limit != null ? html`${d.limit} <span class="hl-muted">(${d.limit_reason})</span>` : html`<span class="hl-muted">none known for ${d.rmw}</span>`],
+        ['domain', html`ROS_DOMAIN_ID ${d.domain_id}${d.graph_nodes != null ? `, ${d.graph_nodes} nodes in the graph` : ''}`],
+        ['UDP drops', html`${rate(d.domain_udp_drops_per_min)} on the domain's ${d.domain_udp_sockets} DDS sockets; <span class="hl-muted">${rate(d.udp_rcvbuf_errors_per_min)} host-wide</span>`],
+    ];
+    return html`
+        <section class="hl-section">
+            <h3 class="hl-heading">Discovery</h3>
+            <table class="hl-kv"><tbody>
+                ${rows.map(([k, v]) => html`<tr key=${k}><th>${k}</th><td>${v}</td></tr>`)}
+            </tbody></table>
+        </section>
+    `;
+}
+
 function Host({ host }) {
     const used = (u, t) => (u != null && t) ? `${fmtBytes(u)} of ${fmtBytes(t)} (${Math.round(u * 100 / t)}%)` : '—';
     const rows = [
@@ -627,9 +701,13 @@ export function HealthView() {
 
             ${snap && snap.logs && html`<${Logs} logs=${snap.logs} />`}
 
+            ${snap && snap.tf && html`<${TfTree} tf=${snap.tf} />`}
+
             ${snap && snap.params && html`<${Params} p=${snap.params} />`}
 
             ${snap && snap.resources && html`<${Resources} res=${snap.resources} />`}
+
+            ${snap && snap.discovery && html`<${Discovery} d=${snap.discovery} />`}
 
             ${snap && snap.host && html`<${Host} host=${snap.host} />`}
 

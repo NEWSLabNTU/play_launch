@@ -112,7 +112,19 @@ subsystem's loop). Cost: one `/proc` read a second.
 
 ### Tier 2: high value, needs a new but contained source
 
-**H. TF health** (pain 11). A TF page: the frame tree, each edge's
+**H. TF health** (pain 11). **Done 2026-10-14**, option 2: a `TfPlugin`
+in the interceptor reads every `tf2_msgs/TFMessage` publish through
+introspection (sequences via `size_function`/`get_const_function`, strings
+as pointer + length, the same in C and C++ messages) and ships one `TfEdge`
+event per (publisher, frame pair) a second, with a count, the latest stamp
+and a hash of the transform's seven doubles; the pair's names go once as
+`TfFramesDeclared` chunks. Health: `tf_two_parents` (error),
+`tf_two_publishers`, `tf_disconnected` (more than one root), `tf_stale`,
+`tf_static_at_rate`, `tf_never_moves`, and a TF tree section. Autoware:
+28 static edges from `robot_state_publisher`, and `tf_disconnected` until
+the simulator gets an initial pose (true: no `map → base_link` until then);
+interception at 0.43% of a core. Extrapolation errors in logs are not
+counted yet. Original proposal: A TF page: the frame tree, each edge's
 publisher node, update rate and staleness, and flags for a frame published by
 two nodes, a dynamic transform that never changes (should be static), a
 static transform republished at rate, and a gap between frames that leaves
@@ -212,7 +224,19 @@ the RMW and DDS config file in effect (`RMW_IMPLEMENTATION`,
 sensor stamp to actuator publish, against the budget. The RuleEngine already
 computes max-latency; expose the distribution. Only systems with contracts.
 
-**N. Discovery load** (pain 5): participant count on the domain against the
+**N. Discovery load** (pain 5). **Done 2026-10-14** (`health/discovery.rs`):
+participants are processes, not nodes — one per ROS node process and
+container, plus each composable an `isolated` container forks (the
+monitor's process count) — against the RMW's limit: Fast DDS's default
+port mapping fits 120 a domain, Cyclone with `ParticipantIndex auto` stops
+at `MaxAutoParticipantIndex` + 1 (default 10). Discovery TRAFFIC is not
+counted (that needs packet capture); what the kernel DROPS is: drops on
+sockets bound to the domain's ports (`/proc/net/udp`, by local port in
+`7400 + 250d`'s range) and host-wide `RcvbufErrors`. Autoware under
+`isolated`: 119 participants (observable: 49), and the domain's discovery
+sockets dropped ~5.2 M datagrams in the first minute, 170–219 k on single
+SPDP/SEDP ports, then none. Issues `participants_over_limit`,
+`dds_udp_drops`. Original proposal: participant count on the domain against the
 middleware's limits (warn near Cyclone's participant-index cap), and
 discovery traffic, which needs packet counting (`/proc/net/udp` drops, or the
 SPDP/SEDP ports' bytes). Container mode is the big lever here (fewer

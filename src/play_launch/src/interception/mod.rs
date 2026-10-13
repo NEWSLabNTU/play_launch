@@ -11,9 +11,11 @@
 mod endpoint_stats;
 mod latency;
 mod live;
+mod tf;
 pub(crate) use endpoint_stats::Direction;
 pub use endpoint_stats::StartupMark;
 pub use live::{ClockStatus, EntitySnapshot};
+pub use tf::{TfEdgeView, TfSnapshot};
 pub mod measure;
 pub mod trace;
 
@@ -102,6 +104,11 @@ pub enum EventKind {
     /// `play_launch_interception::event::EventKind::EndpointQos`: the QoS an
     /// endpoint actually got, keyed like the stats (see `live::Qos`).
     EndpointQos = 19,
+    /// `play_launch_interception::event::EventKind::TfEdge`: one TF edge as
+    /// one publisher sends it, at most once a second (see `tf.rs`).
+    TfEdge = 20,
+    /// A chunk of "parent\nchild" for `TfEdge`'s pair hash.
+    TfFramesDeclared = 21,
 }
 
 /// Interception event (56 bytes, matches play_launch_interception::event::InterceptionEvent).
@@ -902,7 +909,11 @@ fn process_event(
             // frontier or stats *state*, but folded into the summary
             // JSON at write time via the name/type catalog.
         }
-        EventKind::EndpointOwner | EventKind::NodeNameDeclared | EventKind::EndpointQos => {
+        EventKind::EndpointOwner
+        | EventKind::NodeNameDeclared
+        | EventKind::EndpointQos
+        | EventKind::TfEdge
+        | EventKind::TfFramesDeclared => {
             // Per-endpoint attribution and QoS, handled by `EndpointTracker`.
         }
         EventKind::RingOverflowReport => {

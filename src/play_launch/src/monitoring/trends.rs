@@ -118,6 +118,9 @@ pub struct MemberResources {
     pub rss_bytes: u64,
     pub threads: u32,
     pub fds: u32,
+    /// Processes: the member's own and its descendants (an `isolated`
+    /// container's composables are each one).
+    pub processes: u32,
     /// RSS fitted over the window, bytes per minute.
     pub rss_trend: Option<Fit>,
     pub fd_trend: Option<Fit>,
@@ -150,6 +153,7 @@ pub struct Sample {
     pub rss_bytes: u64,
     pub threads: u32,
     pub fds: u32,
+    pub processes: u32,
 }
 
 impl TrendBook {
@@ -206,6 +210,7 @@ impl TrendBook {
             rss_bytes: sample.rss_bytes,
             threads: sample.threads,
             fds: sample.fds,
+            processes: sample.processes,
             rss_trend: fit(&rss),
             fd_trend: fit(&fds),
             ..Default::default()
@@ -296,6 +301,7 @@ mod tests {
                 rss_bytes: (100.0 * MB + i as f64 / 4.0 * MB) as u64,
                 threads: 3,
                 fds: 10,
+                processes: 1,
             };
             b.observe(dir, s, None, now);
         }
