@@ -27,10 +27,14 @@ classifiers = [
 ]
 keywords = ["ros2", "launch", "profiling", "monitoring", "robotics"]
 
+# Floors at the versions Ubuntu's apt ships (22.04 for Humble, 24.04 for
+# Jazzy): pip must not try to replace a Debian-installed package, which it
+# cannot uninstall ("RECORD file not found"). lark>=1.2 broke
+# `pip install play_launch` on Jazzy, whose python3-lark is 1.1.9.
 dependencies = [
-    "pyyaml>=6.0",
-    "lark>=1.2",
-    "packaging>=24.0",
+    "pyyaml>=5.4.1",
+    "lark>=1.1.1",
+    "packaging>=21.3",
     # Version matches Ubuntu 22.04 APT package (python3-plotly)
     "plotly>=5.4.1",
 ]

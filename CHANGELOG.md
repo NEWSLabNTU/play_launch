@@ -8,6 +8,11 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fix:** `pip install play_launch` failed on Jazzy (Ubuntu 24.04) with
+  "Cannot uninstall lark 1.1.9, RECORD file not found": the `lark>=1.2`
+  requirement made pip replace the Debian package, which it cannot remove.
+  The Python requirements now start at the versions Ubuntu's apt ships
+  (lark 1.1.1, packaging 21.3, PyYAML 5.4.1), so pip leaves them alone.
 - **New:** host checks on the Health page, once a minute: which middleware
   is in effect and any DDS configuration variable it ignores (a
   `CYCLONEDDS_URI` beside the default Fast DDS), a Cyclone receive-buffer
