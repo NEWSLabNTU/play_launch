@@ -302,6 +302,9 @@ pub struct EntitySnapshot {
     /// timeline. Not sent to the page.
     #[serde(skip)]
     pub(crate) startup: Vec<super::endpoint_stats::StartupMark>,
+    /// Lifecycle transitions per node, for the startup timeline.
+    #[serde(skip)]
+    pub(crate) lifecycle: Vec<super::endpoint_stats::LifecycleMark>,
     /// `/clock`, when something publishes it.
     pub(crate) clock: Option<ClockStatus>,
     /// TF edges as published; for the Health page, not sent with Entities.
@@ -345,6 +348,7 @@ impl EntitySnapshot {
             rows,
             nodes: Vec::new(),
             startup: Vec::new(),
+            lifecycle: Vec::new(),
             clock: self.clock.clone(),
             tf: self.tf.clone(),
         }
@@ -651,6 +655,7 @@ impl EndpointTracker {
             rows,
             nodes: self.node_names.values().cloned().collect(),
             startup: self.startup_marks(topic_names),
+            lifecycle: self.lifecycle_marks(),
             tf: (!self.tf.is_empty()).then(|| {
                 self.tf.snapshot(now_ns, |child, handle| {
                     self.owners

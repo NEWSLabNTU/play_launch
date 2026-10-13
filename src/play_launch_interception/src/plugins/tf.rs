@@ -99,6 +99,23 @@ impl InterceptionPlugin for TfPlugin {
     fn on_publish(&self, _handle: usize, _topic_hash: u64, _stamp: Option<Stamp>) {}
     fn on_take(&self, _handle: usize, _topic_hash: u64, _stamp: Option<Stamp>) {}
 
+    /// Lifecycle transitions ride the same plugin: rare, one event each.
+    fn on_lifecycle_transition(&self, handle: usize, start: u8, goal: u8) {
+        let event = InterceptionEvent {
+            kind: EventKind::LifecycleTransition,
+            _pad: [start, goal, 0],
+            topic_hash: 0,
+            stamp_sec: 0,
+            stamp_nanosec: 0,
+            handle: handle as u64,
+            monotonic_ns: crate::event::monotonic_ns(),
+            cpu_ns: 0,
+            tid: 0,
+            payload_bytes: 0,
+        };
+        crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
+    }
+
     fn on_tf(&self, handle: usize, is_static: bool, transforms: &[TfSample<'_>]) {
         let now = crate::event::monotonic_ns();
         let mut due = Vec::new();

@@ -133,6 +133,19 @@ function startupSegments(r, end) {
             seg.push([r.load_started_ms, to, r.loaded_ms != null ? 'st-load' : (r.failed_ms != null ? 'st-failed' : 'st-wait'),
                 'loading ' + fmtMs(r.load_started_ms) + ' → ' + (r.loaded_ms != null ? fmtMs(r.loaded_ms) : 'not loaded')]);
         }
+    } else if (r.spawned_ms != null && (r.inactive_ms != null || r.activates)) {
+        // A lifecycle node: up, then configured, then active.
+        const up = Math.min(r.spawned_ms, r.first_endpoint_ms ?? r.spawned_ms);
+        const upTo = r.first_endpoint_ms ?? r.inactive_ms ?? up;
+        seg.push([up, upTo, 'st-start', 'process start to first endpoint']);
+        if (r.inactive_ms != null) {
+            seg.push([upTo, r.inactive_ms, 'st-config', 'configured at ' + fmtMs(r.inactive_ms)]);
+        }
+        if (r.active_ms != null) {
+            seg.push([r.inactive_ms ?? upTo, r.active_ms, 'st-activate', 'active at ' + fmtMs(r.active_ms)]);
+        } else if (r.activates && r.failed_ms == null) {
+            seg.push([r.inactive_ms ?? upTo, end, 'st-wait', r.inactive_ms != null ? 'inactive, not activated' : 'not configured']);
+        }
     } else if (r.spawned_ms != null) {
         if (r.kind === 'node' && r.first_endpoint_ms != null) {
             // The actor reports a spawn after its post-fork setup, and a fast
@@ -194,6 +207,7 @@ function StartupTimeline() {
                     <span class="st-legend"><i class="st-start"></i>${t.intercepting ? 'start → node up' : 'spawned'}</span>
                     ${t.intercepting && html`<span class="st-legend"><i class="st-wired"></i>up → first publish</span>`}
                     <span class="st-legend"><i class="st-load"></i>composable load</span>
+                    ${t.rows.some(r => r.inactive_ms != null || r.activates) && html`<span class="st-legend"><i class="st-config"></i>configure</span><span class="st-legend"><i class="st-activate"></i>activate</span>`}
                     <span class="st-legend"><i class="st-wait"></i>not ready</span>
                     <span class="st-legend"><i class="st-failed"></i>failed</span>
                     ${!t.intercepting && html`<span class="hl-muted">nodes count as ready at spawn; --interception on shows when each node came up</span>`}

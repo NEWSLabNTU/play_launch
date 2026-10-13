@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!-- Lifecycle activation on the startup timeline: a lifecycle node and an
+     external manager that configures it, then activates it a second later. -->
+<launch>
+  <node pkg="lifecycle" exec="lifecycle_talker" name="lc_talker"/>
+  <executable cmd="python3 $(dirname)/../scripts/lifecycle_driver.py" name="lifecycle_driver" output="screen"/>
+</launch>

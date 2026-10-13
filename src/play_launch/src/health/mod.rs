@@ -845,6 +845,20 @@ pub async fn run_health_task(inputs: HealthInputs) {
     // the clock again.
     let mut up_since: HashMap<String, (Option<u32>, std::time::Instant)> = HashMap::new();
     let own_prefix = format!("/play_launch_{}", std::process::id());
+    // Lifecycle nodes the launch asks to activate: ready means active.
+    let autostart_active: std::collections::HashSet<String> = model
+        .structure
+        .nodes
+        .iter()
+        .filter(|(_, n)| {
+            n.lifecycle
+                && matches!(
+                    n.lifecycle_autostart,
+                    Some(ros_launch_manifest_model::Autostart::Active)
+                )
+        })
+        .map(|(fqn, _)| fqn.clone())
+        .collect();
     // Parameters against the launch (J) and the time base (I): a probe once
     // startup completes, then every PROBE_PERIOD.
     let mut params_job: Option<tokio::task::JoinHandle<params::ParamsReport>> = None;
@@ -955,6 +969,10 @@ pub async fn run_health_task(inputs: HealthInputs) {
                     .as_ref()
                     .map(|rx| rx.borrow().startup.clone())
                     .unwrap_or_default();
+                let lifecycle_marks = entities
+                    .as_ref()
+                    .map(|rx| rx.borrow().lifecycle.clone())
+                    .unwrap_or_default();
                 let timeline = {
                     let mut book = startup_book.lock().unwrap();
                     if summary_done {
@@ -964,6 +982,8 @@ pub async fn run_health_task(inputs: HealthInputs) {
                         &list,
                         &fqns,
                         &marks,
+                        &lifecycle_marks,
+                        &autostart_active,
                         entities.is_some(),
                         crate::runtime_enforcement::monotonic_now_ns(),
                     )

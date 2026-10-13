@@ -498,6 +498,12 @@ unsafe fn read_stamp(ros_message: *const c_void, offset: Option<usize>) -> Optio
 ///
 /// `ros_message` must be the message being published on `publisher`.
 unsafe fn on_typed_publish(rt: &Runtime, publisher: usize, ros_message: *const c_void) {
+    if let Some(layout) = tf::lookup_transition(publisher) {
+        let (start, goal) = unsafe { tf::transition_states(&layout, ros_message) };
+        for p in &rt.plugins {
+            p.on_lifecycle_transition(publisher, start, goal);
+        }
+    }
     if let Some((layout, is_static)) = tf::lookup(publisher) {
         let samples = unsafe { tf::samples(&layout, ros_message) };
         for p in &rt.plugins {
@@ -1015,6 +1021,11 @@ pub unsafe extern "C" fn rcl_publisher_init(
                 && let Some(layout) = unsafe { tf::tf_layout(type_support) }
             {
                 tf::register(rcl_id(publisher), layout, topic.ends_with("tf_static"));
+            }
+            if id == "lifecycle_msgs/msg/TransitionEvent"
+                && let Some(layout) = unsafe { tf::transition_layout(type_support) }
+            {
+                tf::register_transition(rcl_id(publisher), layout);
             }
         }
         plugin_dispatch::dispatch_publisher_init(

@@ -1811,3 +1811,66 @@ fn test_health_reads_the_tf_tree_as_published() {
         "the value moves: {from_py}"
     );
 }
+
+/// Lifecycle activation on the startup timeline: an external manager (not
+/// play_launch) configures a lifecycle node and then activates it; the
+/// node's own TransitionEvents, read by the interceptor, put both on its row.
+#[test]
+fn test_startup_timeline_shows_lifecycle_activation() {
+    let env = fixtures::install_env();
+    let launch =
+        fixtures::test_workspace_path("simple_test").join("launch/lifecycle_probe.launch.xml");
+    let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--interception",
+        "on",
+        "--web-addr",
+        &format!("127.0.0.1:{port}"),
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        launch.to_str().unwrap(),
+    ]);
+    cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", interception_so_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let row = loop {
+        std::thread::sleep(Duration::from_millis(1000));
+        let (status, body) = http(port, "GET", "/api/startup", None);
+        if status != 200 {
+            continue;
+        }
+        let t: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let row = t["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == "lc_talker")
+            .cloned();
+        let active = row.as_ref().is_some_and(|r| !r["active_ms"].is_null());
+        if active || std::time::Instant::now() > deadline {
+            break row.unwrap_or_else(|| panic!("no lc_talker row: {t}"));
+        }
+    };
+    drop(proc);
+
+    let inactive = row["inactive_ms"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("{row}"));
+    let active = row["active_ms"].as_u64().unwrap_or_else(|| panic!("{row}"));
+    assert!(
+        active >= inactive + 900,
+        "activated about a second after configure: {row}"
+    );
+}

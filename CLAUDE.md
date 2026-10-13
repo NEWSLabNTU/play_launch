@@ -680,6 +680,17 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-14**: **Lifecycle activation on the startup timeline.** The
+  interceptor reads each `lifecycle_msgs/TransitionEvent` a node publishes
+  (`tf.rs::transition_layout`, event kind 22, so the consumer's `EventKind`
+  lists it) and the consumer keeps first-inactive and first-active per
+  node (`EndpointTracker::lifecycle_marks`); `lifecycle_autostart::spawn_all`
+  takes an `OnReached` callback into the `StartupBook`. A lifecycle node with
+  Jazzy `autostart` is ready when active. The external-manager path is
+  tested (`test_startup_timeline_shows_lifecycle_activation`); the
+  autostart-driver path only by unit test, since Humble has no launch-file
+  autostart.
+
 - **2026-10-14**: **TF and discovery load on the Health page**
   (`big-system-observability.md` §H, §N). TF is read IN the publishing
   process: `play_launch_interception/src/tf.rs` resolves a `TFMessage`'s

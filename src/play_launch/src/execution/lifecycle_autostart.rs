@@ -95,10 +95,15 @@ pub fn plan(model: &SystemModel) -> Plan {
 /// Spawn one task per node in `plan`. Returns nothing to await: each task
 /// ends when its node is where it was asked to be, a transition fails, or
 /// the run shuts down.
+/// Told each lifecycle state a node reaches through the driver: (node FQN,
+/// `lifecycle_msgs` state id, 2 inactive or 3 active).
+pub type OnReached = Arc<dyn Fn(&str, u8) + Send + Sync>;
+
 pub fn spawn_all(
     plan: Plan,
     ros_node: Option<Arc<rclrs::Node>>,
     shutdown_rx: watch::Receiver<bool>,
+    on_reached: Option<OnReached>,
 ) {
     if !plan.not_lifecycle.is_empty() {
         warn!(
@@ -122,7 +127,13 @@ pub fn spawn_all(
         return;
     };
     for (fqn, steps) in plan.drive {
-        tokio::spawn(drive(ros_node.clone(), fqn, steps, shutdown_rx.clone()));
+        tokio::spawn(drive(
+            ros_node.clone(),
+            fqn,
+            steps,
+            shutdown_rx.clone(),
+            on_reached.clone(),
+        ));
     }
 }
 
@@ -133,6 +144,7 @@ async fn drive(
     fqn: String,
     steps: &'static [Transition],
     mut shutdown_rx: watch::Receiver<bool>,
+    on_reached: Option<OnReached>,
 ) {
     let service = format!("{}/change_state", fqn.trim_end_matches('/'));
     let client = match ros_node.create_client::<lifecycle_msgs::srv::ChangeState>(&service) {
@@ -181,7 +193,18 @@ async fn drive(
             _ = shutdown_rx.changed() => return,
         };
         match response {
-            Ok(r) if r.success => debug!("[lifecycle] {fqn}: {} succeeded", step.label()),
+            Ok(r) if r.success => {
+                debug!("[lifecycle] {fqn}: {} succeeded", step.label());
+                if let Some(f) = on_reached.as_ref() {
+                    f(
+                        &fqn,
+                        match step {
+                            Transition::Configure => 2,
+                            Transition::Activate => 3,
+                        },
+                    );
+                }
+            }
             Ok(_) => {
                 warn!(
                     "[lifecycle] {fqn}: the node refused {}; autostart stops here",

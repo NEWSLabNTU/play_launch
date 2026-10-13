@@ -28,7 +28,7 @@ use serde::Serialize;
 
 use super::{Condition, Link, Severity, Subject};
 use crate::{
-    interception::StartupMark,
+    interception::{LifecycleMark, StartupMark},
     member_actor::{
         events::StateEvent,
         model::member_view::{MemberState, MemberSummary, MemberType},
@@ -58,6 +58,9 @@ struct Milestones {
 pub struct StartupBook {
     t0_ns: u64,
     members: HashMap<String, Milestones>,
+    /// Node FQN -> when it first reached inactive and active, as the
+    /// autostart driver saw it.
+    lifecycle: HashMap<String, (Option<u64>, Option<u64>)>,
     complete_ns: Option<u64>,
 }
 
@@ -77,6 +80,7 @@ impl StartupBook {
         Self {
             t0_ns,
             members: HashMap::new(),
+            lifecycle: HashMap::new(),
             complete_ns: None,
         }
     }
@@ -106,6 +110,24 @@ impl StartupBook {
         }
     }
 
+    /// A lifecycle node reached `state` (2 inactive, 3 active).
+    pub fn observe_lifecycle(&mut self, fqn: &str, state: u8) {
+        self.observe_lifecycle_at(fqn, state, now_ns());
+    }
+
+    fn observe_lifecycle_at(&mut self, fqn: &str, state: u8, at: u64) {
+        let e = self.lifecycle.entry(fqn.to_string()).or_default();
+        match state {
+            2 => {
+                e.0.get_or_insert(at);
+            }
+            3 => {
+                e.1.get_or_insert(at);
+            }
+            _ => {}
+        }
+    }
+
     /// The run reached startup complete (first time only).
     pub fn mark_complete(&mut self) {
         self.complete_ns.get_or_insert_with(now_ns);
@@ -122,14 +144,29 @@ impl StartupBook {
     /// The timeline as of `now_ns`. `fqns` maps member id to node FQN, for
     /// joining the interceptor's per-node marks; `intercepting` says whether
     /// those marks exist at all.
+    #[allow(clippy::too_many_arguments)] // one caller, the Health task
     pub fn timeline(
         &self,
         members: &[MemberSummary],
         fqns: &HashMap<String, String>,
         marks: &[StartupMark],
+        lifecycle_marks: &[LifecycleMark],
+        autostart_active: &std::collections::HashSet<String>,
         intercepting: bool,
         now_ns: u64,
     ) -> StartupTimeline {
+        // Lifecycle times by FQN: the earlier of the driver's and the
+        // interceptor's (a node's own TransitionEvent, whoever asked).
+        let mut lifecycle = self.lifecycle.clone();
+        for m in lifecycle_marks {
+            let e = lifecycle.entry(m.node.clone()).or_default();
+            let min = |a: Option<u64>, b: Option<u64>| match (a, b) {
+                (Some(x), Some(y)) => Some(x.min(y)),
+                (x, y) => x.or(y),
+            };
+            e.0 = min(e.0, m.inactive_ns);
+            e.1 = min(e.1, m.active_ns);
+        }
         // A mark belongs to the member whose node it names, else to the
         // process that reported it (a member's own id when not a container).
         let by_fqn: HashMap<&str, &str> = fqns
@@ -178,7 +215,15 @@ impl StartupBook {
                     MemberType::Node if s.package.is_some() => "node",
                     MemberType::Node => "executable",
                 };
+                let fqn = fqns.get(&s.id);
+                let (inactive_ns, active_ns) = fqn
+                    .and_then(|f| lifecycle.get(f).copied())
+                    .unwrap_or((None, None));
+                // A lifecycle node its launch asks to activate is ready when
+                // it is active, not when its process is up.
+                let activates = fqn.is_some_and(|f| autostart_active.contains(f));
                 let ready_ns = match kind {
+                    _ if activates => active_ns,
                     "composable" => ms.loaded_ns,
                     "node" if intercepting => endpoint,
                     _ => ms.spawned_ns,
@@ -196,6 +241,9 @@ impl StartupBook {
                     ready_ms: self.ms(ready_ns),
                     failed_ms: self.ms(ms.failed_ns),
                     error: ms.error.clone(),
+                    inactive_ms: self.ms(inactive_ns),
+                    active_ms: self.ms(active_ns),
+                    activates,
                     waiting_ms: None,
                     state: state_word(&s.state),
                     recent_exits: s.recent_exits,
@@ -263,6 +311,11 @@ pub struct StartupRow {
     pub failed_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// A lifecycle node's first inactive and active.
+    pub inactive_ms: Option<u64>,
+    pub active_ms: Option<u64>,
+    /// Its launch asks for it to be activated, so ready means active.
+    pub activates: bool,
     /// How long it has been waiting to become ready, if it is not.
     pub waiting_ms: Option<u64>,
     pub state: &'static str,
@@ -293,6 +346,15 @@ pub fn startup_conditions(t: &StartupTimeline) -> Vec<Condition> {
         .map(|r| {
             let waited = r.waiting_ms.unwrap_or(0) / 1000;
             let (what, why) = match r.kind {
+                _ if r.activates => (
+                    if r.inactive_ms.is_some() {
+                        "inactive"
+                    } else {
+                        "unconfigured"
+                    },
+                    "its launch asks for it to be activated and it has not been: its \
+                     configure or activate was refused, or what drives it is waiting",
+                ),
                 "composable" => (
                     "loading",
                     "its constructor has not returned; the container reports it alive, so \
@@ -420,7 +482,15 @@ mod tests {
             first_endpoint_ns: 1_150 * MS,
             first_publish_ns: Some(1_400 * MS),
         }];
-        let t = b.timeline(&members, &fqns, &marks, true, 62_000 * MS);
+        let t = b.timeline(
+            &members,
+            &fqns,
+            &marks,
+            &[],
+            &Default::default(),
+            true,
+            62_000 * MS,
+        );
         let row = |id: &str| t.rows.iter().find(|r| r.id == id).unwrap();
         assert_eq!(row("n").spawned_ms, Some(100));
         assert_eq!(row("n").ready_ms, Some(150), "ready at its first endpoint");
@@ -438,6 +508,51 @@ mod tests {
     }
 
     #[test]
+    fn a_lifecycle_node_its_launch_activates_is_ready_when_active() {
+        let mut b = StartupBook::starting_at(0);
+        b.observe_at(&started("node:/lc"), 100 * MS);
+        b.observe_at(&started("node:/stuck"), 100 * MS);
+        // The driver configured /lc; its own TransitionEvent says active.
+        b.observe_lifecycle_at("/lc", 2, 400 * MS);
+        b.observe_lifecycle_at("/stuck", 2, 500 * MS);
+        let marks = [LifecycleMark {
+            node: "/lc".into(),
+            inactive_ns: Some(450 * MS),
+            active_ns: Some(900 * MS),
+        }];
+        let members = [
+            member(
+                "node:/lc",
+                MemberType::Node,
+                true,
+                MemberState::Running { pid: 1 },
+            ),
+            member(
+                "node:/stuck",
+                MemberType::Node,
+                true,
+                MemberState::Running { pid: 2 },
+            ),
+        ];
+        let fqns: HashMap<String, String> = [
+            ("node:/lc".to_string(), "/lc".to_string()),
+            ("node:/stuck".to_string(), "/stuck".to_string()),
+        ]
+        .into();
+        let activates: std::collections::HashSet<String> =
+            ["/lc".to_string(), "/stuck".to_string()].into();
+        let t = b.timeline(&members, &fqns, &[], &marks, &activates, true, 100_000 * MS);
+        let row = |id: &str| t.rows.iter().find(|r| r.id == id).unwrap();
+        assert_eq!(row("node:/lc").inactive_ms, Some(400), "the earlier source");
+        assert_eq!(row("node:/lc").ready_ms, Some(900), "ready = active");
+        assert_eq!(row("node:/stuck").ready_ms, None);
+        let c = startup_conditions(&t);
+        assert_eq!(c.len(), 1, "{c:?}");
+        assert_eq!(c[0].key, "never_ready:node:/stuck");
+        assert!(c[0].title.contains("inactive"), "{}", c[0].title);
+    }
+
+    #[test]
     fn without_interception_a_node_is_ready_at_its_spawn() {
         let mut b = StartupBook::starting_at(0);
         b.observe_at(&started("n"), 100 * MS);
@@ -451,14 +566,30 @@ mod tests {
                 MemberState::Running { pid: 2 },
             ),
         ];
-        let t = b.timeline(&members, &HashMap::new(), &[], false, 100_000 * MS);
+        let t = b.timeline(
+            &members,
+            &HashMap::new(),
+            &[],
+            &[],
+            &Default::default(),
+            false,
+            100_000 * MS,
+        );
         assert_eq!(t.rows[0].ready_ms, Some(100));
         assert_eq!(t.rows[1].kind, "executable");
         assert!(startup_conditions(&t).is_empty());
 
         // With interception, a node without an endpoint after 60 s is late,
         // and a plain executable (no ROS node to wait for) is not.
-        let t = b.timeline(&members, &HashMap::new(), &[], true, 100_000 * MS);
+        let t = b.timeline(
+            &members,
+            &HashMap::new(),
+            &[],
+            &[],
+            &Default::default(),
+            true,
+            100_000 * MS,
+        );
         let c = startup_conditions(&t);
         assert_eq!(c.len(), 1, "{c:?}");
         assert_eq!(c[0].key, "never_ready:n");
@@ -493,7 +624,15 @@ mod tests {
             first_endpoint_ns: 300 * MS,
             first_publish_ns: None,
         }];
-        let t = b.timeline(&members, &HashMap::new(), &marks, true, 100_000 * MS);
+        let t = b.timeline(
+            &members,
+            &HashMap::new(),
+            &marks,
+            &[],
+            &Default::default(),
+            true,
+            100_000 * MS,
+        );
         assert_eq!(
             t.rows
                 .iter()

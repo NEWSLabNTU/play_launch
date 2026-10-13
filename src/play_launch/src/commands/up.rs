@@ -1471,11 +1471,18 @@ pub(crate) async fn play(
     // for `LifecycleNode(autostart=True)`. Each task waits for its node's
     // `change_state` service, so spawn order and `<timer>` delays need no
     // coordination here.
-    crate::execution::lifecycle_autostart::spawn_all(
-        crate::execution::lifecycle_autostart::plan(&system_model),
-        shared_ros_node_for_params.clone(),
-        shutdown_signal.clone(),
-    );
+    {
+        // The startup timeline takes each state the driver reaches.
+        let book = startup_book.clone();
+        crate::execution::lifecycle_autostart::spawn_all(
+            crate::execution::lifecycle_autostart::plan(&system_model),
+            shared_ros_node_for_params.clone(),
+            shutdown_signal.clone(),
+            Some(std::sync::Arc::new(move |fqn: &str, state: u8| {
+                book.lock().unwrap().observe_lifecycle(fqn, state);
+            })),
+        );
+    }
 
     // Phase 61 W2: the task that opens each startup stage as the previous one
     // comes up. Spawned after the handle exists because it reads member state;

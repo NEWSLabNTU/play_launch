@@ -162,3 +162,63 @@ pub fn lookup(publisher: usize) -> Option<(TfLayout, bool)> {
     }
     PUBLISHERS.read().as_ref()?.get(&publisher).copied()
 }
+
+/// Where a `lifecycle_msgs/TransitionEvent`'s start and goal state ids are.
+#[derive(Debug, Clone, Copy)]
+pub struct TransitionLayout {
+    start_id: usize,
+    goal_id: usize,
+}
+
+/// The layout of a `TransitionEvent` type support, or `None` for another.
+///
+/// # Safety
+///
+/// `ts` must be a valid message type support.
+pub unsafe fn transition_layout(
+    ts: *const rosidl_message_type_support_t,
+) -> Option<TransitionLayout> {
+    let msg = unsafe { members_of(ts) }?;
+    let id_of = |name: &[u8]| -> Option<usize> {
+        let state = member(msg, name)?;
+        let state_m = unsafe { members_of(state.members_) }?;
+        let id = member(state_m, b"id")?;
+        Some(state.offset_ as usize + id.offset_ as usize)
+    };
+    Some(TransitionLayout {
+        start_id: id_of(b"start_state")?,
+        goal_id: id_of(b"goal_state")?,
+    })
+}
+
+/// (start state, goal state) of one `TransitionEvent`.
+///
+/// # Safety
+///
+/// `msg` must be a message of the type `layout` was resolved from.
+pub unsafe fn transition_states(layout: &TransitionLayout, msg: *const c_void) -> (u8, u8) {
+    let base = msg as *const u8;
+    unsafe { (*base.add(layout.start_id), *base.add(layout.goal_id)) }
+}
+
+static ANY_LIFECYCLE: AtomicBool = AtomicBool::new(false);
+static TRANSITION_PUBLISHERS: RwLock<Option<HashMap<usize, TransitionLayout>>> = RwLock::new(None);
+
+pub fn register_transition(publisher: usize, layout: TransitionLayout) {
+    TRANSITION_PUBLISHERS
+        .write()
+        .get_or_insert_with(HashMap::new)
+        .insert(publisher, layout);
+    ANY_LIFECYCLE.store(true, Ordering::Release);
+}
+
+pub fn lookup_transition(publisher: usize) -> Option<TransitionLayout> {
+    if !ANY_LIFECYCLE.load(Ordering::Acquire) {
+        return None;
+    }
+    TRANSITION_PUBLISHERS
+        .read()
+        .as_ref()?
+        .get(&publisher)
+        .copied()
+}

@@ -94,6 +94,9 @@ pub(crate) trait InterceptionPlugin: Send + Sync {
     /// transforms (`crate::tf`). `is_static` for a `tf_static` topic.
     fn on_tf(&self, _handle: usize, _is_static: bool, _transforms: &[crate::tf::TfSample<'_>]) {}
 
+    /// Called when a lifecycle node publishes a `TransitionEvent`.
+    fn on_lifecycle_transition(&self, _handle: usize, _start: u8, _goal: u8) {}
+
     // -----------------------------------------------------------------
     // RMW-layer hooks (Phase 36.1). Default no-op so existing plugins
     // (FrontierPlugin, StatsPlugin) compile unchanged. New plugins

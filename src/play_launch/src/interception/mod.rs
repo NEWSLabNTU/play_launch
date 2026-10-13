@@ -13,7 +13,7 @@ mod latency;
 mod live;
 mod tf;
 pub(crate) use endpoint_stats::Direction;
-pub use endpoint_stats::StartupMark;
+pub use endpoint_stats::{LifecycleMark, StartupMark};
 pub use live::{ClockStatus, EntitySnapshot};
 pub use tf::{TfEdgeView, TfSnapshot};
 pub mod measure;
@@ -109,6 +109,9 @@ pub enum EventKind {
     TfEdge = 20,
     /// A chunk of "parent\nchild" for `TfEdge`'s pair hash.
     TfFramesDeclared = 21,
+    /// A lifecycle node's `TransitionEvent`: `_pad[0]` start state,
+    /// `_pad[1]` goal state (2 inactive, 3 active).
+    LifecycleTransition = 22,
 }
 
 /// Interception event (56 bytes, matches play_launch_interception::event::InterceptionEvent).
@@ -913,7 +916,8 @@ fn process_event(
         | EventKind::NodeNameDeclared
         | EventKind::EndpointQos
         | EventKind::TfEdge
-        | EventKind::TfFramesDeclared => {
+        | EventKind::TfFramesDeclared
+        | EventKind::LifecycleTransition => {
             // Per-endpoint attribution and QoS, handled by `EndpointTracker`.
         }
         EventKind::RingOverflowReport => {

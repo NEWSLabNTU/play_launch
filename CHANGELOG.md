@@ -8,6 +8,11 @@ allowance heavily.
 
 ## Unreleased
 
+- **New:** lifecycle activation on the startup timeline: when each lifecycle
+  node was configured and activated, whoever drove it (with interception,
+  from the node's own transition events; otherwise from play_launch's
+  autostart). A node its launch asks to activate counts as ready only once
+  active, and one still inactive a minute later is reported.
 - **New:** TF on the Health page, read where it is published (no
   subscription to `/tf`): the frame tree with each edge's publisher, rate
   and last message, and issues for a frame under two parents, an edge sent

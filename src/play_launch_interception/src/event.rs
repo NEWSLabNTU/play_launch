@@ -127,6 +127,13 @@ pub enum EventKind {
     /// A chunk of "parent\nchild", keyed by its hash in `topic_hash`; same
     /// chunking as `TopicNameDeclared`.
     TfFramesDeclared = 21,
+    /// A lifecycle node published a `lifecycle_msgs/TransitionEvent`: it
+    /// went from one state to another, whoever asked. Field overload:
+    /// `handle` = the rcl publisher id (its node arrives by `EndpointOwner`),
+    /// `_pad[0]` = start state id, `_pad[1]` = goal state id (lifecycle_msgs
+    /// `State`: 1 unconfigured, 2 inactive, 3 active, 4 finalized, 10+
+    /// transitional).
+    LifecycleTransition = 22,
 }
 
 /// A single interception event (56 bytes, `#[repr(C)]`).

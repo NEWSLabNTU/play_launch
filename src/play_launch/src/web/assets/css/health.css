@@ -292,3 +292,5 @@
 /* --- resources ------------------------------------------------------------ */
 .hl-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hl-trend-up { color: var(--pending-text); font-weight: 600; }
+.st-config, .st-legend .st-config { background: #8b5cf6; opacity: 0.7; }
+.st-activate, .st-legend .st-activate { background: #7c3aed; }

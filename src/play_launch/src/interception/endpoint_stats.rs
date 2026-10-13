@@ -91,6 +91,15 @@ impl Endpoint {
     }
 }
 
+/// When a lifecycle node first reached inactive and active, on
+/// `CLOCK_MONOTONIC`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LifecycleMark {
+    pub node: String,
+    pub inactive_ns: Option<u64>,
+    pub active_ns: Option<u64>,
+}
+
 /// A node's first endpoint and first publish, on `CLOCK_MONOTONIC`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StartupMark {
@@ -201,6 +210,9 @@ pub(crate) struct EndpointTracker {
     pub(super) clock: ClockTrack,
     /// TF edges as published (`tf.rs`).
     pub(super) tf: super::tf::TfBook,
+    /// Per node hash: when it first reached inactive (2) and active (3),
+    /// from its `TransitionEvent`s.
+    pub(super) lifecycle: HashMap<u64, (Option<u64>, Option<u64>)>,
 }
 
 /// `/clock` as published: its value (the interceptor reads a
@@ -238,6 +250,20 @@ impl EndpointTracker {
     pub(crate) fn observe(&mut self, child: usize, member: &str, event: &InterceptionEvent) {
         let key = (child, event.handle);
         match event.kind {
+            EventKind::LifecycleTransition => {
+                if let Some(node) = self.owners.get(&key).copied() {
+                    let e = self.lifecycle.entry(node).or_default();
+                    match event._pad[1] {
+                        2 => {
+                            e.0.get_or_insert(event.monotonic_ns);
+                        }
+                        3 => {
+                            e.1.get_or_insert(event.monotonic_ns);
+                        }
+                        _ => {}
+                    }
+                }
+            }
             EventKind::TfEdge => self.tf.observe_edge(child, event),
             EventKind::TfFramesDeclared => self.tf.observe_names(event),
             EventKind::EndpointOwner => {
@@ -391,6 +417,20 @@ impl EndpointTracker {
             }
         }
         marks.into_values().collect()
+    }
+
+    /// Per lifecycle node FQN: when it first reached inactive and active.
+    pub(crate) fn lifecycle_marks(&self) -> Vec<LifecycleMark> {
+        self.lifecycle
+            .iter()
+            .filter_map(|(h, (inactive, active))| {
+                Some(LifecycleMark {
+                    node: self.node_names.get(h)?.clone(),
+                    inactive_ns: *inactive,
+                    active_ns: *active,
+                })
+            })
+            .collect()
     }
 
     pub(crate) fn is_empty(&self) -> bool {

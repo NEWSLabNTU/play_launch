@@ -159,8 +159,17 @@ As built (W7):
   sits between); the data keeps both and the chart starts at the earlier.
 - **Ready** is per kind: a ROS node at its first endpoint when intercepting,
   else at spawn; an `<executable>` and a container at spawn; a composable
-  at its load. Lifecycle activation is not a milestone yet (it is a log
-  line, not an event).
+  at its load; a lifecycle node its launch asks to activate (Jazzy
+  `autostart`), when it is ACTIVE.
+- **Lifecycle** (added 2026-10-14): each lifecycle node's first inactive and
+  active, from two sources, the earlier winning. The interceptor reads the
+  node's own `lifecycle_msgs/TransitionEvent` on publish (start and goal
+  state ids by introspection; event kind 22), so a transition counts
+  whoever asked for it — nav2's lifecycle manager, a script, `ros2
+  lifecycle set`. play_launch's autostart driver reports what it brought
+  about, so a run without interception has the times too. A node to be
+  activated that is not, 60 s on, is `never_ready` ("still inactive").
+  The Gantt draws configure and activate as their own segments.
 - **Interceptor marks join by node FQN** through the FQN map, else by the
   process: the ring is keyed by model key and the member id carries a kind
   prefix (`node:/system/aggregator_node-1`), which the first Autoware run
