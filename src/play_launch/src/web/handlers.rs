@@ -636,6 +636,25 @@ pub async fn get_diagnostic_counts(
     Ok(Json(counts))
 }
 
+// ===== Health =====
+
+pub fn health_unavailable() -> Response {
+    (
+        StatusCode::CONFLICT,
+        Json(json!({ "error": "this run has no health task" })),
+    )
+        .into_response()
+}
+
+/// Open and recently closed issues, and play_launch's own cost.
+pub async fn get_health(State(state): State<Arc<WebState>>) -> Response {
+    let Some(rx) = &state.health else {
+        return health_unavailable();
+    };
+    let snap = rx.borrow().clone();
+    Json(&*snap).into_response()
+}
+
 // ===== Entities (live endpoints) =====
 
 /// Rows sent when the client did not ask for `?all=1`: the busiest, plus

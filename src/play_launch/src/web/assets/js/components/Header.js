@@ -3,7 +3,7 @@
 import { h } from '../vendor/preact.module.js';
 import { useCallback, useEffect, useState } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { currentView, theme, healthSummary, diagnostics, systemMetrics, graphSelectedElement, statusFacet, nodeList, getStatusString } from '../store.js';
+import { currentView, theme, healthSummary, diagnostics, systemMetrics, graphSelectedElement, statusFacet, nodeList, getStatusString, healthIssueCounts, applyHealthResponse } from '../store.js';
 
 const html = htm.bind(h);
 
@@ -141,6 +141,40 @@ function EventRecordToggle() {
     `;
 }
 
+/**
+ * Count of open health issues on the Health tab: red if any error, amber if
+ * only warnings, hidden otherwise. Polls /api/health/issues every 5 s so the count
+ * is current on every page; the Health page also feeds the same signal from
+ * its stream while open.
+ */
+function HealthTabBadge() {
+    useEffect(() => {
+        let alive = true;
+        const load = () => fetch('/api/health/issues')
+            .then(r => {
+                if (!r.ok) {
+                    // 404/409: no issue tracker on this run, so no badge.
+                    if (alive && (r.status === 404 || r.status === 409)) healthIssueCounts.value = null;
+                    return null;
+                }
+                return r.json();
+            })
+            .then(d => { if (alive && d) applyHealthResponse(d); })
+            .catch(() => {});
+        load();
+        const id = setInterval(load, 5000);
+        return () => { alive = false; clearInterval(id); };
+    }, []);
+
+    const c = healthIssueCounts.value;
+    if (!c) return null;
+    const n = (c.error || 0) + (c.warning || 0);
+    if (n === 0) return null;
+    const cls = c.error > 0 ? 'health-tab-badge-error' : 'health-tab-badge-warning';
+    const title = `${c.error} error${c.error === 1 ? '' : 's'}, ${c.warning} warning${c.warning === 1 ? '' : 's'}`;
+    return html`<span class="health-tab-badge ${cls}" title=${title}>${n}</span>`;
+}
+
 function ThemeToggle() {
     const toggleTheme = useCallback(() => {
         const next = theme.value === 'dark' ? 'light' : 'dark';
@@ -173,6 +207,8 @@ export function Header() {
         <header>
             <h1>play_launch</h1>
             <div class="nav-tabs">
+                <button class="nav-tab ${view === 'health' ? 'active' : ''}"
+                    onClick=${() => switchView('health')}>Health<${HealthTabBadge} /></button>
                 <button class="nav-tab ${view === 'nodes' ? 'active' : ''}"
                     onClick=${() => switchView('nodes')}>Nodes</button>
                 <button class="nav-tab ${view === 'graph' ? 'active' : ''}"

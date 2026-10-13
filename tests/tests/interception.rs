@@ -879,3 +879,79 @@ fn test_event_recording_switches_at_runtime() {
         "the second segment recorded no message: {second:?}"
     );
 }
+
+/// The Health page's issue book, through its API: a deliberately mismatched
+/// QoS pair (`qos_mismatch.launch.xml`, BEST_EFFORT publisher, RELIABLE
+/// subscription) opens exactly one `qos_incompatible` issue for the topic —
+/// not one per endpoint — and the open is journalled to `health.jsonl`.
+#[test]
+fn test_health_reports_one_issue_per_incompatible_topic() {
+    let env = fixtures::install_env();
+    let launch =
+        fixtures::test_workspace_path("simple_test").join("launch/qos_mismatch.launch.xml");
+    let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--interception",
+        "on",
+        "--web-addr",
+        &format!("127.0.0.1:{port}"),
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        "--container-mode",
+        "stock",
+        launch.to_str().unwrap(),
+    ]);
+    cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", interception_so_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+    let play_log = work_dir.path().join("play_log/latest");
+    fixtures::wait_for_processes(&play_log, 2, Duration::from_secs(15));
+
+    // The pair is judged once both endpoints and their QoS are known.
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let issues = loop {
+        let (status, body) = http(port, "GET", "/api/health/issues", None);
+        assert_eq!(status, 200, "{body}");
+        let snap: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let qos: Vec<serde_json::Value> = snap["open"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["kind"] == "qos_incompatible")
+            .cloned()
+            .collect();
+        if !qos.is_empty() || std::time::Instant::now() > deadline {
+            break qos;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    };
+    drop(proc);
+    std::thread::sleep(Duration::from_millis(500));
+
+    assert_eq!(issues.len(), 1, "one issue per topic: {issues:?}");
+    let issue = &issues[0];
+    assert_eq!(issue["severity"], "error");
+    assert_eq!(issue["subject"]["name"], "/qos_test");
+    assert!(
+        issue["detail"].as_str().unwrap().contains("reliability"),
+        "{issue}"
+    );
+
+    let journal = std::fs::read_to_string(play_log.join("health.jsonl")).expect("health.jsonl");
+    assert!(
+        journal
+            .lines()
+            .any(|l| l.contains(r#""event":"open""#) && l.contains("qos_incompatible:/qos_test")),
+        "{journal}"
+    );
+}

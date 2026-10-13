@@ -1,0 +1,249 @@
+/* Health view — open issues, recently resolved, play_launch's own cost */
+.health-view {
+    width: 100%;
+}
+
+/* Nav tab badge (Header) */
+.health-tab-badge {
+    display: inline-block;
+    min-width: 1.4em;
+    margin-left: 6px;
+    padding: 0 5px;
+    border-radius: 9px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1.5;
+    text-align: center;
+    border: 1px solid transparent;
+    font-variant-numeric: tabular-nums;
+}
+
+.health-tab-badge-error { background: var(--failed-bg); color: var(--failed-text); border-color: var(--failed-border); }
+.health-tab-badge-warning { background: var(--pending-bg); color: var(--pending-text); border-color: var(--pending-border); }
+
+.hl-muted { color: var(--text-muted); }
+.hl-sep { color: var(--text-muted); }
+
+.hl-counts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 14px;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.hl-counts b {
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.hl-counts .hl-count-error b { color: var(--failed-text); }
+.hl-counts .hl-count-warning b { color: var(--pending-text); }
+.hl-disconnected { margin-left: auto; font-style: italic; }
+
+.hl-empty {
+    padding: 48px 16px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+}
+
+.hl-empty-detail { margin-top: 8px; font-size: 0.85rem; }
+
+.hl-section { margin-bottom: 22px; }
+
+.hl-heading {
+    margin: 0 0 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.hl-toggle { cursor: pointer; user-select: none; }
+.hl-caret { display: inline-block; width: 1em; color: var(--text-muted); }
+.hl-heading-count { font-weight: 400; font-size: 0.85rem; }
+
+.hl-calm {
+    padding: 12px 8px;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.hl-check { color: var(--running-text); font-weight: 700; margin-right: 6px; }
+
+.hl-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+    border: 1px solid var(--border-color);
+    table-layout: auto;
+}
+
+.hl-table th {
+    background: var(--bg-secondary);
+    padding: 6px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.hl-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: middle;
+    background: var(--bg-primary);
+}
+
+.hl-row:hover td { background: var(--bg-tertiary); }
+
+.hl-sev {
+    display: inline-block;
+    min-width: 4.6em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-align: center;
+    border: 1px solid transparent;
+}
+
+.hl-sev-error { background: var(--failed-bg); color: var(--failed-text); border-color: var(--failed-border); }
+.hl-sev-warning { background: var(--pending-bg); color: var(--pending-text); border-color: var(--pending-border); }
+.hl-sev-info { background: var(--stopped-bg); color: var(--text-muted); }
+
+.hl-kind { white-space: nowrap; color: var(--text-secondary); }
+
+.hl-subject {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: nowrap;
+}
+
+.hl-subject-cell {
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hl-subject-kind {
+    margin-right: 5px;
+    font-family: inherit;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
+.hl-title { color: var(--text-primary); }
+
+.hl-detail {
+    max-width: 360px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-muted);
+}
+
+.hl-table .hl-since {
+    white-space: nowrap;
+    text-align: right;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+}
+
+.hl-link { text-align: right; white-space: nowrap; }
+
+.hl-show {
+    padding: 2px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
+.hl-show:hover { background: var(--bg-tertiary); }
+
+/* Recently resolved */
+.hl-resolved {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--border-color);
+    font-size: 0.8rem;
+}
+
+.hl-resolved-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 10px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+.hl-resolved-row:last-child { border-bottom: none; }
+.hl-resolved-title { color: var(--text-secondary); }
+.hl-resolved-when { margin-left: auto; white-space: nowrap; }
+
+/* play_launch itself */
+.hl-self-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.hl-self-stats b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+.hl-bars {
+    display: grid;
+    grid-template-columns: max-content minmax(80px, 1fr) max-content;
+    gap: 4px 10px;
+    align-items: center;
+    max-width: 640px;
+    font-size: 0.8rem;
+}
+
+.hl-bar-row { display: contents; }
+
+.hl-bar-name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--text-secondary);
+}
+
+.hl-bar-track {
+    display: block;
+    height: 10px;
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.hl-bar-fill {
+    display: block;
+    height: 100%;
+    background: var(--loading-border);
+    border-radius: 3px;
+}
+
+.hl-bar-fill.hl-bar-rclrs { background: var(--unloading-border); }
+.hl-bar-fill.hl-bar-other { background: var(--text-muted); }
+
+.hl-bar-val {
+    text-align: right;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+}
+
+@media (max-width: 768px) {
+    .hl-detail { display: none; }
+    .hl-subject-cell { max-width: 160px; }
+}

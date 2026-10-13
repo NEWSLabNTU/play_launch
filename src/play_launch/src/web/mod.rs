@@ -59,6 +59,8 @@ pub struct WebState {
     /// The Entities page's 1 Hz snapshot. `None` when this run does not
     /// intercept with `stats`, so there is nothing to show.
     pub entities: Option<tokio::sync::watch::Receiver<Arc<crate::interception::EntitySnapshot>>>,
+    /// The Health page's snapshot. `None` when the caller runs no health task.
+    pub health: Option<tokio::sync::watch::Receiver<Arc<crate::health::HealthSnapshot>>>,
 }
 
 impl WebState {
@@ -83,7 +85,17 @@ impl WebState {
             node_scope_map,
             events_switch: None,
             entities: None,
+            health: None,
         }
+    }
+
+    /// Hand over the receiving end of the Health snapshot.
+    pub fn with_health(
+        mut self,
+        rx: Option<tokio::sync::watch::Receiver<Arc<crate::health::HealthSnapshot>>>,
+    ) -> Self {
+        self.health = rx;
+        self
     }
 
     /// Hand over the receiving end of the Entities snapshot.
@@ -203,6 +215,8 @@ pub fn create_router(state: Arc<WebState>, bind_addr: &str, port: u16) -> Router
         .route("/api/nodes/:name/topics", get(handlers::get_node_topics))
         .route("/api/graph", get(handlers::get_graph))
         .route("/api/launch-tree", get(handlers::get_launch_tree))
+        .route("/api/health/issues", get(handlers::get_health))
+        .route("/api/health/issues/stream", get(sse::stream_health))
         .route("/api/entities", get(handlers::get_entities))
         .route("/api/entities/stream", get(sse::stream_entities))
         .route(

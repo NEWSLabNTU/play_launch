@@ -403,6 +403,33 @@ pub async fn stream_system_metrics(State(state): State<Arc<WebState>>) -> Respon
     Sse::new(stream).into_response()
 }
 
+/// Stream the Health snapshot: one event per update (at most once a second).
+pub async fn stream_health(State(state): State<Arc<WebState>>) -> Response {
+    let Some(rx) = &state.health else {
+        return super::handlers::health_unavailable();
+    };
+    let mut rx = rx.clone();
+    let stream = async_stream::stream! {
+        loop {
+            let json = {
+                let _cost = crate::util::self_cost::section(crate::util::self_cost::Subsystem::Web);
+                serde_json::to_string(&*rx.borrow_and_update().clone())
+            };
+            match json {
+                Ok(json) => yield Ok::<_, Infallible>(Event::default().data(json)),
+                Err(e) => error!("Failed to serialize HealthSnapshot: {}", e),
+            }
+            if rx.changed().await.is_err() {
+                break;
+            }
+        }
+        debug!("SSE health stream ended");
+    };
+    Sse::new(stream)
+        .keep_alive(axum::response::sse::KeepAlive::new().interval(SSE_KEEPALIVE_INTERVAL))
+        .into_response()
+}
+
 /// Stream the Entities snapshot: one event per second while connected, the
 /// busiest rows plus every flagged one unless `?all=1`.
 pub async fn stream_entities(

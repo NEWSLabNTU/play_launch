@@ -1,6 +1,10 @@
 # Health page (Tier 1 observability)
 
-**Status: design (no code).** The Tier 1 items of
+**Status: W0–W2 done (2026-10-13); W3–W7 next.** W0 found that the
+diagnostics subscriber was *not* the ~30% (see "Prerequisite" below for what
+it was); W1's per-subsystem accounting is in (`util/self_cost.rs`, logged and
+shown on the page); W2's book, API (`/api/health/issues`, its `/stream`) and
+page are in, fed by the Entities flags and self cost. The Tier 1 items of
 `docs/design/big-system-observability.md`: a Health page listing what is
 wrong now, fed by crash-loop tracking, a startup timeline, delivery latency,
 log statistics, a graph-versus-model diff, and play_launch's own cost. Tier 2
@@ -217,6 +221,16 @@ SelfCost warning when play_launch exceeds 10% of a core for 60 s, naming the
 top subsystem.
 
 ## Prerequisite: the diagnostics subscriber
+
+**Outcome (2026-10-13).** The diagnostics path costs 0.2–0.4% of a core; the
+~30% A/B was an intermittent busy Fast DDS shared-memory listener thread in
+play_launch's own participant (gdb: `SharedMemChannelResource::
+perform_listen_operation`), seen in about half the day's runs and then in none
+of ten, diagnostics on or off. `/dev/shm` held 285 stale `fastrtps_port*`
+segments; that is the suspect, unproven. Parked. What the investigation did
+fix in the diagnostics path: per-message `debug!` lines (~270 MB/h of run
+log), a CSV flush per status, clones before filtering, and the subscription
+moved to its own executor. The original analysis follows.
 
 Measured at ~30% of a core on Autoware (~250 msg/s, so ~1 ms per message).
 The per-message path clones every status and key/value before filtering

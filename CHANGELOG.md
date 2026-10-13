@@ -8,6 +8,18 @@ allowance heavily.
 
 ## Unreleased
 
+- **New:** a **Health** page, now the web UI's landing view: one list of what
+  is wrong now (QoS pairs that never match, subscribers dropping messages,
+  streams that stopped, a summary of endpoints that never carried a message,
+  play_launch itself using over 10% of a core), with a count badge on the tab,
+  recently resolved issues, and play_launch's own CPU per subsystem. Issues
+  link to the page holding their evidence. Every issue opening and closing is
+  appended to `play_log/<ts>/health.jsonl`. API: `GET /api/health/issues` and
+  `/api/health/issues/stream`.
+- **Fix:** the diagnostics monitor logged two debug lines per `/diagnostics`
+  message into the run's `play_launch.log` (~270 MB an hour on Autoware) and
+  flushed `diagnostics.csv` once per status. Now neither; the subscription
+  also runs on its own ROS executor.
 - **New:** an **Entities** page in the web UI, an htop for publishers and
   subscriptions: every endpoint with its message rate (1 s and 10 s), byte
   rate, message size, time since its last message and QoS, sortable and

@@ -10,6 +10,7 @@
 
 mod endpoint_stats;
 mod live;
+pub(crate) use endpoint_stats::Direction;
 pub use live::EntitySnapshot;
 pub mod measure;
 pub mod trace;

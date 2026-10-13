@@ -88,7 +88,9 @@ function startReconnectLoop() {
     reconnectTimer = setInterval(async () => {
         try {
             const resp = await fetch('/api/health', { signal: AbortSignal.timeout(3000) });
-            if (resp.ok) {
+            // Any HTTP answer means the server is up: /api/health may
+            // legitimately answer 409 when the run has no issue tracker.
+            if (resp.status > 0) {
                 console.debug('[sse] Server is back — reconnecting');
                 connect(); // clears the interval
             }

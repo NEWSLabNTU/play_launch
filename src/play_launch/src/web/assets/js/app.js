@@ -14,6 +14,7 @@ import { GraphView } from './components/GraphView.js';
 import { LaunchTreeView } from './components/LaunchTreeView.js';
 import { LaunchPanel } from './components/LaunchPanel.js';
 import { EntitiesView } from './components/EntitiesView.js';
+import { HealthView } from './components/HealthView.js';
 
 const html = htm.bind(h);
 
@@ -96,6 +97,11 @@ function App() {
                  style=${{ display: view === 'launch-tree' ? '' : 'none' }}>
                 <${LaunchTreeView} />
             </div>
+            ${view === 'health' && html`
+                <div class="left-panel">
+                    <${HealthView} />
+                </div>
+            `}
             ${view === 'entities' && html`
                 <div class="left-panel ${isOpen ? 'with-sidebar' : ''}">
                     <${EntitiesView} />

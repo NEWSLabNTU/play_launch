@@ -677,6 +677,30 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-13**: **The Health page, and the diagnostics cost that was not**
+  (`docs/design/health-page.md` W0–W2). `health/mod.rs`: a `HealthBook` of
+  issues opened by the conditions sources report each second and closed after
+  two absent reports, journalled to `play_log/<ts>/health.jsonl`; sources so
+  far are the Entities flags (one issue per incompatible *topic*, one per
+  deficient or stale endpoint, one summary for silent ones) and self cost.
+  API `/api/health/issues` (+`/stream`) — `/api/health` stays the member
+  summary the header strip reads. `util/self_cost.rs`: CPU per subsystem
+  from `CLOCK_THREAD_CPUTIME_ID` around each subsystem's synchronous work, plus
+  the rclrs threads by name (`pl-rclrs`, `pl-rclrs-diag`), logged every 30 s
+  to `play_launch.log`. It disproved the "diagnostics costs ~30% of a core"
+  finding of the same morning: diagnostics is 0.2–0.4%; the swings were an
+  intermittent busy **Fast DDS shared-memory listener thread in play_launch's
+  own participant** (gdb, run as the parent since `ptrace_scope=1`), in about
+  half the day's earlier runs and none of the last ten, with diagnostics on or
+  off. The Autoware fixture sets no `RMW_IMPLEMENTATION`, so its
+  `cyclonedds.xml` does nothing and everything runs Fast DDS; `/dev/shm` held
+  285 stale `fastrtps_port*` segments. Parked by choice. Note for anyone
+  measuring: `perf` is blocked here (`perf_event_paranoid=4`) and a thread's
+  CPU vanishes from `/proc/<pid>/task` when it exits — rclrs spawns a wait-set
+  thread per `spin()` call — so per-thread sums undercount; compare process
+  totals. Also fixed in the diagnostics path: per-message `debug!` (44k lines
+  in 100 s), a CSV flush per status, and its own executor.
+
 - **2026-10-13**: **The Entities page** (`docs/design/live-entity-monitor.md`,
   W1–W3). `interception/live.rs` adds an 11-slot one-second window per
   endpoint (10 complete seconds plus the one in progress — a 10-slot ring

@@ -415,6 +415,10 @@ pub(crate) async fn play(
         runtime_config.interception.events,
         interception_decision.enabled() && runtime_config.interception.stats,
     ));
+    // The Health page: a 1 Hz book of open issues (`health::run_health_task`,
+    // spawned once the log directory exists).
+    let (health_tx, health_rx) =
+        tokio::sync::watch::channel(std::sync::Arc::new(crate::health::HealthSnapshot::default()));
     // The Entities page's 1 Hz snapshot, when there is traffic to show.
     let (entities_tx, entities_rx) =
         if interception_decision.enabled() && runtime_config.interception.stats {
@@ -429,6 +433,12 @@ pub(crate) async fn play(
     // Prepare directories
     debug!("Creating log directories...");
     let log_dir = create_log_dir(&common.log_dir)?;
+    tokio::spawn(crate::health::run_health_task(
+        log_dir.clone(),
+        entities_rx.clone(),
+        health_tx,
+        shutdown_signal.clone(),
+    ));
     debug!("Log directory created: {}", log_dir.display());
     // Issue #0023: from here on, play_launch's own account of the run lives
     // in the bundle too — everything logged before this line was buffered
@@ -1536,7 +1546,8 @@ pub(crate) async fn play(
                 node_scope_map,
             )
             .with_events_switch(events_switch.clone())
-            .with_entities(entities_rx.clone()),
+            .with_entities(entities_rx.clone())
+            .with_health(Some(health_rx.clone())),
         );
         let web_shutdown = shutdown_signal.clone();
 

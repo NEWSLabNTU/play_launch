@@ -20,7 +20,7 @@ export const nodePanelOpen = signal(false);
 export const graphPanelOpen = signal(false);
 export const activeTab = signal('stderr');
 export const theme = signal(localStorage.getItem('theme') || 'light');
-export const currentView = signal('nodes');
+export const currentView = signal('health');
 
 /** Status facet for the node list (phase-50): 'all' | 'active' | 'transitioning'
  *  | 'failed' | 'inactive' | 'blocked'. Set by the header health strip too. */
@@ -51,6 +51,36 @@ export const healthSummary = signal(/** @type {any} */ ({
     composable_loaded: 0,
     composable_total: 0,
 }));
+
+// --- Health issues (the Health page) ---
+
+/** Open-issue counts for the Health tab badge: {error, warning, info}, or
+ *  null when the server has no issue tracker for this run. Kept current by a
+ *  5 s poll in the Header and by the Health page's own stream while open. */
+export const healthIssueCounts = signal(null);
+
+/** Apply a health response: the issue snapshot from /api/health/issues
+ *  (sets the badge counts) or the member summary from /api/health (sets the
+ *  header strip). Either shape is accepted, so one helper serves both. */
+export function applyHealthResponse(data) {
+    if (!data || typeof data !== 'object') return;
+    if (data.counts && typeof data.counts === 'object') {
+        healthIssueCounts.value = {
+            error: data.counts.error || 0,
+            warning: data.counts.warning || 0,
+            info: data.counts.info || 0,
+        };
+    }
+    if (typeof data.nodes_running === 'number') {
+        healthSummary.value = data;
+    } else if (data.summary && typeof data.summary.nodes_running === 'number') {
+        healthSummary.value = data.summary;
+    }
+}
+
+/** One-shot request the Health page's "Show" button leaves for the Entities
+ *  page: a filter term to start with. Consumed on mount. */
+export const entitiesFilterRequest = signal(null);
 
 // --- Launch tree state (Phase 30) ---
 
@@ -307,7 +337,7 @@ export async function fetchHealth() {
     try {
         const resp = await fetch('/api/health');
         if (!resp.ok) return;
-        healthSummary.value = await resp.json();
+        applyHealthResponse(await resp.json());
     } catch (e) {
         console.warn('[store] Failed to fetch health:', e);
     }

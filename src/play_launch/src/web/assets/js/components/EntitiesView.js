@@ -9,7 +9,7 @@
 import { h } from '../vendor/preact.module.js';
 import { useState, useEffect, useCallback, useMemo } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { selectedNode, nodePanelOpen, activeTab, nodes, getNodeByKey, memberFqn } from '../store.js';
+import { selectedNode, nodePanelOpen, activeTab, nodes, getNodeByKey, memberFqn, entitiesFilterRequest } from '../store.js';
 
 const html = htm.bind(h);
 
@@ -234,6 +234,14 @@ function GroupRow({ group }) {
 // --- view -----------------------------------------------------------------
 
 export function EntitiesView() {
+    // A link from another page (Health's "Show") may hand over a filter.
+    // Applied before usePref reads prefs, so the first render already has it.
+    const req = entitiesFilterRequest.peek();
+    if (req != null) {
+        prefs.filterTerm = req;
+        entitiesFilterRequest.value = null;
+    }
+
     const [snap, setSnap] = useState(null);
     const [offMsg, setOffMsg] = useState(null);      // interception off / 409 text
     const [disconnected, setDisconnected] = useState(false);

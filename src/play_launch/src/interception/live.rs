@@ -729,6 +729,48 @@ mod tests {
     }
 
     #[test]
+    fn health_turns_a_mismatch_into_one_issue_per_topic() {
+        let mut t = EndpointTracker::default();
+        // 0xA: best-effort pub, two reliable subs (one incompatible pair each).
+        t.observe(0, "pub", &qos_ev(0x1, 0xA, 2, 2, 10));
+        t.observe(0, "pub", &ev(EventKind::PublisherInit, 0x1, 0xA, 0));
+        for (child, h) in [(1, 0x2), (2, 0x3)] {
+            t.observe(child, "sub", &qos_ev(h, 0xA, 1, 2, 10));
+            t.observe(child, "sub", &ev(EventKind::SubscriptionInit, h, 0xA, 0));
+        }
+        // 0xB: reliable pub at 20 Hz, a depth-1 sub taking 5 Hz.
+        t.observe(3, "p2", &qos_ev(0x4, 0xB, 1, 2, 10));
+        t.observe(3, "p2", &ev(EventKind::PublisherInit, 0x4, 0xB, 0));
+        t.observe(4, "s2", &qos_ev(0x5, 0xB, 1, 2, 1));
+        t.observe(4, "s2", &ev(EventKind::SubscriptionInit, 0x5, 0xB, 0));
+        for s in 0..20u64 {
+            for k in 0..20u64 {
+                let at = s * NS + k * (NS / 20);
+                t.observe(0, "pub", &ev(EventKind::Publish, 0x1, 0xA, at));
+                t.observe(3, "p2", &ev(EventKind::Publish, 0x4, 0xB, at));
+                if k % 4 == 0 {
+                    t.observe(4, "s2", &ev(EventKind::Take, 0x5, 0xB, at));
+                }
+            }
+        }
+        let (mut n, ty) = names();
+        n.insert(0xB, "/b".to_string());
+        let snap = t.live_snapshot(20 * NS + 1, &n, &ty, 0);
+        let conds = crate::health::entity_conditions(&snap);
+        let kinds = |k: &str| conds.iter().filter(|c| c.kind == k).count();
+        assert_eq!(
+            kinds("qos_incompatible"),
+            1,
+            "one issue for the topic, not one per side"
+        );
+        assert_eq!(kinds("take_deficit"), 1);
+        assert_eq!(kinds("silent"), 1, "silent endpoints are one summary");
+        let q = conds.iter().find(|c| c.kind == "qos_incompatible").unwrap();
+        assert_eq!(q.subject.name, "/a");
+        assert!(q.detail.contains("reliability"), "{}", q.detail);
+    }
+
+    #[test]
     fn a_startup_burst_is_not_a_stream_that_went_stale() {
         let mut t = EndpointTracker::default();
         // Three messages at startup (`/parameter_events`), then nothing.

@@ -17,6 +17,7 @@ pub mod cli;
 pub mod commands;
 pub mod diagnostics;
 pub mod execution;
+pub mod health;
 pub mod interception;
 pub mod ipc;
 pub mod member_actor;
