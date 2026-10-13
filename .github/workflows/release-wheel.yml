@@ -90,8 +90,20 @@ jobs:
             set -e
             export DEBIAN_FRONTEND=noninteractive
 
+            # Under QEMU, a package's maintainer script (libc-bin's ldconfig)
+            # now and then segfaults (exit 139) and fails the whole job.
+            # Finish the configuration and try again.
+            apt_install() {
+              for attempt in 1 2 3; do
+                apt-get install -y \"\$@\" && return 0
+                echo \"apt-get install failed (attempt \$attempt); retrying\" >&2
+                dpkg --configure -a || true
+              done
+              return 1
+            }
+
             apt-get update
-            apt-get install -y software-properties-common curl git build-essential pkg-config ca-certificates
+            apt_install software-properties-common curl git build-essential pkg-config ca-certificates
 
             # Add ROS 2 repository
             curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
@@ -100,7 +112,7 @@ jobs:
               > /etc/apt/sources.list.d/ros2.list
 
             apt-get update
-            apt-get install -y \
+            apt_install \
               python3-pip python3-dev python3-venv python3-colcon-common-extensions \
               ros-${ROS}-ros-core \
               ros-${ROS}-ament-index-python \
