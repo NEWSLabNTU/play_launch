@@ -25,6 +25,18 @@ use tokio::sync::watch;
 
 use crate::{interception::EntitySnapshot, util::self_cost};
 
+pub mod logs;
+
+/// FNV-1a, for stable issue keys built from free text.
+pub(crate) fn fnv(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
 /// Reports a condition may be missing before its issue closes.
 pub const CLOSE_AFTER_ABSENT: u32 = 2;
 /// Closed issues kept in memory (the journal keeps all of them).
@@ -103,6 +115,8 @@ pub struct HealthSnapshot {
     pub open: Vec<Issue>,
     pub closed: Vec<Issue>,
     pub self_cost: Option<self_cost::Usage>,
+    /// Members by log rate, busiest first, with their top message signatures.
+    pub logs: Vec<logs::MemberLogView>,
 }
 
 fn unix_ms(t: SystemTime) -> u64 {
@@ -206,7 +220,12 @@ impl HealthBook {
         }
     }
 
-    pub fn snapshot(&self, now: SystemTime, self_cost: Option<self_cost::Usage>) -> HealthSnapshot {
+    pub fn snapshot(
+        &self,
+        now: SystemTime,
+        self_cost: Option<self_cost::Usage>,
+        logs: Vec<logs::MemberLogView>,
+    ) -> HealthSnapshot {
         let mut open: Vec<Issue> = self.open.values().cloned().collect();
         open.sort_by(|a, b| {
             b.severity
@@ -228,6 +247,7 @@ impl HealthBook {
             open,
             closed: self.closed.iter().take(CLOSED_SENT).cloned().collect(),
             self_cost,
+            logs,
         }
     }
 }
@@ -528,6 +548,8 @@ pub async fn run_health_task(
     mut shutdown: watch::Receiver<bool>,
 ) {
     let mut book = HealthBook::with_journal(&log_dir);
+    let mut log_watcher = logs::LogWatcher::default();
+    let mut ticks: u64 = 0;
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     // Self-cost readings for the display (last few seconds) and the rule
     // (the last SELF_COST_WINDOW).
@@ -554,6 +576,7 @@ pub async fn run_health_task(
             .map(|r| self_cost::usage(r, readings.back().unwrap()));
 
         let mut conditions = Vec::new();
+        ticks += 1;
         // Members exist once the coordinator is built, after this task starts.
         if let Some(handle) = members.get() {
             let list = handle.list_members().await;
@@ -562,6 +585,15 @@ pub async fn run_health_task(
                 |id| handle.stopped_by_user(id),
                 unix_ms(now),
             ));
+            if ticks.is_multiple_of(logs::LOG_TICK.as_secs().max(1)) {
+                let _cost = self_cost::section(self_cost::Subsystem::Logs);
+                log_watcher.tick(
+                    list.iter()
+                        .map(|m| (m.id.as_str(), m.name.as_str(), m.output_dir.as_path())),
+                    unix_ms(now),
+                );
+            }
+            conditions.extend(log_watcher.conditions(unix_ms(now)));
         }
         if let Some(rx) = entities.as_ref() {
             let snap = rx.borrow().clone();
@@ -576,7 +608,7 @@ pub async fn run_health_task(
             conditions.push(c);
         }
         book.report(conditions, now);
-        let _ = tx.send(Arc::new(book.snapshot(now, shown)));
+        let _ = tx.send(Arc::new(book.snapshot(now, shown, log_watcher.views(10))));
     }
 }
 
@@ -603,24 +635,30 @@ mod tests {
         UNIX_EPOCH + Duration::from_secs(1_000 + s)
     }
 
+    impl HealthBook {
+        fn snapshot_t(&self, now: SystemTime, c: Option<self_cost::Usage>) -> HealthSnapshot {
+            self.snapshot(now, c, Vec::new())
+        }
+    }
+
     #[test]
     fn a_condition_opens_once_and_closes_after_two_absent_reports() {
         let mut book = HealthBook::default();
         book.report(vec![cond("a", Severity::Error)], at(0));
         book.report(vec![cond("a", Severity::Error)], at(1));
-        let s = book.snapshot(at(1), None);
+        let s = book.snapshot_t(at(1), None);
         assert_eq!(s.open.len(), 1);
         assert_eq!(s.open[0].opened_ms, unix_ms(at(0)), "not reopened");
         assert_eq!(s.open[0].last_seen_ms, unix_ms(at(1)));
 
         book.report(vec![], at(2));
         assert_eq!(
-            book.snapshot(at(2), None).open.len(),
+            book.snapshot_t(at(2), None).open.len(),
             1,
             "one absent report is a flicker"
         );
         book.report(vec![], at(3));
-        let s = book.snapshot(at(3), None);
+        let s = book.snapshot_t(at(3), None);
         assert!(s.open.is_empty());
         assert_eq!(s.closed.len(), 1);
         assert_eq!(s.closed[0].closed_ms, Some(unix_ms(at(3))));
@@ -632,7 +670,7 @@ mod tests {
         book.report(vec![cond("a", Severity::Warning)], at(0));
         book.report(vec![], at(1));
         book.report(vec![cond("a", Severity::Warning)], at(2));
-        let s = book.snapshot(at(2), None);
+        let s = book.snapshot_t(at(2), None);
         assert_eq!(s.open.len(), 1);
         assert!(s.closed.is_empty());
         assert_eq!(s.open[0].opened_ms, unix_ms(at(0)));
@@ -649,7 +687,7 @@ mod tests {
             ],
             at(0),
         );
-        let s = book.snapshot(at(0), None);
+        let s = book.snapshot_t(at(0), None);
         let keys: Vec<&str> = s.open.iter().map(|i| i.key.as_str()).collect();
         assert_eq!(keys, ["e", "w", "i"]);
         assert_eq!((s.counts.error, s.counts.warning, s.counts.info), (1, 1, 1));

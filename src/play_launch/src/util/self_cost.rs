@@ -33,16 +33,19 @@ pub enum Subsystem {
     Graph,
     /// Web request handlers and SSE serialisation.
     Web,
+    /// The Health page's log watcher.
+    Logs,
 }
 
 impl Subsystem {
-    pub const ALL: [Subsystem; 6] = [
+    pub const ALL: [Subsystem; 7] = [
         Subsystem::Diagnostics,
         Subsystem::Interception,
         Subsystem::Entities,
         Subsystem::Monitor,
         Subsystem::Graph,
         Subsystem::Web,
+        Subsystem::Logs,
     ];
 
     pub fn name(self) -> &'static str {
@@ -53,12 +56,14 @@ impl Subsystem {
             Subsystem::Monitor => "monitor",
             Subsystem::Graph => "graph",
             Subsystem::Web => "web",
+            Subsystem::Logs => "logs",
         }
     }
 }
 
-static CPU_NS: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
-static CALLS: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
+const N: usize = Subsystem::ALL.len();
+static CPU_NS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+static CALLS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
 
 fn thread_cpu_ns() -> u64 {
     let mut ts = libc::timespec {
@@ -132,7 +137,7 @@ pub struct Reading {
     pub process_cpu_ns: u64,
     pub rss_bytes: u64,
     pub threads: u64,
-    pub subsystems: [u64; 6],
+    pub subsystems: [u64; N],
     /// CPU of the rclrs executor thread (named [`RCLRS_THREAD_NAME`]), which
     /// runs every subscription callback and message conversion.
     pub rclrs_cpu_ns: u64,
@@ -180,7 +185,7 @@ pub fn read() -> Reading {
     };
     unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
     let (process_cpu_ns, rss_bytes, threads) = process().unwrap_or_default();
-    let mut subsystems = [0; 6];
+    let mut subsystems = [0; N];
     for (i, s) in Subsystem::ALL.iter().enumerate() {
         subsystems[i] = total(*s).0;
     }
@@ -287,7 +292,7 @@ mod tests {
         let a = Reading {
             at_ns: 0,
             process_cpu_ns: 0,
-            subsystems: [0; 6],
+            subsystems: [0; N],
             ..Default::default()
         };
         let mut b = a.clone();

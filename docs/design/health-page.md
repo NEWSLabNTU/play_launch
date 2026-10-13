@@ -1,6 +1,10 @@
 # Health page (Tier 1 observability)
 
-**Status: W0–W3 done (2026-10-13); W4–W7 next.** W3: every exit carries
+**Status: W0–W4 done (2026-10-13); W5–W7 next.** W4: `health/logs.rs`
+reads each member's `out`/`err` growth every 2 s (≤1 MiB per file per tick,
+counted beyond), classifies rcutils levels, collapses repeats into
+signatures, and reports floods, error bursts and errors new after the first
+minute; `list_members` reads only the last 64 KiB of stderr. W3: every exit carries
 its signal, uptime and an OOM verdict from the member's cgroup; the
 coordinator keeps the last 20 per member; Health reports crash loops (≥3
 exits in 5 min), OOM kills, members that crashed and stayed down (not ones a

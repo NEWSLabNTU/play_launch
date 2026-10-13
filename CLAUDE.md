@@ -677,6 +677,32 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-13**: **#0070: the Python frontend carries `respawn`.** The
+  `Node`/`LifecycleNode`/`ExecuteProcess`/`ComposableNodeContainer` mocks
+  read `respawn` and `respawn_delay` from `**kwargs` (a substitution is
+  performed when the action executes; a value launch cannot coerce to bool is
+  refused), `NodeCapture`/`ContainerCapture` carry them, and `bridge.rs` no
+  longer writes `respawn: None` (or a container's hard-coded `Some(false)`).
+  Recorded the way the Python dumper records them, since the parity gate
+  compares exactly: `respawn` is `true` or absent. **pyexec C ABI 9 → 10**
+  (both sides): the new fields are serde-defaulted, so a v9 object would
+  accept a v10 request and drop them silently — the shape the version exists
+  to refuse.
+
+- **2026-10-13**: **Logs on the Health page** (`health-page.md` W4,
+  `health/logs.rs`). Every 2 s the health task reads what each member's
+  `out`/`err` gained — never the whole file, at most 1 MiB per file per tick,
+  and beyond that it counts bytes it did not read (`unread_bytes`), since
+  reading a flood to measure it doubles its cost. Lines are classified by the
+  rcutils prefix and reduced to a signature (digits, hex, quoted strings
+  replaced; paths kept), top 50 per member. Issues: `log_flood` (>100
+  lines/s over 30 s, or >1 MiB/min), `error_burst` (>10 ERROR/min),
+  `new_error` (an ERROR signature first seen after the first minute, open for
+  two). `/rosout` is deliberately not subscribed. Found on the way: the node
+  list's `read_last_n_lines` read the whole stderr file for every member on
+  every `/api/nodes` call; it reads the last 64 KiB now. Self cost gains a
+  `logs` subsystem.
+
 - **2026-10-13**: **Exits reach the Health page** (`health-page.md` W3).
   `StateEvent::Exited` carries `signal`, `at_ms`, `uptime_ms` and
   `oom_killed` (the member cgroup's `memory.events` `oom_kill` read at spawn

@@ -8,15 +8,27 @@ allowance heavily.
 
 ## Unreleased
 
+- **New:** the Health page watches logs. Per member: lines and bytes per
+  second, ERROR and WARN lines per minute, and the most frequent messages
+  with repeats collapsed (`lost connection to sensor 12` and `... 13` are one
+  row with a count). It raises an issue for a member logging over 100 lines
+  a second or 1 MiB a minute, more than ten ERROR lines a minute, or an
+  ERROR message first seen after the run's first minute. Only newly written
+  bytes are read, at most 1 MiB per file every two seconds.
+- **Fix:** the node list read each member's entire stderr file on every
+  refresh to show its last five lines; it now reads the last 64 KiB.
 - **New:** exits are tracked. Each exit records its signal, how long the
   process had run, and — when the member has a cgroup — whether the kernel's
   OOM killer did it. Node cards show the last exit (`exit: SIGSEGV after
   12 s`) and a crash-loop badge; the Health page reports crash loops (three
   exits in five minutes, however fast the node comes back), OOM kills, and
   members that crashed and stayed down (a member you stopped is not one).
-- **Fix:** `respawn` and `respawn_delay` on `<executable>` (XML and YAML)
-  were accepted and ignored, so the process stayed dead (#0069). The Python
-  frontend still drops them for `Node` and `ExecuteProcess` (#0070).
+- **Fix:** `respawn` and `respawn_delay` were dropped on `<executable>` (XML
+  and YAML, #0069) and on a `.launch.py` `Node`, `LifecycleNode`,
+  `ExecuteProcess` and `ComposableNodeContainer` (#0070), so the process
+  stayed dead after it exited where `ros2 launch` restarts it. All four
+  frontends carry both now. The parser's pyexec C ABI moves 9 → 10: rebuild
+  play_launch and its Python half together.
 - **New:** a **Health** page, now the web UI's landing view: one list of what
   is wrong now (QoS pairs that never match, subscribers dropping messages,
   streams that stopped, a summary of endpoints that never carried a message,

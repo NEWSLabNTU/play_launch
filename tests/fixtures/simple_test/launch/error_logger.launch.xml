@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<!-- An error burst for the Health page's log watcher (W4); see the script. -->
+<launch>
+  <executable cmd="python3 $(dirname)/../scripts/error_logger.py" name="error_logger" output="screen"/>
+</launch>

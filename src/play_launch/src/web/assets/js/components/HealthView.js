@@ -142,6 +142,46 @@ function ResolvedRow({ issue, now }) {
     `;
 }
 
+/** Log activity per member: rate, ERROR/WARN per minute, and the most
+ *  frequent message signatures (repeats collapsed, counted). */
+function Logs({ logs }) {
+    const [open, setOpen] = useState(null);
+    if (!logs || logs.length === 0) return null;
+    return html`
+        <section class="hl-section">
+            <h3 class="hl-heading">Logs <span class="hl-muted hl-heading-count">(busiest first)</span></h3>
+            <table class="hl-table hl-logs">
+                <thead><tr>
+                    <th>member</th><th class="hl-num">lines/s</th><th class="hl-num">bytes/s</th>
+                    <th class="hl-num">errors/min</th><th class="hl-num">warnings/min</th><th>most frequent</th>
+                </tr></thead>
+                <tbody>
+                    ${logs.map(l => {
+                        const top = (l.signatures || [])[0];
+                        const expanded = open === l.member;
+                        return html`
+                            <tr class="hl-row" key=${l.member} onClick=${() => setOpen(expanded ? null : l.member)}>
+                                <td class="hl-subject">${l.name}</td>
+                                <td class="hl-num">${(l.lines_per_s || 0).toFixed(1)}</td>
+                                <td class="hl-num">${fmtBytes(l.bytes_per_s || 0)}/s${l.unread_bytes > 0 ? html` <span class="hl-muted" title="bytes counted but not read: arriving faster than the watcher reads">(${fmtBytes(l.unread_bytes)} unread)</span>` : ''}</td>
+                                <td class=${'hl-num' + (l.errors_per_min > 0 ? ' hl-count-err' : '')}>${l.errors_per_min}</td>
+                                <td class=${'hl-num' + (l.warnings_per_min > 0 ? ' hl-count-warn' : '')}>${l.warnings_per_min}</td>
+                                <td class="hl-detail" title=${top ? top.example : ''}>${top ? `${top.example} (×${top.count})` : ''}</td>
+                            </tr>
+                            ${expanded && (l.signatures || []).map((s, i) => html`
+                                <tr class="hl-sig-row" key=${l.member + ':' + i}>
+                                    <td></td>
+                                    <td colspan="4" class="hl-muted">${s.level} ×${s.count}</td>
+                                    <td class="hl-sig-example">${s.example}</td>
+                                </tr>`)}
+                        `;
+                    })}
+                </tbody>
+            </table>
+        </section>
+    `;
+}
+
 function SelfCost({ cost }) {
     const subs = Array.isArray(cost.subsystems) ? cost.subsystems : [];
     const cpu = cost.cpu_percent || 0;
@@ -345,6 +385,8 @@ export function HealthView() {
                     `}
                 </section>
             `}
+
+            ${snap && snap.logs && html`<${Logs} logs=${snap.logs} />`}
 
             ${snap && snap.self_cost && html`<${SelfCost} cost=${snap.self_cost} />`}
         </div>

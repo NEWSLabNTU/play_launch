@@ -1036,3 +1036,84 @@ fn test_health_reports_crash_loops_and_members_that_stay_down() {
     assert!(signals.contains(&11), "SIGSEGV on /api/nodes: {signals:?}");
     assert!(signals.contains(&6), "SIGABRT on /api/nodes: {signals:?}");
 }
+
+/// Log watching (W4): a process writing ERROR lines with a changing counter
+/// shows on the Health page as an error burst, and under Logs as ONE
+/// signature with a count — not one row per counter value.
+#[test]
+fn test_health_reports_an_error_burst_with_its_signature() {
+    let env = fixtures::install_env();
+    let launch =
+        fixtures::test_workspace_path("simple_test").join("launch/error_logger.launch.xml");
+    let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--web-addr",
+        &format!("127.0.0.1:{port}"),
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        launch.to_str().unwrap(),
+    ]);
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(25);
+    let snap = loop {
+        std::thread::sleep(Duration::from_millis(500));
+        let (status, body) = http(port, "GET", "/api/health/issues", None);
+        if status != 200 {
+            continue;
+        }
+        let snap: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let burst = snap["open"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["kind"] == "error_burst");
+        if burst || std::time::Instant::now() > deadline {
+            break snap;
+        }
+    };
+    drop(proc);
+
+    let burst = snap["open"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"] == "error_burst")
+        .unwrap_or_else(|| panic!("no error_burst: {snap}"));
+    assert!(
+        burst["detail"]
+            .as_str()
+            .unwrap()
+            .contains("lost connection to sensor"),
+        "{burst}"
+    );
+
+    let logs = snap["logs"].as_array().unwrap();
+    let member = logs
+        .iter()
+        .find(|l| l["name"] == "error_logger")
+        .unwrap_or_else(|| panic!("error_logger not under Logs: {logs:?}"));
+    let errors: Vec<&serde_json::Value> = member["signatures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|s| s["level"] == "error")
+        .collect();
+    assert_eq!(
+        errors.len(),
+        1,
+        "one signature for every counter value: {errors:?}"
+    );
+    assert!(errors[0]["count"].as_u64().unwrap() > 10, "{errors:?}");
+}

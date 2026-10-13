@@ -48,15 +48,64 @@ pub struct MemberMetadata {
     pub auto_load: Option<bool>, // For composable nodes: auto-load when container starts
 }
 
-/// Helper function to read last N lines from a file
+/// Bytes from the end of a file `read_last_n_lines` looks at: enough for the
+/// few preview lines it is asked for, however large the file has grown.
+const TAIL_BYTES: u64 = 64 * 1024;
+
+/// The last `n` lines of a file, reading only its last [`TAIL_BYTES`].
+///
+/// It used to read the whole file and collect every line, and it runs for
+/// every member on every `/api/nodes` call: a node that had logged a few
+/// hundred megabytes made each node-list refresh read all of it.
 pub(super) fn read_last_n_lines(path: &std::path::Path, n: usize) -> eyre::Result<Vec<String>> {
-    use std::io::{BufRead, BufReader};
+    use std::io::{Read, Seek, SeekFrom};
 
-    let file = std::fs::File::open(path)?;
-    let reader = BufReader::new(file);
-    let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    let start = len.saturating_sub(TAIL_BYTES);
+    file.seek(SeekFrom::Start(start))?;
+    let mut buf = Vec::with_capacity((len - start) as usize);
+    file.read_to_end(&mut buf)?;
+    let text = String::from_utf8_lossy(&buf);
+    let mut lines: Vec<&str> = text.lines().collect();
+    // Seeking into the middle of the file lands mid-line: drop the fragment.
+    if start > 0 && !lines.is_empty() {
+        lines.remove(0);
+    }
+    let from = lines.len().saturating_sub(n);
+    Ok(lines[from..].iter().map(|l| l.to_string()).collect())
+}
 
-    let start = if lines.len() > n { lines.len() - n } else { 0 };
+#[cfg(test)]
+mod tail_tests {
+    use super::*;
 
-    Ok(lines[start..].to_vec())
+    #[test]
+    fn the_last_lines_of_a_large_file_come_from_its_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("err");
+        let mut body = String::new();
+        for i in 0..20_000 {
+            body.push_str(&format!("line {i} with some padding to make it longer\n"));
+        }
+        std::fs::write(&path, &body).unwrap();
+        assert!(body.len() as u64 > TAIL_BYTES);
+        let last = read_last_n_lines(&path, 3).unwrap();
+        assert_eq!(
+            last,
+            [
+                "line 19997 with some padding to make it longer",
+                "line 19998 with some padding to make it longer",
+                "line 19999 with some padding to make it longer",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_short_file_returns_what_it_has() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("err");
+        std::fs::write(&path, "a\nb\n").unwrap();
+        assert_eq!(read_last_n_lines(&path, 5).unwrap(), ["a", "b"]);
+    }
 }

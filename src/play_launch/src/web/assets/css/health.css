@@ -247,3 +247,12 @@
     .hl-detail { display: none; }
     .hl-subject-cell { max-width: 160px; }
 }
+
+/* Logs section */
+.hl-logs .hl-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hl-logs th.hl-num { text-align: right; }
+.hl-logs .hl-row { cursor: pointer; }
+.hl-count-err { color: var(--failed-text); font-weight: 600; }
+.hl-count-warn { color: var(--pending-text); font-weight: 600; }
+.hl-sig-row td { font-size: 0.8rem; border-top: none; }
+.hl-sig-example { font-family: monospace; white-space: pre-wrap; word-break: break-all; color: var(--text-secondary); }
