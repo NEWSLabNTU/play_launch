@@ -36,6 +36,10 @@ allowance heavily.
   chains (`GET /api/chains`, `interception/chains.json`). A node that keeps
   re-sending a stamp it took long ago is reported on the Health page as
   info. Needs `--interception on`.
+  Hops no stamp carries are listed too, as sampled: the input the node took
+  last on the thread that published, with its share of the output and the
+  time since the node last took it. That says the data flowed, not what
+  triggered the output.
 - **New:** lifecycle activation on the startup timeline: when each lifecycle
   node was configured and activated, whoever drove it (with interception,
   from the node's own transition events; otherwise from play_launch's

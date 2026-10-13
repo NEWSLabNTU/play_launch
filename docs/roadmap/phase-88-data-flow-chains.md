@@ -1,6 +1,6 @@
 # Phase 88 - data-flow chains without contracts
 
-Status: **in progress** (2026-10-14): C1 done. Design of record:
+Status: **in progress** (2026-10-14): C1 and C2 done. Design of record:
 `docs/design/data-flow-chains.md`. Replaces item M of
 `docs/design/big-system-observability.md`, which assumed a contract.
 
@@ -20,7 +20,8 @@ Autoware planning simulator, driven to a goal, 60 s (`scripts/chains/`):
   gate re-sending a 25.9 s-old gear-command stamp.
 - **Sampled edges** (same thread, latest take before the publish) cover 90%
   of publishes but say "last input handled", wrong as a trigger for timer
-  nodes with several inputs: labelled sampled, an upper bound.
+  nodes with several inputs: labelled sampled. (Planned as an upper bound on
+  staleness; C2 found it is a lower bound, see below.)
 - Chains break where nodes restamp (235 topics); origin propagation per node
   bridges them.
 
@@ -29,7 +30,7 @@ Autoware planning simulator, driven to a goal, 60 s (`scripts/chains/`):
 | Step | Work | Acceptance |
 |---|---|---|
 | C1 | Carried edges, per-node latency per edge, `stale_stamp` issue | Autoware, live: the 8-topic planning chain, and the 25.9 s gear stamp reported. **Done**: see below |
-| C2 | Sampled edges: same node and thread, input among the node's subscriptions, ≥ 20 observations | the behavior planner's inputs shown as sampled, never as triggers |
+| C2 | Sampled edges: same node and thread, input among the node's subscriptions, ≥ 20 observations | the behavior planner's inputs shown as sampled, never as triggers. **Done**: see below |
 | C3 | Origin propagation: data age per topic, upper bound flagged across sampled hops | age on `/control/command/control_cmd` reported |
 | C4 | Chain view: source/sink picker, per-hop p50/p99, end-to-end age; budget line where a contract declares one | fixture: a three-node pipeline with a restamping middle node shows one carried and one sampled hop |
 
@@ -59,3 +60,38 @@ control command's stamp 47.7 s old. That is right for a state stamped when it
 changed and wrong for data judged by age, and only the author knows which, so
 the issue is **info**, not the warning first planned. Cost: 84 ns per event
 in a microbenchmark where every publish matches.
+
+## C2 result
+
+A publish that carries no stamp its node took is attributed to the latest
+take the same node made on the same thread, stamped or not, and counted as a
+SAMPLED edge `(input, node, output)`. Keying by node as well as thread is
+the subscription guard: composables sharing an executor thread do not lend
+each other inputs. A sampled edge is reported (`sampled` in `/api/chains`
+and `chains.json`) once seen 20 times, with its `share` of the node's
+publishes on the output, and never when a carried edge states the same
+triple. Chains still join carried edges only.
+
+**The hop's time is from the node's latest take of the input on ANY thread,
+and it is a lower bound, not the upper bound the design planned.** The first
+Autoware run timed it from the publishing thread's own take and read 4 to
+10 s for the behavior planner's status topics: on a multi-threaded executor
+the thread that publishes may not have taken the map for seconds while
+another thread took it 60 ms ago. The node cannot have used data newer than
+its latest take, so `t_publish − latest take` bounds the staleness from
+below, and is exact for a node that uses the latest value. Fixture: a
+`fuse` timer node with two inputs; unit tests for the thread split and the
+cross-thread timing.
+
+Autoware, driven to a goal, live: 54 carried and 623 sampled edges. The
+behavior planner's `path_with_lane_id` is attributed to
+`occupancy_grid_map/map` 482 times (share 0.73) and to the costmap 172 times
+(0.26), as the offline analysis found (479/173), p50 5.1 and 6.4 ms; its
+status topics read 60 to 74 ms (4 to 10 s before the change). The
+controller's `control_cmd` comes from `kinematic_state` at share 1.00, 1.1
+ms; the simulator's `kinematic_state` splits across four commands. Four
+sampled edges have a p50 over a second, each a timer node whose input
+arrives rarely (`/autoware/state` from the operation mode state, three
+topic-state monitors on `/diagnostics`). Cost: 77 ns per event in a
+microbenchmark (half of publishes carried); interception self-cost 2.2 to
+2.3% of a core in the driven run, against 0.9 to 2.0% for C1.

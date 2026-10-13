@@ -14,6 +14,23 @@
 //!
 //! A node is `(ring, node hash)` from `EndpointOwner`: the composables of one
 //! container are separate nodes here.
+//!
+//! C2 adds SAMPLED edges: a publish by N on thread T that carried no stamp N
+//! took is attributed to the latest take N made on T, stamped or not. That
+//! says the data flowed (the input sat in a buffer the callback could read)
+//! and not what triggered the output: a timer node with several inputs is
+//! attributed to whichever it handled last. So a sampled edge is reported
+//! apart from the carried ones, with its `share` of the output's publishes,
+//! and only once seen [`CHAIN_MIN_SAMPLES`] times. Its time is from the
+//! node's latest take of the input on ANY thread to the publish: a lower
+//! bound on the hop's staleness, since the node cannot have used data newer
+//! than it took. The thread's own latest take is no bound at all on a
+//! multi-threaded executor: on a driven Autoware it read 4 to 10 s for the
+//! behavior planner's status topics, published from a thread that had not
+//! taken the map for seconds while others had. Keying the latest take by the
+//! node as well as the thread is the guard that the input is among the
+//! node's own subscriptions: composables sharing an executor thread do not
+//! lend each other inputs.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -56,10 +73,42 @@ pub(crate) struct ChainBook {
     taken: HashMap<NodeKey, Taken>,
     /// (input topic, node, output topic) -> edge.
     edges: HashMap<(u64, NodeKey, u64), Edge>,
+    /// (node, thread) -> topic of the latest take on that thread.
+    last_take: HashMap<(NodeKey, u32), u64>,
+    /// (node, topic) -> the node's latest take of it, on any thread.
+    latest_input: HashMap<(NodeKey, u64), u64>,
+    /// (input topic, node, output topic) -> sampled edge.
+    sampled: HashMap<(u64, NodeKey, u64), Edge>,
+    /// (node, output topic) -> publishes, for a sampled edge's share.
+    outputs: HashMap<(NodeKey, u64), u64>,
+}
+
+impl Edge {
+    fn observe(&mut self, at_ns: u64, latency_ns: u64) {
+        if self.first_ns == 0 {
+            self.first_ns = at_ns;
+        }
+        self.last_ns = at_ns;
+        self.last_latency_ns = latency_ns;
+        self.latency.add(at_ns, latency_ns);
+    }
 }
 
 impl ChainBook {
-    pub(crate) fn take(&mut self, node: NodeKey, topic: u64, stamp: u64, at_ns: u64) {
+    /// A take by `node` on thread `tid` (0 when the `.so` did not say).
+    pub(crate) fn take(
+        &mut self,
+        node: NodeKey,
+        tid: u32,
+        topic: u64,
+        stamp: Option<u64>,
+        at_ns: u64,
+    ) {
+        if tid != 0 {
+            self.last_take.insert((node, tid), topic);
+            self.latest_input.insert((node, topic), at_ns);
+        }
+        let Some(stamp) = stamp else { return };
         let t = self.taken.entry(node).or_default();
         if t.at.insert(stamp, (topic, at_ns)).is_none() {
             if t.order.len() >= STAMPS_PER_NODE
@@ -71,24 +120,46 @@ impl ChainBook {
         }
     }
 
-    pub(crate) fn publish(&mut self, node: NodeKey, topic: u64, stamp: u64, at_ns: u64) {
-        let Some(&(input, take_ns)) = self.taken.get(&node).and_then(|t| t.at.get(&stamp)) else {
+    /// A publish: a carried edge when `node` took this stamp, else a sampled
+    /// edge from the latest take on the same thread.
+    pub(crate) fn publish(
+        &mut self,
+        node: NodeKey,
+        tid: u32,
+        topic: u64,
+        stamp: Option<u64>,
+        at_ns: u64,
+    ) {
+        *self.outputs.entry((node, topic)).or_default() += 1;
+        let carried = stamp
+            .and_then(|s| self.taken.get(&node).and_then(|t| t.at.get(&s)))
+            .copied();
+        if let Some((input, take_ns)) = carried {
+            if input != topic && take_ns <= at_ns {
+                self.edges
+                    .entry((input, node, topic))
+                    .or_default()
+                    .observe(at_ns, at_ns - take_ns);
+            }
+            return;
+        }
+        if tid == 0 {
+            return;
+        }
+        let Some(&input) = self.last_take.get(&(node, tid)) else {
             return;
         };
-        if input == topic || take_ns > at_ns {
-            return;
+        let take_ns = self.latest_input[&(node, input)];
+        if input != topic && take_ns <= at_ns {
+            self.sampled
+                .entry((input, node, topic))
+                .or_default()
+                .observe(at_ns, at_ns - take_ns);
         }
-        let e = self.edges.entry((input, node, topic)).or_default();
-        if e.first_ns == 0 {
-            e.first_ns = at_ns;
-        }
-        e.last_ns = at_ns;
-        e.last_latency_ns = at_ns - take_ns;
-        e.latency.add(at_ns, at_ns - take_ns);
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.edges.is_empty()
+        self.edges.is_empty() && self.sampled.is_empty()
     }
 
     /// The edges with names, and the longest chains over those seen at
@@ -138,7 +209,48 @@ impl ChainBook {
                 .then_with(|| x.node.cmp(&y.node))
         });
         let chains = longest_chains(&edges);
-        ChainSnapshot { edges, chains }
+
+        let mut sampled: Vec<SampledEdge> = Vec::new();
+        for (k @ (a, node, b), e) in &self.sampled {
+            if self.edges.contains_key(k) || e.latency.run.samples() < CHAIN_MIN_SAMPLES {
+                continue;
+            }
+            let (Some(from), Some(to)) = (topic_names.get(a), topic_names.get(b)) else {
+                continue;
+            };
+            if INFRASTRUCTURE.contains(&from.as_str()) || INFRASTRUCTURE.contains(&to.as_str()) {
+                continue;
+            }
+            let run = &e.latency.run;
+            let outputs = self.outputs.get(&(*node, *b)).copied().unwrap_or(0);
+            sampled.push(SampledEdge {
+                from: from.clone(),
+                node: node_name(*node),
+                to: to.clone(),
+                samples: run.samples(),
+                share: if outputs > 0 {
+                    run.samples() as f64 / outputs as f64
+                } else {
+                    0.0
+                },
+                p50_ms: run.quantile_ms(0.5),
+                p99_ms: run.quantile_ms(0.99),
+                max_ms: run.max_ms(),
+                last_ms: e.last_latency_ns as f64 / 1e6,
+                since_last_s: secs(now_ns.saturating_sub(e.last_ns)),
+            });
+        }
+        sampled.sort_by(|x, y| {
+            x.to.cmp(&y.to)
+                .then_with(|| x.node.cmp(&y.node))
+                .then_with(|| y.samples.cmp(&x.samples))
+                .then_with(|| x.from.cmp(&y.from))
+        });
+        ChainSnapshot {
+            edges,
+            sampled,
+            chains,
+        }
     }
 }
 
@@ -163,6 +275,26 @@ pub struct CarriedEdge {
     pub since_last_s: f64,
 }
 
+/// One sampled edge: `node` published on `to` with no stamp it took, on the
+/// thread whose latest take was on `from`. The data flowed; the trigger is
+/// unknown, and a node with several inputs shows one edge per input.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SampledEdge {
+    pub from: String,
+    pub node: String,
+    pub to: String,
+    pub samples: u64,
+    /// Of `node`'s publishes on `to`, the fraction attributed to `from`.
+    pub share: f64,
+    /// The node's latest take of `from` to the publish: a lower bound on the
+    /// hop's staleness.
+    pub p50_ms: Option<f64>,
+    pub p99_ms: Option<f64>,
+    pub max_ms: Option<f64>,
+    pub last_ms: f64,
+    pub since_last_s: f64,
+}
+
 /// A chain of topics joined by carried edges, source first.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Chain {
@@ -175,7 +307,11 @@ pub struct Chain {
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct ChainSnapshot {
+    /// Carried edges.
     pub edges: Vec<CarriedEdge>,
+    /// Sampled edges seen at least [`CHAIN_MIN_SAMPLES`] times, minus those
+    /// a carried edge already states.
+    pub sampled: Vec<SampledEdge>,
     pub chains: Vec<Chain>,
 }
 
@@ -286,8 +422,8 @@ mod tests {
     #[test]
     fn a_stamp_taken_and_republished_by_one_node_is_an_edge() {
         let mut b = ChainBook::default();
-        b.take((0, 1), 1, 7, 100 * MS);
-        b.publish((0, 1), 2, 7, 103 * MS);
+        b.take((0, 1), 0, 1, Some(7), 100 * MS);
+        b.publish((0, 1), 0, 2, Some(7), 103 * MS);
         let s = b.snapshot(110 * MS, &names(), label);
         assert_eq!(s.edges.len(), 1);
         let e = &s.edges[0];
@@ -302,19 +438,19 @@ mod tests {
     fn a_stamp_shared_by_two_nodes_is_no_edge() {
         // Node 1 took it; node 2 publishes the same stamp from elsewhere.
         let mut b = ChainBook::default();
-        b.take((0, 1), 1, 7, 100 * MS);
-        b.publish((0, 2), 2, 7, 103 * MS);
+        b.take((0, 1), 0, 1, Some(7), 100 * MS);
+        b.publish((0, 2), 0, 2, Some(7), 103 * MS);
         // Same node, same topic in and out: a relay, not a hop between topics.
-        b.take((1, 3), 3, 8, 100 * MS);
-        b.publish((1, 3), 3, 8, 101 * MS);
+        b.take((1, 3), 0, 3, Some(8), 100 * MS);
+        b.publish((1, 3), 0, 3, Some(8), 101 * MS);
         assert!(b.is_empty());
     }
 
     #[test]
     fn infrastructure_topics_are_not_edges() {
         let mut b = ChainBook::default();
-        b.take((0, 1), 1, 7, 100 * MS);
-        b.publish((0, 1), 9, 7, 101 * MS);
+        b.take((0, 1), 0, 1, Some(7), 100 * MS);
+        b.publish((0, 1), 0, 9, Some(7), 101 * MS);
         assert!(!b.is_empty());
         assert!(b.snapshot(110 * MS, &names(), label).edges.is_empty());
     }
@@ -324,16 +460,16 @@ mod tests {
         let mut b = ChainBook::default();
         for i in 1..=CHAIN_MIN_SAMPLES {
             let t = i * 100 * MS;
-            b.take((0, 1), 1, i, t);
-            b.publish((0, 1), 2, i, t + MS);
-            b.take((0, 2), 2, i, t + 2 * MS);
-            b.publish((0, 2), 3, i, t + 5 * MS);
-            b.take((0, 3), 3, i, t + 6 * MS);
-            b.publish((0, 3), 4, i, t + 7 * MS);
+            b.take((0, 1), 0, 1, Some(i), t);
+            b.publish((0, 1), 0, 2, Some(i), t + MS);
+            b.take((0, 2), 0, 2, Some(i), t + 2 * MS);
+            b.publish((0, 2), 0, 3, Some(i), t + 5 * MS);
+            b.take((0, 3), 0, 3, Some(i), t + 6 * MS);
+            b.publish((0, 3), 0, 4, Some(i), t + 7 * MS);
         }
         // A side branch seen too rarely to count.
-        b.take((0, 4), 2, 999, 50 * MS);
-        b.publish((0, 4), 9, 999, 51 * MS);
+        b.take((0, 4), 0, 2, Some(999), 50 * MS);
+        b.publish((0, 4), 0, 9, Some(999), 51 * MS);
         let s = b.snapshot(10_000 * MS, &names(), label);
         assert_eq!(s.chains.len(), 1, "{:?}", s.chains);
         let c = &s.chains[0];
@@ -345,11 +481,78 @@ mod tests {
     fn the_stamps_a_node_remembers_are_bounded() {
         let mut b = ChainBook::default();
         for s in 1..=(STAMPS_PER_NODE as u64 + 1) {
-            b.take((0, 1), 1, s, s * MS);
+            b.take((0, 1), 0, 1, Some(s), s * MS);
         }
-        b.publish((0, 1), 2, 1, 10_000 * MS);
+        b.publish((0, 1), 0, 2, Some(1), 10_000 * MS);
         assert!(b.is_empty(), "stamp 1 was forgotten");
-        b.publish((0, 1), 2, 2, 10_000 * MS);
+        b.publish((0, 1), 0, 2, Some(2), 10_000 * MS);
         assert!(!b.is_empty());
+    }
+
+    #[test]
+    fn a_timer_node_with_two_inputs_is_sampled_from_both_never_carried() {
+        // Node 1 takes /a and /b on thread 7 and publishes /c from a timer
+        // with stamps of its own: /c is attributed to whichever came last.
+        let mut b = ChainBook::default();
+        for i in 1..=40u64 {
+            let t = i * 100 * MS;
+            let input = if i % 4 == 0 { 2 } else { 1 };
+            b.take((0, 1), 7, input, Some(i), t);
+            b.publish((0, 1), 7, 3, Some(10_000 + i), t + 2 * MS);
+        }
+        let s = b.snapshot(10_000 * MS, &names(), label);
+        assert!(s.edges.is_empty(), "nothing carried: {:?}", s.edges);
+        let got: Vec<(&str, &str, u64)> = s
+            .sampled
+            .iter()
+            .map(|e| (e.from.as_str(), e.to.as_str(), e.samples))
+            .collect();
+        assert_eq!(got, [("/a", "/c", 30)], "/b seen 10 times, under the floor");
+        assert_eq!(s.sampled[0].share, 0.75);
+        assert_eq!(s.sampled[0].last_ms, 2.0);
+    }
+
+    #[test]
+    fn a_carried_publish_is_not_also_sampled_and_threads_are_apart() {
+        let mut b = ChainBook::default();
+        for i in 1..=CHAIN_MIN_SAMPLES {
+            let t = i * 100 * MS;
+            b.take((0, 1), 7, 1, Some(i), t);
+            b.publish((0, 1), 7, 2, Some(i), t + MS);
+            // Another thread of the same node publishes /d, unstamped.
+            b.publish((0, 1), 8, 4, None, t + MS);
+            // Another node on thread 7 of the same process.
+            b.publish((0, 2), 7, 4, None, t + MS);
+        }
+        let s = b.snapshot(10_000 * MS, &names(), label);
+        assert_eq!(s.edges.len(), 1);
+        assert!(s.sampled.is_empty(), "{:?}", s.sampled);
+    }
+
+    #[test]
+    fn a_sampled_hop_is_timed_from_the_inputs_latest_take_on_any_thread() {
+        let mut b = ChainBook::default();
+        for i in 1..=CHAIN_MIN_SAMPLES {
+            let t = i * 1000 * MS;
+            // Thread 7 took /a long ago; thread 8 took it again just now.
+            b.take((0, 1), 7, 1, None, t);
+            b.take((0, 1), 8, 1, None, t + 900 * MS);
+            b.publish((0, 1), 7, 2, None, t + 901 * MS);
+        }
+        let s = b.snapshot(100_000 * MS, &names(), label);
+        assert_eq!(s.sampled[0].last_ms, 1.0);
+    }
+
+    #[test]
+    fn an_unstamped_take_still_samples() {
+        let mut b = ChainBook::default();
+        for i in 1..=CHAIN_MIN_SAMPLES {
+            let t = i * 100 * MS;
+            b.take((0, 1), 7, 1, None, t);
+            b.publish((0, 1), 7, 2, None, t + 3 * MS);
+        }
+        let s = b.snapshot(10_000 * MS, &names(), label);
+        assert_eq!(s.sampled.len(), 1);
+        assert_eq!(s.sampled[0].share, 1.0);
     }
 }

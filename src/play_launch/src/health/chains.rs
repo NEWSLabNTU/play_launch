@@ -93,7 +93,7 @@ mod tests {
     fn an_old_stamp_re_sent_at_rate_is_stale() {
         let snap = ChainSnapshot {
             edges: vec![edge(10.0, 25_900.0, 25_950.0)],
-            chains: vec![],
+            ..Default::default()
         };
         let c = chain_conditions(&snap);
         assert_eq!(c.len(), 1);
@@ -106,7 +106,7 @@ mod tests {
         // 0.2 Hz output: ten periods is 50 s.
         let snap = ChainSnapshot {
             edges: vec![edge(0.2, 3_000.0, 3_000.0), edge(10.0, 40.0, 40.0)],
-            chains: vec![],
+            ..Default::default()
         };
         assert!(chain_conditions(&snap).is_empty());
     }

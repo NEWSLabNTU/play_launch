@@ -353,18 +353,31 @@ impl EndpointTracker {
                     self.clock
                         .observe(event.stamp_sec, event.stamp_nanosec, event.monotonic_ns);
                 }
-                if let Some(stamp) = stamp_key(event.stamp_sec, event.stamp_nanosec) {
-                    let node = (child, owner.unwrap_or(0));
+                let stamp = stamp_key(event.stamp_sec, event.stamp_nanosec);
+                let node = (child, owner.unwrap_or(0));
+                match direction {
+                    Direction::Pub => self.chains.publish(
+                        node,
+                        event.tid,
+                        event.topic_hash,
+                        stamp,
+                        event.monotonic_ns,
+                    ),
+                    Direction::Sub => self.chains.take(
+                        node,
+                        event.tid,
+                        event.topic_hash,
+                        stamp,
+                        event.monotonic_ns,
+                    ),
+                }
+                if let Some(stamp) = stamp {
                     match direction {
                         Direction::Pub => {
                             self.matcher
                                 .publish(event.topic_hash, stamp, event.monotonic_ns);
-                            self.chains
-                                .publish(node, event.topic_hash, stamp, event.monotonic_ns);
                         }
                         Direction::Sub => {
-                            self.chains
-                                .take(node, event.topic_hash, stamp, event.monotonic_ns);
                             let lat = ep.latency.get_or_insert_with(Default::default);
                             self.matcher.take(
                                 key,

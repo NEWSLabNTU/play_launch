@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Carried-edge fixture (phase 88 C1).
+"""Carried- and sampled-edge fixture (phase 88 C1, C2).
 
 `source`: publishes std_msgs/Header on /chain/raw at 20 Hz, fresh stamps.
 `filter`: re-publishes each /chain/raw stamp on /chain/filtered.
@@ -9,8 +9,11 @@
     carried edge, the stamp is born there.
 `once`: publishes one message on /chain/mode (transient local), then stays.
 `hold`: keeps the /chain/mode stamp it took and re-sends it on
-    /chain/mode_out at 10 Hz, so the stamp it publishes grows old: a stale
+    /chain/mode_out at ~8 Hz, so the stamp it publishes grows old: a stale
     stamp once it is past a second.
+`fuse`: takes /chain/raw and /chain/mode_out and publishes /chain/fused
+    from a timer at ~14 Hz with now(): no stamp carried, so both inputs are
+    SAMPLED edges, each with a share of the output, and neither a trigger.
 """
 
 import sys
@@ -71,7 +74,21 @@ def main():
             if held:
                 pub.publish(held[-1])
 
-        node.create_timer(0.1, tick)
+        # Not a multiple of /chain/raw's period: `fuse` takes both, and in
+        # step one would always follow the other.
+        node.create_timer(0.13, tick)
+    elif role == "fuse":
+        pub = node.create_publisher(Header, "/chain/fused", qos)
+        node.create_subscription(Header, "/chain/raw", lambda _m: None, qos)
+        node.create_subscription(Header, "/chain/mode_out", lambda _m: None, qos)
+
+        def tick():
+            msg = Header()
+            msg.stamp = node.get_clock().now().to_msg()
+            pub.publish(msg)
+
+        # Not a multiple of either input's period, so the latest input drifts.
+        node.create_timer(0.07, tick)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

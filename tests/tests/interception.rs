@@ -1229,6 +1229,8 @@ fn test_delivery_latency_separates_a_slow_subscriber_from_a_fast_one() {
 /// in the bundle.
 #[test]
 fn test_carried_edges_form_a_chain_and_an_old_stamp_is_reported() {
+    // Also phase 88 C2: a timer node's inputs are sampled edges, never
+    // carried ones.
     let env = fixtures::install_env();
     let launch = fixtures::test_workspace_path("simple_test").join("launch/chain_probe.launch.xml");
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
@@ -1273,7 +1275,10 @@ fn test_carried_edges_form_a_chain_and_an_old_stamp_is_reported() {
             .as_array()
             .is_some_and(|c| c.iter().any(|c| c["topics"].as_array().unwrap().len() == 3));
         let stale = issues.iter().any(|i| i["kind"] == "stale_stamp");
-        if (chained && stale) || std::time::Instant::now() > deadline {
+        let fused = chains["sampled"].as_array().map_or(0, |s| {
+            s.iter().filter(|e| e["to"] == "/chain/fused").count()
+        });
+        if (chained && stale && fused >= 2) || std::time::Instant::now() > deadline {
             break (chains, issues);
         }
     };
@@ -1311,6 +1316,34 @@ fn test_carried_edges_form_a_chain_and_an_old_stamp_is_reported() {
         edge("/chain/restamped").is_none(),
         "a restamp is no edge: {chains}"
     );
+    assert!(edge("/chain/fused").is_none(), "nothing carried: {chains}");
+
+    // Sampled: the restamping relay from its one input, the timer node from
+    // both of its inputs, each with a share of the output.
+    let sampled = chains["sampled"].as_array().unwrap();
+    let into = |to: &str| -> Vec<&serde_json::Value> {
+        sampled.iter().filter(|e| e["to"] == to).collect()
+    };
+    let restamped = into("/chain/restamped");
+    assert_eq!(restamped.len(), 1, "{chains}");
+    assert_eq!(restamped[0]["from"], "/chain/raw");
+    assert_eq!(restamped[0]["node"], "/chain_restamp");
+    let mut fused: Vec<(&str, f64)> = into("/chain/fused")
+        .iter()
+        .map(|e| (e["from"].as_str().unwrap(), e["share"].as_f64().unwrap()))
+        .collect();
+    fused.sort_by(|a, b| a.0.cmp(b.0));
+    assert_eq!(
+        fused.iter().map(|f| f.0).collect::<Vec<_>>(),
+        ["/chain/mode_out", "/chain/raw"],
+        "{chains}"
+    );
+    assert!(
+        fused.iter().all(|f| f.1 > 0.0 && f.1 < 1.0),
+        "each input has part of the output: {fused:?}"
+    );
+    // A carried edge is not stated again as sampled.
+    assert!(into("/chain/filtered").is_empty(), "{chains}");
 
     let stale: Vec<&serde_json::Value> = issues
         .iter()

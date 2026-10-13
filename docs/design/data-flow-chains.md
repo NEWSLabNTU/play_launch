@@ -62,7 +62,7 @@ Two kinds of edge, never mixed silently:
 | Edge | Evidence | Confidence | Latency it gives |
 |---|---|---|---|
 | carried | same node took and published the same stamp | exact | that node's take → publish |
-| sampled | same node and thread, latest take before the publish, over ≥ 20 observations, and A is among the node's subscriptions | the data flowed, the trigger is unknown | an upper bound on that hop's staleness: `t_pub − t_take` of the last sample |
+| sampled | same node and thread, latest take before the publish, over ≥ 20 observations, and A is among the node's subscriptions | the data flowed, the trigger is unknown | a LOWER bound on that hop's staleness: `t_pub` minus the node's latest take of A on any thread (C2; the thread's own take is no bound on a multi-threaded executor) |
 
 **Data age, end to end.** For each publish, the age of the oldest data behind
 it: origin time propagated per node.
@@ -75,7 +75,8 @@ it: origin time propagated per node.
 - `age = t_pub − origin`, recorded per topic as a distribution (the W5
   histogram). On `/control/command/control_cmd` that is how old the newest
   sensor data behind a command is — the number the question asks for.
-- Sampled hops make it an upper bound, and the page says so.
+- Sampled hops make it approximate, and the page says so: per hop the node's
+  latest take is a lower bound on the data it used (C2).
 
 **Chains, on demand.** The page lets a user pick a source topic and a sink
 topic; play_launch shows the paths between them over observed edges, per hop
@@ -114,6 +115,6 @@ one container is one "node" here unless the endpoint's owner (already shipped,
 | Step | Work | Acceptance |
 |---|---|---|
 | C1 | carried edges and per-node latency, `stale_stamp` | Autoware: the 8-topic planning chain and the 25.9 s gear stamp, from a live run |
-| C2 | sampled edges, guarded by subscriptions and a minimum count | the behavior planner's inputs reported as sampled, not as triggers |
+| C2 | sampled edges, guarded by subscriptions and a minimum count | the behavior planner's inputs reported as sampled, not as triggers. Done |
 | C3 | origin propagation, data age per topic | age on `/control/command/control_cmd` reported, upper-bound flagged |
 | C4 | chain view: source/sink picker, per-hop table, age distribution | fixture: a three-node pipeline with a restamping middle node shows one carried and one sampled hop |

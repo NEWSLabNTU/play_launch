@@ -490,8 +490,8 @@ play_log/<timestamp>/
 │   ├── stats_summary.json          # per-topic pub/take counts, rates
 │   ├── events.jsonl                # per-message record read by `measure`; only when
 │                                   #   asked for (--record-events / web UI toggle)
-│   ├── chains.json                 # carried edges (a node re-sent a stamp it took)
-│   │                               #   and the chains they form (phase 88)
+│   ├── chains.json                 # carried edges (a node re-sent a stamp it took),
+│   │                               #   sampled edges, and the chains (phase 88)
 │   ├── endpoint_stats.json         # every pub/sub created: messages, rate, est. bytes,
 │                                   #   publish-to-take latency per subscription —
 │                                   #   silent endpoints included, busiest first
@@ -694,6 +694,15 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   three stale stamps all of that shape (gear command, operation mode, the
   emergency stop operator's 47.7 s control command) — right for a state,
   wrong for data, which is why it is info. 84 ns per event.
+  **C2, sampled edges**: a publish carrying no stamp its node took is
+  attributed to that node's latest take on the same THREAD (node plus
+  thread is the subscription guard), reported apart as `sampled` with its
+  `share` of the output, ≥ 20 observations, never duplicating a carried
+  triple. Its time runs from the node's latest take of the input on ANY
+  thread, a LOWER bound on staleness: timed from the publishing thread's
+  own take, a multi-threaded executor read 4–10 s for the behavior
+  planner's status topics against 60–74 ms. Autoware: 623 sampled edges,
+  the planner's path attributed to the map 0.73 / costmap 0.26.
 
 - **2026-10-14**: **Lifecycle activation on the startup timeline.** The
   interceptor reads each `lifecycle_msgs/TransitionEvent` a node publishes
