@@ -29,6 +29,8 @@ pub struct MemberRunner {
     shared_state: Arc<dashmap::DashMap<String, MemberState>>,
     /// Composable restart counters — written ONLY via `state_reducer`
     restart_counts: Arc<state_reducer::RestartCounts>,
+    /// Recent exits per member — written ONLY via `state_reducer`
+    exit_history: Arc<state_reducer::ExitHistory>,
     /// Members launched with `on_exit=Shutdown()`, by canonical member id
     shutdown_on_exit: HashSet<String>,
     /// The same shutdown lever `MemberHandle::shutdown` pulls. Stops the actors, but
@@ -48,6 +50,7 @@ impl MemberRunner {
         state_rx: mpsc::Receiver<StateEvent>,
         shared_state: Arc<dashmap::DashMap<String, MemberState>>,
         restart_counts: Arc<state_reducer::RestartCounts>,
+        exit_history: Arc<state_reducer::ExitHistory>,
         shutdown_on_exit: HashSet<String>,
         shutdown_tx: Arc<watch::Sender<bool>>,
     ) -> Self {
@@ -56,6 +59,7 @@ impl MemberRunner {
             state_rx,
             shared_state,
             restart_counts,
+            exit_history,
             shutdown_on_exit,
             shutdown_tx,
             shutdown_hook: None,
@@ -86,7 +90,9 @@ impl MemberRunner {
         shutdown_hook: Option<&Arc<dyn Fn() + Send + Sync>>,
         event: &StateEvent,
     ) {
-        if let StateEvent::Exited { name, exit_code } = event
+        if let StateEvent::Exited {
+            name, exit_code, ..
+        } = event
             && shutdown_on_exit.contains(name)
             && !*shutdown_tx.borrow()
         {
@@ -112,6 +118,7 @@ impl MemberRunner {
         let event = self.state_rx.recv().await?;
         state_reducer::apply(&self.shared_state, &event);
         state_reducer::apply_restart_count(&self.restart_counts, &event);
+        state_reducer::apply_exit(&self.exit_history, &event);
         Self::honour_on_exit_shutdown(
             &self.shutdown_on_exit,
             &self.shutdown_tx,
@@ -131,6 +138,7 @@ impl MemberRunner {
             mut state_rx,
             shared_state,
             restart_counts,
+            exit_history,
             shutdown_on_exit,
             shutdown_tx,
             shutdown_hook,
@@ -159,6 +167,7 @@ impl MemberRunner {
                     tracing::debug!("State event: {:?}", event);
                     state_reducer::apply(&shared_state, &event);
                     state_reducer::apply_restart_count(&restart_counts, &event);
+                    state_reducer::apply_exit(&exit_history, &event);
                     Self::honour_on_exit_shutdown(
                         &shutdown_on_exit,
                         &shutdown_tx,
@@ -222,6 +231,10 @@ mod tests {
         StateEvent::Exited {
             name: name.to_string(),
             exit_code: Some(0),
+            signal: None,
+            at_ms: 0,
+            uptime_ms: None,
+            oom_killed: None,
         }
     }
 

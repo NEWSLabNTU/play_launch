@@ -150,6 +150,8 @@ mod tests {
             auto_load: Some(true),
             restart_count: Some(0),
             output_dir: std::path::PathBuf::from("/nonexistent"),
+            last_exit: None,
+            recent_exits: 0,
         }
     }
 

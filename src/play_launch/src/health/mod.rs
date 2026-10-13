@@ -353,6 +353,127 @@ pub fn entity_conditions(snap: &EntitySnapshot) -> Vec<Condition> {
     out
 }
 
+/// How long an OOM kill stays an open issue after it happened.
+pub const OOM_ISSUE_MS: u64 = 10 * 60 * 1000;
+/// Exits within `RECENT_EXIT_WINDOW_MS` that make a crash loop.
+pub const CRASH_LOOP_EXITS: u32 = 3;
+
+/// `SIGSEGV` for 11, and so on; the number when it is not a common one.
+pub fn signal_name(signal: i32) -> String {
+    let name = match signal {
+        1 => "SIGHUP",
+        2 => "SIGINT",
+        3 => "SIGQUIT",
+        4 => "SIGILL",
+        5 => "SIGTRAP",
+        6 => "SIGABRT",
+        7 => "SIGBUS",
+        8 => "SIGFPE",
+        9 => "SIGKILL",
+        11 => "SIGSEGV",
+        13 => "SIGPIPE",
+        14 => "SIGALRM",
+        15 => "SIGTERM",
+        _ => return format!("signal {signal}"),
+    };
+    name.to_string()
+}
+
+/// How an exit reads: "SIGSEGV after 12 s", "code 1 after 3 s".
+pub fn describe_exit(e: &crate::member_actor::coordinator::ExitRecord) -> String {
+    let how = match (e.signal, e.code) {
+        _ if e.oom_killed == Some(true) => "killed by the OOM killer".to_string(),
+        (Some(sig), _) => signal_name(sig),
+        (None, Some(code)) => format!("code {code}"),
+        (None, None) => "no exit status".to_string(),
+    };
+    match e.uptime_ms {
+        Some(ms) if ms < 120_000 => format!("{how} after {:.0} s", ms as f64 / 1000.0),
+        Some(ms) => format!("{how} after {:.0} min", ms as f64 / 60_000.0),
+        None => how,
+    }
+}
+
+/// Conditions from the members: crash loops, OOM kills, members that crashed
+/// and stayed down, and members that failed to start. `stopped_by_user`
+/// says whether a user stopped a member, which makes `Stopped` expected.
+pub fn member_conditions(
+    members: &[crate::member_actor::model::member_view::MemberSummary],
+    stopped_by_user: impl Fn(&str) -> bool,
+    now_ms: u64,
+) -> Vec<Condition> {
+    use crate::member_actor::model::member_view::MemberState;
+    let mut out = Vec::new();
+    for m in members {
+        let link = Some(Link {
+            view: "nodes",
+            target: Some(m.id.clone()),
+        });
+        let subject = Subject {
+            kind: "member",
+            name: m.name.clone(),
+        };
+        if m.recent_exits >= CRASH_LOOP_EXITS {
+            let last = m.last_exit.as_ref().map(describe_exit).unwrap_or_default();
+            out.push(Condition {
+                key: format!("crash_loop:{}", m.id),
+                kind: "crash_loop",
+                severity: Severity::Error,
+                subject: subject.clone(),
+                title: format!("exited {} times in 5 min", m.recent_exits),
+                detail: format!("last: {last}"),
+                link: link.clone(),
+            });
+        }
+        if let Some(e) = &m.last_exit
+            && e.oom_killed == Some(true)
+            && now_ms.saturating_sub(e.at_ms) < OOM_ISSUE_MS
+        {
+            out.push(Condition {
+                key: format!("oom_kill:{}", m.id),
+                kind: "oom_kill",
+                severity: Severity::Error,
+                subject: subject.clone(),
+                title: "killed by the kernel's OOM killer".to_string(),
+                detail: format!(
+                    "{}; its cgroup's memory.events oom_kill counter rose",
+                    describe_exit(e)
+                ),
+                link: link.clone(),
+            });
+        }
+        match &m.state {
+            MemberState::Stopped => {
+                if let Some(e) = &m.last_exit {
+                    let clean = e.signal.is_none() && e.code == Some(0);
+                    if !clean && !stopped_by_user(&m.id) {
+                        out.push(Condition {
+                            key: format!("down:{}", m.id),
+                            kind: "down",
+                            severity: Severity::Error,
+                            subject: subject.clone(),
+                            title: "exited and is not restarting".to_string(),
+                            detail: format!("{} (respawn is off for it)", describe_exit(e)),
+                            link: link.clone(),
+                        });
+                    }
+                }
+            }
+            MemberState::Failed { error } => out.push(Condition {
+                key: format!("failed:{}", m.id),
+                kind: "failed",
+                severity: Severity::Error,
+                subject,
+                title: "failed".to_string(),
+                detail: error.clone(),
+                link,
+            }),
+            _ => {}
+        }
+    }
+    out
+}
+
 /// A self-cost condition when play_launch has used more than
 /// [`SELF_COST_LIMIT_PERCENT`] of a core over the window.
 pub fn self_cost_condition(window: &self_cost::Usage) -> Option<Condition> {
@@ -402,6 +523,7 @@ pub fn self_cost_condition(window: &self_cost::Usage) -> Option<Condition> {
 pub async fn run_health_task(
     log_dir: PathBuf,
     entities: Option<watch::Receiver<Arc<EntitySnapshot>>>,
+    members: Arc<std::sync::OnceLock<Arc<crate::member_actor::MemberHandle>>>,
     tx: watch::Sender<Arc<HealthSnapshot>>,
     mut shutdown: watch::Receiver<bool>,
 ) {
@@ -432,6 +554,15 @@ pub async fn run_health_task(
             .map(|r| self_cost::usage(r, readings.back().unwrap()));
 
         let mut conditions = Vec::new();
+        // Members exist once the coordinator is built, after this task starts.
+        if let Some(handle) = members.get() {
+            let list = handle.list_members().await;
+            conditions.extend(member_conditions(
+                &list,
+                |id| handle.stopped_by_user(id),
+                unix_ms(now),
+            ));
+        }
         if let Some(rx) = entities.as_ref() {
             let snap = rx.borrow().clone();
             conditions.extend(entity_conditions(&snap));
@@ -543,6 +674,136 @@ mod tests {
             })
             .collect();
         assert_eq!(events, ["open", "close"]);
+    }
+
+    fn member(
+        id: &str,
+        state: crate::member_actor::MemberState,
+        last_exit: Option<crate::member_actor::coordinator::ExitRecord>,
+        recent_exits: u32,
+    ) -> crate::member_actor::MemberSummary {
+        crate::member_actor::MemberSummary {
+            id: id.to_string(),
+            name: id.rsplit('/').next().unwrap().to_string(),
+            member_type: crate::member_actor::MemberType::Node,
+            state,
+            pid: None,
+            package: Some("pkg".into()),
+            executable: "exe".into(),
+            namespace: None,
+            target_container: None,
+            is_container: false,
+            exec_name: None,
+            node_name: None,
+            stderr_last_modified: None,
+            stderr_size: 0,
+            stderr_preview: None,
+            respawn_enabled: Some(false),
+            respawn_delay: None,
+            auto_load: None,
+            restart_count: None,
+            output_dir: std::path::PathBuf::from("/nonexistent"),
+            last_exit,
+            recent_exits,
+        }
+    }
+
+    fn exit(
+        at_ms: u64,
+        code: Option<i32>,
+        signal: Option<i32>,
+        oom: Option<bool>,
+    ) -> crate::member_actor::coordinator::ExitRecord {
+        crate::member_actor::coordinator::ExitRecord {
+            at_ms,
+            code,
+            signal,
+            uptime_ms: Some(12_000),
+            oom_killed: oom,
+        }
+    }
+
+    #[test]
+    fn crashes_and_ooms_and_down_members_become_issues() {
+        use crate::member_actor::MemberState;
+        let now = 1_000_000;
+        let members = vec![
+            // Three exits in five minutes, still respawning.
+            member(
+                "node:/loop",
+                MemberState::Respawning { attempt: 3 },
+                Some(exit(now - 1000, None, Some(11), None)),
+                3,
+            ),
+            // OOM-killed a minute ago.
+            member(
+                "node:/oom",
+                MemberState::Running { pid: 2 },
+                Some(exit(now - 60_000, None, Some(9), Some(true))),
+                1,
+            ),
+            // Crashed with respawn off: down.
+            member(
+                "node:/down",
+                MemberState::Stopped,
+                Some(exit(now - 5000, None, Some(6), None)),
+                1,
+            ),
+            // Stopped by a user after a crash: not an issue.
+            member(
+                "node:/user",
+                MemberState::Stopped,
+                Some(exit(now - 5000, None, Some(6), None)),
+                1,
+            ),
+            // Exited cleanly: not an issue.
+            member(
+                "node:/clean",
+                MemberState::Stopped,
+                Some(exit(now - 5000, Some(0), None, None)),
+                1,
+            ),
+            // Spawn failure.
+            member(
+                "node:/failed",
+                MemberState::Failed {
+                    error: "no such executable".into(),
+                },
+                None,
+                0,
+            ),
+        ];
+        let conds = member_conditions(&members, |id| id == "node:/user", now);
+        let mut keys: Vec<&str> = conds.iter().map(|c| c.key.as_str()).collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            [
+                "crash_loop:node:/loop",
+                "down:node:/down",
+                "failed:node:/failed",
+                "oom_kill:node:/oom"
+            ]
+        );
+        let lp = conds.iter().find(|c| c.kind == "crash_loop").unwrap();
+        assert!(lp.detail.contains("SIGSEGV after 12 s"), "{}", lp.detail);
+        let oom = conds.iter().find(|c| c.kind == "oom_kill").unwrap();
+        assert!(oom.detail.contains("OOM killer"), "{}", oom.detail);
+        let down = conds.iter().find(|c| c.kind == "down").unwrap();
+        assert!(down.detail.contains("SIGABRT"), "{}", down.detail);
+    }
+
+    #[test]
+    fn an_old_oom_kill_is_no_longer_open() {
+        use crate::member_actor::MemberState;
+        let now = 100 * 60 * 1000;
+        let m = member(
+            "node:/oom",
+            MemberState::Running { pid: 2 },
+            Some(exit(now - OOM_ISSUE_MS - 1, None, Some(9), Some(true))),
+            1,
+        );
+        assert!(member_conditions(&[m], |_| false, now).is_empty());
     }
 
     #[test]

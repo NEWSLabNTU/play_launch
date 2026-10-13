@@ -635,8 +635,36 @@ impl CommandGenerator {
             params_files: Vec::new(),
             param_sources: Vec::new(),
             remaps: Vec::new(),
-            respawn: None,
-            respawn_delay: None,
+            respawn: exec
+                .respawn
+                .as_ref()
+                .map(|subs| {
+                    let resolved = resolve_substitutions(subs, context)?;
+                    resolved.parse::<bool>().map_err(|_| {
+                        GenerationError::Substitution(
+                            crate::error::SubstitutionError::InvalidSubstitution(format!(
+                                "Failed to parse respawn value '{}' as boolean",
+                                resolved
+                            )),
+                        )
+                    })
+                })
+                .transpose()?,
+            respawn_delay: exec
+                .respawn_delay
+                .as_ref()
+                .map(|subs| {
+                    let resolved = resolve_substitutions(subs, context)?;
+                    resolved.parse::<f64>().map_err(|_| {
+                        GenerationError::Substitution(
+                            crate::error::SubstitutionError::InvalidSubstitution(format!(
+                                "Failed to parse respawn_delay value '{}' as number",
+                                resolved
+                            )),
+                        )
+                    })
+                })
+                .transpose()?,
             ros_args: None,
             scope: None,
         })

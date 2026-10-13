@@ -173,6 +173,12 @@ pub struct NodeSummary {
     pub restart_count: Option<u32>,
     /// Whether this composable node has its own log files (isolated mode)
     pub has_own_logs: bool,
+    /// The most recent exit (code, signal, uptime, OOM), if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub last_exit: Option<crate::member_actor::coordinator::ExitRecord>,
+    /// Exits in the last five minutes.
+    pub recent_exits: u32,
 }
 
 impl NodeSummary {
@@ -221,6 +227,8 @@ impl NodeSummary {
             auto_load: member.auto_load,
             restart_count: member.restart_count,
             has_own_logs,
+            last_exit: member.last_exit.clone(),
+            recent_exits: member.recent_exits,
         }
     }
 

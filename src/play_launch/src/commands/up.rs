@@ -433,9 +433,11 @@ pub(crate) async fn play(
     // Prepare directories
     debug!("Creating log directories...");
     let log_dir = create_log_dir(&common.log_dir)?;
+    let health_members = std::sync::Arc::new(std::sync::OnceLock::new());
     tokio::spawn(crate::health::run_health_task(
         log_dir.clone(),
         entities_rx.clone(),
+        health_members.clone(),
         health_tx,
         shutdown_signal.clone(),
     ));
@@ -1426,6 +1428,7 @@ pub(crate) async fn play(
     debug!("Spawning all {} actors...", builder.member_count());
     let (member_handle, mut member_runner) = builder.spawn(shared_ros_node).await;
     let member_handle = std::sync::Arc::new(member_handle); // Wrap in Arc for sharing
+    let _ = health_members.set(member_handle.clone());
     debug!("All actors spawned successfully");
 
     // A node declared `on_exit=Shutdown()` is required: when it exits, the launch is

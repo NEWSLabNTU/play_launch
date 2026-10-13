@@ -74,6 +74,20 @@ pub enum StateEvent {
         name: String,
         /// Exit code (None if killed)
         exit_code: Option<i32>,
+        /// The signal that ended it, when one did (SIGSEGV = 11, ...).
+        #[serde(default)]
+        signal: Option<i32>,
+        /// When it exited, Unix ms.
+        #[serde(default)]
+        at_ms: u64,
+        /// How long it had been running, when known.
+        #[serde(default)]
+        uptime_ms: Option<u64>,
+        /// Whether the kernel's OOM killer ended it: from the member's cgroup
+        /// `memory.events` `oom_kill` counter, read at spawn and at exit.
+        /// `None` when the member has no cgroup to ask.
+        #[serde(default)]
+        oom_killed: Option<bool>,
     },
     /// Process is respawning after exit
     Respawning {
@@ -190,6 +204,27 @@ impl StateEvent {
     pub fn is_terminal(&self) -> bool {
         matches!(self, StateEvent::Terminated { .. })
     }
+}
+
+/// The facts recorded with an exit: when, after how long, and whether the
+/// kernel's OOM killer did it. `oom_baseline` is the member cgroup's
+/// `oom_kill` counter read at spawn; a higher count now means this exit was an
+/// OOM kill — in a container's group, possibly of one of its composables, which
+/// with `memory.oom.group=1` takes the container with it.
+pub(crate) fn exit_facts(
+    spawned_at: Option<std::time::Instant>,
+    oom_baseline: Option<u64>,
+    cgroup: Option<&crate::execution::cgroup::CgroupHandle>,
+) -> (u64, Option<u64>, Option<bool>) {
+    let at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
+    let uptime_ms = spawned_at.map(|t| t.elapsed().as_millis() as u64);
+    let oom_killed = match (oom_baseline, cgroup.and_then(|c| c.oom_kills())) {
+        (Some(before), Some(now)) => Some(now > before),
+        _ => None,
+    };
+    (at_ms, uptime_ms, oom_killed)
 }
 
 #[cfg(test)]

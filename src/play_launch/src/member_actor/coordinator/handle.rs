@@ -24,6 +24,12 @@ pub struct MemberHandle {
     shared_state: Arc<dashmap::DashMap<String, MemberState>>,
     /// Composable crash-reload counters (reducer-written, read here)
     restart_counts: Arc<super::state_reducer::RestartCounts>,
+    /// Recent exits per member (reducer-written, read here)
+    exit_history: Arc<super::state_reducer::ExitHistory>,
+    /// Members a user stopped (Stop without a later Start/Restart). A node
+    /// that crashed and stayed down is a problem; one somebody stopped is not,
+    /// and both end in `Stopped`.
+    stopped_by_user: dashmap::DashSet<String>,
     /// Shutdown signal broadcaster. Shared with `MemberRunner`, which pulls the same
     /// lever when a node declared `on_exit=Shutdown()` exits.
     shutdown_tx: Arc<watch::Sender<bool>>,
@@ -36,6 +42,30 @@ pub struct MemberHandle {
 }
 
 impl MemberHandle {
+    /// Recent exits of one member, oldest first (at most
+    /// `state_reducer::EXIT_HISTORY_LEN`).
+    pub fn exit_history(&self, member: &str) -> Vec<super::state_reducer::ExitRecord> {
+        self.exit_history
+            .get(member)
+            .map(|h| h.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Whether a user stopped this member (and has not started it since).
+    pub fn stopped_by_user(&self, member: &str) -> bool {
+        self.stopped_by_user.contains(member)
+    }
+
+    /// Recent exits of every member that has exited.
+    pub fn all_exit_history(
+        &self,
+    ) -> std::collections::HashMap<String, Vec<super::state_reducer::ExitRecord>> {
+        self.exit_history
+            .iter()
+            .map(|e| (e.key().clone(), e.value().iter().cloned().collect()))
+            .collect()
+    }
+
     /// Create a new MemberHandle (called from builder)
     #[allow(clippy::too_many_arguments)] // one call site, the builder
     pub(super) fn new(
@@ -43,6 +73,7 @@ impl MemberHandle {
         metadata: Arc<RwLock<HashMap<String, MemberMetadata>>>,
         shared_state: Arc<dashmap::DashMap<String, MemberState>>,
         restart_counts: Arc<super::state_reducer::RestartCounts>,
+        exit_history: Arc<super::state_reducer::ExitHistory>,
         shutdown_tx: Arc<watch::Sender<bool>>,
         virtual_member_routing: HashMap<String, String>,
         shared_ros_node: Option<Arc<rclrs::Node>>,
@@ -53,6 +84,8 @@ impl MemberHandle {
             metadata,
             shared_state,
             restart_counts,
+            exit_history,
+            stopped_by_user: dashmap::DashSet::new(),
             shutdown_tx,
             virtual_member_routing,
             shared_ros_node,
@@ -75,9 +108,30 @@ impl MemberHandle {
                     .get(name)
                     .map(|entry| entry.value().clone())
                     .unwrap_or(MemberState::Pending);
-                super::summary::build_summary(meta, state, self.restart_count(name))
+                let mut summary =
+                    super::summary::build_summary(meta, state, self.restart_count(name));
+                self.add_exits(name, &mut summary);
+                summary
             })
             .collect()
+    }
+
+    /// Fill a summary's exit fields from the history.
+    fn add_exits(&self, name: &str, summary: &mut MemberSummary) {
+        let Some(history) = self.exit_history.get(name) else {
+            return;
+        };
+        summary.last_exit = history.back().cloned();
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64);
+        summary.recent_exits = history
+            .iter()
+            .filter(|e| {
+                now_ms.saturating_sub(e.at_ms)
+                    <= crate::member_actor::model::member_view::RECENT_EXIT_WINDOW_MS
+            })
+            .count() as u32;
     }
 
     /// Get detailed state for a specific member
@@ -89,11 +143,9 @@ impl MemberHandle {
             .get(name)
             .map(|entry| entry.value().clone())
             .unwrap_or(MemberState::Pending);
-        Some(super::summary::build_summary(
-            meta,
-            state,
-            self.restart_count(name),
-        ))
+        let mut summary = super::summary::build_summary(meta, state, self.restart_count(name));
+        self.add_exits(name, &mut summary);
+        Some(summary)
     }
 
     /// Crash reloads scheduled for a member (0 when none ever were).
@@ -192,6 +244,15 @@ impl MemberHandle {
     /// Phase 12: For virtual members (composable nodes managed by containers),
     /// this translates and routes control events to the parent container.
     pub async fn send_control(&self, name: &str, event: ControlEvent) -> Result<()> {
+        match event {
+            ControlEvent::Stop => {
+                self.stopped_by_user.insert(name.to_string());
+            }
+            ControlEvent::Start | ControlEvent::Restart => {
+                self.stopped_by_user.remove(name);
+            }
+            _ => {}
+        }
         // Check if this is a virtual member (composable node)
         if let Some(parent_container) = self.virtual_member_routing.get(name) {
             // Translate control event for virtual member

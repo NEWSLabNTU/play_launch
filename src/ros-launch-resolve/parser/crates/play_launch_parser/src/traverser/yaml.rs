@@ -676,6 +676,12 @@ impl LaunchTraverser {
                 yaml_str(map, "on_exit"),
                 "executable",
             )?,
+            respawn: yaml_str(map, "respawn")
+                .map(parse_substitutions)
+                .transpose()?,
+            respawn_delay: yaml_str(map, "respawn_delay")
+                .map(parse_substitutions)
+                .transpose()?,
         };
 
         let record = CommandGenerator::generate_executable_record(&exec, &self.context)

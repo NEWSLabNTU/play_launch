@@ -181,6 +181,17 @@
     flex-shrink: 0;
 }
 
+.node-crash-loop {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--failed-bg);
+    color: var(--failed-text);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
 .node-meta {
     display: flex;
     gap: 12px;

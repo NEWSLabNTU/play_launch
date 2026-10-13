@@ -17,10 +17,20 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-*None.* `just check-issue-index` fails if this section and the per-file
-`status:` frontmatter disagree.
+**#0070** -- the Python frontend drops `respawn` / `respawn_delay` on `Node`
+and `ExecuteProcess`: `bridge.rs` writes `respawn: None` for every captured
+process, so a `.launch.py` process declared to respawn stays dead. See
+`0070-*`.
+
+`just check-issue-index` fails if this section and the per-file `status:`
+frontmatter disagree.
 
 ## Resolved
+
+**#0069** -- `<executable respawn="true">` (XML and YAML) was accepted by the
+attribute allowlist and dropped, so the process stayed dead after it exited.
+`ExecutableAction` now carries `respawn` / `respawn_delay`. Found by the
+Health page's crash-loop test. See `archived/0069-*`.
 
 **#0068** -- a list parameter whose string elements held `: ` or `, ` reached
 the node re-shaped, a #0067 regression: an element was quoted only by the

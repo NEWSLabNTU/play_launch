@@ -59,5 +59,7 @@ pub(super) fn build_summary(
         auto_load: meta.auto_load,
         restart_count: (meta.member_type == MemberType::ComposableNode).then_some(restart_count),
         output_dir: meta.output_dir.clone(),
+        last_exit: None,
+        recent_exits: 0,
     }
 }

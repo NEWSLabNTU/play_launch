@@ -19,6 +19,11 @@ pub struct ExecutableAction {
     pub arguments: Vec<Vec<Substitution>>,
     /// `on_exit="shutdown"` (#0064); see `node::parse_on_exit`.
     pub on_exit_shutdown: Option<bool>,
+    /// `respawn` / `respawn_delay`, as on `<node>`: launch's `ExecuteProcess`
+    /// takes both, and they used to be accepted here and then dropped, so an
+    /// `<executable respawn="true">` that died stayed dead.
+    pub respawn: Option<Vec<Substitution>>,
+    pub respawn_delay: Option<Vec<Substitution>>,
 }
 
 impl ExecutableAction {
@@ -106,6 +111,14 @@ impl ExecutableAction {
             environment,
             arguments,
             on_exit_shutdown: crate::actions::node::parse_on_exit(entity, "executable")?,
+            respawn: entity
+                .optional_attr_str("respawn")?
+                .map(|s| parse_substitutions(&s))
+                .transpose()?,
+            respawn_delay: entity
+                .optional_attr_str("respawn_delay")?
+                .map(|s| parse_substitutions(&s))
+                .transpose()?,
         })
     }
 

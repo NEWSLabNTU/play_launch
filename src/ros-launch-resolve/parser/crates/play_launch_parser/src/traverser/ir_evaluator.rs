@@ -350,8 +350,11 @@ fn ir_to_executable_action(kind: &ActionKind) -> ExecutableAction {
             args,
             env,
         } => ExecutableAction {
-            // The IR does not model on_exit (dormant feature; see CLAUDE.md).
+            // The IR does not model on_exit or respawn (dormant feature; see
+            // CLAUDE.md).
             on_exit_shutdown: None,
+            respawn: None,
+            respawn_delay: None,
             cmd: cmd.parts.clone(),
             cwd: None,
             name: name.as_ref().map(|n| n.parts.clone()),

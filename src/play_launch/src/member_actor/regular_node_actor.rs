@@ -99,6 +99,8 @@ pub struct RegularNodeActor {
     respawn_count: u32,
     /// When the current child was spawned, for the healthy-uptime reset.
     spawned_at: Option<std::time::Instant>,
+    /// The cgroup's `oom_kill` counter at spawn, to tell an OOM kill at exit.
+    oom_baseline: Option<u64>,
 }
 
 impl RegularNodeActor {
@@ -126,6 +128,7 @@ impl RegularNodeActor {
             process_registry,
             respawn_count: 0,
             spawned_at: None,
+            oom_baseline: None,
         }
     }
 
@@ -227,6 +230,7 @@ impl RegularNodeActor {
 
         let pid = child.id().expect("Child process should have PID");
         self.spawned_at = Some(std::time::Instant::now());
+        self.oom_baseline = self.context.cgroup.as_ref().and_then(|c| c.oom_kills());
 
         // Hold the startup slot until this child has finished initialising,
         // not until spawn() returned — spawn() returns in microseconds, so
@@ -335,21 +339,31 @@ impl RegularNodeActor {
                     self.respawn_count = self.respawn_count.saturating_add(1);
                 }
 
-                let exit_code = match result {
+                let (exit_code, signal) = match result {
                     Ok(status) => {
                         self.save_status(&status)?;
-                        status.code()
+                        use std::os::unix::process::ExitStatusExt;
+                        (status.code(), status.signal())
                     }
                     Err(err) => {
                         error!("[{}] Failed to wait for process: {}", self.name, err);
-                        None
+                        (None, None)
                     }
                 };
+                let (at_ms, uptime_ms, oom_killed) = super::events::exit_facts(
+                    self.spawned_at,
+                    self.oom_baseline,
+                    self.context.cgroup.as_ref(),
+                );
 
                 // Send Exited event
                 super::events::emit(&self.state_tx, StateEvent::Exited {
                     name: self.name.clone(),
                     exit_code,
+                    signal,
+                    at_ms,
+                    uptime_ms,
+                    oom_killed,
                 }).await;
 
                 // Decide next state

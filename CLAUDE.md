@@ -677,6 +677,20 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-13**: **Exits reach the Health page** (`health-page.md` W3).
+  `StateEvent::Exited` carries `signal`, `at_ms`, `uptime_ms` and
+  `oom_killed` (the member cgroup's `memory.events` `oom_kill` read at spawn
+  and at exit — a fact, `None` without a cgroup, never a guess); the reducer
+  keeps the last 20 per member (`state_reducer::ExitHistory`) and
+  `/api/nodes` carries `last_exit` and `recent_exits`. Health's member rules:
+  crash loop at ≥3 exits in 5 min (independent of the actor's 30 s streak
+  reset, so a node crashing every 40 s is still caught), OOM kill for 10 min
+  after it, `down` for a crash that stayed down — `MemberHandle` remembers
+  which members a USER stopped, since both end in `Stopped` and only one is a
+  problem — and `failed`. Its first integration test found #0069: the parser
+  allowlisted `respawn` on `<executable>` and then dropped it. #0070 (the
+  Python frontend drops `respawn` for `Node` and `ExecuteProcess`) is open.
+
 - **2026-10-13**: **The Health page, and the diagnostics cost that was not**
   (`docs/design/health-page.md` W0–W2). `health/mod.rs`: a `HealthBook` of
   issues opened by the conditions sources report each second and closed after

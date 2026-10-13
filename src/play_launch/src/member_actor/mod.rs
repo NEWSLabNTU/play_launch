@@ -34,7 +34,9 @@
 //!         StateEvent::Started { name, pid } => {
 //!             println!("Node {} started with PID {}", name, pid);
 //!         }
-//!         StateEvent::Exited { name, exit_code } => {
+//!         StateEvent::Exited {
+//!             name, exit_code, ..
+//!         } => {
 //!             println!("Node {} exited with code {:?}", name, exit_code);
 //!         }
 //!         _ => {}

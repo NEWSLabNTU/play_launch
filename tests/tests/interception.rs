@@ -955,3 +955,84 @@ fn test_health_reports_one_issue_per_incompatible_topic() {
         "{journal}"
     );
 }
+
+/// Exits reach the Health page with their signal (W3): a process that
+/// segfaults and is respawned becomes a crash loop, one that aborts with
+/// respawn off stays down, and `/api/nodes` carries each member's last exit.
+#[test]
+fn test_health_reports_crash_loops_and_members_that_stay_down() {
+    let env = fixtures::install_env();
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/crash_loop.launch.xml");
+    let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--web-addr",
+        &format!("127.0.0.1:{port}"),
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        launch.to_str().unwrap(),
+    ]);
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let (kinds, issues) = loop {
+        std::thread::sleep(Duration::from_millis(500));
+        let (status, body) = http(port, "GET", "/api/health/issues", None);
+        if status != 200 {
+            continue;
+        }
+        let snap: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let open = snap["open"].as_array().cloned().unwrap_or_default();
+        let kinds: Vec<String> = open
+            .iter()
+            .map(|i| i["kind"].as_str().unwrap().to_string())
+            .collect();
+        if (kinds.contains(&"crash_loop".to_string()) && kinds.contains(&"down".to_string()))
+            || std::time::Instant::now() > deadline
+        {
+            break (kinds, open);
+        }
+    };
+    let (_, nodes) = http(port, "GET", "/api/nodes", None);
+    drop(proc);
+
+    assert!(kinds.contains(&"crash_loop".to_string()), "{issues:?}");
+    assert!(kinds.contains(&"down".to_string()), "{issues:?}");
+    let detail = |kind: &str| {
+        issues
+            .iter()
+            .find(|i| i["kind"] == kind)
+            .map(|i| i["detail"].as_str().unwrap().to_string())
+            .unwrap()
+    };
+    assert!(
+        detail("crash_loop").contains("SIGSEGV"),
+        "{}",
+        detail("crash_loop")
+    );
+    assert!(detail("down").contains("SIGABRT"), "{}", detail("down"));
+    assert!(
+        !issues.iter().any(|i| i["subject"]["name"] == "talker"),
+        "the healthy talker raised an issue: {issues:?}"
+    );
+
+    let nodes: serde_json::Value = serde_json::from_str(&nodes).unwrap();
+    let signals: Vec<i64> = nodes
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|n| n["last_exit"]["signal"].as_i64())
+        .collect();
+    assert!(signals.contains(&11), "SIGSEGV on /api/nodes: {signals:?}");
+    assert!(signals.contains(&6), "SIGABRT on /api/nodes: {signals:?}");
+}

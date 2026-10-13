@@ -61,6 +61,48 @@ pub(crate) fn apply(shared: &SharedState, event: &StateEvent) {
 /// same event stream as the state mirror.
 pub(crate) type RestartCounts = DashMap<String, u32>;
 
+/// One process exit, as the Health page and the node panel show it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ExitRecord {
+    pub at_ms: u64,
+    pub code: Option<i32>,
+    pub signal: Option<i32>,
+    pub uptime_ms: Option<u64>,
+    pub oom_killed: Option<bool>,
+}
+
+/// Exits kept per member: enough to see a crash loop, bounded.
+pub(crate) const EXIT_HISTORY_LEN: usize = 20;
+
+/// Recent exits per member, newest last (reducer-written, read by the handle).
+pub(crate) type ExitHistory = DashMap<String, std::collections::VecDeque<ExitRecord>>;
+
+/// Fold one actor event into the exit history.
+pub(crate) fn apply_exit(history: &ExitHistory, event: &StateEvent) {
+    if let StateEvent::Exited {
+        name,
+        exit_code,
+        signal,
+        at_ms,
+        uptime_ms,
+        oom_killed,
+    } = event
+    {
+        let mut entry = history.entry(name.clone()).or_default();
+        entry.push_back(ExitRecord {
+            at_ms: *at_ms,
+            code: *exit_code,
+            signal: *signal,
+            uptime_ms: *uptime_ms,
+            oom_killed: *oom_killed,
+        });
+        while entry.len() > EXIT_HISTORY_LEN {
+            entry.pop_front();
+        }
+    }
+}
+
 /// Fold one actor event into the restart counters.
 pub(crate) fn apply_restart_count(counts: &RestartCounts, event: &StateEvent) {
     if let StateEvent::ComposableRespawning {
@@ -118,6 +160,32 @@ mod tests {
     }
 
     #[test]
+    fn exit_history_keeps_the_last_exits_with_their_signal() {
+        let history = ExitHistory::new();
+        for i in 0..(EXIT_HISTORY_LEN as u64 + 5) {
+            apply_exit(
+                &history,
+                &StateEvent::Exited {
+                    name: "node:/a".into(),
+                    exit_code: None,
+                    signal: Some(11),
+                    at_ms: i,
+                    uptime_ms: Some(1000),
+                    oom_killed: Some(false),
+                },
+            );
+        }
+        let h = history.get("node:/a").unwrap();
+        assert_eq!(h.len(), EXIT_HISTORY_LEN, "bounded");
+        assert_eq!(
+            h.back().unwrap().at_ms,
+            EXIT_HISTORY_LEN as u64 + 4,
+            "newest last"
+        );
+        assert_eq!(h.back().unwrap().signal, Some(11));
+    }
+
+    #[test]
     fn started_maps_to_running() {
         let shared = SharedState::new();
         apply(
@@ -148,6 +216,10 @@ mod tests {
             &StateEvent::Exited {
                 name: "node:/a".into(),
                 exit_code: Some(0),
+                signal: None,
+                at_ms: 0,
+                uptime_ms: None,
+                oom_killed: None,
             },
         );
         // Still Running — the resolution event carries the outcome.

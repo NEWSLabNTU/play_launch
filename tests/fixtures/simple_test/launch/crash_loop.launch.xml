@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<!--
+  Exits the Health page must report.
+
+  - The first process segfaults after a second and is respawned: a crash
+    loop, every exit SIGSEGV.
+  - The second aborts after a second with respawn off: it stays down, SIGABRT.
+  - The talker is healthy, so the page has something that is not a problem.
+-->
+<launch>
+  <executable cmd="python3 $(dirname)/../scripts/crasher.py" respawn="true" respawn_delay="0.5" output="screen">
+    <env name="SIGNAL" value="SEGV"/>
+  </executable>
+  <executable cmd="python3 $(dirname)/../scripts/crasher.py" output="screen">
+    <env name="SIGNAL" value="ABRT"/>
+  </executable>
+  <node pkg="demo_nodes_cpp" exec="talker" name="talker" output="screen"/>
+</launch>

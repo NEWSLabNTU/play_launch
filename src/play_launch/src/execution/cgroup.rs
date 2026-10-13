@@ -43,6 +43,7 @@
 
 use std::{
     ffi::CString,
+    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
 };
 use tracing::{debug, info, warn};
@@ -650,6 +651,14 @@ impl CgroupHandle {
             libc::close(fd);
             result
         }
+    }
+
+    /// The group's `memory.events` `oom_kill` counter: how many processes the
+    /// kernel's OOM killer has killed in this group. `None` when unreadable
+    /// (no memory controller delegated).
+    pub fn oom_kills(&self) -> Option<u64> {
+        let procs = Path::new(std::ffi::OsStr::from_bytes(self.0.as_bytes()));
+        MemoryEvents::read(procs.parent()?).map(|e| e.oom_kill)
     }
 
     /// The `cgroup.procs` path this handle writes, for the failure report.

@@ -8,6 +8,15 @@ allowance heavily.
 
 ## Unreleased
 
+- **New:** exits are tracked. Each exit records its signal, how long the
+  process had run, and — when the member has a cgroup — whether the kernel's
+  OOM killer did it. Node cards show the last exit (`exit: SIGSEGV after
+  12 s`) and a crash-loop badge; the Health page reports crash loops (three
+  exits in five minutes, however fast the node comes back), OOM kills, and
+  members that crashed and stayed down (a member you stopped is not one).
+- **Fix:** `respawn` and `respawn_delay` on `<executable>` (XML and YAML)
+  were accepted and ignored, so the process stayed dead (#0069). The Python
+  frontend still drops them for `Node` and `ExecuteProcess` (#0070).
 - **New:** a **Health** page, now the web UI's landing view: one list of what
   is wrong now (QoS pairs that never match, subscribers dropping messages,
   streams that stopped, a summary of endpoints that never carried a message,

@@ -49,6 +49,10 @@ pub struct ContainerActor {
     pub(super) name: String,
     /// Node execution context
     pub(super) context: NodeContext,
+    /// When the current container process was spawned, for exit uptime.
+    pub(super) spawned_at: Option<std::time::Instant>,
+    /// The cgroup's `oom_kill` counter at spawn, to tell an OOM kill at exit.
+    pub(super) oom_baseline: Option<u64>,
     /// Actor configuration
     pub(super) config: ActorConfig,
     /// Current state
@@ -101,6 +105,8 @@ impl ContainerActor {
         Self {
             name,
             context: params.context,
+            spawned_at: None,
+            oom_baseline: None,
             config: params.config,
             state: NodeState::Pending,
             control_rx,
@@ -193,6 +199,8 @@ impl ContainerActor {
                     .ok_or_else(|| eyre::eyre!("Failed to get PID from spawned process"))?;
 
                 debug!("{}: Container process started with PID {}", self.name, pid);
+                self.spawned_at = Some(std::time::Instant::now());
+                self.oom_baseline = self.context.cgroup.as_ref().and_then(|c| c.oom_kills());
 
                 // Register process for I/O monitoring
                 self.register_process(pid);
@@ -361,8 +369,11 @@ impl ContainerActor {
 
             tokio::select! {
                 status = child.wait() => {
-                    let exit_code = status.ok().and_then(|s| s.code());
-                    return self.handle_child_exit(exit_code, pid).await;
+                    use std::os::unix::process::ExitStatusExt;
+                    let status = status.ok();
+                    let exit_code = status.and_then(|s| s.code());
+                    let signal = status.and_then(|s| s.signal());
+                    return self.handle_child_exit(exit_code, signal, pid).await;
                 }
 
                 Some(event) = self.control_rx.recv() => {

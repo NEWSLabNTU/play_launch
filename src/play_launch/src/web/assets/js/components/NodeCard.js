@@ -13,6 +13,23 @@ function getStatusClass(status) {
 }
 
 /** Get the display label for node type. */
+const SIGNALS = { 1: 'SIGHUP', 2: 'SIGINT', 3: 'SIGQUIT', 4: 'SIGILL', 5: 'SIGTRAP', 6: 'SIGABRT',
+    7: 'SIGBUS', 8: 'SIGFPE', 9: 'SIGKILL', 11: 'SIGSEGV', 13: 'SIGPIPE', 14: 'SIGALRM', 15: 'SIGTERM' };
+
+/** "SIGSEGV after 12 s", "code 1 after 3 min", "killed by the OOM killer". */
+export function describeExit(e) {
+    if (!e) return '';
+    let how;
+    if (e.oom_killed === true) how = 'killed by the OOM killer';
+    else if (e.signal != null) how = SIGNALS[e.signal] || `signal ${e.signal}`;
+    else if (e.code != null) how = `code ${e.code}`;
+    else how = 'no exit status';
+    if (e.uptime_ms == null) return how;
+    return e.uptime_ms < 120000
+        ? `${how} after ${Math.round(e.uptime_ms / 1000)} s`
+        : `${how} after ${Math.round(e.uptime_ms / 60000)} min`;
+}
+
 function getTypeLabel(nodeType) {
     switch (nodeType) {
         case 'node': return 'Node';
@@ -271,6 +288,8 @@ export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
                     ${ordinal && html`<span class="node-ordinal" title="Duplicate name — canonical id ${id}">${ordinal}</span>`}
                     ${node.pid != null && html`<span class="node-pid">PID ${node.pid}</span>`}
                     ${isComposable && node.restart_count != null && node.restart_count > 0 && html`<span class="node-pid" title="Reloaded after a crash (composable_respawn)">restarts ${node.restart_count}</span>`}
+                    ${node.recent_exits >= 3 && html`<span class="node-crash-loop" title="Exited ${node.recent_exits} times in the last 5 minutes">crash loop</span>`}
+                    ${node.last_exit && html`<span class="node-pid" title=${'Last exit at ' + new Date(node.last_exit.at_ms).toLocaleTimeString()}>exit: ${describeExit(node.last_exit)}</span>`}
                     <${DiagnosticBadge} level=${node.diagnostic_level} />
                     <${StderrIcon} node=${node} />
                 </div>

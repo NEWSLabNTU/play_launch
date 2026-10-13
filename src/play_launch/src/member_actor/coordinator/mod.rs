@@ -9,6 +9,7 @@ mod builder;
 mod handle;
 mod runner;
 mod state_reducer;
+pub use state_reducer::ExitRecord;
 mod summary;
 
 pub use builder::MemberCoordinatorBuilder;

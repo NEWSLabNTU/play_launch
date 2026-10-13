@@ -26,7 +26,25 @@ name: string,
 /**
  * Exit code (None if killed)
  */
-exit_code: number | null, } | { "type": "respawning", 
+exit_code: number | null, 
+/**
+ * The signal that ended it, when one did (SIGSEGV = 11, ...).
+ */
+signal: number | null, 
+/**
+ * When it exited, Unix ms.
+ */
+at_ms: bigint, 
+/**
+ * How long it had been running, when known.
+ */
+uptime_ms: bigint | null, 
+/**
+ * Whether the kernel's OOM killer ended it: from the member's cgroup
+ * `memory.events` `oom_kill` counter, read at spawn and at exit.
+ * `None` when the member has no cgroup to ask.
+ */
+oom_killed: boolean | null, } | { "type": "respawning", 
 /**
  * Member name
  */

@@ -128,7 +128,14 @@ pub struct MemberSummary {
     pub restart_count: Option<u32>,
     /// Output directory for logs
     pub output_dir: PathBuf,
+    /// The member's most recent exit, if it has exited.
+    pub last_exit: Option<crate::member_actor::coordinator::ExitRecord>,
+    /// Exits in the last [`RECENT_EXIT_WINDOW_MS`].
+    pub recent_exits: u32,
 }
+
+/// The window `recent_exits` counts over, and the crash-loop rule judges.
+pub const RECENT_EXIT_WINDOW_MS: u64 = 5 * 60 * 1000;
 
 /// Health summary statistics for all members
 #[derive(Debug, Clone, Default, Serialize)]

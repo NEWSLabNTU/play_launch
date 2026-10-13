@@ -1,6 +1,10 @@
 # Health page (Tier 1 observability)
 
-**Status: W0–W2 done (2026-10-13); W3–W7 next.** W0 found that the
+**Status: W0–W3 done (2026-10-13); W4–W7 next.** W3: every exit carries
+its signal, uptime and an OOM verdict from the member's cgroup; the
+coordinator keeps the last 20 per member; Health reports crash loops (≥3
+exits in 5 min), OOM kills, members that crashed and stayed down (not ones a
+user stopped), and failures; node cards show the last exit. W0 found that the
 diagnostics subscriber was *not* the ~30% (see "Prerequisite" below for what
 it was); W1's per-subsystem accounting is in (`util/self_cost.rs`, logged and
 shown on the page); W2's book, API (`/api/health/issues`, its `/stream`) and

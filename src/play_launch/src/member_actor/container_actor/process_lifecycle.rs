@@ -244,6 +244,7 @@ impl ContainerActor {
     pub(super) async fn handle_child_exit(
         &mut self,
         exit_code: Option<i32>,
+        signal: Option<i32>,
         pid: u32,
     ) -> Result<bool> {
         info!("{}: Container exited with code {:?}", self.name, exit_code);
@@ -265,13 +266,21 @@ impl ContainerActor {
         let _ = self.container_state_tx.send(ContainerState::Stopped);
 
         // Send state event
-        crate::member_actor::events::emit(
-            &self.state_tx,
+        crate::member_actor::events::emit(&self.state_tx, {
+            let (at_ms, uptime_ms, oom_killed) = crate::member_actor::events::exit_facts(
+                self.spawned_at,
+                self.oom_baseline,
+                self.context.cgroup.as_ref(),
+            );
             StateEvent::Exited {
                 name: self.name.clone(),
                 exit_code,
-            },
-        )
+                signal,
+                at_ms,
+                uptime_ms,
+                oom_killed,
+            }
+        })
         .await;
 
         // Check if respawn is enabled
