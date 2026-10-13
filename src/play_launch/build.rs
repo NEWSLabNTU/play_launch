@@ -69,7 +69,14 @@ fn embed_long_version() {
         let s = String::from_utf8(out.stdout).ok()?.trim().to_string();
         (!s.is_empty()).then_some(s)
     };
-    let describe = git(&["describe", "--tags", "--always", "--dirty"]);
+    // The release workflow passes the describe it took before rewriting
+    // pyproject.toml's package name for the distribution, which would
+    // otherwise mark every release binary `-dirty`.
+    println!("cargo:rerun-if-env-changed=PLAY_LAUNCH_GIT_DESCRIBE");
+    let describe = std::env::var("PLAY_LAUNCH_GIT_DESCRIBE")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| git(&["describe", "--tags", "--always", "--dirty"]));
 
     // Rebuild when the commit, the branch, a tag or the index moves.
     if let Some(git_dir) = git(&["rev-parse", "--absolute-git-dir"]) {

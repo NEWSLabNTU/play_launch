@@ -60,6 +60,9 @@ jobs:
         echo "Building version $VERSION for ${{ matrix.ros }} on ${{ matrix.arch }}"
         ROS=${{ matrix.ros }}
         PYTAG=${{ matrix.python }}
+        # Taken before the sed below dirties the tree; build.rs embeds it in
+        # `play_launch --version`.
+        DESCRIBE=$(git describe --tags --always --dirty)
         # The distribution's package name; the module stays `play_launch`.
         sed -i "0,/^name = \"play_launch\"/s//name = \"play_launch_${ROS}\"/" pyproject.toml
         grep -m1 '^name = ' pyproject.toml
@@ -79,6 +82,7 @@ jobs:
         # native libraries for each architecture (avoids QEMU/multi-arch
         # issues with pre-built Docker images).
         docker run --rm --platform=${DOCKER_ARCH} \
+          -e PLAY_LAUNCH_GIT_DESCRIBE="$DESCRIBE" \
           -v $PWD:/workspace \
           -w /workspace \
           ubuntu:${{ matrix.ubuntu }} \
