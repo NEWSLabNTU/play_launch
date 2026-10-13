@@ -8,6 +8,14 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fix:** `--parser python` with nav2_bringup: the dumper merged every
+  node's section of a substituted parameter file into each node, and dropped
+  parameter files holding lists (`node_names`). Such files now stay
+  parameter files and lists load (#0074).
+- **Fix:** the Rust parser reads Jazzy's `PushROSNamespace` and
+  `launch_ros.descriptions.ParameterFile` (#0072). It still cannot read
+  launch files that define their own substitutions, such as nav2_bringup's;
+  use `--parser python` for those (#0073).
 - **Fix:** a process with `shell=True` (`ExecuteProcess(shell=True)`,
   `<executable shell="true">`) was run with its parts as argv instead of
   through the shell. `ros_gz_sim`'s `gz_sim.launch.py` is one: `gz sim` got

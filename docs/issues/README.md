@@ -27,6 +27,11 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0074** -- the Python dumper merged every node's section of a substituted
+parameter file (`ParameterFile(allow_substs=True)`, nav2_bringup) into each
+node, and dropped files holding lists (`!!python/tuple`); Nav2's costmaps and
+lifecycle managers aborted. See `archived/0074-*`.
+
 **#0072** -- Jazzy's `launch_ros` names (`PushROSNamespace`,
 `PopROSNamespace`, `ParameterFile` from `launch_ros.descriptions`) were
 missing from the mocks, so `nav2_bringup` on Jazzy stopped the Rust parser.

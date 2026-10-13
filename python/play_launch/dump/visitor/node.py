@@ -56,6 +56,39 @@ def _classify_on_exit(handlers):
     return shutdown, others
 
 
+def _load_launch_params(text: str):
+    """Load a parameter file launch wrote. launch_ros dumps a list value as a
+    tuple, which yaml writes as `!!python/tuple`; safe_load refuses the tag, and
+    the whole file used to be dropped with a warning (nav2's lifecycle managers
+    lost `node_names` and aborted). rcl reads it as a sequence; so do we."""
+    import yaml
+
+    class Loader(yaml.SafeLoader):
+        pass
+
+    Loader.add_constructor(
+        "tag:yaml.org,2002:python/tuple", lambda loader, node: loader.construct_sequence(node)
+    )
+    return yaml.load(text, Loader=Loader)
+
+
+def _section_applies(key: str, fqn: str | None) -> bool:
+    """Whether a parameter file section (`/**`, `controller_server`,
+    `/ns/*/name`...) addresses the node `fqn`, the way rcl matches it."""
+    import re
+
+    key = key.strip("/")
+    if key in ("**", ""):
+        return True
+    if fqn is None:
+        return False
+    pattern = "".join(
+        ".*" if part == "**" else "[^/]*" if part == "*" else re.escape(part)
+        for part in re.split(r"(\*\*|\*)", key)
+    )
+    return re.fullmatch(pattern, fqn.strip("/")) is not None
+
+
 def visit_node(
     node: Node,
     context: LaunchContext,
@@ -143,27 +176,43 @@ def visit_node(
                 # Check if this is a temporary parameter file (created by launch system)
                 # If so, extract the parameters as inline params instead
                 if "/tmp/launch_params_" in path:
-                    temp_param_files.append(path)
                     try:
-                        import yaml
-
                         with open(path) as fp:
-                            data = yaml.safe_load(fp)
-                            # Extract params from YAML structure: {namespace/node_name: {ros__parameters: {key: value}}}
-                            for _node_path, node_data in data.items():
-                                if isinstance(node_data, dict) and "ros__parameters" in node_data:
-                                    for param_name, param_value in node_data[
-                                        "ros__parameters"
-                                    ].items():
-                                        # YAML, not str(). yaml.safe_load above returns real
-                                        # Python objects, and str() renders them as Python
-                                        # repr: str(['camera6']) is "['camera6']", whose
-                                        # quotes survive into the spawned node as part of the
-                                        # value. traffic_light_multi_camera_fusion then built
-                                        # the topic "'camera6'/detection/rois" and aborted on
-                                        # InvalidTopicNameError. str(True) is likewise "True"
-                                        # where ROS wants "true".
-                                        params.append((param_name, param_value_to_str(param_value)))
+                            text = fp.read()
+                        data = _load_launch_params(text)
+                        # launch writes two kinds of file there: a node's inline
+                        # `parameters=[{...}]`, and a whole parameter file after
+                        # substitution (`ParameterFile(..., allow_substs=True)`,
+                        # as nav2_bringup does), with a section per node.
+                        # Flattening the second into this node gave every Nav2
+                        # node every other node's keys (`observation_sources`
+                        # from collision_monitor as a list on the costmaps, so
+                        # they aborted). A file addressing other nodes stays a
+                        # parameter file: the node picks its own sections.
+                        try:
+                            fqn = node.node_name
+                        except Exception:
+                            fqn = None
+                        if isinstance(data, dict) and not all(
+                            _section_applies(str(key), fqn) for key in data
+                        ):
+                            params_files.append(text)
+                            dump.file_data[path] = text
+                            continue
+                        temp_param_files.append(path)
+                        # Extract params from YAML structure: {namespace/node_name: {ros__parameters: {key: value}}}
+                        for _node_path, node_data in data.items():
+                            if isinstance(node_data, dict) and "ros__parameters" in node_data:
+                                for param_name, param_value in node_data["ros__parameters"].items():
+                                    # YAML, not str(). yaml.safe_load above returns real
+                                    # Python objects, and str() renders them as Python
+                                    # repr: str(['camera6']) is "['camera6']", whose
+                                    # quotes survive into the spawned node as part of the
+                                    # value. traffic_light_multi_camera_fusion then built
+                                    # the topic "'camera6'/detection/rois" and aborted on
+                                    # InvalidTopicNameError. str(True) is likewise "True"
+                                    # where ROS wants "true".
+                                    params.append((param_name, param_value_to_str(param_value)))
                     except Exception as e:
                         execute_process_logger = launch.logging.get_logger(node.name)
                         execute_process_logger.warning(
