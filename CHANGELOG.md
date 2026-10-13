@@ -8,6 +8,18 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fix:** a process with `shell=True` (`ExecuteProcess(shell=True)`,
+  `<executable shell="true">`) was run with its parts as argv instead of
+  through the shell. `ros_gz_sim`'s `gz_sim.launch.py` is one: `gz sim` got
+  its whole `gz_args` ("-r -s world.sdf") as a single argument and exited
+  at once. Both parsers now record such a process as launch runs it:
+  `/bin/sh -c "<the command line joined with spaces>"`.
+- **Fix:** Jazzy. `rcl_interception_sys` had no Jazzy bindings, so nothing
+  built there, and the published wheels were Humble builds that pip also
+  installed on Jazzy, where they cannot run (they link Python 3.10 and
+  Humble's libraries). The release now builds one wheel per distribution:
+  `manylinux_2_35` (Ubuntu 22.04, Humble) and `manylinux_2_39`
+  (Ubuntu 24.04, Jazzy); pip picks the right one by the system's glibc.
 - **Fix:** `pip install play_launch` failed on Jazzy (Ubuntu 24.04) with
   "Cannot uninstall lark 1.1.9, RECORD file not found": the `lark>=1.2`
   requirement made pip replace the Debian package, which it cannot remove.

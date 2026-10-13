@@ -7,11 +7,20 @@ on:
   workflow_dispatch:
 
 jobs:
+  # One wheel per ROS distribution: the binaries link that distribution's
+  # libraries and its Python (3.10 on Humble, 3.12 on Jazzy), so a Humble
+  # wheel cannot run on Jazzy. The glibc in the platform tag keeps them
+  # apart: pip on 24.04 prefers manylinux_2_39 (Jazzy), and 22.04 cannot
+  # install it, so it takes manylinux_2_35 (Humble).
   build-wheel:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
         arch: [amd64, arm64]
+        ros: [humble, jazzy]
+        include:
+          - {ros: humble, ubuntu: "22.04", codename: jammy, glibc: "2_35"}
+          - {ros: jazzy, ubuntu: "24.04", codename: noble, glibc: "2_39"}
 
     steps:
     - name: Checkout code
@@ -26,7 +35,7 @@ jobs:
       with:
         platforms: arm64
 
-    - name: Build Python wheel (${{ matrix.arch }})
+    - name: Build Python wheel (${{ matrix.ros }}, ${{ matrix.arch }})
       run: |
         # Get version from tag or pyproject.toml
         if [ -n "${GITHUB_REF#refs/tags/v}" ] && [ "${GITHUB_REF#refs/tags/v}" != "$GITHUB_REF" ]; then
@@ -34,26 +43,27 @@ jobs:
         else
           VERSION=$(grep -m1 'version = ' pyproject.toml | sed 's/.*"\(.*\)".*/\1/')
         fi
-        echo "Building version $VERSION for ${{ matrix.arch }}"
+        echo "Building version $VERSION for ${{ matrix.ros }} on ${{ matrix.arch }}"
+        ROS=${{ matrix.ros }}
 
         # Set up architecture-specific variables
         if [ "${{ matrix.arch }}" = "arm64" ]; then
           DOCKER_ARCH="linux/arm64"
           DEB_ARCH="arm64"
-          WHEEL_PLATFORM="manylinux_2_35_aarch64"
+          WHEEL_PLATFORM="manylinux_${{ matrix.glibc }}_aarch64"
         else
           DOCKER_ARCH="linux/amd64"
           DEB_ARCH="amd64"
-          WHEEL_PLATFORM="manylinux_2_35_x86_64"
+          WHEEL_PLATFORM="manylinux_${{ matrix.glibc }}_x86_64"
         fi
 
-        # Build in a fresh ubuntu:22.04 container to ensure correct
+        # Build in a fresh Ubuntu container to ensure correct
         # native libraries for each architecture (avoids QEMU/multi-arch
         # issues with pre-built Docker images).
         docker run --rm --platform=${DOCKER_ARCH} \
           -v $PWD:/workspace \
           -w /workspace \
-          ubuntu:22.04 \
+          ubuntu:${{ matrix.ubuntu }} \
           bash -c "
             set -e
             export DEBIAN_FRONTEND=noninteractive
@@ -64,30 +74,30 @@ jobs:
             # Add ROS 2 repository
             curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
               -o /usr/share/keyrings/ros-archive-keyring.gpg
-            echo \"deb [arch=${DEB_ARCH} signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main\" \
+            echo \"deb [arch=${DEB_ARCH} signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu ${{ matrix.codename }} main\" \
               > /etc/apt/sources.list.d/ros2.list
 
             apt-get update
             apt-get install -y \
               python3-pip python3-dev python3-venv python3-colcon-common-extensions \
-              ros-humble-ros-core \
-              ros-humble-ament-index-python \
-              ros-humble-launch \
-              ros-humble-rcl \
-              ros-humble-rcutils \
-              ros-humble-rmw \
-              ros-humble-rosidl-typesupport-c \
-              ros-humble-composition-interfaces \
-              ros-humble-rcl-interfaces \
-              ros-humble-builtin-interfaces \
-              ros-humble-action-msgs \
-              ros-humble-unique-identifier-msgs \
-              ros-humble-rosgraph-msgs \
-              ros-humble-example-interfaces \
-              ros-humble-test-msgs \
-              ros-humble-rclcpp-components \
-              ros-humble-class-loader \
-              ros-humble-ament-index-cpp \
+              ros-${ROS}-ros-core \
+              ros-${ROS}-ament-index-python \
+              ros-${ROS}-launch \
+              ros-${ROS}-rcl \
+              ros-${ROS}-rcutils \
+              ros-${ROS}-rmw \
+              ros-${ROS}-rosidl-typesupport-c \
+              ros-${ROS}-composition-interfaces \
+              ros-${ROS}-rcl-interfaces \
+              ros-${ROS}-builtin-interfaces \
+              ros-${ROS}-action-msgs \
+              ros-${ROS}-unique-identifier-msgs \
+              ros-${ROS}-rosgraph-msgs \
+              ros-${ROS}-example-interfaces \
+              ros-${ROS}-test-msgs \
+              ros-${ROS}-rclcpp-components \
+              ros-${ROS}-class-loader \
+              ros-${ROS}-ament-index-cpp \
               libclang-dev \
               libz3-dev
 
@@ -96,6 +106,8 @@ jobs:
             source ~/.cargo/env
 
             # Install Python build tools
+            # 24.04 marks the system Python as externally managed (PEP 668)
+            export PIP_BREAK_SYSTEM_PACKAGES=1
             pip3 install 'colcon-cargo-ros2==0.5.1' 'cargo-ament-build>=0.1.11' build 'wheel>=0.40' uv
             # State the toolchain rather than assume it. This pin used to be
             # >=0.4.0, so CI silently tracked whatever PyPI served that day and
@@ -106,10 +118,10 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 
             # Build
-            source /opt/ros/humble/setup.bash
+            source /opt/ros/${ROS}/setup.bash
             just build
             for whl in dist/*.whl; do
-              wheel tags --platform-tag=${WHEEL_PLATFORM} --remove \"\$whl\"
+              python3 -m wheel tags --platform-tag=${WHEEL_PLATFORM} --remove \"\$whl\"
             done
             ls -lh dist/
             chown -R \$(stat -c '%u:%g' /workspace) dist/ build/ install/ || true
@@ -120,7 +132,7 @@ jobs:
     - name: Upload wheel artifact
       uses: actions/upload-artifact@v5
       with:
-        name: wheel-${{ matrix.arch }}
+        name: wheel-${{ matrix.ros }}-${{ matrix.arch }}
         path: dist/*.whl
         retention-days: 7
 
@@ -135,24 +147,15 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v5
 
-    - name: Download amd64 wheel
+    - name: Download the wheels
       uses: actions/download-artifact@v5
       with:
-        name: wheel-amd64
-        path: dist-amd64
+        pattern: wheel-*
+        merge-multiple: true
+        path: release-assets
 
-    - name: Download arm64 wheel
-      uses: actions/download-artifact@v5
-      with:
-        name: wheel-arm64
-        path: dist-arm64
-
-    - name: Prepare release assets
-      run: |
-        mkdir -p release-assets
-        cp dist-amd64/*.whl release-assets/
-        cp dist-arm64/*.whl release-assets/
-        ls -lh release-assets/
+    - name: Show release assets
+      run: ls -lh release-assets/
 
     - name: Extract version
       id: version
@@ -176,16 +179,11 @@ jobs:
       id-token: write  # Required for trusted publishing
 
     steps:
-    - name: Download amd64 wheel
+    - name: Download the wheels
       uses: actions/download-artifact@v5
       with:
-        name: wheel-amd64
-        path: dist
-
-    - name: Download arm64 wheel
-      uses: actions/download-artifact@v5
-      with:
-        name: wheel-arm64
+        pattern: wheel-*
+        merge-multiple: true
         path: dist
 
     - name: Show wheels to publish
