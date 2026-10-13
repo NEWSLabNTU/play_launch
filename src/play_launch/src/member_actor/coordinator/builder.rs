@@ -101,6 +101,7 @@ impl MemberCoordinatorBuilder {
                 .name
                 .clone()
                 .or(context.record.exec_name.clone()),
+            ros_name_known: context.record.name.is_some() && context.record.package.is_some(),
             auto_load: None, // Not applicable for regular nodes
         };
 
@@ -139,6 +140,7 @@ impl MemberCoordinatorBuilder {
             respawn_delay: context.record.respawn_delay,
             exec_name: context.record.exec_name.clone(),
             node_name: context.record.name.clone(),
+            ros_name_known: context.record.name.is_some(),
             auto_load: None, // Not applicable for containers
         };
 
@@ -180,6 +182,7 @@ impl MemberCoordinatorBuilder {
             respawn_delay: None,
             exec_name: None,
             node_name: Some(context.record.node_name.clone()),
+            ros_name_known: true,
             auto_load: Some(auto_load),
         };
 

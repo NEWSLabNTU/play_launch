@@ -9,19 +9,53 @@ use std::{
 /// across all nextest worker processes (each test binary is a separate process).
 static CALL_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-/// Return a ROS_DOMAIN_ID unique across concurrent nextest processes.
-/// Combines PID (unique per process) with a per-process call counter,
-/// then maps into the valid DDS domain range 1..=232 (FastDDS port
-/// formula overflows u16 above 232).
+/// Return a ROS_DOMAIN_ID no other concurrent test process holds.
+///
+/// Each id is claimed with an exclusive `flock` on
+/// `tmp/ros_domains/<id>.lock` under the repository root, held until this
+/// process exits — the kernel drops it then, crash or not, so nothing goes
+/// stale. Ids range over the valid DDS domains 1..=232 (FastDDS's port
+/// formula overflows u16 above 232); the search starts at a pid-derived
+/// offset so concurrent processes rarely contend for the same file.
+///
+/// It used to be `(pid * 7 + counter) % 232 + 1` with no claim at all. With
+/// ~16 tests running at once that puts two on one domain about 40% of the
+/// time, and nothing noticed until the Health page's foreign-node check
+/// (W6) reported another test's `play_launch` on its domain.
+///
 /// Public so a test that has to hand the SAME domain to an external process
 /// (`ros2 topic echo`) can use the same allocator instead of pinning a
 /// constant — see issue 0014, where a hard-coded 199 made the test fail
 /// against a stale `ros2-daemon` left on that domain by an earlier run.
 pub fn next_domain_id() -> u32 {
+    use std::os::fd::AsRawFd;
+    const DOMAINS: u32 = 232;
+    static HELD: std::sync::Mutex<Vec<std::fs::File>> = std::sync::Mutex::new(Vec::new());
+
+    let dir = repo_root().join("tmp/ros_domains");
+    let _ = std::fs::create_dir_all(&dir);
     let pid = std::process::id();
     let seq = CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
-    // Mix pid and seq to spread across domain space; avoid domain 0 (system default)
-    (pid.wrapping_mul(7).wrapping_add(seq) % 232) + 1
+    let start = pid.wrapping_mul(7).wrapping_add(seq) % DOMAINS;
+    for i in 0..DOMAINS {
+        let id = (start + i) % DOMAINS + 1;
+        let Ok(file) = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join(format!("{id}.lock")))
+        else {
+            continue;
+        };
+        // SAFETY: flock on a descriptor this function owns.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            HELD.lock().unwrap().push(file);
+            return id;
+        }
+    }
+    // Every domain claimed (or the directory unwritable): fall back to the
+    // unclaimed spread rather than fail the test.
+    start + 1
 }
 
 /// Repository root (parent of `tests/`).

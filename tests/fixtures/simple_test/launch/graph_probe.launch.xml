@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!-- The ROS graph against the run (Health page W6): a subscription whose
+     topic is a typo of a published one; see the script. -->
+<launch>
+  <executable cmd="python3 $(dirname)/../scripts/graph_probe.py pub" name="nm_pub" output="screen"/>
+  <executable cmd="python3 $(dirname)/../scripts/graph_probe.py sub" name="nm_sub" output="screen"/>
+</launch>

@@ -597,6 +597,11 @@ impl MemberHandle {
 
     // --- Graph introspection (Phase 25) ---
 
+    /// play_launch's own ROS node, when it has one.
+    pub fn ros_node(&self) -> Option<Arc<rclrs::Node>> {
+        self.shared_ros_node.clone()
+    }
+
     /// Build a full graph snapshot of all topics and services.
     pub async fn build_graph_snapshot(&self) -> Result<crate::ros::graph_builder::GraphSnapshot> {
         let ros_node = self
@@ -612,7 +617,12 @@ impl MemberHandle {
             .collect();
         drop(fqn_map);
 
-        crate::ros::graph_builder::build_graph_snapshot(ros_node, &fqn_to_member)
+        // Synchronous rcl work, O(topics + services): off the async workers.
+        let ros_node = ros_node.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::ros::graph_builder::build_graph_snapshot(&ros_node, &fqn_to_member)
+        })
+        .await?
     }
 
     /// Get topics and services for a single node.

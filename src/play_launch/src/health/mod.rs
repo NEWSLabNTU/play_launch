@@ -9,8 +9,8 @@
 //! `play_log/<ts>/health.jsonl` so a bundle can explain its run afterwards.
 //!
 //! Sources today: the Entities snapshot (QoS, take deficits, delivery latency, stale and silent
-//! endpoints) and play_launch's own cost. Crash loops, logs, graph-versus-
-//! model and startup land as their own sources.
+//! endpoints), member exits, logs, the ROS graph against the run, and
+//! play_launch's own cost.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -25,6 +25,7 @@ use tokio::sync::watch;
 
 use crate::{interception::EntitySnapshot, util::self_cost};
 
+pub mod graph;
 pub mod logs;
 
 /// FNV-1a, for stable issue keys built from free text.
@@ -553,6 +554,41 @@ pub fn self_cost_condition(window: &self_cost::Usage) -> Option<Condition> {
     })
 }
 
+fn is_up(state: &crate::member_actor::model::member_view::MemberState) -> bool {
+    use crate::member_actor::model::member_view::MemberState;
+    matches!(
+        state,
+        MemberState::Running { .. } | MemberState::Loaded { .. }
+    )
+}
+
+/// Each member's part in the graph comparison. A member has a known node FQN
+/// when the launch named it (a ROS node with a package, a container, a loaded
+/// composable); a plain `<executable>` and a node the launch did not name
+/// are accounted for by namespace (`graph.rs`).
+fn expected_members(
+    list: &[crate::member_actor::model::member_view::MemberSummary],
+    fqns: &HashMap<String, String>,
+    up_since: &HashMap<String, (Option<u32>, std::time::Instant)>,
+    now: std::time::Instant,
+) -> Vec<graph::Expected> {
+    use crate::member_actor::model::member_view::MemberType;
+    list.iter()
+        .map(|m| {
+            let fqn = m.ros_name_known.then(|| fqns.get(&m.id).cloned()).flatten();
+            let unnamed_ns = (m.member_type != MemberType::ComposableNode && fqn.is_none())
+                .then(|| m.namespace.clone().unwrap_or_else(|| "/".to_string()));
+            graph::Expected {
+                member_id: m.id.clone(),
+                member_name: m.name.clone(),
+                fqn,
+                unnamed_ns,
+                up_for: up_since.get(&m.id).map(|(_, t)| now.duration_since(*t)),
+            }
+        })
+        .collect()
+}
+
 /// The Health task: once a second, gather conditions from every source,
 /// update the book, and publish a snapshot.
 pub async fn run_health_task(
@@ -569,6 +605,15 @@ pub async fn run_health_task(
     // Self-cost readings for the display (last few seconds) and the rule
     // (the last SELF_COST_WINDOW).
     let mut readings: VecDeque<self_cost::Reading> = VecDeque::new();
+    // The graph comparison: a read every GRAPH_PERIOD on a blocking thread,
+    // its conditions reported every tick until the next read replaces them.
+    let mut graph_job: Option<tokio::task::JoinHandle<eyre::Result<graph::GraphFacts>>> = None;
+    let mut graph_conds: Vec<Condition> = Vec::new();
+    let mut dangling: std::collections::HashSet<String> = Default::default();
+    // Since when each member has been up, and as which pid: a respawn starts
+    // the clock again.
+    let mut up_since: HashMap<String, (Option<u32>, std::time::Instant)> = HashMap::new();
+    let own_prefix = format!("/play_launch_{}", std::process::id());
     loop {
         tokio::select! {
             _ = tick.tick() => {}
@@ -609,6 +654,46 @@ pub async fn run_health_task(
                 );
             }
             conditions.extend(log_watcher.conditions(unix_ms(now)));
+
+            let mono = std::time::Instant::now();
+            for m in &list {
+                if is_up(&m.state) {
+                    let e = up_since.entry(m.id.clone()).or_insert((m.pid, mono));
+                    if e.0 != m.pid {
+                        *e = (m.pid, mono);
+                    }
+                } else {
+                    up_since.remove(&m.id);
+                }
+            }
+            if graph_job.as_ref().is_some_and(|j| j.is_finished()) {
+                match graph_job.take().unwrap().await {
+                    Ok(Ok(facts)) => {
+                        let fqns = handle.node_fqn_map().read().await.clone();
+                        let expected = expected_members(&list, &fqns, &up_since, mono);
+                        let ours = graph::Ours {
+                            announced: entities
+                                .as_ref()
+                                .map(|rx| rx.borrow().nodes.iter().cloned().collect())
+                                .unwrap_or_default(),
+                            own_prefix: own_prefix.clone(),
+                        };
+                        graph_conds = graph::graph_conditions(&facts, &expected, &ours, &dangling);
+                        dangling = graph::dangling_subscribed(&facts);
+                    }
+                    Ok(Err(e)) => tracing::debug!("health: graph read failed: {e:#}"),
+                    Err(e) => tracing::debug!("health: graph read panicked: {e}"),
+                }
+            }
+            if graph_job.is_none()
+                && ticks.is_multiple_of(graph::GRAPH_PERIOD.as_secs())
+                && let Some(node) = handle.ros_node()
+            {
+                graph_job = Some(tokio::task::spawn_blocking(move || {
+                    graph::read_graph(&node)
+                }));
+            }
+            conditions.extend(graph_conds.iter().cloned());
         }
         if let Some(rx) = entities.as_ref() {
             let snap = rx.borrow().clone();
@@ -748,6 +833,7 @@ mod tests {
             is_container: false,
             exec_name: None,
             node_name: None,
+            ros_name_known: false,
             stderr_last_modified: None,
             stderr_size: 0,
             stderr_preview: None,

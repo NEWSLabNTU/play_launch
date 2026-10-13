@@ -294,6 +294,10 @@ pub struct EntitySnapshot {
     pub(crate) totals: Totals,
     pub(crate) truncated: usize,
     pub(crate) rows: Vec<LiveRow>,
+    /// Every node FQN the interceptor saw a process of this run create, for
+    /// the Health page's graph comparison. Not sent to the page.
+    #[serde(skip)]
+    pub(crate) nodes: Vec<String>,
 }
 
 impl EntitySnapshot {
@@ -315,6 +319,7 @@ impl EntitySnapshot {
             totals: self.totals.clone(),
             truncated: self.rows.len() - rows.len(),
             rows,
+            nodes: Vec::new(),
         }
     }
 }
@@ -596,6 +601,7 @@ impl EndpointTracker {
             totals,
             truncated: 0,
             rows,
+            nodes: self.node_names.values().cloned().collect(),
         }
     }
 }

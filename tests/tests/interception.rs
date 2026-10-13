@@ -1218,3 +1218,115 @@ fn test_delivery_latency_separates_a_slow_subscriber_from_a_fast_one() {
         "{latency:?}"
     );
 }
+
+/// Run `graph_probe.launch.xml` with a node started outside it on the same
+/// domain, and return the open Health issues once the near miss is reported
+/// (or after 50 s).
+fn graph_probe_issues(interception: bool) -> Vec<serde_json::Value> {
+    let env = fixtures::install_env();
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/graph_probe.launch.xml");
+    let script = fixtures::test_workspace_path("simple_test").join("scripts/graph_probe.py");
+    let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--interception",
+        if interception { "on" } else { "off" },
+        "--web-addr",
+        &format!("127.0.0.1:{port}"),
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        launch.to_str().unwrap(),
+    ]);
+    cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", interception_so_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let domain = cmd
+        .get_envs()
+        .find(|(k, _)| *k == "ROS_DOMAIN_ID")
+        .and_then(|(_, v)| v)
+        .unwrap()
+        .to_owned();
+    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+
+    let mut stranger = std::process::Command::new("python3");
+    fixtures::apply_test_env(&mut stranger, &env);
+    stranger.env("ROS_DOMAIN_ID", &domain);
+    stranger.args([script.to_str().unwrap(), "stranger"]);
+    stranger.stdout(Stdio::null());
+    stranger.stderr(Stdio::null());
+    let stranger = ManagedProcess::spawn(&mut stranger).expect("failed to spawn stranger");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(50);
+    let issues = loop {
+        std::thread::sleep(Duration::from_millis(1000));
+        let (status, body) = http(port, "GET", "/api/health/issues", None);
+        if status != 200 {
+            continue;
+        }
+        let open: Vec<serde_json::Value> = serde_json::from_str::<serde_json::Value>(&body)
+            .unwrap()["open"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let has = |k: &str| open.iter().any(|i| i["kind"] == k);
+        if (has("near_miss_topic") && has("foreign_node")) || std::time::Instant::now() > deadline {
+            break open;
+        }
+    };
+    drop(stranger);
+    drop(proc);
+    issues
+}
+
+fn issues_of<'a>(issues: &'a [serde_json::Value], kind: &str) -> Vec<&'a serde_json::Value> {
+    issues.iter().filter(|i| i["kind"] == kind).collect()
+}
+
+/// The ROS graph against the run (W6), with interception naming every node
+/// of the run: the stranger is reported by name, and the subscription to a
+/// typo of a published topic is a near miss naming the published one.
+#[test]
+fn test_health_compares_the_graph_with_the_run() {
+    let issues = graph_probe_issues(true);
+    let foreign = issues_of(&issues, "foreign_node");
+    assert_eq!(foreign.len(), 1, "{issues:?}");
+    assert_eq!(foreign[0]["subject"]["name"], "/stranger", "{foreign:?}");
+
+    let near = issues_of(&issues, "near_miss_topic");
+    assert_eq!(near.len(), 1, "{issues:?}");
+    assert_eq!(near[0]["subject"]["name"], "/near_miss/pointz");
+    let detail = near[0]["detail"].as_str().unwrap();
+    assert!(detail.contains("`/near_miss/points`"), "{detail}");
+    assert!(detail.contains("/nm_sub"), "{detail}");
+    assert!(issues_of(&issues, "missing_node").is_empty(), "{issues:?}");
+}
+
+/// The same without interception: an executable's node has no name the run
+/// can know, so the stranger is reported as the namespace's excess, and says
+/// how to name them.
+#[test]
+fn test_health_counts_unnamed_nodes_by_namespace_without_interception() {
+    let issues = graph_probe_issues(false);
+    let foreign = issues_of(&issues, "foreign_node");
+    assert_eq!(foreign.len(), 1, "{issues:?}");
+    assert_eq!(
+        foreign[0]["subject"]["name"], "/ (1 unaccounted)",
+        "{foreign:?}"
+    );
+    assert!(
+        foreign[0]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("--interception on"),
+        "{foreign:?}"
+    );
+    assert_eq!(issues_of(&issues, "near_miss_topic").len(), 1, "{issues:?}");
+}

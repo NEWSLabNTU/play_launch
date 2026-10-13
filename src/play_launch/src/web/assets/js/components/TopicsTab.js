@@ -1,9 +1,9 @@
 // TopicsTab component — shows topics/services for the selected node (Phase 25).
 
 import { h } from '../vendor/preact.module.js';
-import { useState, useCallback, useMemo } from '../vendor/hooks.module.js';
+import { useState, useCallback, useMemo, useEffect } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { nodes, getStatusString, selectedNode, nodePanelOpen, graphPanelOpen, graphSnapshot, currentView, launchTreeSelection } from '../store.js';
+import { nodes, getStatusString, selectedNode, nodePanelOpen, graphPanelOpen, graphSnapshot, graphViewers, currentView, launchTreeSelection } from '../store.js';
 
 const html = htm.bind(h);
 
@@ -208,6 +208,11 @@ function deriveTopicsFromSnapshot(snap, nodeName) {
 
 /** Main TopicsTab component. */
 export function TopicsTab({ nodeName }) {
+    // While shown, keep the graph snapshot refreshing (store.js).
+    useEffect(() => {
+        graphViewers.value += 1;
+        return () => { graphViewers.value -= 1; };
+    }, []);
     const [showInfra, setShowInfra] = useState(false);
     const [collapsedSections, setCollapsedSections] = useState(new Set());
 

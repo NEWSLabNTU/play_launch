@@ -1,7 +1,7 @@
 // State store for play_launch web UI.
 // Single source of truth using Preact signals.
 
-import { signal, computed } from './vendor/signals.module.js';
+import { signal, computed, effect } from './vendor/signals.module.js';
 
 // --- Node state ---
 
@@ -103,9 +103,6 @@ export const graphSnapshot = signal(null);
  */
 export const graphSelectedElement = signal(null);
 
-
-/** Debounce timer for graph refetch on state changes. */
-let _graphDebounceTimer = null;
 
 // --- Computed values ---
 
@@ -316,8 +313,6 @@ export function applyStateEvent(event) {
     map.set(name, updated);
     nodes.value = map;
 
-    // Phase 25: Debounce graph refresh on state-changing events
-    debounceFetchGraph();
 }
 
 /** Fetch full node list from the API and update the store. */
@@ -375,11 +370,26 @@ export function debounceFetchNodes() {
     }, 300);
 }
 
-/** Debounced graph refetch — called on state-changing events. */
-export function debounceFetchGraph() {
-    if (_graphDebounceTimer) clearTimeout(_graphDebounceTimer);
-    _graphDebounceTimer = setTimeout(() => {
-        _graphDebounceTimer = null;
-        fetchGraph();
-    }, 500);
-}
+/** The graph is read only while something on screen shows it: the Graph
+ * page, the Nodes page (its cards carry topic counts), or a Topics tab
+ * (counted in `graphViewers`). Then once on opening and every 10 s. Building it
+ * costs the server a walk of every topic and service, so it used to be
+ * refetched after every state event — hundreds of times during a big
+ * launch's startup. */
+const GRAPH_REFRESH_MS = 10000;
+let _graphTimer = null;
+/** Mounted components that read the graph snapshot outside those pages. */
+export const graphViewers = signal(0);
+export const graphWanted = computed(() =>
+    currentView.value === 'graph' || currentView.value === 'nodes' || graphViewers.value > 0);
+effect(() => {
+    if (graphWanted.value) {
+        if (_graphTimer === null) {
+            fetchGraph();
+            _graphTimer = setInterval(fetchGraph, GRAPH_REFRESH_MS);
+        }
+    } else if (_graphTimer !== null) {
+        clearInterval(_graphTimer);
+        _graphTimer = null;
+    }
+});

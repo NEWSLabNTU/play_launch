@@ -45,6 +45,10 @@ pub struct MemberMetadata {
     pub respawn_delay: Option<f64>,
     pub exec_name: Option<String>,
     pub node_name: Option<String>,
+    /// `node_name` is the node's real ROS name: the launch file named it (or
+    /// it is a composable, always named). An unnamed node's `node_name` is
+    /// its executable-derived key (#0017), which the graph does not know.
+    pub ros_name_known: bool,
     pub auto_load: Option<bool>, // For composable nodes: auto-load when container starts
 }
 

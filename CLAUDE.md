@@ -664,7 +664,7 @@ play_launch context system_model.yaml --tree    # Launch tree inspection
 
 Two crates: parser unit tests (`src/play_launch_parser/`) and integration tests (`tests/`, excluded from workspace). Integration tests use `ManagedProcess` RAII guard (`tests/src/process.rs`) for guaranteed cleanup via `setsid()` + `PR_SET_PDEATHSIG` + PGID kill on Drop.
 
-**DDS isolation**: `play_launch_cmd()` in `tests/src/fixtures.rs` assigns a unique `ROS_DOMAIN_ID` per invocation (PID + counter) so concurrent nextest processes don't cross-talk over DDS.
+**DDS isolation**: `play_launch_cmd()` in `tests/src/fixtures.rs` assigns a `ROS_DOMAIN_ID` per invocation that no other running test holds: `next_domain_id()` claims it with an exclusive `flock` on `tmp/ros_domains/<id>.lock`, released by the kernel when the test process exits. It used to hash PID + counter into 232 slots unclaimed, which with ~16 concurrent tests shares a domain roughly 40% of the time; the Health page's foreign-node check found it (another test's `play_launch` on its domain).
 
 Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concurrent_loading,container_events,parallel_loading,rt_workspace}/` — 4 of them (`autoware`, `simple_test`, `container_events`, `rt_workspace`) have a `just compare-dumps` recipe (model-based parser parity, self-contained — resolves both parsers itself; Phase 47.B5 removed the `dump-rust`/`dump-python`/`dump-both`/`compare-dumps-record` record.json-based recipes). **`just test-all` runs the parity gates** (`just test-parity`), because a gate
 nobody runs is a gate that rots: in that state one of them found #0021 — the
@@ -677,6 +677,24 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-10-13**: **The graph against the run** (`health-page.md` W6,
+  `health/graph.rs`). Every 10 s the health task reads node names and each
+  topic's endpoints on `spawn_blocking` and reports `missing_node` (a named
+  member up 30 s, same pid, absent from the graph), `foreign_node`,
+  `duplicate_node` and `near_miss_topic`. What the run "accounts for": FQNs in
+  the coordinator's map, nodes the interceptor saw our processes create
+  (`EntitySnapshot.nodes`), play_launch's own, and — for members whose ROS
+  name the run cannot know — one node per such member in its namespace.
+  `MemberMetadata::ros_name_known` is that test (`node_name` falls back to
+  the executable key for unnamed nodes, #0017; the first Autoware run read
+  eleven of them as missing). The near-miss rule was narrowed by measurement:
+  53 candidates on Autoware under a looser rule, all optional inputs, 0 now.
+  `/api/graph` builds on `spawn_blocking`, and the web UI fetches it only
+  while the Graph or Nodes page or a Topics tab is shown, every 10 s — it
+  used to refetch 500 ms after every state event. Its first `test-all` run
+  found the test suite's `ROS_DOMAIN_ID` allocator handing two concurrent
+  tests one domain (see Testing); it claims domains with `flock` now.
 
 - **2026-10-13**: **Delivery latency per subscription** (`health-page.md`
   W5, `interception/latency.rs`). The interceptor already reported a

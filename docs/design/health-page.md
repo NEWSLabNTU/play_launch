@@ -1,6 +1,11 @@
 # Health page (Tier 1 observability)
 
-**Status: W0–W5 done (2026-10-13); W6–W7 next.** W5:
+**Status: W0–W6 done (2026-10-13); W7 next.** W6: `health/graph.rs`
+reads the graph every 10 s on `spawn_blocking` and reports nodes the run
+expects and the graph lacks, nodes on the domain the run did not start,
+names two nodes share, and subscriptions whose topic is a typo of a
+published one; `/api/graph` runs off the async workers and the page fetches
+it only while something shows it. W5:
 `interception/latency.rs` matches each stamped take to its publish by
 stamp and keeps a 64-bucket log histogram per subscription (run, and the
 last 10–20 s); Entities shows p99/p50 and Health a `delivery_latency`
@@ -238,6 +243,38 @@ policy is unknown` collapsed into one row with its count.
 Also: **move `build_graph_snapshot` onto `spawn_blocking`** and stop
 re-fetching it after every state event (fetch on Graph-page open and every
 10 s while open). It is synchronous rcl work on an async worker today.
+
+As built (W6), and where it departs from the above:
+
+- **No model in `WebState`.** Everything the three rules need is already in
+  the member handle: the FQN map (named nodes and containers at start,
+  composables on load) and, per member, whether its name is a ROS name.
+  That last bit is new (`MemberMetadata::ros_name_known`): `node_name` falls
+  back to the executable-derived key (#0017) for an unnamed node, and the
+  first Autoware run reported eleven such nodes missing.
+- **MissingNode uses the graph read**, not interceptor identities, so it
+  works without interception. "Up" restarts with each new pid: a member
+  crash-looping between ticks (rviz2 without a display) is not "up for 88 s".
+- **ForeignNode without interception** cannot name a node the launch left
+  unnamed, nor an `<executable>`'s. Such members excuse as many unclaimed
+  graph nodes in their namespace; beyond that the issue is the namespace's
+  ("/ (1 unaccounted)") and says to run with interception, which names every
+  node a process of ours creates (`EntitySnapshot.nodes`). Hidden nodes
+  (`_`-prefixed segments), rclcpp's `transform_listener_impl_*` and
+  play_launch's own are never foreign.
+- **DuplicateNode** was added: one FQN listed twice. Cheap from the same read,
+  and two launches on one domain produce exactly this.
+- **NearMissTopic is narrower.** The first Autoware run reported 53, every one
+  an optional input: a segment differing entirely, or a shared leaf, matches
+  `processing_time_ms` and `pointcloud` everywhere. A candidate is now a
+  same-depth topic one segment off by a typo (edit distance ≤ 2 and ≤ a third
+  of the word, and neither extending the other: `/initialpose3d` is a sibling
+  of `/initialpose`), or the ONLY published topic with that leaf and one
+  nobody subscribes to. The subscription must have dangled for two reads.
+  Autoware: 0, with or without interception; the fixture's `pointz` typo: 1.
+- **Graph page fetching**: once on opening and every 10 s while the Graph or
+  Nodes page or a Topics tab is shown, instead of 500 ms after every state
+  event. The read cost 0.3–0.4% of a core on Autoware.
 
 ### G. play_launch's own cost
 

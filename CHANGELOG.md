@@ -8,6 +8,17 @@ allowance heavily.
 
 ## Unreleased
 
+- **New:** the Health page compares the ROS graph with the run, every 10 s:
+  a node the launch named that has been up 30 s but is not discoverable; a
+  node on the same `ROS_DOMAIN_ID` this run did not start (another launch, a
+  stray `ros2 run`); two nodes sharing one name; and a subscription to a
+  topic nobody publishes when a one-letter-off topic has a publisher (a remap
+  typo). Without `--interception on`, nodes the launch did not name are
+  counted per namespace rather than by name.
+- **Fix:** the Graph page's data was rebuilt after every node state change,
+  hundreds of times during a large launch's startup, on the web server's
+  async workers. It is now read on a blocking thread, once when a page that
+  shows it opens and every 10 s while it stays open.
 - **New:** delivery latency per subscription, from publish to take, for
   every message with a `header.stamp` (or a top-level `stamp`). The Entities
   page has a latency column (p99, p50 below; the tooltip gives the max,

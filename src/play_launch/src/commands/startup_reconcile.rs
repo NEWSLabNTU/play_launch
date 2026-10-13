@@ -142,6 +142,7 @@ mod tests {
             is_container: false,
             exec_name: None,
             node_name: None,
+            ros_name_known: false,
             stderr_last_modified: None,
             stderr_size: 0,
             stderr_preview: None,

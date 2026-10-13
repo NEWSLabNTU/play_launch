@@ -51,6 +51,7 @@ pub(super) fn build_summary(
         is_container: meta.member_type == MemberType::Container,
         exec_name: meta.exec_name.clone(),
         node_name: meta.node_name.clone(),
+        ros_name_known: meta.ros_name_known,
         stderr_last_modified,
         stderr_size,
         stderr_preview,

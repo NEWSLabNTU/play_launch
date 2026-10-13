@@ -106,6 +106,9 @@ pub struct MemberSummary {
     pub exec_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_name: Option<String>,
+    /// `node_name` is the node's ROS name, not an executable-derived key.
+    #[serde(skip)]
+    pub ros_name_known: bool,
     /// Unix timestamp (seconds) when stderr was last modified
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stderr_last_modified: Option<u64>,
