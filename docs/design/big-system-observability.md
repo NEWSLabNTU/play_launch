@@ -220,11 +220,17 @@ the RMW and DDS config file in effect (`RMW_IMPLEMENTATION`,
 
 ### Tier 3: valuable, larger or narrower
 
-**M. Live chain latency** for paths a contract declares: p50/p99 from
+**M. Live chain latency.** Redesigned contract-free in
+`docs/design/data-flow-chains.md` (2026-10-14): chains discovered from
+stamps carried across nodes and from same-thread take-then-publish, with
+data age propagated end to end; a contract adds a budget, nothing more.
+Original proposal, for paths a contract declares: p50/p99 from
 sensor stamp to actuator publish, against the budget. The RuleEngine already
 computes max-latency; expose the distribution. Only systems with contracts.
 
-**N. Discovery load** (pain 5). **Done 2026-10-14** (`health/discovery.rs`):
+**N. Discovery load** (pain 5). **Done 2026-10-14**; what play_launch may
+and may not do about DDS, and the next items, are in
+`docs/design/dds-assist.md` (`health/discovery.rs`):
 participants are processes, not nodes — one per ROS node process and
 container, plus each composable an `isolated` container forks (the
 monitor's process count) — against the RMW's limit: Fast DDS's default
@@ -243,7 +249,9 @@ SPDP/SEDP ports' bytes). Container mode is the big lever here (fewer
 participants under `observable`); the panel should say how many participants
 each mode would create.
 
-**O. Network bandwidth per interface and multi-host clock offset**
+**O. Out of scope (2026-10-14).** play_launch aims to be a better `ros2
+launch`, not a fleet monitor. Original proposal: network bandwidth per
+interface and multi-host clock offset
 (`/proc/net/dev`, chrony). Only matters for multi-host deployments.
 
 ## Cost on an AGX Orin
