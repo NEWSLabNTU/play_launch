@@ -321,6 +321,28 @@ function Logs({ logs }) {
     `;
 }
 
+function Host({ host }) {
+    const used = (u, t) => (u != null && t) ? `${fmtBytes(u)} of ${fmtBytes(t)} (${Math.round(u * 100 / t)}%)` : '—';
+    const rows = [
+        ['middleware', html`<b>${host.rmw}</b>${host.rmw_is_default ? html` <span class="hl-muted">(RMW_IMPLEMENTATION unset: the ${host.ros_distro || 'distro'} default)</span>` : ''}`],
+        ['DDS config', host.dds_config.length ? host.dds_config.map(c => html`<div class="hl-mono">${c}</div>`) : html`<span class="hl-muted">none set</span>`],
+        ['socket buffers', html`rmem_max ${fmtBytes(host.rmem_max)}, wmem_max ${fmtBytes(host.wmem_max)}${host.cyclone_rcvbuf_min != null ? html`; Cyclone asks for ≥ ${fmtBytes(host.cyclone_rcvbuf_min)}` : ''}`],
+        ['/dev/shm', html`${used(host.shm_used, host.shm_total)}; Fast DDS files: ${host.fastdds_live} in use, ${host.fastdds_zombie} orphaned${host.fastdds_zombie ? ' (' + fmtBytes(host.fastdds_zombie_bytes) + ')' : ''}`],
+        ['log disk', html`${host.disk_free != null ? fmtBytes(host.disk_free) + ' free' : '—'} <span class="hl-muted hl-mono">${host.log_dir}</span>`],
+        ['swap', html`${host.swap_total ? used(host.swap_used, host.swap_total) : 'none'}${host.swap_pages_per_s != null ? `, ${Math.round(host.swap_pages_per_s)} pages/s` : ''}`],
+    ];
+    return html`
+        <section class="hl-section">
+            <h3 class="hl-heading">Host</h3>
+            <table class="hl-kv">
+                <tbody>
+                    ${rows.map(([k, v]) => html`<tr key=${k}><th>${k}</th><td>${v}</td></tr>`)}
+                </tbody>
+            </table>
+        </section>
+    `;
+}
+
 function SelfCost({ cost }) {
     const subs = Array.isArray(cost.subsystems) ? cost.subsystems : [];
     const cpu = cost.cpu_percent || 0;
@@ -528,6 +550,8 @@ export function HealthView() {
             <${StartupTimeline} />
 
             ${snap && snap.logs && html`<${Logs} logs=${snap.logs} />`}
+
+            ${snap && snap.host && html`<${Host} host=${snap.host} />`}
 
             ${snap && snap.self_cost && html`<${SelfCost} cost=${snap.self_cost} />`}
         </div>

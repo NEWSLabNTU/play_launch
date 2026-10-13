@@ -680,6 +680,18 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-13**: **Host checks** (`big-system-observability.md` §L,
+  `health/host.rs`), read every 60 s on a blocking thread and shown as a
+  Host section on the Health page. The one that matters most here:
+  `rmw_config_ignored`, a DDS config variable the RMW in effect never reads
+  — exactly the Autoware fixture, which exports `CYCLONEDDS_URI` and runs
+  Fast DDS because `RMW_IMPLEMENTATION` is unset. Orphaned Fast DDS
+  shared-memory files are counted the way `fastdds shm clean` decides (a
+  live owner holds a `flock` on the `_el`/`_sl` file), but by reading
+  `/proc/locks` and matching inodes rather than taking the lock, which
+  could race a node's own locking during startup; nothing is deleted.
+  On this host: 773 orphaned (371 MiB) beside 98 in use.
+
 - **2026-10-13**: **The startup timeline** (`health-page.md` W7,
   `health/startup.rs`). Per member: spawn, load start, load (from state
   events) and, when intercepting, first endpoint and first publish per node

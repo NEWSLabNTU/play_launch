@@ -8,6 +8,12 @@ allowance heavily.
 
 ## Unreleased
 
+- **New:** host checks on the Health page, once a minute: which middleware
+  is in effect and any DDS configuration variable it ignores (a
+  `CYCLONEDDS_URI` beside the default Fast DDS), a Cyclone receive-buffer
+  minimum above `net.core.rmem_max` (which stops every participant from
+  starting), `/dev/shm` use and Fast DDS shared-memory files no process
+  holds any more, free disk under the log directory, and swapping.
 - **New:** a startup timeline on the Health page: one bar per member from
   spawn to ready (a node's first publisher or subscription when
   intercepting, a composable's load), with the first publish marked and the

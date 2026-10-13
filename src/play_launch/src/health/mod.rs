@@ -26,6 +26,7 @@ use tokio::sync::watch;
 use crate::{interception::EntitySnapshot, util::self_cost};
 
 pub mod graph;
+pub mod host;
 pub mod logs;
 pub mod startup;
 
@@ -119,6 +120,8 @@ pub struct HealthSnapshot {
     pub self_cost: Option<self_cost::Usage>,
     /// Members by log rate, busiest first, with their top message signatures.
     pub logs: Vec<logs::MemberLogView>,
+    /// The host and middleware setup, read once a minute.
+    pub host: Option<host::HostFacts>,
 }
 
 fn unix_ms(t: SystemTime) -> u64 {
@@ -250,6 +253,7 @@ impl HealthBook {
             closed: self.closed.iter().take(CLOSED_SENT).cloned().collect(),
             self_cost,
             logs,
+            host: None,
         }
     }
 }
@@ -643,6 +647,10 @@ pub async fn run_health_task(
     // the clock again.
     let mut up_since: HashMap<String, (Option<u32>, std::time::Instant)> = HashMap::new();
     let own_prefix = format!("/play_launch_{}", std::process::id());
+    // Host checks: a read every HOST_PERIOD on a blocking thread.
+    let mut host_state = Some(host::HostState::default());
+    let mut host_job: Option<tokio::task::JoinHandle<(host::HostFacts, host::HostState)>> = None;
+    let mut host_facts: Option<host::HostFacts> = None;
     loop {
         tokio::select! {
             _ = tick.tick() => {}
@@ -760,6 +768,32 @@ pub async fn run_health_task(
             let snap = rx.borrow().clone();
             conditions.extend(entity_conditions(&snap));
         }
+        if host_job.as_ref().is_some_and(|j| j.is_finished()) {
+            match host_job.take().unwrap().await {
+                Ok((facts, state)) => {
+                    host_facts = Some(facts);
+                    host_state = Some(state);
+                }
+                // The read panicked and took its state with it: start over,
+                // or the host is never read again.
+                Err(e) => {
+                    tracing::debug!("health: host read panicked: {e}");
+                    host_state = Some(host::HostState::default());
+                }
+            }
+        }
+        if host_job.is_none()
+            && (ticks == 1 || ticks.is_multiple_of(host::HOST_PERIOD.as_secs()))
+            && let Some(mut state) = host_state.take()
+        {
+            let dir = log_dir.clone();
+            host_job = Some(tokio::task::spawn_blocking(move || {
+                (host::read(&dir, &mut state), state)
+            }));
+        }
+        if let Some(h) = host_facts.as_ref() {
+            conditions.extend(host::host_conditions(h));
+        }
         if readings.len() > SELF_COST_WINDOW.as_secs() as usize
             && let Some(c) = self_cost_condition(&self_cost::usage(
                 readings.front().unwrap(),
@@ -769,7 +803,9 @@ pub async fn run_health_task(
             conditions.push(c);
         }
         book.report(conditions, now);
-        let _ = tx.send(Arc::new(book.snapshot(now, shown, log_watcher.views(10))));
+        let mut snap = book.snapshot(now, shown, log_watcher.views(10));
+        snap.host = host_facts.clone();
+        let _ = tx.send(Arc::new(snap));
     }
 }
 

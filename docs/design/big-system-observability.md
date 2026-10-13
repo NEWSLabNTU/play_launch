@@ -150,7 +150,14 @@ where the cgroup exists. Flag RSS growing for 30 min at over 1 MB/min. Data:
 (phase 66). Cost: the monitor's existing sampling; see its own cost in G
 first — at 6.6% of a core today it is the second-largest self-cost.
 
-**L. Host checks** (pain 17). A one-time-plus-periodic panel:
+**L. Host checks** (pain 17). **Done 2026-10-13** (`health/host.rs`):
+middleware in effect and DDS config variables it ignores, Cyclone's
+`SocketReceiveBufferSize min` against `rmem_max`, `/dev/shm` use and
+orphaned Fast DDS files (by `/proc/locks`, read-only), free disk under the
+log directory, swap rate; issues `rmw_config_ignored`, `socket_buffer`,
+`shm_full`, `shm_zombies`, `disk_low`, `swapping`, and a Host section on the
+Health page. Multicast on the DDS interface is not checked. Original
+proposal: A one-time-plus-periodic panel:
 `net.core.rmem_max`/`wmem_max` against the middleware's recommendation
 (Autoware's DDS guide lists the values), `/dev/shm` usage and segments
 owned by dead pids (Fast DDS leaves `fastrtps_*` behind after a crash),

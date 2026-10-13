@@ -1411,3 +1411,75 @@ fn test_startup_timeline_names_the_slow_constructor() {
         serde_json::from_str(&written.expect("startup_timeline.json")).unwrap();
     assert_eq!(written["last_ready"], slow["id"]);
 }
+
+/// Host checks (§L of `big-system-observability.md`): a `CYCLONEDDS_URI`
+/// beside the default RMW is reported as read by nothing, and the page's
+/// host facts carry what the middleware setup is.
+#[test]
+fn test_health_reports_a_dds_config_the_rmw_does_not_read() {
+    let env = fixtures::install_env();
+    let launch =
+        fixtures::test_workspace_path("simple_test").join("launch/error_logger.launch.xml");
+    let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
+    let cyclone = work_dir.path().join("cyclonedds.xml");
+    std::fs::write(
+        &cyclone,
+        r#"<CycloneDDS><Domain><Internal><SocketReceiveBufferSize min="10MB"/></Internal></Domain></CycloneDDS>"#,
+    )
+    .unwrap();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--web-addr",
+        &format!("127.0.0.1:{port}"),
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        launch.to_str().unwrap(),
+    ]);
+    cmd.env_remove("RMW_IMPLEMENTATION");
+    cmd.env("CYCLONEDDS_URI", format!("file://{}", cyclone.display()));
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let snap = loop {
+        std::thread::sleep(Duration::from_millis(500));
+        let (status, body) = http(port, "GET", "/api/health/issues", None);
+        if status != 200 {
+            continue;
+        }
+        let snap: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let found = snap["open"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["kind"] == "rmw_config_ignored");
+        if found || std::time::Instant::now() > deadline {
+            break snap;
+        }
+    };
+    drop(proc);
+
+    let issue = snap["open"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"] == "rmw_config_ignored")
+        .unwrap_or_else(|| panic!("no rmw_config_ignored: {snap}"));
+    assert!(
+        issue["title"].as_str().unwrap().contains("CYCLONEDDS_URI"),
+        "{issue}"
+    );
+    let host = &snap["host"];
+    assert_eq!(host["rmw_is_default"], true, "{host}");
+    assert_eq!(host["cyclone_rcvbuf_min"], 10 << 20, "{host}");
+    assert!(host["disk_free"].as_u64().is_some(), "{host}");
+}
