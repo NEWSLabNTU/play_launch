@@ -240,6 +240,7 @@ pub fn create_router(state: Arc<WebState>, bind_addr: &str, port: u16) -> Router
         .route("/api/graph", get(handlers::get_graph))
         .route("/api/launch-tree", get(handlers::get_launch_tree))
         .route("/api/health/issues", get(handlers::get_health))
+        .route("/api/health/dds_report", get(handlers::get_dds_report))
         .route("/api/startup", get(handlers::get_startup))
         .route("/api/chains", get(handlers::get_chains))
         .route("/api/chains/paths", get(handlers::get_chain_paths))

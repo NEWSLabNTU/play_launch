@@ -9,9 +9,9 @@
 //! - Writing summary files on shutdown
 
 mod chains;
-mod endpoint_stats;
+pub(crate) mod endpoint_stats;
 mod latency;
-mod live;
+pub(crate) mod live;
 mod tf;
 pub use chains::{CarriedEdge, Chain, ChainPath, ChainSnapshot, Hop, SampledEdge, TopicAge};
 pub(crate) use endpoint_stats::Direction;

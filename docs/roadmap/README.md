@@ -256,18 +256,21 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     suite's domain allocator shared a domain between concurrent tests about
     40% of the time.
     [phase-87-health-page.md](./phase-87-health-page.md).
-  - **Phase 88** - planned: data-flow chains without contracts (2026-10-14).
+  - **Phase 88** - complete: data-flow chains without contracts (2026-10-14).
     Chains discovered from stamps a node carries from input to output
-    (exact: Autoware's 8-topic planning chain, and a 25.9 s-old stamp
-    re-sent) and from same-thread take-then-publish (sampled: an upper
-    bound), with data age propagated across nodes that restamp. A contract
-    adds a budget, nothing more.
+    (exact: Autoware's 8-topic planning chain, and old stamps re-sent) and
+    from same-thread take-then-publish (sampled: the data flowed, the time a
+    lower bound), data age propagated across nodes that restamp, and a
+    Chains page from source to sink. A contract adds a budget, nothing more.
     [phase-88-data-flow-chains.md](./phase-88-data-flow-chains.md).
-  - **Phase 89** - planned: helping with DDS without touching it
+  - **Phase 89** - complete: helping with DDS without touching it
     (2026-10-14). play_launch never changes a user's DDS setting; it
-    observes and names the fix: per-node DDS environment, IP fragmentation
-    of large messages, one `discovery_pressure` issue, a pasteable DDS
-    report, and — its own to change — play_launch's own participant.
+    observes and names the fix: per-node DDS environment (`check` and
+    Health), large messages against IP reassembly, one `discovery_pressure`
+    issue (Autoware under `isolated`: 119 participants, 49 under
+    observable, ~5 M datagrams dropped), a pasteable DDS report
+    (`dds_report.txt`). Its own participant was left alone: the busy
+    listener did not follow the orphaned segments.
     [phase-89-dds-assist.md](./phase-89-dds-assist.md).
   - **Phase 80** - planned: the plan and what was applied (2026-09-21). A
     composable's derived tier is printed by `check --sched --explain`, written

@@ -84,6 +84,11 @@ pub struct HostFacts {
     /// config sets them.
     pub cyclone_participant_index: Option<String>,
     pub cyclone_max_auto_index: Option<u32>,
+    /// `net.ipv4.ipfrag_time` (s) and `ipfrag_high_thresh` (bytes): how long
+    /// the kernel keeps the fragments of an incomplete datagram, and how
+    /// much it keeps before dropping every new one.
+    pub ipfrag_time_s: Option<u64>,
+    pub ipfrag_high_thresh: Option<u64>,
 }
 
 /// The UDP port range of a DDS domain under the RTPS default mapping:
@@ -96,7 +101,7 @@ pub fn domain_ports(domain: u32) -> std::ops::Range<u32> {
 /// (sockets, total drops) on local ports in `ports`, from `/proc/net/udp`
 /// and `udp6`: the port is the hex after the colon of `local_address`, the
 /// drop count the last column.
-fn udp_drops(ports: &std::ops::Range<u32>) -> (usize, u64) {
+pub(crate) fn udp_drops(ports: &std::ops::Range<u32>) -> (usize, u64) {
     let mut sockets = 0;
     let mut drops = 0u64;
     for file in ["/proc/net/udp", "/proc/net/udp6"] {
@@ -368,7 +373,123 @@ pub fn read(log_dir: &Path, state: &mut HostState) -> HostFacts {
         domain_udp_sockets,
         cyclone_participant_index,
         cyclone_max_auto_index,
+        ipfrag_time_s: read_u64("/proc/sys/net/ipv4/ipfrag_time"),
+        ipfrag_high_thresh: read_u64("/proc/sys/net/ipv4/ipfrag_high_thresh"),
     }
+}
+
+/// A message larger than this is IP-fragmented wherever it travels over UDP
+/// on a path with a smaller MTU: one UDP datagram holds at most 64 KiB.
+pub const FRAGMENTED_BYTES: f64 = 65_536.0;
+/// What Autoware's DDS guide sets, for comparison in the report.
+const GUIDE_IPFRAG_TIME_S: u64 = 3;
+const GUIDE_IPFRAG_HIGH_THRESH: u64 = 128 << 20;
+
+/// `large_udp_message` (phase 89 D2): a topic whose messages are larger than
+/// a UDP datagram, taken in another process, with the kernel's reassembly
+/// settings beside it. A warning only where the transport is UDP for certain
+/// (Cyclone DDS, whose shared memory is off unless configured) and the
+/// settings are below the guide's; Fast DDS carries same-host traffic over
+/// shared memory by default, so there it is information for the multi-host
+/// case.
+pub(crate) fn large_message_conditions(
+    rows: &[crate::interception::live::LiveRow],
+    h: Option<&HostFacts>,
+) -> Vec<Condition> {
+    use crate::interception::endpoint_stats::Direction;
+    use std::collections::{BTreeMap, BTreeSet};
+    // topic -> (largest mean publish size, its publish rate, publishing
+    // members, subscribing members).
+    #[derive(Default)]
+    struct T<'a> {
+        bytes: f64,
+        rate: f64,
+        pubs: BTreeSet<&'a str>,
+        subs: BTreeSet<&'a str>,
+    }
+    let mut topics: BTreeMap<&str, T> = BTreeMap::new();
+    for r in rows {
+        let Some(topic) = r.topic.as_deref() else {
+            continue;
+        };
+        let t = topics.entry(topic).or_default();
+        match r.direction {
+            Direction::Pub => {
+                if let Some(b) = r.mean_message_bytes
+                    && b > t.bytes
+                {
+                    t.bytes = b;
+                    t.rate = r.rate_10s;
+                }
+                t.pubs.insert(r.member.as_str());
+            }
+            Direction::Sub => {
+                t.subs.insert(r.member.as_str());
+            }
+        }
+    }
+    let cyclone = h.is_some_and(|h| h.rmw.contains("cyclonedds"));
+    let below_guide = h.is_some_and(|h| {
+        h.ipfrag_time_s.is_some_and(|t| t > GUIDE_IPFRAG_TIME_S)
+            || h.ipfrag_high_thresh
+                .is_some_and(|b| b < GUIDE_IPFRAG_HIGH_THRESH)
+    });
+    let fmt_opt = |v: Option<u64>, f: &dyn Fn(u64) -> String| v.map_or("unknown".to_string(), f);
+    let mut out = Vec::new();
+    for (topic, t) in topics {
+        if t.bytes <= FRAGMENTED_BYTES || t.rate <= 0.0 {
+            continue;
+        }
+        let others = t.subs.iter().filter(|m| !t.pubs.contains(*m)).count();
+        if others == 0 {
+            continue;
+        }
+        let size = if t.bytes >= (1 << 20) as f64 {
+            format!("{:.1} MiB", t.bytes / (1 << 20) as f64)
+        } else {
+            format!("{:.0} KiB", t.bytes / 1024.0)
+        };
+        let ipfrag_time = fmt_opt(h.and_then(|h| h.ipfrag_time_s), &|t| format!("{t} s"));
+        let ipfrag_high = fmt_opt(h.and_then(|h| h.ipfrag_high_thresh), &|b| mib(b));
+        out.push(Condition {
+            key: format!("large_udp_message:{topic}"),
+            kind: "large_udp_message",
+            severity: if cyclone && below_guide {
+                Severity::Warning
+            } else {
+                Severity::Info
+            },
+            subject: Subject {
+                kind: "topic",
+                name: topic.to_string(),
+            },
+            title: format!(
+                "{size} messages at {:.1} Hz to {others} other process{}",
+                t.rate,
+                if others == 1 { "" } else { "es" }
+            ),
+            detail: format!(
+                "Over UDP a message this size is split into IP fragments wherever the \
+                 path's MTU is smaller than the datagram (between hosts always). One lost \
+                 fragment keeps the rest of its message in the kernel's reassembly buffer \
+                 for net.ipv4.ipfrag_time ({ipfrag_time} here), and once \
+                 net.ipv4.ipfrag_high_thresh ({ipfrag_high} here) is full every new \
+                 fragment is dropped, so whole messages vanish. Autoware's DDS guide sets \
+                 ipfrag_time={GUIDE_IPFRAG_TIME_S} and ipfrag_high_thresh={GUIDE_IPFRAG_HIGH_THRESH}. {}",
+                if cyclone {
+                    "Cyclone DDS sends it over UDP unless its shared memory is configured"
+                } else {
+                    "Fast DDS's shared-memory transport (on by default) carries it within \
+                     one host; this matters when it crosses hosts or that transport is off"
+                }
+            ),
+            link: Some(Link {
+                view: "entities",
+                target: Some(topic.to_string()),
+            }),
+        });
+    }
+    out
 }
 
 fn mib(b: u64) -> String {

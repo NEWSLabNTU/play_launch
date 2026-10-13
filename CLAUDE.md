@@ -482,6 +482,7 @@ play_log/<timestamp>/
 │                                   #   config), then play_launch=debug regardless of RUST_LOG
 ├── run_info.json                   # version, argv, cwd, pid, config path — what produced the bundle
 ├── health.jsonl                    # every Health issue opened and closed
+├── dds_report.txt                  # the DDS facts to paste (phase 89), each minute + at end
 ├── startup_timeline.json           # per member: spawn, first endpoint/publish, load, ready
 ├── config.yaml                     # copy of --config, when one was given
 ├── params_files/
@@ -682,6 +683,26 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-10-14**: **Phase 89: DDS help that touches nothing.** D1
+  `ros_launch_resolve::ros::dds_env` (one implementation for `check`'s
+  `warning[dds-env-split]`, a `warn!` before the first spawn, and Health's
+  `dds_env_split`): a node whose `<env>` sets a discovery variable or DDS
+  config file other than what the rest inherit, defaults applied. D2
+  `large_udp_message` (`health/host.rs`): > 64 KiB to another member, with
+  `ipfrag_time`/`ipfrag_high_thresh`; a warning only under Cyclone below
+  Autoware's guide, since the transport in use is not observable. D3
+  `discovery_pressure` (`health/discovery.rs`, `StartupDrops`): the
+  domain's sockets read every 5 s until 30 s after startup complete; one
+  issue with the participants, the `observable` count and the symptoms
+  open at once, replacing `dds_udp_drops`. Autoware under `isolated`: ~5 M
+  datagrams, 119 participants, 49 under observable, 19 `missing_node` as
+  evidence. D4 `health/dds_report.rs`: `GET /api/health/dds_report`,
+  `dds_report.txt`. D5: the busy Fast DDS listener in play_launch's own
+  participant was absent from all nine runs since 01:18 while orphaned
+  shm files grew 780 → 849, so orphans are not its cause; nothing changed.
+  `interception::{live, endpoint_stats}` are `pub(crate)` now (Health
+  reads `LiveRow`).
 
 - **2026-10-14**: **Data-flow chains without a contract, C1: carried
   edges** (phase 88, `interception/chains.rs`, `health/chains.rs`). A node

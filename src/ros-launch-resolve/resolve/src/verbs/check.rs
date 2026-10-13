@@ -157,6 +157,10 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // a subtree and still be reported clean.
     let dropped_is_error = report_dropped_actions(&dump, inputs.allow_unsupported_actions);
 
+    // Phase 89 D1: nodes the launch puts on another DDS network. A warning
+    // and never a failure: a per-robot domain is often meant.
+    report_dds_env(&dump);
+
     // Load and check manifests: overlay > provider sidecar. The provider
     // channel is on by default, so `check` works with no manifest flags at
     // all whenever the launch file ships sidecar contracts.
@@ -521,6 +525,18 @@ fn report_dropped_actions(dump: &crate::ros::launch_dump::LaunchDump, allow: boo
             dump.dropped_actions.len()
         );
         true
+    }
+}
+
+/// Nodes whose launch-declared environment puts them on a different DDS
+/// network (or config) from the rest of the launch, against the environment
+/// `check` runs in, which is what the other nodes would inherit.
+fn report_dds_env(dump: &crate::ros::launch_dump::LaunchDump) {
+    let splits = crate::ros::dds_env::dds_env_splits(crate::ros::dds_env::dump_nodes(dump), |k| {
+        std::env::var(k).ok()
+    });
+    for s in &splits {
+        crate::say!("warning[dds-env-split]: {}", s.message());
     }
 }
 

@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!--
+  One node on another DDS domain from the rest (phase 89 D1): the listener's
+  <env> sets ROS_DOMAIN_ID to `other_domain`, so it can never hear the
+  talker. play_launch reports it before anything spawns, in `check` and on
+  the Health page, and changes nothing. The test passes a domain it has
+  claimed for itself, so the listener lands on no one else's.
+-->
+<launch>
+  <arg name="other_domain" default="0"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="talker" namespace="/split" output="screen"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="listener" namespace="/split" output="screen">
+    <env name="ROS_DOMAIN_ID" value="$(var other_domain)"/>
+  </node>
+</launch>

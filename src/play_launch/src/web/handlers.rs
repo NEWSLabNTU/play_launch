@@ -655,6 +655,22 @@ pub async fn get_health(State(state): State<Arc<WebState>>) -> Response {
     Json(&*snap).into_response()
 }
 
+/// The DDS report as plain text, to copy (phase 89 D4).
+pub async fn get_dds_report(State(state): State<Arc<WebState>>) -> Response {
+    let Some(rx) = &state.health else {
+        return health_unavailable();
+    };
+    let text = rx.borrow().dds_report.clone();
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
+        text,
+    )
+        .into_response()
+}
+
 /// The startup timeline: per member, spawn, first endpoint, first publish,
 /// load and readiness, in ms since the run started.
 pub async fn get_startup(State(state): State<Arc<WebState>>) -> Response {

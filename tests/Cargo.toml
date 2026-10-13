@@ -70,6 +70,10 @@ name = "interception"
 path = "tests/interception.rs"
 
 [[test]]
+name = "dds_assist"
+path = "tests/dds_assist.rs"
+
+[[test]]
 name = "manifest_check"
 path = "tests/manifest_check.rs"
 

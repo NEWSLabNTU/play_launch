@@ -491,6 +491,7 @@ function Host({ host }) {
         ['middleware', html`<b>${host.rmw}</b>${host.rmw_is_default ? html` <span class="hl-muted">(RMW_IMPLEMENTATION unset: the ${host.ros_distro || 'distro'} default)</span>` : ''}`],
         ['DDS config', host.dds_config.length ? host.dds_config.map(c => html`<div class="hl-mono">${c}</div>`) : html`<span class="hl-muted">none set</span>`],
         ['socket buffers', html`rmem_max ${fmtBytes(host.rmem_max)}, wmem_max ${fmtBytes(host.wmem_max)}${host.cyclone_rcvbuf_min != null ? html`; Cyclone asks for ≥ ${fmtBytes(host.cyclone_rcvbuf_min)}` : ''}`],
+        ['IP reassembly', html`ipfrag_time ${host.ipfrag_time_s != null ? host.ipfrag_time_s + ' s' : '—'}, ipfrag_high_thresh ${fmtBytes(host.ipfrag_high_thresh)}`],
         ['/dev/shm', html`${used(host.shm_used, host.shm_total)}; Fast DDS files: ${host.fastdds_live} in use, ${host.fastdds_zombie} orphaned${host.fastdds_zombie ? ' (' + fmtBytes(host.fastdds_zombie_bytes) + ')' : ''}`],
         ['log disk', html`${host.disk_free != null ? fmtBytes(host.disk_free) + ' free' : '—'} <span class="hl-muted hl-mono">${host.log_dir}</span>`],
         ['swap', html`${host.swap_total ? used(host.swap_used, host.swap_total) : 'none'}${host.swap_pages_per_s != null ? `, ${Math.round(host.swap_pages_per_s)} pages/s` : ''}`],
@@ -503,6 +504,46 @@ function Host({ host }) {
                     ${rows.map(([k, v]) => html`<tr key=${k}><th>${k}</th><td>${v}</td></tr>`)}
                 </tbody>
             </table>
+        </section>
+    `;
+}
+
+/** The DDS report: every fact a DDS question needs, as text to paste
+ * (phase 89 D4). Fetched when opened, not with every snapshot. */
+function DdsReport() {
+    const [open, setOpen] = useState(false);
+    const [text, setText] = useState(null);
+    const [copied, setCopied] = useState(false);
+    useEffect(() => {
+        if (!open) return undefined;
+        let alive = true;
+        const load = () => fetch('/api/health/dds_report')
+            .then(r => (r.ok ? r.text() : null))
+            .then(t => { if (alive && t != null) setText(t); })
+            .catch(() => {});
+        load();
+        const id = setInterval(load, 10000);
+        return () => { alive = false; clearInterval(id); };
+    }, [open]);
+    const copy = () => {
+        if (!text || !navigator.clipboard) return;
+        navigator.clipboard.writeText(text).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+        });
+    };
+    return html`
+        <section class="hl-section">
+            <h3 class="hl-heading hl-toggle" onClick=${() => setOpen(!open)}>
+                ${open ? '▾' : '▸'} DDS report
+                <span class="hl-muted"> — the facts a DDS question needs, to paste; also dds_report.txt in the log directory</span>
+            </h3>
+            ${open && html`
+                <div class="hl-report-actions">
+                    <button class="hl-copy" onClick=${copy} disabled=${!text}>${copied ? 'Copied' : 'Copy'}</button>
+                </div>
+                <pre class="hl-report">${text == null ? 'loading…' : text}</pre>
+            `}
         </section>
     `;
 }
@@ -724,6 +765,8 @@ export function HealthView() {
             ${snap && snap.discovery && html`<${Discovery} d=${snap.discovery} />`}
 
             ${snap && snap.host && html`<${Host} host=${snap.host} />`}
+
+            ${snap && html`<${DdsReport} />`}
 
             ${snap && snap.self_cost && html`<${SelfCost} cost=${snap.self_cost} />`}
         </div>

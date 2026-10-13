@@ -808,6 +808,10 @@ pub(crate) async fn play(
     // uses the LaunchDump-sourced `prepare_node_contexts`.)
     debug!("Preparing node execution contexts...");
     info!("Spawn source: SystemModel (structure.nodes)");
+    // Phase 89 D1: said before anything spawns, and kept on the Health page.
+    for split in crate::health::discovery::dds_env_splits(&system_model) {
+        warn!("dds-env-split: {}", split.message());
+    }
     let mut pure_node_contexts = prepare_node_contexts_from_model(
         &system_model,
         &node_log_dir,

@@ -26,6 +26,7 @@ use tokio::sync::watch;
 use crate::{interception::EntitySnapshot, util::self_cost};
 
 pub mod chains;
+pub mod dds_report;
 pub mod discovery;
 pub mod graph;
 pub mod host;
@@ -136,6 +137,10 @@ pub struct HealthSnapshot {
     pub tf: Option<crate::interception::TfSnapshot>,
     /// Participants on the domain against the middleware's limit, and drops.
     pub discovery: Option<discovery::DiscoveryView>,
+    /// The DDS report as text (`GET /api/health/dds_report`); not sent with
+    /// the issues.
+    #[serde(skip)]
+    pub dds_report: String,
 }
 
 fn unix_ms(t: SystemTime) -> u64 {
@@ -272,6 +277,7 @@ impl HealthBook {
             params: None,
             tf: None,
             discovery: None,
+            dds_report: String::new(),
         }
     }
 }
@@ -831,6 +837,13 @@ pub async fn run_health_task(inputs: HealthInputs) {
         mut shutdown,
     } = inputs;
     let mut book = HealthBook::with_journal(&log_dir);
+    let dds_env = discovery::dds_env_splits(&model);
+    let mut startup_drops = discovery::StartupDrops::default();
+    let mut last_report = String::new();
+    let domain_id: u32 = std::env::var("ROS_DOMAIN_ID")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     let mut log_watcher = logs::LogWatcher::default();
     let mut ticks: u64 = 0;
     let mut tick = tokio::time::interval(Duration::from_secs(1));
@@ -1052,6 +1065,10 @@ pub async fn run_health_task(inputs: HealthInputs) {
         if let Some(rx) = entities.as_ref() {
             let snap = rx.borrow().clone();
             conditions.extend(entity_conditions(&snap));
+            conditions.extend(host::large_message_conditions(
+                &snap.rows,
+                host_facts.as_ref(),
+            ));
             if let Some(t) = snap.tf.as_ref() {
                 conditions.extend(tf::tf_conditions(t));
                 tf_view = Some(t.clone());
@@ -1060,9 +1077,11 @@ pub async fn run_health_task(inputs: HealthInputs) {
                 conditions.extend(chains::chain_conditions(c));
             }
         }
+        let mut host_read = false;
         if host_job.as_ref().is_some_and(|j| j.is_finished()) {
             match host_job.take().unwrap().await {
                 Ok((facts, state)) => {
+                    host_read = true;
                     host_facts = Some(facts);
                     host_state = Some(state);
                 }
@@ -1086,6 +1105,7 @@ pub async fn run_health_task(inputs: HealthInputs) {
         if let Some(h) = host_facts.as_ref() {
             conditions.extend(host::host_conditions(h));
         }
+        conditions.extend(discovery::dds_env_conditions(&dds_env));
         let resources = trends.borrow().clone();
         conditions.extend(resource_conditions(&resources));
         if let Some(handle) = members.get() {
@@ -1097,6 +1117,9 @@ pub async fn run_health_task(inputs: HealthInputs) {
                 .collect();
             let v = discovery::view(&list, &processes, host_facts.as_ref(), graph_nodes);
             conditions.extend(discovery::discovery_conditions(&v));
+            let complete = startup_book.lock().unwrap().is_complete();
+            startup_drops.sample(std::time::Instant::now(), domain_id, complete);
+            discovery::discovery_pressure(&v, &startup_drops, &mut conditions);
             discovery_view = Some(v);
         }
         if readings.len() > SELF_COST_WINDOW.as_secs() as usize
@@ -1114,7 +1137,30 @@ pub async fn run_health_task(inputs: HealthInputs) {
         snap.params = params_report.clone();
         snap.tf = tf_view;
         snap.discovery = discovery_view.clone();
+        snap.dds_report = dds_report::render(&dds_report::ReportInputs {
+            host: host_facts.as_ref(),
+            discovery: discovery_view.as_ref(),
+            dds_env: &dds_env,
+            startup_drops: &startup_drops,
+            open: &snap.open,
+            now_ms: unix_ms(now),
+        });
+        // In the bundle too: each time the host is read, and at the end.
+        if host_read {
+            write_dds_report(&log_dir, &snap.dds_report);
+        }
+        last_report = snap.dds_report.clone();
         let _ = tx.send(Arc::new(snap));
+    }
+    write_dds_report(&log_dir, &last_report);
+}
+
+fn write_dds_report(log_dir: &std::path::Path, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    if let Err(e) = std::fs::write(log_dir.join("dds_report.txt"), text) {
+        tracing::debug!("health: could not write dds_report.txt: {e}");
     }
 }
 

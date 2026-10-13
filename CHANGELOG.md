@@ -45,6 +45,13 @@ allowance heavily.
   A Chains page shows the paths between a source and a sink topic, each hop
   marked carried or sampled with its p50/p99, the sink's data age, and a
   contract's budget for the pair where one is declared.
+- **New:** DDS help that changes nothing. A node the launch file puts on
+  another `ROS_DOMAIN_ID`, RMW, discovery range or DDS config is reported
+  by `check` and before the spawn. Messages larger than a UDP datagram are
+  listed with the kernel's IP reassembly settings. A startup discovery
+  storm is one issue that names the participant count and what
+  `--container-mode observable` would hold. The Health page has a DDS
+  report to paste into a bug report, also written as `dds_report.txt`.
 - **Fix:** a delivery latency, hop time or data age above 10 s was reported
   as 12.5 s, the edge of the histogram's last bucket. It now reports the
   largest value seen.

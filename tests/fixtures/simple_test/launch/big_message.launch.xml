@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!-- A 200 KiB message published in one process and taken in another
+     (phase 89 D2); see the script. -->
+<launch>
+  <executable cmd="python3 $(dirname)/../scripts/big_message.py pub" name="big_pub" output="screen"/>
+  <executable cmd="python3 $(dirname)/../scripts/big_message.py sub" name="big_sub" output="screen"/>
+</launch>
