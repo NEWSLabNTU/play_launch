@@ -7,6 +7,9 @@
     raw -> filtered -> cmd is one carried chain of three topics.
 `restamp`: takes /chain/raw and publishes /chain/restamped with now(): no
     carried edge, the stamp is born there.
+`actuate`: re-publishes each /chain/restamped stamp on /chain/actuated, so
+    source -> restamp -> actuate is a three-node pipeline whose path from
+    /chain/raw to /chain/actuated is one sampled hop and one carried hop.
 `once`: publishes one message on /chain/mode (transient local), then stays.
 `hold`: keeps the /chain/mode stamp it took and re-sends it on
     /chain/mode_out at ~8 Hz, so the stamp it publishes grows old: a stale
@@ -60,6 +63,8 @@ def main():
         relay("/chain/filtered", "/chain/cmd")
     elif role == "restamp":
         relay("/chain/raw", "/chain/restamped", restamp=True)
+    elif role == "actuate":
+        relay("/chain/restamped", "/chain/actuated")
     elif role == "once":
         pub = node.create_publisher(Header, "/chain/mode", latched)
         msg = Header()

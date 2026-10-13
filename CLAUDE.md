@@ -714,7 +714,17 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   12 s of age from its startup `/parameter_events` take). Autoware:
   `control_cmd` p50 19.5 ms, p99 442 ms, from `kinematic_state`; an input
   that does not trigger (the controller's trajectory) is not in the age.
-  150 ns per event.
+  150 ns per event. A publish whose stamped input's publish is not read
+  yet (another process's ring) WAITS (`ChainBook::settle`, after each
+  drain pass, 1 s expiry): without it a cross-process hop restarted the
+  origin, and the scenario selector read 0 ms with 283 ms of planning
+  behind it. **C4, the Chains page** (`ChainsView.js`,
+  `GET /api/chains/paths?from=&to=`, `ChainSnapshot::paths`): paths over
+  carried and sampled hops, per hop p50/p99 and kind, the sink's age, and a
+  contract scope path's `max_latency` as a budget line
+  (`WebState::scope_paths`). Found with it: a percentile in the latency
+  histogram's open last bucket reported 12.5 s for anything past 10 s; it
+  reports the largest sample now.
 
 - **2026-10-14**: **Lifecycle activation on the startup timeline.** The
   interceptor reads each `lifecycle_msgs/TransitionEvent` a node publishes

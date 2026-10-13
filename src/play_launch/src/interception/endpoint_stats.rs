@@ -396,6 +396,7 @@ impl EndpointTracker {
 
     /// Match takes read before their publish; call after each drain pass.
     pub(crate) fn settle(&mut self, now_ns: u64) {
+        self.chains.settle(now_ns);
         for (key, take_ns, latency_ns) in self.matcher.settle(now_ns) {
             if let Some(lat) = self
                 .live

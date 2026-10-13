@@ -101,6 +101,13 @@ impl Histogram {
         for (i, &c) in self.counts.iter().enumerate() {
             seen += c as u64;
             if seen >= rank {
+                // The last bucket is open above: its "upper edge" (12.5 s)
+                // would cap every larger value, and a stamp held for 40 s
+                // read 12.5 s. Report the largest sample instead, which errs
+                // high as every other bucket does.
+                if i == BUCKETS - 1 {
+                    return Some(self.max_ns as f64 / 1e6);
+                }
                 return Some(upper_ns(i).min(self.max_ns as f64) / 1e6);
             }
         }
@@ -299,6 +306,15 @@ mod tests {
     use super::*;
 
     const MS: u64 = 1_000_000;
+
+    #[test]
+    fn a_percentile_past_ten_seconds_is_not_capped_at_the_last_edge() {
+        let mut h = Histogram::default();
+        for _ in 0..10 {
+            h.add(40_000 * MS);
+        }
+        assert_eq!(h.quantile_ms(0.5), Some(40_000.0));
+    }
 
     #[test]
     fn buckets_cover_ten_microseconds_to_ten_seconds() {

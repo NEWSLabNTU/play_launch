@@ -675,6 +675,44 @@ pub async fn get_chains(State(state): State<Arc<WebState>>) -> Response {
     Json(snap).into_response()
 }
 
+#[derive(serde::Deserialize)]
+pub struct ChainPathsQuery {
+    from: String,
+    to: String,
+}
+
+/// Paths from a source topic to a sink over observed edges, the sink's data
+/// age, and the budget a contract's scope path puts on that pair, if any.
+pub async fn get_chain_paths(
+    State(state): State<Arc<WebState>>,
+    axum::extract::Query(q): axum::extract::Query<ChainPathsQuery>,
+) -> Response {
+    let Some(rx) = &state.entities else {
+        return entities_unavailable();
+    };
+    let snap = rx.borrow().chains.clone().unwrap_or_default();
+    let (paths, truncated) = snap.paths(&q.from, &q.to);
+    let sink_age = snap.ages.iter().find(|a| a.topic == q.to);
+    let budget = state
+        .scope_paths
+        .iter()
+        .find(|p| {
+            p.max_latency_ms.is_some()
+                && p.input_topics.contains(&q.from)
+                && p.output_topics.contains(&q.to)
+        })
+        .map(|p| json!({ "name": p.name, "max_latency_ms": p.max_latency_ms }));
+    Json(json!({
+        "from": q.from,
+        "to": q.to,
+        "paths": paths,
+        "truncated": truncated,
+        "sink_age": sink_age,
+        "budget": budget,
+    }))
+    .into_response()
+}
+
 // ===== Entities (live endpoints) =====
 
 /// Rows sent when the client did not ask for `?all=1`: the busiest, plus

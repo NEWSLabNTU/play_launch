@@ -217,6 +217,8 @@ export function Header() {
                     onClick=${() => switchView('launch-tree')}>Launch</button>
                 <button class="nav-tab ${view === 'entities' ? 'active' : ''}"
                     onClick=${() => switchView('entities')}>Entities</button>
+                <button class="nav-tab ${view === 'chains' ? 'active' : ''}"
+                    onClick=${() => switchView('chains')}>Chains</button>
                 <button class="nav-tab ${view === 'diagnostics' ? 'active' : ''}"
                     onClick=${() => switchView('diagnostics')}>Diagnostics</button>
             </div>

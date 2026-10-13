@@ -63,6 +63,8 @@ pub struct WebState {
     pub health: Option<tokio::sync::watch::Receiver<Arc<crate::health::HealthSnapshot>>>,
     /// The startup timeline (`GET /api/startup`). `None` without a health task.
     pub startup: Option<tokio::sync::watch::Receiver<Arc<crate::health::startup::StartupTimeline>>>,
+    /// Scope paths the contract declares, for the chain view's budget line.
+    pub scope_paths: Vec<crate::runtime_enforcement::view::ScopePathView>,
 }
 
 impl WebState {
@@ -89,7 +91,17 @@ impl WebState {
             entities: None,
             health: None,
             startup: None,
+            scope_paths: Vec::new(),
         }
+    }
+
+    /// Hand over the contract's scope paths (their budgets).
+    pub fn with_scope_paths(
+        mut self,
+        scope_paths: Vec<crate::runtime_enforcement::view::ScopePathView>,
+    ) -> Self {
+        self.scope_paths = scope_paths;
+        self
     }
 
     /// Hand over the receiving end of the Health snapshot.
@@ -230,6 +242,7 @@ pub fn create_router(state: Arc<WebState>, bind_addr: &str, port: u16) -> Router
         .route("/api/health/issues", get(handlers::get_health))
         .route("/api/startup", get(handlers::get_startup))
         .route("/api/chains", get(handlers::get_chains))
+        .route("/api/chains/paths", get(handlers::get_chain_paths))
         .route("/api/health/issues/stream", get(sse::stream_health))
         .route("/api/entities", get(handlers::get_entities))
         .route("/api/entities/stream", get(sse::stream_entities))

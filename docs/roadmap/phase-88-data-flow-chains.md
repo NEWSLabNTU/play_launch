@@ -1,6 +1,6 @@
 # Phase 88 - data-flow chains without contracts
 
-Status: **in progress** (2026-10-14): C1, C2 and C3 done. Design of record:
+Status: **done** (2026-10-14): C1–C4. Design of record:
 `docs/design/data-flow-chains.md`. Replaces item M of
 `docs/design/big-system-observability.md`, which assumed a contract.
 
@@ -32,7 +32,7 @@ Autoware planning simulator, driven to a goal, 60 s (`scripts/chains/`):
 | C1 | Carried edges, per-node latency per edge, `stale_stamp` issue | Autoware, live: the 8-topic planning chain, and the 25.9 s gear stamp reported. **Done**: see below |
 | C2 | Sampled edges: same node and thread, input among the node's subscriptions, ≥ 20 observations | the behavior planner's inputs shown as sampled, never as triggers. **Done**: see below |
 | C3 | Origin propagation: data age per topic, upper bound flagged across sampled hops | age on `/control/command/control_cmd` reported. **Done**: see below |
-| C4 | Chain view: source/sink picker, per-hop p50/p99, end-to-end age; budget line where a contract declares one | fixture: a three-node pipeline with a restamping middle node shows one carried and one sampled hop |
+| C4 | Chain view: source/sink picker, per-hop p50/p99, end-to-end age; budget line where a contract declares one | fixture: a three-node pipeline with a restamping middle node shows one carried and one sampled hop. **Done**: see below |
 
 Cost target: ~0.2 µs per event (W5's order), measured on Autoware as W5 was.
 Nodes, not containers: edges use the endpoint's owner (`EndpointOwner`).
@@ -143,3 +143,59 @@ publish, so the trajectory it follows, and the planning age behind that, is
 not in `control_cmd`'s age. Cost: 150 ns per event in a microbenchmark with
 every publish stamped; interception self-cost 2.7–2.8% of a core in the
 driven run (C2: 2.2–2.3%).
+
+## C4 result
+
+A **Chains** page in the web UI, and `GET /api/chains/paths?from=&to=`:
+simple paths from a source topic to a sink over carried hops seen 20 times
+and the reported sampled hops, fewest hops first, then fastest, at most 10,
+the walk bounded (`truncated` says so). Each hop shows its node, its kind
+(carried: measured; sampled: the data flowed, the time a lower bound), p50,
+p99, samples and a sampled hop's share; each path its carried and sampled
+counts and the sums of the hops' p50 and p99. The sink's data age (C3) sits
+above the paths, with its source and estimated share. Where a contract's
+scope path names the pair as input and output with a `max_latency`, a budget
+line is drawn under each path and an over-budget Σp99 is marked. With
+nothing picked the page lists the longest carried chains with their sinks'
+ages, and topics by data age; a row click picks its source and sink.
+
+Fixture: `chain_probe` gains `actuate`, which carries `/chain/restamped` on
+to `/chain/actuated`, so source → restamp → actuate is a three-node pipeline
+with a restamping middle node. The integration test asks for the paths from
+`/chain/raw` to `/chain/actuated` and gets one sampled hop (`/chain_restamp`)
+then one carried hop (`/chain_actuate`), and the sink's age from
+`/chain/raw`. It fails with sampled hops left out of the search. The page was
+checked in headless Chrome against the fixture. The budget line has no
+end-to-end test: no fixture has a contract whose scope path spans observed
+topics.
+
+Two defects found by looking at the result:
+- **An age past 10 s read 12.5 s.** A percentile in the histogram's last,
+  open bucket reported that bucket's upper edge; the held stamp of the
+  fixture, 34 s old, showed 12.5 s, and so did any W5 latency or C1 hop
+  past 10 s. The open bucket now reports the largest sample (errs high, as
+  the others do).
+- **A hop across processes restarted the origin.** On Autoware the scenario
+  selector's trajectory read 0 ms of age with 283 ms of planning behind it:
+  its input's publish, in another process, had not been read yet when its
+  own publish was, since rings drain in turn. A publish whose stamped input
+  is unresolved now waits, like a W5 take, and is retried after each drain
+  pass in time order; past 1 s its take time stands in. `/planning/
+  trajectory` now reads 226 ms p50 from tracked objects.
+
+Autoware, live: a path query answers in 1–2 ms and does not hit its bound.
+`kinematic_state → control_cmd` is two hops (sampled into the controller,
+carried through the gate), 1.4 ms; `objects → control_cmd` finds 4 paths of
+9–12 hops through the simulator, which is what sampled hops say: the data
+flowed, not that objects caused the command. `/planning/scenario_planning/
+trajectory` reads 0 ms: a relay whose take carries no stamp, so the age
+restarts at its take, flagged estimated.
+
+## What remains
+
+- **Inputs that do not trigger a publish are not in its age.** The
+  controller is attributed to `kinematic_state`, so the trajectory it
+  follows, and the planning age behind it, are not in `control_cmd`'s age.
+- **`data_age`** (an issue past a per-sink threshold the user sets) is not
+  built.
+- Unstamped and serialized takes restart an origin, flagged estimated.

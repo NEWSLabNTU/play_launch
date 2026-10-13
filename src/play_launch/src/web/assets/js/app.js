@@ -15,6 +15,7 @@ import { LaunchTreeView } from './components/LaunchTreeView.js';
 import { LaunchPanel } from './components/LaunchPanel.js';
 import { EntitiesView } from './components/EntitiesView.js';
 import { HealthView } from './components/HealthView.js';
+import { ChainsView } from './components/ChainsView.js';
 
 const html = htm.bind(h);
 
@@ -105,6 +106,11 @@ function App() {
             ${view === 'entities' && html`
                 <div class="left-panel ${isOpen ? 'with-sidebar' : ''}">
                     <${EntitiesView} />
+                </div>
+            `}
+            ${view === 'chains' && html`
+                <div class="left-panel">
+                    <${ChainsView} />
                 </div>
             `}
             ${view === 'graph' ? html`

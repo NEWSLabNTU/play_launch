@@ -1,6 +1,6 @@
 # Data-flow chains without contracts
 
-**Status: design, 2026-10-14; roadmap: phase 88** (`docs/roadmap/phase-88-data-flow-chains.md`). Measured, not built. Supersedes the
+**Status: built (C1–C4), 2026-10-14; roadmap: phase 88** (`docs/roadmap/phase-88-data-flow-chains.md`). Measured, not built. Supersedes the
 "contracts only" framing of `big-system-observability.md` §M: a contract can
 still put a budget on a chain, but finding the chain and measuring it needs
 none.
@@ -120,4 +120,4 @@ one container is one "node" here unless the endpoint's owner (already shipped,
 | C1 | carried edges and per-node latency, `stale_stamp` | Autoware: the 8-topic planning chain and the 25.9 s gear stamp, from a live run |
 | C2 | sampled edges, guarded by subscriptions and a minimum count | the behavior planner's inputs reported as sampled, not as triggers. Done |
 | C3 | origin propagation, data age per topic | age on `/control/command/control_cmd` reported, upper-bound flagged. Done (flagged as `estimated_share`) |
-| C4 | chain view: source/sink picker, per-hop table, age distribution | fixture: a three-node pipeline with a restamping middle node shows one carried and one sampled hop |
+| C4 | chain view: source/sink picker, per-hop table, age distribution | fixture: a three-node pipeline with a restamping middle node shows one carried and one sampled hop. Done |

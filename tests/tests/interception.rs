@@ -1258,7 +1258,7 @@ fn test_carried_edges_form_a_chain_and_an_old_stamp_is_reported() {
     let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
     let deadline = std::time::Instant::now() + Duration::from_secs(40);
-    let (chains, issues) = loop {
+    let (chains, issues, answer) = loop {
         std::thread::sleep(Duration::from_millis(1000));
         let (s1, chains) = http(port, "GET", "/api/chains", None);
         let (s2, health) = http(port, "GET", "/api/health/issues", None);
@@ -1286,8 +1286,20 @@ fn test_carried_edges_form_a_chain_and_an_old_stamp_is_reported() {
                 })
                 .count()
         });
-        if (chained && stale && fused >= 2 && aged == 3) || std::time::Instant::now() > deadline {
-            break (chains, issues);
+        let (_, body) = http(
+            port,
+            "GET",
+            "/api/chains/paths?from=/chain/raw&to=/chain/actuated",
+            None,
+        );
+        let answer: serde_json::Value =
+            serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+        let pathed = answer["paths"].as_array().is_some_and(|p| !p.is_empty())
+            && !answer["sink_age"].is_null();
+        if (chained && stale && fused >= 2 && aged == 3 && pathed)
+            || std::time::Instant::now() > deadline
+        {
+            break (chains, issues, answer);
         }
     };
     drop(proc);
@@ -1376,6 +1388,35 @@ fn test_carried_edges_form_a_chain_and_an_old_stamp_is_reported() {
         ages.iter().all(|a| a["topic"] != "/chain/raw"),
         "a source has no age: {chains}"
     );
+
+    // C4: the path through a restamping middle node is one sampled hop and
+    // one carried hop, and the sink's age runs from the source.
+    let path = &answer["paths"][0];
+    let hops: Vec<(String, String)> = path["hops"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no path: {answer}"))
+        .iter()
+        .map(|h| {
+            (
+                h["kind"].as_str().unwrap().to_string(),
+                h["node"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        hops,
+        [
+            ("sampled".to_string(), "/chain_restamp".to_string()),
+            ("carried".to_string(), "/chain_actuate".to_string())
+        ],
+        "{answer}"
+    );
+    assert_eq!(
+        (path["carried_hops"].as_u64(), path["sampled_hops"].as_u64()),
+        (Some(1), Some(1))
+    );
+    assert_eq!(answer["sink_age"]["source"], "/chain/raw", "{answer}");
+    assert!(answer["budget"].is_null(), "no contract here: {answer}");
 
     let stale: Vec<&serde_json::Value> = issues
         .iter()

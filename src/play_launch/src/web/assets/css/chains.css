@@ -1,0 +1,99 @@
+/* Chains view — data-flow paths, hop kinds, data age, budget line */
+.chain-heading {
+    margin: 16px 0 8px;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+}
+
+.chain-pick { cursor: pointer; }
+
+.chain-topics {
+    font-family: monospace;
+    font-size: 0.8rem;
+    white-space: normal;
+}
+
+.chain-clear {
+    padding: 4px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.chain-age {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px;
+    margin: 4px 0 12px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.chain-age b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.chain-estimated { color: var(--pending-text); }
+
+.chain-path {
+    margin-bottom: 16px;
+    padding: 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+}
+
+.chain-path-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 6px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.chain-path-head b { color: var(--text-primary); }
+.chain-over-text { color: var(--failed-text); font-weight: 600; }
+
+.chain-kind {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+.chain-kind-carried { background: var(--running-bg); color: var(--running-text); }
+.chain-kind-sampled { background: var(--pending-bg); color: var(--pending-text); }
+
+.chain-budget {
+    position: relative;
+    height: 10px;
+    margin: 4px 0 8px;
+    border-radius: 3px;
+    background: var(--bg-tertiary);
+}
+
+.chain-budget-p99,
+.chain-budget-p50 {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    border-radius: 3px;
+}
+
+.chain-budget-p99 { background: var(--loading-bg); }
+.chain-budget-p99.chain-over { background: var(--failed-bg); }
+.chain-budget-p50 { background: var(--loading-border); opacity: 0.7; }
+
+.chain-budget-line {
+    position: absolute;
+    top: -3px;
+    width: 2px;
+    height: 16px;
+    background: var(--failed-border);
+}
+
+.chain-note { margin: -6px 0 10px; font-size: 0.8rem; }

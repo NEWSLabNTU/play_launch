@@ -1581,7 +1581,8 @@ pub(crate) async fn play(
             .with_events_switch(events_switch.clone())
             .with_entities(entities_rx.clone())
             .with_health(Some(health_rx.clone()))
-            .with_startup(Some(startup_rx.clone())),
+            .with_startup(Some(startup_rx.clone()))
+            .with_scope_paths(contract_view.scope_paths.clone()),
         );
         let web_shutdown = shutdown_signal.clone();
 

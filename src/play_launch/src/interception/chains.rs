@@ -53,6 +53,15 @@
 //! output starts a new origin instead. So in the simulator → controller →
 //! simulator loop the state is born where it is published, and the
 //! command's age is how old the state behind it is.
+//!
+//! An input's origin is the one recorded at its publish, and the publish of
+//! a message another process took may not have been read yet: each process
+//! has its own ring and they drain in turn. A publish whose input is not
+//! resolved waits, like a take in `latency.rs`, and is retried after each
+//! drain pass ([`ChainBook::settle`]). Without that, a hop across processes
+//! a few microseconds after its input restarted the origin: on Autoware the
+//! scenario selector's trajectory read 0 ms of age with 283 ms of planning
+//! behind it.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -135,6 +144,22 @@ impl Origin {
     }
 }
 
+/// A publish waiting for its input's origin.
+#[derive(Debug)]
+struct Pending {
+    topic: u64,
+    stamp: Option<u64>,
+    at_ns: u64,
+    /// (input, its stamp, take time, sampled hop).
+    from: Option<(u64, Option<u64>, u64, bool)>,
+}
+
+/// Publishes held for their input's origin, at most; beyond, the take time
+/// stands in at once.
+const PENDING_MAX: usize = 65_536;
+/// How long a publish waits for its input's publish to be read.
+const PENDING_EXPIRY_NS: u64 = 1_000_000_000;
+
 #[derive(Debug, Default)]
 struct Origins {
     at: HashMap<u64, Origin>,
@@ -172,6 +197,8 @@ pub(crate) struct ChainBook {
     origins: HashMap<u64, Origins>,
     /// topic -> data age.
     ages: HashMap<u64, Age>,
+    /// Publishes whose input's publish was not read yet, oldest first.
+    pending: VecDeque<Pending>,
     /// (input topic, node, output topic) -> sampled edge.
     sampled: HashMap<(u64, NodeKey, u64), Edge>,
     /// (node, output topic) -> publishes, for a sampled edge's share.
@@ -232,14 +259,15 @@ impl ChainBook {
         let carried = stamp
             .and_then(|s| self.taken.get(&node).and_then(|t| t.at.get(&s)))
             .copied();
-        let mut from: Option<Origin> = None;
+        // The input's origin: (input, its stamp, take time, sampled?).
+        let mut from: Option<(u64, Option<u64>, u64, bool)> = None;
         if let Some((input, take_ns)) = carried {
             if input != topic && take_ns <= at_ns {
                 self.edges
                     .entry((input, node, topic))
                     .or_default()
                     .observe(at_ns, at_ns - take_ns);
-                from = Some(self.resolve(input, stamp, take_ns));
+                from = Some((input, stamp, take_ns, false));
             }
         } else if tid != 0
             && let Some(&input) = self.last_take.get(&(node, tid))
@@ -250,11 +278,80 @@ impl ChainBook {
                     .entry((input, node, topic))
                     .or_default()
                     .observe(at_ns, at_ns - take_ns);
-                let mut o = self.resolve(input, take_stamp, take_ns);
-                o.estimated = true;
-                from = Some(o);
+                from = Some((input, take_stamp, take_ns, true));
             }
         }
+        let p = Pending {
+            topic,
+            stamp,
+            at_ns,
+            from,
+        };
+        // A stamped input whose publish has not been read yet: its process's
+        // ring may simply drain after this one. Wait for the pass to end.
+        if self.pending.is_empty() && self.ready(&p) {
+            self.finish(&p, false);
+        } else if self.pending.len() < PENDING_MAX {
+            self.pending.push_back(p);
+        } else {
+            self.finish(&p, true);
+        }
+    }
+
+    /// Whether a publish's input origin can be resolved now.
+    fn ready(&self, p: &Pending) -> bool {
+        match p.from {
+            Some((input, Some(s), _, _)) => self
+                .origins
+                .get(&input)
+                .is_some_and(|r| r.at.contains_key(&s)),
+            _ => true,
+        }
+    }
+
+    /// Resolve publishes that waited for their input's publish; call after
+    /// each drain pass. In time order, repeatedly, since one may feed the
+    /// next; one waiting past [`PENDING_EXPIRY_NS`] (its input published
+    /// outside the run, or forgotten) falls back to its take time.
+    pub(crate) fn settle(&mut self, now_ns: u64) {
+        if self.pending.is_empty() {
+            return;
+        }
+        self.pending.make_contiguous().sort_by_key(|p| p.at_ns);
+        loop {
+            let mut progress = false;
+            let mut rest = VecDeque::with_capacity(self.pending.len());
+            while let Some(p) = self.pending.pop_front() {
+                if self.ready(&p) {
+                    self.finish(&p, false);
+                    progress = true;
+                } else if now_ns.saturating_sub(p.at_ns) > PENDING_EXPIRY_NS {
+                    self.finish(&p, true);
+                    progress = true;
+                } else {
+                    rest.push_back(p);
+                }
+            }
+            self.pending = rest;
+            if !progress || self.pending.is_empty() {
+                break;
+            }
+        }
+    }
+
+    /// Record a publish's data age and remember its origin. `fallback`: the
+    /// input's origin is not coming, so its take time stands in.
+    fn finish(&mut self, p: &Pending, fallback: bool) {
+        let from = p.from.map(|(input, s, take_ns, sampled)| {
+            let mut o = if fallback {
+                Origin::born(input, take_ns, true)
+            } else {
+                self.resolve(input, s, take_ns)
+            };
+            o.estimated |= sampled;
+            o
+        });
+        let (topic, at_ns) = (p.topic, p.at_ns);
         let origin = match from {
             Some(o) if !o.visited(topic) && o.ns <= at_ns => {
                 let age = self.ages.entry(topic).or_default();
@@ -265,7 +362,7 @@ impl ChainBook {
             }
             _ => Origin::born(topic, at_ns, false),
         };
-        if let Some(stamp) = stamp {
+        if let Some(stamp) = p.stamp {
             let r = self.origins.entry(topic).or_default();
             if r.at.insert(stamp, origin).is_none() {
                 if r.order.len() >= ORIGINS_PER_TOPIC
@@ -500,6 +597,137 @@ pub struct ChainSnapshot {
     /// Data age per topic, for topics with an upstream seen at least
     /// [`CHAIN_MIN_SAMPLES`] times.
     pub ages: Vec<TopicAge>,
+}
+
+/// One hop of a path between two topics.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Hop {
+    pub from: String,
+    pub node: String,
+    pub to: String,
+    /// `carried` (the stamp crossed the node: measured) or `sampled` (the
+    /// thread's latest input: the data flowed, the time is a lower bound).
+    pub kind: &'static str,
+    pub samples: u64,
+    pub p50_ms: Option<f64>,
+    pub p99_ms: Option<f64>,
+    /// A sampled hop's share of the node's publishes on `to`.
+    pub share: Option<f64>,
+}
+
+/// A path of hops from a source topic to a sink topic.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ChainPath {
+    pub hops: Vec<Hop>,
+    /// Sums of the hops' medians and 99th percentiles. The second bounds the
+    /// path's p99 from above only if the hops' worst cases coincide.
+    pub p50_ms: f64,
+    pub p99_ms: f64,
+    pub carried_hops: usize,
+    pub sampled_hops: usize,
+}
+
+/// Paths shown between a source and a sink.
+pub const PATHS_SHOWN: usize = 10;
+/// Hops in a path, at most.
+const PATH_MAX_HOPS: usize = 16;
+
+impl ChainSnapshot {
+    /// Simple paths from `from` to `to` over carried edges seen at least
+    /// [`CHAIN_MIN_SAMPLES`] times and the sampled edges reported, fewest
+    /// hops first, then fastest. `truncated` when the walk hit its bound.
+    pub fn paths(&self, from: &str, to: &str) -> (Vec<ChainPath>, bool) {
+        let mut succ: HashMap<&str, Vec<Hop>> = HashMap::new();
+        for e in self.edges.iter().filter(|e| e.samples >= CHAIN_MIN_SAMPLES) {
+            succ.entry(e.from.as_str()).or_default().push(Hop {
+                from: e.from.clone(),
+                node: e.node.clone(),
+                to: e.to.clone(),
+                kind: "carried",
+                samples: e.samples,
+                p50_ms: e.p50_ms,
+                p99_ms: e.p99_ms,
+                share: None,
+            });
+        }
+        for e in &self.sampled {
+            succ.entry(e.from.as_str()).or_default().push(Hop {
+                from: e.from.clone(),
+                node: e.node.clone(),
+                to: e.to.clone(),
+                kind: "sampled",
+                samples: e.samples,
+                p50_ms: e.p50_ms,
+                p99_ms: e.p99_ms,
+                share: Some(e.share),
+            });
+        }
+        let mut found: Vec<Vec<&Hop>> = Vec::new();
+        let mut walked = 0usize;
+        #[allow(clippy::too_many_arguments)]
+        fn walk<'a>(
+            at: &'a str,
+            to: &str,
+            succ: &'a HashMap<&str, Vec<Hop>>,
+            path: &mut Vec<&'a Hop>,
+            seen: &mut HashSet<&'a str>,
+            found: &mut Vec<Vec<&'a Hop>>,
+            walked: &mut usize,
+        ) {
+            *walked += 1;
+            if *walked > PATHS_WALKED || path.len() >= PATH_MAX_HOPS {
+                return;
+            }
+            for h in succ.get(at).into_iter().flatten() {
+                if h.to == to {
+                    path.push(h);
+                    found.push(path.clone());
+                    path.pop();
+                    continue;
+                }
+                if seen.insert(h.to.as_str()) {
+                    path.push(h);
+                    walk(h.to.as_str(), to, succ, path, seen, found, walked);
+                    path.pop();
+                    seen.remove(h.to.as_str());
+                }
+            }
+        }
+        if from != to {
+            let mut seen = HashSet::from([from]);
+            walk(
+                from,
+                to,
+                &succ,
+                &mut Vec::new(),
+                &mut seen,
+                &mut found,
+                &mut walked,
+            );
+        }
+        let truncated = walked > PATHS_WALKED;
+        let mut paths: Vec<ChainPath> = found
+            .into_iter()
+            .map(|hops| {
+                let carried_hops = hops.iter().filter(|h| h.kind == "carried").count();
+                ChainPath {
+                    p50_ms: hops.iter().filter_map(|h| h.p50_ms).sum(),
+                    p99_ms: hops.iter().filter_map(|h| h.p99_ms).sum(),
+                    carried_hops,
+                    sampled_hops: hops.len() - carried_hops,
+                    hops: hops.into_iter().cloned().collect(),
+                }
+            })
+            .collect();
+        paths.sort_by(|a, b| {
+            a.hops
+                .len()
+                .cmp(&b.hops.len())
+                .then(a.p50_ms.total_cmp(&b.p50_ms))
+        });
+        paths.truncate(PATHS_SHOWN);
+        (paths, truncated)
+    }
 }
 
 /// The longest simple paths over well-observed edges, starting at topics no
@@ -823,5 +1051,73 @@ mod tests {
         let s = b.snapshot(10_000 * MS, &names, label);
         assert_eq!(s.sampled.len(), 1);
         assert_eq!(s.sampled[0].from, "/a");
+    }
+
+    #[test]
+    fn paths_join_carried_and_sampled_hops_fewest_first() {
+        // /a -carried-> /b -sampled-> /c, and a longer /a -> /d -> /b too.
+        let mut b = ChainBook::default();
+        for i in 1..=CHAIN_MIN_SAMPLES {
+            let t = i * 100 * MS;
+            b.take((0, 1), 1, 1, Some(i), t);
+            b.publish((0, 1), 1, 2, Some(i), t + MS);
+            b.take((0, 2), 2, 2, Some(i), t + 2 * MS);
+            b.publish((0, 2), 2, 3, Some(10_000 + i), t + 6 * MS);
+            b.take((0, 3), 3, 1, Some(i), t + 2 * MS);
+            b.publish((0, 3), 3, 4, Some(i), t + 3 * MS);
+            b.take((0, 4), 4, 4, Some(i), t + 4 * MS);
+            b.publish((0, 4), 4, 2, Some(i), t + 5 * MS);
+        }
+        let s = b.snapshot(10_000 * MS, &names(), label);
+        let (paths, truncated) = s.paths("/a", "/c");
+        assert!(!truncated);
+        assert_eq!(paths.len(), 2, "{paths:?}");
+        let kinds: Vec<&str> = paths[0].hops.iter().map(|h| h.kind).collect();
+        assert_eq!(kinds, ["carried", "sampled"]);
+        assert_eq!((paths[0].carried_hops, paths[0].sampled_hops), (1, 1));
+        assert_eq!(paths[0].hops[1].node, "n2");
+        assert_eq!(paths[1].hops.len(), 3);
+        assert!(s.paths("/c", "/a").0.is_empty());
+        assert!(s.paths("/a", "/a").0.is_empty());
+    }
+
+    #[test]
+    fn a_publish_read_before_its_inputs_publish_waits_for_it() {
+        // Node 2's ring drains first: its take of /a and publish of /b are
+        // read before node 1's publish of /a that started them.
+        let mut b = ChainBook::default();
+        for i in 1..=CHAIN_MIN_SAMPLES {
+            let t = i * 100 * MS;
+            b.take((1, 2), 2, 1, Some(i), t + MS);
+            b.publish((1, 2), 2, 2, Some(i), t + 3 * MS);
+            b.take((2, 3), 3, 2, Some(i), t + 4 * MS);
+            b.publish((2, 3), 3, 3, Some(i), t + 6 * MS);
+            b.publish((0, 1), 1, 1, Some(i), t);
+            b.settle(t + 10 * MS);
+        }
+        let s = b.snapshot(10_000 * MS, &names(), label);
+        let c = age(&s, "/c");
+        assert_eq!((c.source.as_str(), c.max_ms), ("/a", Some(6.0)), "{c:?}");
+        assert_eq!(c.estimated_share, 0.0);
+    }
+
+    #[test]
+    fn a_publish_whose_input_never_appears_falls_back_after_a_second() {
+        let mut b = ChainBook::default();
+        for i in 1..=CHAIN_MIN_SAMPLES {
+            let t = i * 100 * MS;
+            b.take((1, 2), 2, 1, Some(i), t);
+            b.publish((1, 2), 2, 2, Some(i), t + 3 * MS);
+        }
+        b.settle(CHAIN_MIN_SAMPLES * 100 * MS + 10 * MS);
+        assert!(
+            b.snapshot(0, &names(), label).ages.is_empty(),
+            "still waiting"
+        );
+        b.settle(10_000 * MS);
+        let s = b.snapshot(10_000 * MS, &names(), label);
+        let a = age(&s, "/b");
+        assert_eq!((a.source.as_str(), a.max_ms), ("/a", Some(3.0)));
+        assert_eq!(a.estimated_share, 1.0);
     }
 }

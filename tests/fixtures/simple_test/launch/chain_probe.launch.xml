@@ -1,12 +1,14 @@
 <?xml version="1.0"?>
 <!-- Carried and sampled edges (phase 88 C1, C2): a stamp carried across two
-     nodes, a node that restamps, one that re-sends an old stamp, and a timer
-     node with two inputs; see the script. -->
+     nodes, a node that restamps and one that carries its output on, one that
+     re-sends an old stamp, and a timer node with two inputs; see the
+     script. -->
 <launch>
   <executable cmd="python3 $(dirname)/../scripts/chain_probe.py source" name="chain_source" output="screen"/>
   <executable cmd="python3 $(dirname)/../scripts/chain_probe.py filter" name="chain_filter" output="screen"/>
   <executable cmd="python3 $(dirname)/../scripts/chain_probe.py control" name="chain_control" output="screen"/>
   <executable cmd="python3 $(dirname)/../scripts/chain_probe.py restamp" name="chain_restamp" output="screen"/>
+  <executable cmd="python3 $(dirname)/../scripts/chain_probe.py actuate" name="chain_actuate" output="screen"/>
   <executable cmd="python3 $(dirname)/../scripts/chain_probe.py once" name="chain_once" output="screen"/>
   <executable cmd="python3 $(dirname)/../scripts/chain_probe.py hold" name="chain_hold" output="screen"/>
   <executable cmd="python3 $(dirname)/../scripts/chain_probe.py fuse" name="chain_fuse" output="screen"/>

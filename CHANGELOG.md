@@ -42,6 +42,12 @@ allowance heavily.
   triggered the output. Each topic also gets a data age: how long before
   a publish the data behind it began, carried along both kinds of hop, with
   the share that went through a sampled hop and is therefore an estimate.
+  A Chains page shows the paths between a source and a sink topic, each hop
+  marked carried or sampled with its p50/p99, the sink's data age, and a
+  contract's budget for the pair where one is declared.
+- **Fix:** a delivery latency, hop time or data age above 10 s was reported
+  as 12.5 s, the edge of the histogram's last bucket. It now reports the
+  largest value seen.
 - **New:** lifecycle activation on the startup timeline: when each lifecycle
   node was configured and activated, whoever drove it (with interception,
   from the node's own transition events; otherwise from play_launch's
