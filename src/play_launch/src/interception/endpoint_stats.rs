@@ -25,7 +25,10 @@ use std::{collections::HashMap, path::Path};
 
 use serde::Serialize;
 
-use super::{EventKind, InterceptionEvent, TopicNameAssembly, decode_topic_name_chunk};
+use super::{
+    EventKind, InterceptionEvent, TopicNameAssembly, decode_topic_name_chunk,
+    latency::{Latency, Matcher, stamp_key},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -55,6 +58,8 @@ pub(super) struct Endpoint {
     pub(super) window: super::live::Window,
     /// The QoS the middleware applied, from `EndpointQos`.
     pub(super) qos: Option<super::live::Qos>,
+    /// Delivery latency, for a subscription that took a stamped message.
+    pub(super) latency: Option<Box<Latency>>,
 }
 
 impl Endpoint {
@@ -78,6 +83,7 @@ impl Endpoint {
             size_samples: 0,
             window: Default::default(),
             qos: None,
+            latency: None,
         }
     }
 }
@@ -123,6 +129,35 @@ pub(crate) struct EndpointRow {
     /// been lost to ring overflow, so its lifetime is understated.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub created_late: bool,
+    /// Delivery latency over the run, publish to take, for a subscription
+    /// that took stamped messages; see `latency.rs`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latency: Option<LatencySummary>,
+}
+
+/// A latency histogram reduced to what a reader looks at.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub(crate) struct LatencySummary {
+    pub p50_ms: Option<f64>,
+    pub p99_ms: Option<f64>,
+    pub max_ms: Option<f64>,
+    /// Takes matched to their publish.
+    pub samples: u64,
+    /// Matched over stamped takes: below 1 when some publishes were not seen
+    /// (a publisher outside the launch, a ring overflow).
+    pub coverage: f64,
+}
+
+impl LatencySummary {
+    pub(crate) fn of(h: &super::latency::Histogram, lat: &Latency) -> Option<Self> {
+        Some(Self {
+            p50_ms: h.quantile_ms(0.5),
+            p99_ms: h.quantile_ms(0.99),
+            max_ms: h.max_ms(),
+            samples: h.samples(),
+            coverage: lat.coverage()?,
+        })
+    }
 }
 
 /// Aggregates per-endpoint traffic from every child's ring.
@@ -142,6 +177,8 @@ pub(crate) struct EndpointTracker {
     /// `(child, topic hash, direction)` the middleware itself reported an
     /// incompatible-QoS event for.
     pub(super) dds_incompatible: std::collections::HashSet<(usize, u64, Direction)>,
+    /// Stamped publishes, for matching the takes of them.
+    pub(super) matcher: Matcher<(usize, u64)>,
 }
 
 impl EndpointTracker {
@@ -226,8 +263,39 @@ impl EndpointTracker {
                     ep.size_samples += 1;
                 }
                 ep.window.add(event.monotonic_ns, event.payload_bytes);
+                if let Some(stamp) = stamp_key(event.stamp_sec, event.stamp_nanosec) {
+                    match direction {
+                        Direction::Pub => {
+                            self.matcher
+                                .publish(event.topic_hash, stamp, event.monotonic_ns)
+                        }
+                        Direction::Sub => {
+                            let lat = ep.latency.get_or_insert_with(Default::default);
+                            self.matcher.take(
+                                key,
+                                lat,
+                                event.topic_hash,
+                                stamp,
+                                event.monotonic_ns,
+                            );
+                        }
+                    }
+                }
             }
             _ => {}
+        }
+    }
+
+    /// Match takes read before their publish; call after each drain pass.
+    pub(crate) fn settle(&mut self, now_ns: u64) {
+        for (key, take_ns, latency_ns) in self.matcher.settle(now_ns) {
+            if let Some(lat) = self
+                .live
+                .get_mut(&key)
+                .and_then(|ep| ep.latency.as_deref_mut())
+            {
+                lat.add(take_ns, latency_ns);
+            }
         }
     }
 
@@ -277,6 +345,10 @@ impl EndpointTracker {
                         .filter(|_| lifetime_s > 0.0)
                         .map(|b| b as f64 / lifetime_s),
                     created_late: ep.seen_without_init,
+                    latency: ep
+                        .latency
+                        .as_deref()
+                        .and_then(|l| LatencySummary::of(&l.run, l)),
                 }
             })
             .collect();

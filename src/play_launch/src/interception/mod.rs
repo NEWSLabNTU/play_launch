@@ -9,6 +9,7 @@
 //! - Writing summary files on shutdown
 
 mod endpoint_stats;
+mod latency;
 mod live;
 pub(crate) use endpoint_stats::Direction;
 pub use live::EntitySnapshot;
@@ -705,6 +706,7 @@ pub async fn run_interception_task(
                         }
                     }
                 }
+                endpoints.settle(crate::runtime_enforcement::monotonic_now_ns());
                 drop(drain_cost);
                 // The Entities page: one snapshot a second, built only while
                 // the web server holds a receiver.
@@ -759,6 +761,7 @@ pub async fn run_interception_task(
             }
         }
     }
+    endpoints.settle(crate::runtime_enforcement::monotonic_now_ns());
 
     if let Some(re) = rule_engine.as_mut() {
         re.flush();

@@ -8,7 +8,7 @@
 //! wrong ten minutes ago" survives, and every open and close is appended to
 //! `play_log/<ts>/health.jsonl` so a bundle can explain its run afterwards.
 //!
-//! Sources today: the Entities snapshot (QoS, take deficits, stale and silent
+//! Sources today: the Entities snapshot (QoS, take deficits, delivery latency, stale and silent
 //! endpoints) and play_launch's own cost. Crash loops, logs, graph-versus-
 //! model and startup land as their own sources.
 
@@ -293,6 +293,21 @@ pub fn entity_conditions(snap: &EntitySnapshot) -> Vec<Condition> {
                         name: format!("{who} ← {topic}"),
                     },
                     title: format!("takes fewer messages than {topic} publishes"),
+                    detail: f.message.clone(),
+                    link: Some(Link {
+                        view: "entities",
+                        target: Some(topic.clone()),
+                    }),
+                }),
+                "advisory" if f.code == "delivery_latency" => out.push(Condition {
+                    key: format!("delivery_latency:{who}:{topic}"),
+                    kind: "delivery_latency",
+                    severity: Severity::Warning,
+                    subject: Subject {
+                        kind: "endpoint",
+                        name: format!("{who} ← {topic}"),
+                    },
+                    title: format!("takes {topic} late"),
                     detail: f.message.clone(),
                     link: Some(Link {
                         view: "entities",

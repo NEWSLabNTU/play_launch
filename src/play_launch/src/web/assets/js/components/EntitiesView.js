@@ -67,6 +67,23 @@ function fmtLast(row) {
     return (s / 3600).toFixed(1) + 'h';
 }
 
+function fmtMs(ms) {
+    if (ms == null || !isFinite(ms)) return '—';
+    if (ms < 1) return ms.toFixed(2);
+    if (ms < 10) return ms.toFixed(1);
+    return Math.round(ms).toString();
+}
+
+/** Delivery latency cell: p99 over p50, in ms. A subscription that took no
+ * stamped message has none, which is not the same as zero. */
+function latencyCell(row) {
+    const l = row.latency;
+    if (!l) return html`<td class="ent-num ent-muted" title=${row.direction === 'sub' ? 'No stamped traffic: nothing to match a take to its publish' : ''}>—</td>`;
+    const title = `publish to take, last 10–20 s: p50 ${fmtMs(l.p50_ms)} ms, p99 ${fmtMs(l.p99_ms)} ms, max ${fmtMs(l.max_ms)} ms; `
+        + `${l.samples} samples, ${Math.round(l.coverage * 100)}% of stamped takes matched`;
+    return html`<td class="ent-num" title=${title}>${fmtMs(l.p99_ms)}<span class="ent-sub">${fmtMs(l.p50_ms)}</span></td>`;
+}
+
 const REL = { reliable: 'R', best_effort: 'B', system_default: 'D', best_available: 'A' };
 const DUR = { volatile: 'V', transient_local: 'T', system_default: 'D', best_available: 'A' };
 
@@ -137,6 +154,7 @@ const SORT_VALUE = {
     rate: r => r.rate_1s ?? -1,
     bytes: r => r.bytes_per_s ?? -1,
     size: r => r.mean_message_bytes ?? -1,
+    latency: r => r.latency?.p99_ms ?? -1,
     last: r => (r.since_last_message_s ?? (r.messages === 0 ? Infinity : -1)),
     qos: r => qosCompact(r.qos),
     flags: r => flagScore(r),
@@ -207,6 +225,7 @@ function EntityRow({ row, selected, onSelect }) {
             </td>
             <td class="ent-num">${row.bytes_per_s == null ? '—' : fmtBytes(row.bytes_per_s) + '/s'}</td>
             <td class="ent-num">${fmtBytes(row.mean_message_bytes)}</td>
+            ${latencyCell(row)}
             <td class="ent-num">${fmtLast(row)}</td>
             <td class="ent-qos" title=${qosTitle(row.qos)}>${qosCompact(row.qos)}</td>
             <td class="ent-flags">${flags.map((f, i) => html`<${FlagBadge} key=${i} flag=${f} />`)}</td>
@@ -221,7 +240,7 @@ function GroupRow({ group }) {
     }
     return html`
         <tr class="ent-group">
-            <td colspan="9">
+            <td colspan="10">
                 <span class="ent-group-topic">${group.topic}</span>
                 ${group.msgType && html`<span class="ent-group-type">${group.msgType}</span>`}
                 <span class="ent-group-stat">${fmtRate(pubRate)} msg/s published</span>
@@ -444,6 +463,7 @@ export function EntitiesView() {
                         ${th('rate', 'msg/s', 'ent-num', '1 s rate (10 s mean below)')}
                         ${th('bytes', 'bytes/s', 'ent-num')}
                         ${th('size', 'size', 'ent-num', 'Mean message size')}
+                        ${th('latency', 'latency ms', 'ent-num', 'Publish to take, p99 (p50 below), stamped messages only')}
                         ${th('last', 'last', 'ent-num', 'Time since the last message')}
                         ${th('qos', 'QoS', '', 'Reliability (R/B) · durability (V/T) · history (K<depth>/A)')}
                         ${th('flags', 'flags')}
@@ -451,7 +471,7 @@ export function EntitiesView() {
                 </thead>
                 <tbody>
                     ${body.count === 0 && html`
-                        <tr><td colspan="9" class="ent-none">${snap ? 'No entities match' : ''}</td></tr>`}
+                        <tr><td colspan="10" class="ent-none">${snap ? 'No entities match' : ''}</td></tr>`}
                     ${body.rows
                         ? body.rows.map(renderRow)
                         : body.groups.flatMap(g => [

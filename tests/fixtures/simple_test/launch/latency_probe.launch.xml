@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!-- Delivery latency (Health page W5): one publisher at 20 Hz, a subscriber
+     that keeps up and one that sleeps 150 ms per message; see the script. -->
+<launch>
+  <executable cmd="python3 $(dirname)/../scripts/latency_probe.py pub" name="latency_pub" output="screen"/>
+  <executable cmd="python3 $(dirname)/../scripts/latency_probe.py fast" name="latency_fast" output="screen"/>
+  <executable cmd="python3 $(dirname)/../scripts/latency_probe.py slow" name="latency_slow" output="screen"/>
+</launch>

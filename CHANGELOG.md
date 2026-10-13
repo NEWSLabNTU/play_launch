@@ -8,6 +8,13 @@ allowance heavily.
 
 ## Unreleased
 
+- **New:** delivery latency per subscription, from publish to take, for
+  every message with a `header.stamp` (or a top-level `stamp`). The Entities
+  page has a latency column (p99, p50 below; the tooltip gives the max,
+  sample count and the share of stamped takes matched), `endpoint_stats.json`
+  gives the same over the whole run, and the Health page warns about a
+  subscription whose p99 over the last 10–20 s is above both 100 ms and
+  twice the topic's period. Needs interception (`--interception on`).
 - **New:** the Health page watches logs. Per member: lines and bytes per
   second, ERROR and WARN lines per minute, and the most frequent messages
   with repeats collapsed (`lost connection to sensor 12` and `... 13` are one

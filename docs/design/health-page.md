@@ -1,6 +1,10 @@
 # Health page (Tier 1 observability)
 
-**Status: W0–W4 done (2026-10-13); W5–W7 next.** W4: `health/logs.rs`
+**Status: W0–W5 done (2026-10-13); W6–W7 next.** W5:
+`interception/latency.rs` matches each stamped take to its publish by
+stamp and keeps a 64-bucket log histogram per subscription (run, and the
+last 10–20 s); Entities shows p99/p50 and Health a `delivery_latency`
+warning. W4: `health/logs.rs`
 reads each member's `out`/`err` growth every 2 s (≤1 MiB per file per tick,
 counted beyond), classifies rcutils levels, collapses repeats into
 signatures, and reports floods, error bursts and errors new after the first
@@ -157,6 +161,29 @@ Entities gains `lat p50 / p99` and a DeliveryLatency warning when p99 exceeds
 max(100 ms, 2 × the topic's period) for 10 s. Cost: one hash insert per
 stamped publish, one lookup per stamped take; memory 256 × stamped topics.
 ~0.1–0.2 µs per event on top of the current ~0.13.
+
+As built (W5), four departures from the sketch above:
+
+- **512 stamps per topic, 64 buckets.** 256 stamps is a quarter second of a
+  1 kHz IMU; 32 buckets over six decades are 54% wide, too coarse to tell
+  60 ms from 90 ms. 64 buckets are ~25% wide, and a percentile reports its
+  bucket's upper edge capped at the largest sample, so it errs high by at
+  most one bucket.
+- **Takes read before their publish.** The consumer drains each child's ring
+  in turn, so the subscriber's take can be read first. Such a take waits in
+  a pending queue (≤4096) retried after every drain pass and dropped,
+  counting only against coverage, after 1 s.
+- **Several publishes of one stamp** keep the first and the latest, and a
+  take matches the latest not after it — enough for a relay, not for three
+  publishers sharing stamps.
+- **"For 10 s"** is the window, not a debounce: the live histogram covers
+  the current 10 s epoch and the one before, and the rule needs ≥20 matched
+  takes in it. The Health book's two-absent-reports rule does the rest.
+
+The fixture (`latency_probe.launch.xml`: 20 Hz `std_msgs/Header`, a
+subscriber that returns at once and one that sleeps 150 ms with depth 10)
+measured p99 1 ms and 467 ms — the slow one takes the oldest of ten queued
+messages, 10 × 47 ms. Per-event cost was not measured separately.
 
 ### E. Log rate and error bursts
 

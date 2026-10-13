@@ -488,7 +488,8 @@ play_log/<timestamp>/
 │   ├── stats_summary.json          # per-topic pub/take counts, rates
 │   ├── events.jsonl                # per-message record read by `measure`; only when
 │                                   #   asked for (--record-events / web UI toggle)
-│   ├── endpoint_stats.json         # every pub/sub created: messages, rate, est. bytes —
+│   ├── endpoint_stats.json         # every pub/sub created: messages, rate, est. bytes,
+│                                   #   publish-to-take latency per subscription —
 │                                   #   silent endpoints included, busiest first
 │   └── node_identity.tsv           # model key → PID → REAL ROS node name (#0017)
 ├── system_stats.csv, diagnostics.csv
@@ -676,6 +677,23 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-10-13**: **Delivery latency per subscription** (`health-page.md`
+  W5, `interception/latency.rs`). The interceptor already reported a
+  publish and each take with the message's `header.stamp`; the consumer now
+  uses the stamp as a KEY — per topic the last 512 stamps map to their
+  publish time (`CLOCK_MONOTONIC`, one clock across processes), and a take
+  looks its own up, so it works under `use_sim_time`. Each child has its own
+  ring and they drain in turn, so a take is often read BEFORE its publish:
+  it waits in a pending queue retried after every drain pass
+  (`EndpointTracker::settle`) and expires after 1 s, counting only against
+  coverage. 64 log buckets, 10 µs to 10 s (~25% wide); a percentile reports
+  its bucket's upper edge, capped at the largest sample. Entities gains a
+  latency column, `endpoint_stats.json` a `latency` block, Health a
+  `delivery_latency` warning (p99 over the last 10–20 s > max(100 ms, 2 ×
+  the topic's period), ≥20 samples). Fixture `latency_probe.launch.xml`:
+  fast subscriber p99 1 ms, one sleeping 150 ms at depth 10 p99 467 ms.
+  Blind to unstamped types and rclcpp intra-process.
 
 - **2026-10-13**: **#0070: the Python frontend carries `respawn`.** The
   `Node`/`LifecycleNode`/`ExecuteProcess`/`ComposableNodeContainer` mocks

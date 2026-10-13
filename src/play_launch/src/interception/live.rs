@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use super::{
     EventKind, InterceptionEvent,
-    endpoint_stats::{Direction, Endpoint, EndpointTracker},
+    endpoint_stats::{Direction, Endpoint, EndpointTracker, LatencySummary},
 };
 
 /// Seconds of history the live rates are computed over.
@@ -268,6 +268,9 @@ pub(crate) struct LiveRow {
     pub since_last_message_s: Option<f64>,
     pub lifetime_s: f64,
     pub qos: Option<QosView>,
+    /// Delivery latency over the last 10 to 20 s; absent for a subscription
+    /// that took no stamped message.
+    pub latency: Option<LatencySummary>,
     pub flags: Vec<Flag>,
 }
 
@@ -330,6 +333,12 @@ const STALE_MIN_MESSAGES: u64 = 5;
 const STALE_MIN_ACTIVE_S: f64 = 5.0;
 /// Topics that carry events rather than streams: quiet is their normal state.
 const EVENT_TOPICS: [&str; 2] = ["/parameter_events", "/rosout"];
+/// Delivery latency is judged against the larger of this and
+/// [`LATENCY_PERIODS`] periods of the topic.
+const LATENCY_FLOOR_MS: f64 = 100.0;
+const LATENCY_PERIODS: f64 = 2.0;
+/// Fewer matched takes than this in the window is not judged.
+const LATENCY_MIN_SAMPLES: u64 = 20;
 
 impl EndpointTracker {
     /// Build the live snapshot at `now_ns` (`CLOCK_MONOTONIC`).
@@ -455,6 +464,37 @@ impl EndpointTracker {
             }
         }
 
+        // Delivery latency: a subscription whose recent p99 is well past
+        // both a floor and the topic's own period.
+        let latencies: Vec<Option<LatencySummary>> = eps
+            .iter()
+            .map(|(_, ep)| {
+                let l = ep.latency.as_deref()?;
+                LatencySummary::of(&l.recent(now_ns), l)
+            })
+            .collect();
+        for (pubs, subs) in by_topic.values() {
+            let published: f64 = pubs.iter().map(|&p| rates[p].rate_10s).sum();
+            let period_ms = (published > 0.0).then(|| 1000.0 / published);
+            let limit = LATENCY_FLOOR_MS.max(period_ms.map_or(0.0, |p| LATENCY_PERIODS * p));
+            for &s in subs {
+                let Some(l) = &latencies[s] else { continue };
+                let Some(p99) = l.p99_ms else { continue };
+                if l.samples >= LATENCY_MIN_SAMPLES && p99 > limit {
+                    let p50 = l.p50_ms.unwrap_or(0.0);
+                    flags[s].push(Flag {
+                        kind: "advisory",
+                        code: "delivery_latency",
+                        message: format!(
+                            "messages wait {p50:.0} ms (p50) to {p99:.0} ms (p99) between \
+                             publish and take, over {limit:.0} ms; the subscriber's \
+                             executor is behind or its queue is holding old messages"
+                        ),
+                    });
+                }
+            }
+        }
+
         let mut totals = Totals {
             ring_drops,
             ..Default::default()
@@ -533,6 +573,7 @@ impl EndpointTracker {
                 since_last_message_s: since_last,
                 lifetime_s: now_ns.saturating_sub(ep.created_ns) as f64 / 1e9,
                 qos: ep.qos.map(|q| q.view()),
+                latency: latencies[i].clone(),
                 flags: fl,
             });
         }
@@ -768,6 +809,47 @@ mod tests {
         let q = conds.iter().find(|c| c.kind == "qos_incompatible").unwrap();
         assert_eq!(q.subject.name, "/a");
         assert!(q.detail.contains("reliability"), "{}", q.detail);
+    }
+
+    #[test]
+    fn a_subscription_that_takes_late_is_flagged_and_a_prompt_one_is_not() {
+        let mut t = EndpointTracker::default();
+        let (n, ty) = names();
+        t.observe(0, "talker", &ev(EventKind::PublisherInit, 1, 0xA, 0));
+        t.observe(1, "fast", &ev(EventKind::SubscriptionInit, 2, 0xA, 0));
+        t.observe(2, "slow", &ev(EventKind::SubscriptionInit, 3, 0xA, 0));
+        let stamped = |kind, handle, i: u64, mono| {
+            let mut e = ev(kind, handle, 0xA, mono);
+            e.stamp_sec = 1000;
+            e.stamp_nanosec = i as u32;
+            e
+        };
+        // 20 Hz for 20 s; the fast subscriber takes 1 ms after each publish,
+        // the slow one 300 ms after, read before the publish half the time
+        // (its ring drained first).
+        let ms = NS / 1000;
+        for i in 1..=400u64 {
+            let at = i * 50 * ms;
+            if i % 2 == 0 {
+                t.observe(2, "slow", &stamped(EventKind::Take, 3, i, at + 300 * ms));
+            }
+            t.observe(0, "talker", &stamped(EventKind::Publish, 1, i, at));
+            t.observe(1, "fast", &stamped(EventKind::Take, 2, i, at + ms));
+            if i % 2 == 1 {
+                t.observe(2, "slow", &stamped(EventKind::Take, 3, i, at + 300 * ms));
+            }
+            t.settle(at + 300 * ms);
+        }
+        let snap = t.live_snapshot(20 * NS + NS / 2, &n, &ty, 0);
+        let row = |m: &str| snap.rows.iter().find(|r| r.member == m).unwrap();
+        let fast = row("fast").latency.clone().unwrap();
+        let slow = row("slow").latency.clone().unwrap();
+        assert!(fast.p99_ms.unwrap() <= 1.25, "{fast:?}");
+        assert!((300.0..=375.0).contains(&slow.p99_ms.unwrap()), "{slow:?}");
+        assert_eq!(slow.coverage, 1.0, "every take matched: {slow:?}");
+        assert!(row("fast").flags.is_empty(), "{:?}", row("fast").flags);
+        assert_eq!(row("slow").flags[0].code, "delivery_latency");
+        assert!(row("talker").latency.is_none(), "a publisher has none");
     }
 
     #[test]

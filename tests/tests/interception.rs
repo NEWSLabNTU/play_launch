@@ -1117,3 +1117,104 @@ fn test_health_reports_an_error_burst_with_its_signature() {
     );
     assert!(errors[0]["count"].as_u64().unwrap() > 10, "{errors:?}");
 }
+
+/// Delivery latency (W5): on one 20 Hz topic, a subscription that sleeps
+/// 150 ms per message takes messages hundreds of milliseconds after their
+/// publish and is reported, on Entities and as a Health issue; one that keeps
+/// up shows a low latency and is not reported.
+#[test]
+fn test_delivery_latency_separates_a_slow_subscriber_from_a_fast_one() {
+    let env = fixtures::install_env();
+    let launch =
+        fixtures::test_workspace_path("simple_test").join("launch/latency_probe.launch.xml");
+    let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--interception",
+        "on",
+        "--web-addr",
+        &format!("127.0.0.1:{port}"),
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        launch.to_str().unwrap(),
+    ]);
+    cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", interception_so_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+
+    let sub_row = |rows: &[serde_json::Value], node: &str| -> Option<serde_json::Value> {
+        rows.iter()
+            .find(|r| {
+                r["node"] == node && r["direction"] == "sub" && r["topic"] == "/latency_probe"
+            })
+            .cloned()
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(40);
+    let (rows, issues) = loop {
+        std::thread::sleep(Duration::from_millis(1000));
+        let (s1, entities) = http(port, "GET", "/api/entities", None);
+        let (s2, health) = http(port, "GET", "/api/health/issues", None);
+        if s1 != 200 || s2 != 200 {
+            continue;
+        }
+        let rows: Vec<serde_json::Value> = serde_json::from_str::<serde_json::Value>(&entities)
+            .unwrap()["rows"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let issues: Vec<serde_json::Value> = serde_json::from_str::<serde_json::Value>(&health)
+            .unwrap()["open"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let reported = issues.iter().any(|i| i["kind"] == "delivery_latency");
+        if reported || std::time::Instant::now() > deadline {
+            break (rows, issues);
+        }
+    };
+    drop(proc);
+
+    let slow = sub_row(&rows, "/latency_slow").unwrap_or_else(|| panic!("no slow row: {rows:?}"));
+    let fast = sub_row(&rows, "/latency_fast").unwrap_or_else(|| panic!("no fast row: {rows:?}"));
+    let p99 = |r: &serde_json::Value| r["latency"]["p99_ms"].as_f64();
+    assert!(p99(&slow).is_some_and(|p| p >= 100.0), "slow: {slow}");
+    assert!(p99(&fast).is_some_and(|p| p < 100.0), "fast: {fast}");
+    let codes = |r: &serde_json::Value| -> Vec<String> {
+        r["flags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["code"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert!(
+        codes(&slow).contains(&"delivery_latency".to_string()),
+        "{slow}"
+    );
+    assert!(
+        !codes(&fast).contains(&"delivery_latency".to_string()),
+        "{fast}"
+    );
+
+    let latency: Vec<&serde_json::Value> = issues
+        .iter()
+        .filter(|i| i["kind"] == "delivery_latency")
+        .collect();
+    assert_eq!(latency.len(), 1, "only the slow one: {latency:?}");
+    assert!(
+        latency[0]["subject"]["name"]
+            .as_str()
+            .unwrap()
+            .contains("/latency_probe"),
+        "{latency:?}"
+    );
+}
