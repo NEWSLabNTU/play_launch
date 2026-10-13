@@ -121,6 +121,9 @@ impl UnsetEnvironmentVariable {
 #[derive(Clone)]
 pub struct ExecuteProcess {
     cmd: Py<PyAny>,
+    /// `shell=True`: launch joins `cmd` with spaces and runs it through
+    /// `/bin/sh -c` (osrf_pycommon's `async_execute_process`).
+    shell: bool,
     on_exit_shutdown: Option<bool>,
     /// `respawn=` / `respawn_delay=` (#0070).
     respawn: crate::api::launch_ros::RespawnArgs,
@@ -141,8 +144,13 @@ impl ExecuteProcess {
         condition: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> Self {
+        let shell = _kwargs
+            .and_then(|k| k.get_item("shell").ok().flatten())
+            .and_then(|v| v.extract::<bool>().ok())
+            .unwrap_or(false);
         Self {
             cmd,
+            shell,
             on_exit_shutdown: crate::api::launch_ros::on_exit_kwarg_shuts_down(_kwargs),
             respawn: crate::api::launch_ros::RespawnArgs::from_kwargs(_kwargs),
             name,
@@ -169,6 +177,9 @@ impl ExecuteProcess {
         }
         if parts.is_empty() {
             return Ok(());
+        }
+        if me.shell {
+            parts = shell_command(&parts);
         }
         let name = me
             .name
@@ -202,6 +213,14 @@ impl ExecuteProcess {
         crate::api::visit::stamp_delay(mark);
         Ok(())
     }
+}
+
+/// The argv `launch` runs for a `shell=True` process: the command line
+/// joined with spaces, given to `/bin/sh -c`. Passing the parts as argv
+/// instead made `gz_sim.launch.py`'s `gz_args` ("-r -s world.sdf") one
+/// argument, which `gz sim` rejected.
+pub(crate) fn shell_command(parts: &[String]) -> Vec<String> {
+    vec!["/bin/sh".to_string(), "-c".to_string(), parts.join(" ")]
 }
 
 /// `ExecuteLocal(process_description=...)`.

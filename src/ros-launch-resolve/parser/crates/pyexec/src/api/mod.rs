@@ -290,6 +290,16 @@ class LaunchContext:
     launch_ros_actions.add_class::<launch_ros::LifecycleTransition>()?;
     launch_ros_actions.add_class::<launch_ros::PushRosNamespace>()?;
     launch_ros_actions.add_class::<launch_ros::PopRosNamespace>()?;
+    // Jazzy's names (Humble's stay as deprecated aliases there); nav2_bringup
+    // on Jazzy imports PushROSNamespace.
+    launch_ros_actions.add(
+        "PushROSNamespace",
+        launch_ros_actions.getattr("PushRosNamespace")?,
+    )?;
+    launch_ros_actions.add(
+        "PopROSNamespace",
+        launch_ros_actions.getattr("PopRosNamespace")?,
+    )?;
     launch_ros_actions.add_class::<launch_ros::LoadComposableNodes>()?;
     launch_ros_actions.add_class::<launch_ros::RosTimer>()?;
     launch_ros_actions.add_class::<launch_ros::SetUseSimTime>()?;
@@ -299,6 +309,10 @@ class LaunchContext:
     // Create launch_ros.descriptions submodule
     let launch_ros_desc = PyModule::new(py, "launch_ros.descriptions")?;
     launch_ros_desc.add_class::<launch_ros::ComposableNode>()?;
+    // launch_ros.descriptions re-exports these (`from launch_ros.descriptions
+    // import ParameterFile` in nav2_bringup on Jazzy).
+    launch_ros_desc.add_class::<parameter_descriptions::ParameterFile>()?;
+    launch_ros_desc.add_class::<parameter_descriptions::ParameterValue>()?;
 
     // Create launch_ros.substitutions submodule
     let launch_ros_subs = PyModule::new(py, "launch_ros.substitutions")?;

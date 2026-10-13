@@ -17,10 +17,25 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-*None.* `just check-issue-index` fails if this section and the per-file `status:`
+**#0073** -- the Rust parser cannot load a launch file that defines its own
+`launch.Substitution` (`nav2_common`'s `RewrittenYaml`, so every
+`nav2_bringup` launch file): the mock `launch` has no `Substitution` base and
+nothing calls a Python `perform()`. Workaround: `--parser python`.
+
+`just check-issue-index` fails if this section and the per-file `status:`
 frontmatter disagree.
 
 ## Resolved
+
+**#0072** -- Jazzy's `launch_ros` names (`PushROSNamespace`,
+`PopROSNamespace`, `ParameterFile` from `launch_ros.descriptions`) were
+missing from the mocks, so `nav2_bringup` on Jazzy stopped the Rust parser.
+See `archived/0072-*`.
+
+**#0071** -- a `shell=True` process (`ExecuteProcess(shell=True)`,
+`<executable shell="true">`) ran with its parts as argv; `ros_gz_sim`'s Gazebo
+got its `gz_args` as one argument and exited. Both parsers now record
+`/bin/sh -c "<joined command>"`, as launch runs it. See `archived/0071-*`.
 
 **#0070** -- the Python frontend dropped `respawn` / `respawn_delay` on
 `Node`, `ExecuteProcess` and `ComposableNodeContainer`: the mocks swallowed

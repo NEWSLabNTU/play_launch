@@ -38,6 +38,10 @@ def visit_bare_execute_process(
     cmd = [str(part) for part in (description.final_cmd or [])]
     if not cmd:
         return ret
+    if process.shell:
+        # launch joins the command line with spaces and runs it through the
+        # shell (osrf_pycommon's async_execute_process, shell=True).
+        cmd = ["/bin/sh", "-c", " ".join(cmd)]
 
     exec_name = _strip_counter(description.final_name)
     # The NAME the author gave, or None: an unnamed process is keyed by its

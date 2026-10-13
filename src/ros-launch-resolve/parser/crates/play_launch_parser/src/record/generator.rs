@@ -584,6 +584,15 @@ impl CommandGenerator {
             cmd.first().cloned()
         };
 
+        // `shell="true"`: launch joins the command line with spaces and runs
+        // it through `/bin/sh -c`. The name stays the one of the command.
+        let (cmd, cmd_str) = if exec.shell {
+            let cmd = vec!["/bin/sh".to_string(), "-c".to_string(), cmd.join(" ")];
+            (cmd, "/bin/sh".to_string())
+        } else {
+            (cmd, cmd_str)
+        };
+
         // Merge context environment with executable-specific environment
         // Executable-specific environment takes precedence
         let mut merged_env = context.environment(); // Already owned HashMap, no clone needed
@@ -613,7 +622,9 @@ impl CommandGenerator {
             on_exit_shutdown: exec.on_exit_shutdown,
             lifecycle: None,
             lifecycle_autostart: None,
-            args: if exec.arguments.is_empty() {
+            args: if exec.shell {
+                Some(cmd[1..].to_vec())
+            } else if exec.arguments.is_empty() {
                 None
             } else {
                 Some(
