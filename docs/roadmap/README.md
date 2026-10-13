@@ -242,6 +242,33 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     over-counts shared pages **2.4x**. Explicitly no performance claim: process
     count, thread count and runqueue depth are untouched.
     [phase-66-cgroup-per-container.md](./phase-66-cgroup-per-container.md).
+  - **Phase 87** - ✅ the Health page: what is wrong with this run, now
+    (2026-10-12 to 2026-10-14). Tier 1 of the big-system observability
+    design (W0-W7: issue book, exits and crash loops, logs, delivery
+    latency, graph against the run, startup timeline) and Tier 2's H, I, J,
+    K, L, N plus lifecycle activation. Nearly every item changed on its
+    first Autoware run: the "diagnostics costs 30%" finding was a busy Fast
+    DDS listener in play_launch's own participant; the resource monitor's
+    own cost fell from 8.9% to 0.34% of a core (NVML queried per process,
+    sysinfo walking every thread); Humble's `get_parameters` returns
+    nothing when one requested name is undeclared; Autoware under
+    `isolated` drops ~5.2 M discovery datagrams at startup; and the test
+    suite's domain allocator shared a domain between concurrent tests about
+    40% of the time.
+    [phase-87-health-page.md](./phase-87-health-page.md).
+  - **Phase 88** - planned: data-flow chains without contracts (2026-10-14).
+    Chains discovered from stamps a node carries from input to output
+    (exact: Autoware's 8-topic planning chain, and a 25.9 s-old stamp
+    re-sent) and from same-thread take-then-publish (sampled: an upper
+    bound), with data age propagated across nodes that restamp. A contract
+    adds a budget, nothing more.
+    [phase-88-data-flow-chains.md](./phase-88-data-flow-chains.md).
+  - **Phase 89** - planned: helping with DDS without touching it
+    (2026-10-14). play_launch never changes a user's DDS setting; it
+    observes and names the fix: per-node DDS environment, IP fragmentation
+    of large messages, one `discovery_pressure` issue, a pasteable DDS
+    report, and — its own to change — play_launch's own participant.
+    [phase-89-dds-assist.md](./phase-89-dds-assist.md).
   - **Phase 80** - planned: the plan and what was applied (2026-09-21). A
     composable's derived tier is printed by `check --sched --explain`, written
     into the model's `execution.bindings`, and then dropped for every

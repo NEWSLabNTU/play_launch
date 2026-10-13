@@ -1,6 +1,6 @@
 # Data-flow chains without contracts
 
-**Status: design, 2026-10-14.** Measured, not built. Supersedes the
+**Status: design, 2026-10-14; roadmap: phase 88** (`docs/roadmap/phase-88-data-flow-chains.md`). Measured, not built. Supersedes the
 "contracts only" framing of `big-system-observability.md` §M: a contract can
 still put a budget on a chain, but finding the chain and measuring it needs
 none.

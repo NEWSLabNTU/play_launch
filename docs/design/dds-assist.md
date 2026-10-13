@@ -1,6 +1,6 @@
 # Helping with DDS without touching it
 
-**Status: design, 2026-10-14.** Builds on the host checks (L) and discovery
+**Status: design, 2026-10-14; roadmap: phase 89** (`docs/roadmap/phase-89-dds-assist.md`). Builds on the host checks (L) and discovery
 load (N) already on the Health page.
 
 ## The rule

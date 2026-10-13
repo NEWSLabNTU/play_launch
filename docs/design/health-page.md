@@ -1,6 +1,6 @@
 # Health page (Tier 1 observability)
 
-**Status: W0–W7 done (2026-10-13).** W7: `health/startup.rs` records
+**Status: W0–W7 done (2026-10-13); roadmap: phase 87.** W7: `health/startup.rs` records
 each member's spawn, load start and load (timestamped as the actor emits
 them) and, from the interceptor, each node's first endpoint and first
 publish; `GET /api/startup`, `startup_timeline.json` at startup complete,
