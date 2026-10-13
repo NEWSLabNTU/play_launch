@@ -268,13 +268,31 @@ impl CgroupTree {
     /// this would happily report the charge of whatever cgroup a process
     /// happened to be in, including the whole user session.
     pub fn memory_current_for_pid(root: &Path, pid: u32) -> Option<u64> {
+        Self::memory_current(&Self::group_of_pid(root, pid)?)
+    }
+
+    /// The group a pid is in, if it is one of ours (under `root`, and not
+    /// `root` itself).
+    pub fn group_of_pid(root: &Path, pid: u32) -> Option<PathBuf> {
         let text = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
         let rel = text.lines().find_map(|l| l.strip_prefix("0::"))?.trim();
         let group = PathBuf::from(CGROUP_ROOT).join(rel.trim_start_matches('/'));
         if !group.starts_with(root) || group == root {
             return None;
         }
-        Self::memory_current(&group)
+        Some(group)
+    }
+
+    /// `throttled_usec` and `usage_usec` from `cpu.stat`: present only when
+    /// the cpu controller is enabled for the group.
+    pub fn cpu_throttled(group: &Path) -> Option<(u64, u64)> {
+        let text = std::fs::read_to_string(group.join("cpu.stat")).ok()?;
+        let field = |k: &str| {
+            text.lines()
+                .find_map(|l| l.strip_prefix(k))
+                .and_then(|v| v.trim().parse::<u64>().ok())
+        };
+        Some((field("throttled_usec ")?, field("usage_usec ")?))
     }
 
     /// Freeze or thaw every task in the group — phase 66 W3.

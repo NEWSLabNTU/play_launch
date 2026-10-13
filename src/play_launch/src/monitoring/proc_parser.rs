@@ -106,6 +106,63 @@ pub fn parse_proc_stat(_pid: u32) -> Result<(u64, u64)> {
     Ok((0, 0))
 }
 
+/// What one read of `/proc/<pid>/stat` gives: everything the monitor used to
+/// ask sysinfo for per process, which cost ~1.3 ms a process per tick on
+/// Autoware (sysinfo also walks every thread's `stat`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ProcStat {
+    pub state: char,
+    pub utime: u64,
+    pub stime: u64,
+    pub num_threads: u32,
+    pub vsize_bytes: u64,
+    pub rss_bytes: u64,
+}
+
+fn page_size() -> u64 {
+    static PAGE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    // SAFETY: sysconf has no preconditions.
+    *PAGE.get_or_init(|| unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as u64)
+}
+
+/// Parse the text of `/proc/<pid>/stat`. The command name is in parentheses
+/// and may itself contain spaces and `)`, so fields are counted from the LAST
+/// `)`.
+pub fn parse_stat_text(content: &str) -> Option<ProcStat> {
+    let rest = &content[content.rfind(')')? + 1..];
+    let f: Vec<&str> = rest.split_whitespace().collect();
+    if f.len() < 22 {
+        return None;
+    }
+    Some(ProcStat {
+        state: f[0].chars().next()?,
+        utime: f[11].parse().ok()?,
+        stime: f[12].parse().ok()?,
+        num_threads: f[17].parse().ok()?,
+        vsize_bytes: f[20].parse().ok()?,
+        rss_bytes: f[21].parse::<u64>().ok()? * page_size(),
+    })
+}
+
+pub fn read_proc_stat(pid: u32) -> Result<ProcStat> {
+    let path = format!("/proc/{pid}/stat");
+    let content =
+        std::fs::read_to_string(&path).wrap_err_with(|| format!("Failed to read {path}"))?;
+    parse_stat_text(&content).ok_or_else(|| eyre::eyre!("Invalid {path}"))
+}
+
+/// `read_bytes` and `write_bytes` from `/proc/<pid>/io`: storage I/O, what
+/// sysinfo reported as disk usage. `None` without permission.
+pub fn read_proc_io_storage(pid: u32) -> Option<(u64, u64)> {
+    let text = std::fs::read_to_string(format!("/proc/{pid}/io")).ok()?;
+    let field = |k: &str| {
+        text.lines()
+            .find_map(|l| l.strip_prefix(k))
+            .and_then(|v| v.trim().parse::<u64>().ok())
+    };
+    Some((field("read_bytes:")?, field("write_bytes:")?))
+}
+
 /// Parse /proc/diskstats for system-wide disk I/O statistics.
 /// Returns (total_read_bytes, total_write_bytes) aggregated across all disks.
 /// Format: major minor name reads ... sectors_read ... writes ... sectors_written ...
@@ -169,4 +226,28 @@ pub fn count_network_connections(pid: u32) -> (u32, u32) {
 #[cfg(not(target_os = "linux"))]
 pub fn count_network_connections(_pid: u32) -> (u32, u32) {
     (0, 0)
+}
+
+#[cfg(test)]
+mod stat_tests {
+    use super::*;
+
+    #[test]
+    fn a_command_name_with_parentheses_and_spaces_parses() {
+        let line = "1234 (a (weird) name) S 1 1234 1234 0 -1 4194560 100 0 0 0 \
+                    250 50 0 0 20 0 7 0 12345 104857600 2560 18446744073709551615";
+        let s = parse_stat_text(line).unwrap();
+        assert_eq!(s.state, 'S');
+        assert_eq!((s.utime, s.stime), (250, 50));
+        assert_eq!(s.num_threads, 7);
+        assert_eq!(s.vsize_bytes, 104_857_600);
+        assert_eq!(s.rss_bytes, 2560 * page_size());
+    }
+
+    #[test]
+    fn this_process_reads() {
+        let s = read_proc_stat(std::process::id()).unwrap();
+        assert!(s.num_threads >= 1 && s.rss_bytes > 0, "{s:?}");
+        assert!(read_proc_io_storage(std::process::id()).is_some());
+    }
 }

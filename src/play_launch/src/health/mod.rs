@@ -122,6 +122,9 @@ pub struct HealthSnapshot {
     pub logs: Vec<logs::MemberLogView>,
     /// The host and middleware setup, read once a minute.
     pub host: Option<host::HostFacts>,
+    /// Members' resources and trends, fastest-growing first (top
+    /// [`RESOURCES_SENT`]).
+    pub resources: Option<crate::monitoring::trends::ResourceSnapshot>,
 }
 
 fn unix_ms(t: SystemTime) -> u64 {
@@ -254,6 +257,7 @@ impl HealthBook {
             self_cost,
             logs,
             host: None,
+            resources: None,
         }
     }
 }
@@ -559,6 +563,135 @@ pub fn self_cost_condition(window: &self_cost::Usage) -> Option<Condition> {
     })
 }
 
+/// Members sent to the page in the Resources section.
+pub const RESOURCES_SENT: usize = 15;
+/// A trend counts once it covers this share of the window…
+const TREND_MIN_SPAN: f64 = 2.0 / 3.0;
+/// …and a line explains it this well: a leak is steady; a cache that fills
+/// and plateaus, or a sawtooth of allocation and release, is not.
+const TREND_MIN_R2: f64 = 0.8;
+/// RSS growth reported: over 1 MiB a minute, and at least 10 MiB in all.
+const RSS_LEAK_PER_MIN: f64 = (1 << 20) as f64;
+const RSS_LEAK_MIN_GROWTH: f64 = (10 << 20) as f64;
+/// Open files growing by at least this many over the window.
+const FD_LEAK_MIN_GROWTH: f64 = 20.0;
+/// A cgroup throttled by the cpu controller for this share of the period.
+const THROTTLED_PERCENT: f64 = 20.0;
+
+fn resources_view(
+    snap: &crate::monitoring::trends::ResourceSnapshot,
+) -> crate::monitoring::trends::ResourceSnapshot {
+    crate::monitoring::trends::ResourceSnapshot {
+        window_s: snap.window_s,
+        members: snap.members.iter().take(RESOURCES_SENT).cloned().collect(),
+    }
+}
+
+/// "12 min", or "40 s" under two minutes (the window is seconds in tests).
+fn span_text(s: f64) -> String {
+    if s < 120.0 {
+        format!("{s:.0} s")
+    } else {
+        format!("{:.0} min", s / 60.0)
+    }
+}
+
+/// `memory_growth`, `fd_growth`, `cpu_throttled`, `memory_high` per member.
+pub fn resource_conditions(snap: &crate::monitoring::trends::ResourceSnapshot) -> Vec<Condition> {
+    let window = snap.window_s as f64;
+    let steady = |f: &crate::monitoring::trends::Fit| {
+        f.span_s >= TREND_MIN_SPAN * window && f.r2 >= TREND_MIN_R2
+    };
+    let mib = |b: f64| b / (1u64 << 20) as f64;
+    let mut out = Vec::new();
+    for m in &snap.members {
+        let subject = Subject {
+            kind: "member",
+            name: m.name.clone(),
+        };
+        let link = Some(Link {
+            view: "nodes",
+            target: Some(m.name.clone()),
+        });
+        if let Some(f) = m.rss_trend
+            && steady(&f)
+            && f.per_min > RSS_LEAK_PER_MIN
+            && f.growth >= RSS_LEAK_MIN_GROWTH
+        {
+            out.push(Condition {
+                key: format!("memory_growth:{}", m.name),
+                kind: "memory_growth",
+                severity: Severity::Warning,
+                subject: subject.clone(),
+                title: format!(
+                    "memory grew {:.0} MiB in {} ({:.1} MiB/min)",
+                    mib(f.growth),
+                    span_text(f.span_s),
+                    mib(f.per_min)
+                ),
+                detail: format!(
+                    "now {:.0} MiB, growing steadily (r² {:.2}): a leak, or a buffer \
+                     with no bound",
+                    mib(m.rss_bytes as f64),
+                    f.r2
+                ),
+                link: link.clone(),
+            });
+        }
+        if let Some(f) = m.fd_trend
+            && steady(&f)
+            && f.growth >= FD_LEAK_MIN_GROWTH
+        {
+            out.push(Condition {
+                key: format!("fd_growth:{}", m.name),
+                kind: "fd_growth",
+                severity: Severity::Warning,
+                subject: subject.clone(),
+                title: format!(
+                    "open files grew by {:.0} in {}",
+                    f.growth,
+                    span_text(f.span_s)
+                ),
+                detail: format!(
+                    "{} open now; a descriptor leak ends at the process's limit, where \
+                     every open, socket and DDS participant fails",
+                    m.fds
+                ),
+                link: link.clone(),
+            });
+        }
+        if let Some(p) = m.cpu_throttled_percent
+            && p >= THROTTLED_PERCENT
+        {
+            out.push(Condition {
+                key: format!("cpu_throttled:{}", m.name),
+                kind: "cpu_throttled",
+                severity: Severity::Warning,
+                subject: subject.clone(),
+                title: format!("throttled {p:.0}% of the time by its cgroup's cpu limit"),
+                detail: "cpu.max is below what it uses: its callbacks wait".to_string(),
+                link: link.clone(),
+            });
+        }
+        if let Some(n) = m.memory_high_events
+            && n > 0
+        {
+            out.push(Condition {
+                key: format!("memory_high:{}", m.name),
+                kind: "memory_high",
+                severity: Severity::Info,
+                subject,
+                title: format!("reclaimed {n} times at memory.high"),
+                detail: "its cgroup's memory.high was reached: allocations stall while \
+                         the kernel reclaims"
+                    .to_string(),
+                link,
+            });
+        }
+    }
+    out
+}
+
 /// `startup_timeline.json`, written once, when the run reaches startup
 /// complete.
 fn write_startup_timeline(log_dir: &Path, t: &startup::StartupTimeline) {
@@ -622,6 +755,7 @@ fn expected_members(
 
 /// The Health task: once a second, gather conditions from every source,
 /// update the book, and publish a snapshot.
+#[allow(clippy::too_many_arguments)] // one call site, `up`, handing over its channels
 pub async fn run_health_task(
     log_dir: PathBuf,
     entities: Option<watch::Receiver<Arc<EntitySnapshot>>>,
@@ -629,6 +763,7 @@ pub async fn run_health_task(
     tx: watch::Sender<Arc<HealthSnapshot>>,
     startup_book: Arc<std::sync::Mutex<startup::StartupBook>>,
     startup_tx: watch::Sender<Arc<startup::StartupTimeline>>,
+    trends: watch::Receiver<Arc<crate::monitoring::trends::ResourceSnapshot>>,
     mut shutdown: watch::Receiver<bool>,
 ) {
     let mut book = HealthBook::with_journal(&log_dir);
@@ -794,6 +929,8 @@ pub async fn run_health_task(
         if let Some(h) = host_facts.as_ref() {
             conditions.extend(host::host_conditions(h));
         }
+        let resources = trends.borrow().clone();
+        conditions.extend(resource_conditions(&resources));
         if readings.len() > SELF_COST_WINDOW.as_secs() as usize
             && let Some(c) = self_cost_condition(&self_cost::usage(
                 readings.front().unwrap(),
@@ -805,6 +942,7 @@ pub async fn run_health_task(
         book.report(conditions, now);
         let mut snap = book.snapshot(now, shown, log_watcher.views(10));
         snap.host = host_facts.clone();
+        snap.resources = Some(resources_view(&resources));
         let _ = tx.send(Arc::new(snap));
     }
 }
@@ -836,6 +974,61 @@ mod tests {
         fn snapshot_t(&self, now: SystemTime, c: Option<self_cost::Usage>) -> HealthSnapshot {
             self.snapshot(now, c, Vec::new())
         }
+    }
+
+    #[test]
+    fn a_steady_rise_is_a_leak_and_a_noisy_one_or_a_short_one_is_not() {
+        use crate::monitoring::trends::{Fit, MemberResources, ResourceSnapshot};
+        let mib = (1u64 << 20) as f64;
+        let member = |name: &str, fit: Fit, fds: Option<Fit>| MemberResources {
+            name: name.into(),
+            rss_bytes: 500 << 20,
+            rss_trend: Some(fit),
+            fd_trend: fds,
+            ..Default::default()
+        };
+        let leak = Fit {
+            per_min: 2.0 * mib,
+            r2: 0.98,
+            span_s: 1700.0,
+            growth: 56.0 * mib,
+        };
+        let snap = ResourceSnapshot {
+            window_s: 1800,
+            members: vec![
+                member(
+                    "leaky",
+                    leak,
+                    Some(Fit {
+                        per_min: 1.0,
+                        r2: 0.95,
+                        span_s: 1700.0,
+                        growth: 28.0,
+                    }),
+                ),
+                member("noisy", Fit { r2: 0.3, ..leak }, None),
+                member(
+                    "young",
+                    Fit {
+                        span_s: 300.0,
+                        ..leak
+                    },
+                    None,
+                ),
+                member(
+                    "slow",
+                    Fit {
+                        per_min: 0.2 * mib,
+                        growth: 6.0 * mib,
+                        ..leak
+                    },
+                    None,
+                ),
+            ],
+        };
+        let c = resource_conditions(&snap);
+        let keys: Vec<&str> = c.iter().map(|c| c.key.as_str()).collect();
+        assert_eq!(keys, ["memory_growth:leaky", "fd_growth:leaky"], "{c:?}");
     }
 
     #[test]

@@ -288,3 +288,7 @@
 .hl-kv th { text-align: left; font-weight: 500; color: var(--text-secondary); padding: 3px 16px 3px 0; vertical-align: top; white-space: nowrap; }
 .hl-kv td { padding: 3px 0; color: var(--text-primary); }
 .hl-mono { font-family: monospace; font-size: 12px; }
+
+/* --- resources ------------------------------------------------------------ */
+.hl-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hl-trend-up { color: var(--pending-text); font-weight: 600; }

@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<!-- A memory and descriptor leak for the Health page's resource trends (K); see the script. -->
+<launch>
+  <executable cmd="python3 $(dirname)/../scripts/leaker.py" name="leaker" output="screen"/>
+</launch>

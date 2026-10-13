@@ -321,6 +321,46 @@ function Logs({ logs }) {
     `;
 }
 
+/** Members' memory and descriptors, with their trend over the window. */
+function Resources({ res }) {
+    const rows = res.members || [];
+    if (rows.length === 0) return null;
+    const win = Math.round(res.window_s / 60);
+    const trend = (f, fmt) => {
+        if (!f) return html`<span class="hl-muted">—</span>`;
+        const steady = f.r2 >= 0.8;
+        return html`<span class=${steady && f.per_min > 0 ? 'hl-trend-up' : 'hl-muted'}
+            title=${'r² ' + f.r2.toFixed(2) + ' over ' + Math.round(f.span_s) + ' s'}>${fmt(f.per_min)}/min</span>`;
+    };
+    const mb = (b) => (b / 1048576).toFixed(b >= 10485760 ? 0 : 1) + ' MiB';
+    const signed = (v, text) => (v > 0 ? '+' : '') + text;
+    return html`
+        <section class="hl-section">
+            <h3 class="hl-heading">Resources <span class="hl-muted hl-heading-count">(fastest-growing first; trend over ${win > 0 ? win + ' min' : res.window_s + ' s'})</span></h3>
+            <table class="hl-table">
+                <thead><tr>
+                    <th>member</th><th class="hl-num">RSS</th><th class="hl-num">RSS trend</th>
+                    <th class="hl-num">fds</th><th class="hl-num">fd trend</th><th class="hl-num">threads</th>
+                    <th class="hl-num">cpu throttled</th><th class="hl-num">memory.high</th>
+                </tr></thead>
+                <tbody>
+                    ${rows.map(m => html`
+                        <tr class="hl-row" key=${m.name}>
+                            <td>${m.name}</td>
+                            <td class="hl-num">${fmtBytes(m.rss_bytes)}</td>
+                            <td class="hl-num">${trend(m.rss_trend, v => signed(v, mb(v)))}</td>
+                            <td class="hl-num">${m.fds}</td>
+                            <td class="hl-num">${trend(m.fd_trend, v => signed(v, v.toFixed(1)))}</td>
+                            <td class="hl-num">${m.threads}</td>
+                            <td class="hl-num">${m.cpu_throttled_percent != null ? m.cpu_throttled_percent.toFixed(0) + '%' : '—'}</td>
+                            <td class="hl-num">${m.memory_high_events ?? '—'}</td>
+                        </tr>`)}
+                </tbody>
+            </table>
+        </section>
+    `;
+}
+
 function Host({ host }) {
     const used = (u, t) => (u != null && t) ? `${fmtBytes(u)} of ${fmtBytes(t)} (${Math.round(u * 100 / t)}%)` : '—';
     const rows = [
@@ -550,6 +590,8 @@ export function HealthView() {
             <${StartupTimeline} />
 
             ${snap && snap.logs && html`<${Logs} logs=${snap.logs} />`}
+
+            ${snap && snap.resources && html`<${Resources} res=${snap.resources} />`}
 
             ${snap && snap.host && html`<${Host} host=${snap.host} />`}
 

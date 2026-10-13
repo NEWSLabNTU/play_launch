@@ -7,7 +7,6 @@ use nvml_wrapper::{
 };
 use std::time::{Duration, SystemTime};
 use sysinfo::{Networks, System};
-use tracing::debug;
 
 use super::proc_parser;
 
@@ -195,79 +194,84 @@ pub fn collect_system_stats(
     })
 }
 
-/// Collect GPU metrics for a specific process using NVML.
-/// Searches all GPU devices for the given PID and returns metrics if found.
-pub fn collect_gpu_metrics(
-    nvml: Option<&Nvml>,
-    gpu_device_count: u32,
-    pid: u32,
-) -> Result<GpuMetricsTuple> {
-    let nvml = match nvml {
-        Some(nvml) => nvml,
-        None => {
-            // No NVML, return all None
-            return Ok((None, None, None, None, None, None, None));
-        }
-    };
+/// One NVML read per device per tick: which processes run on it, with their
+/// memory, and the device's own figures. Looked up per member afterwards.
+///
+/// It used to be queried per PROCESS — `running_compute_processes` on every
+/// device for every member, ~1.8 ms each — which on Autoware's 49 members was
+/// 87 ms of a 2 s tick, the largest part of the monitor's cost. It also only
+/// ever looked for the member's own pid, so a composable forked by an
+/// `isolated` container, the process that actually holds the CUDA context,
+/// never matched.
+#[derive(Debug, Default)]
+pub struct GpuSnapshot {
+    /// pid -> (device index, memory used)
+    procs: std::collections::HashMap<u32, (u32, Option<u64>)>,
+    devices: Vec<GpuDeviceStats>,
+}
 
-    // Search all GPU devices for this process
-    for device_index in 0..gpu_device_count {
-        // Get GPU device - if this fails, log warning and skip this GPU
-        let device = match nvml.device_by_index(device_index) {
-            Ok(dev) => dev,
-            Err(e) => {
-                // Only warn once per monitoring session (avoid log spam)
-                debug!(
-                    "Failed to get GPU device {} for PID {}: {}",
-                    device_index, pid, e
-                );
+#[derive(Debug, Default, Clone, Copy)]
+struct GpuDeviceStats {
+    utilization: Option<(u32, u32)>,
+    temperature: Option<u32>,
+    power: Option<u32>,
+    graphics_clock: Option<u32>,
+    memory_clock: Option<u32>,
+}
+
+impl GpuSnapshot {
+    pub fn read(nvml: Option<&Nvml>, gpu_device_count: u32) -> Self {
+        let mut snap = GpuSnapshot::default();
+        let Some(nvml) = nvml else { return snap };
+        for index in 0..gpu_device_count {
+            let Ok(device) = nvml.device_by_index(index) else {
+                snap.devices.push(GpuDeviceStats::default());
                 continue;
+            };
+            if let Ok(procs) = device.running_compute_processes() {
+                for p in procs {
+                    let mem = match p.used_gpu_memory {
+                        nvml_wrapper::enums::device::UsedGpuMemory::Used(b) => Some(b),
+                        nvml_wrapper::enums::device::UsedGpuMemory::Unavailable => None,
+                    };
+                    snap.procs.entry(p.pid).or_insert((index, mem));
+                }
             }
-        };
-
-        // Get running compute processes - if this fails, log warning and skip this GPU
-        let processes = match device.running_compute_processes() {
-            Ok(procs) => procs,
-            Err(e) => {
-                // This can fail on some GPU architectures or driver configurations
-                // Log as debug to avoid spamming logs
-                debug!(
-                    "Failed to get running processes for GPU {} (PID {}): {}",
-                    device_index, pid, e
-                );
-                continue;
-            }
-        };
-
-        // Check if our PID is using this GPU
-        for proc in processes {
-            if proc.pid == pid {
-                // Found process on this GPU - collect metrics
-                let utilization = device.utilization_rates().ok();
-                let temperature = device.temperature(TemperatureSensor::Gpu).ok();
-                let power = device.power_usage().ok();
-                let graphics_clock = device.clock_info(Clock::Graphics).ok();
-                let memory_clock = device.clock_info(Clock::Memory).ok();
-
-                // Extract GPU memory as u64 from UsedGpuMemory enum
-                let gpu_mem_bytes = match proc.used_gpu_memory {
-                    nvml_wrapper::enums::device::UsedGpuMemory::Used(bytes) => Some(bytes),
-                    nvml_wrapper::enums::device::UsedGpuMemory::Unavailable => None,
-                };
-
-                return Ok((
-                    gpu_mem_bytes,
-                    utilization.as_ref().map(|u| u.gpu),
-                    utilization.as_ref().map(|u| u.memory),
-                    temperature,
-                    power,
-                    graphics_clock,
-                    memory_clock,
-                ));
-            }
+            snap.devices.push(GpuDeviceStats {
+                utilization: device.utilization_rates().ok().map(|u| (u.gpu, u.memory)),
+                temperature: device.temperature(TemperatureSensor::Gpu).ok(),
+                power: device.power_usage().ok(),
+                graphics_clock: device.clock_info(Clock::Graphics).ok(),
+                memory_clock: device.clock_info(Clock::Memory).ok(),
+            });
         }
+        snap
     }
 
-    // Process not found on any GPU (this is normal for most processes)
-    Ok((None, None, None, None, None, None, None))
+    /// A member's GPU figures: memory summed over its process and
+    /// descendants, device figures from the first device any of them uses.
+    pub fn for_pids(&self, pids: impl IntoIterator<Item = u32>) -> GpuMetricsTuple {
+        let mut mem: Option<u64> = None;
+        let mut device: Option<u32> = None;
+        for pid in pids {
+            if let Some((d, m)) = self.procs.get(&pid) {
+                device.get_or_insert(*d);
+                if let Some(m) = m {
+                    mem = Some(mem.unwrap_or(0) + m);
+                }
+            }
+        }
+        let Some(d) = device.and_then(|d| self.devices.get(d as usize)) else {
+            return (None, None, None, None, None, None, None);
+        };
+        (
+            mem,
+            d.utilization.map(|u| u.0),
+            d.utilization.map(|u| u.1),
+            d.temperature,
+            d.power,
+            d.graphics_clock,
+            d.memory_clock,
+        )
+    }
 }

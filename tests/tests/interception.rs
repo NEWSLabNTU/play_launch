@@ -1483,3 +1483,71 @@ fn test_health_reports_a_dds_config_the_rmw_does_not_read() {
     assert_eq!(host["cyclone_rcvbuf_min"], 10 << 20, "{host}");
     assert!(host["disk_free"].as_u64().is_some(), "{host}");
 }
+
+/// Resource trends (K): a process that grows memory and open files steadily
+/// is reported for both, with the window shortened to seconds.
+#[test]
+fn test_health_reports_a_member_that_keeps_growing() {
+    let env = fixtures::install_env();
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/leaker.launch.xml");
+    let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--web-addr",
+        &format!("127.0.0.1:{port}"),
+        "--disable-diagnostics",
+        launch.to_str().unwrap(),
+    ]);
+    cmd.env("PLAY_LAUNCH_RESOURCE_TREND_WINDOW_S", "20");
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(45);
+    let snap = loop {
+        std::thread::sleep(Duration::from_millis(1000));
+        let (status, body) = http(port, "GET", "/api/health/issues", None);
+        if status != 200 {
+            continue;
+        }
+        let snap: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let kinds: Vec<&str> = snap["open"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|i| i["kind"].as_str())
+            .collect();
+        if (kinds.contains(&"memory_growth") && kinds.contains(&"fd_growth"))
+            || std::time::Instant::now() > deadline
+        {
+            break snap;
+        }
+    };
+    drop(proc);
+
+    let open = snap["open"].as_array().unwrap();
+    for kind in ["memory_growth", "fd_growth"] {
+        let i = open
+            .iter()
+            .find(|i| i["kind"] == kind)
+            .unwrap_or_else(|| panic!("no {kind}: {snap}"));
+        assert_eq!(i["subject"]["name"], "leaker", "{i}");
+    }
+    let leaker = snap["resources"]["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "leaker")
+        .unwrap_or_else(|| panic!("no leaker under resources: {snap}"));
+    let per_min = leaker["rss_trend"]["per_min"].as_f64().unwrap();
+    // 2 MiB every 0.4 s is 300 MiB a minute.
+    assert!(per_min > 150.0 * 1048576.0, "{leaker}");
+}

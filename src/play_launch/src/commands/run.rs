@@ -346,6 +346,7 @@ async fn run_direct(
             shutdown_rx.clone(),
             None, // No metrics broadcaster in run mode
             None, // `run` spawns a single node and builds no cgroup tree
+            None, // and runs no Health page to read trends
         ));
 
         debug!("Monitoring task spawned successfully");

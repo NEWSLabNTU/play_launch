@@ -141,7 +141,25 @@ differs from the model's, with when it changed and from which node. Data:
 `/parameter_events` (already subscribed for the web UI) against the model's
 `param_sources`. Cost: none beyond today.
 
-**K. Resource trends** (pain 15). Today Nodes shows CPU and memory now. Add,
+**K. Resource trends** (pain 15). **Done 2026-10-13**, after first cutting
+the monitor's own cost from 8.9% to 0.34% of a core on Autoware (49
+members, 2 s ticks). A per-phase profile of one tick, ~180 ms of CPU: NVML
+queried per PROCESS, 87 ms (`running_compute_processes` on every device
+for every member; now once per device per tick, which also matches an
+`isolated` container's children, the processes that hold the CUDA
+context); sysinfo's per-process refresh, 64 ms (it walks every thread's
+`stat`; now one `/proc/<pid>/stat` and `io` read per process);
+namespace-wide socket counts, 15 ms (now reused for 30 s); the subprocess
+walk rerun in full whenever any pid changed, 8 ms (now only for the
+members that came). Trends (`monitoring/trends.rs`): RSS and open fds
+sampled ~once a minute over 30 min (`PLAY_LAUNCH_RESOURCE_TREND_WINDOW_S`),
+a least-squares fit with its r²; threads; cgroup `cpu.stat` throttling and
+`memory.events` where a group exists. Health: `memory_growth` (steady,
+r² ≥ 0.8, over 2/3 of the window, > 1 MiB/min and ≥ 10 MiB),
+`fd_growth`, `cpu_throttled`, `memory_high`, and a Resources section.
+Autoware with a 120 s window: nothing reported. Not kept: context
+switches, since `/proc/<pid>/status` counts the main thread only and a
+process total reads every thread's file. Original proposal: Today Nodes shows CPU and memory now. Add,
 per node: RSS slope over the last 30 min (a leak is a trend, not a level),
 fd count, thread count, voluntary/involuntary context switches, and cgroup
 `cpu.stat` throttled time and `memory.events` (`high`, `max`, `oom_kill`)

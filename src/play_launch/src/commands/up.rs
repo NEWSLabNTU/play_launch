@@ -443,6 +443,10 @@ pub(crate) async fn play(
         let book = startup_book.clone();
         crate::member_actor::events::set_emit_hook(move |e| book.lock().unwrap().observe(e));
     }
+    // Resource trends: the monitor publishes, the Health task reads.
+    let (trends_tx, trends_rx) = tokio::sync::watch::channel(std::sync::Arc::new(
+        crate::monitoring::trends::ResourceSnapshot::default(),
+    ));
     let (startup_tx, startup_rx) = tokio::sync::watch::channel(std::sync::Arc::new(
         crate::health::startup::StartupTimeline::default(),
     ));
@@ -453,6 +457,7 @@ pub(crate) async fn play(
         health_tx,
         startup_book.clone(),
         startup_tx,
+        trends_rx,
         shutdown_signal.clone(),
     ));
     debug!("Log directory created: {}", log_dir.display());
@@ -670,6 +675,7 @@ pub(crate) async fn play(
             shutdown_signal.clone(),
             metrics_broadcaster.clone(),
             cgroup_root.clone(),
+            Some(trends_tx),
         ));
 
         Some(task)

@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, SystemTime},
 };
-use sysinfo::{Networks, Pid, System};
+use sysinfo::{Networks, System};
 use tokio::sync::watch;
 use tracing::{debug, warn};
 
@@ -127,8 +127,12 @@ pub struct ResourceMonitor {
     io_helper_unavailable: bool, // Track if helper failed to spawn (warn once)
     io_stats_cache: HashMap<u32, play_launch::ipc::ProcIoStats>, // Cache for batch I/O reads
 
-    // Network connection counts cached once per tick (/proc/net/* is namespace-wide)
-    net_connections_cache: Option<(u32, u32)>, // (tcp, udp) -- same for all processes in namespace
+    // Network connection counts, namespace-wide (/proc/net/*), so the same for
+    // every process: read at most every NET_CONNECTIONS_TTL. Parsing them is
+    // O(sockets on the host), 15 ms a read on a host running two simulators.
+    net_connections_cache: Option<(std::time::Instant, (u32, u32))>,
+    /// GPU processes and device figures, read once per tick.
+    gpu_snapshot: system_stats::GpuSnapshot,
 
     // Subprocess PID cache -- refreshed by time interval (process trees are stable in steady-state)
     subprocess_cache: HashMap<u32, Vec<u32>>, // parent PID -> child PIDs
@@ -200,6 +204,7 @@ impl ResourceMonitor {
             io_helper_unavailable: true, // Will be set to false if helper spawns successfully
             io_stats_cache: HashMap::new(),
             net_connections_cache: None,
+            gpu_snapshot: Default::default(),
             subprocess_cache: HashMap::new(),
             subprocess_cache_last_refresh: std::time::Instant::now(),
             cgroup_root,
@@ -208,44 +213,39 @@ impl ResourceMonitor {
 
     fn collect_metrics(&mut self, pid: u32) -> Result<ResourceMetrics> {
         let _cost = crate::util::self_cost::section(crate::util::self_cost::Subsystem::Monitor);
-        let pid_obj = Pid::from_u32(pid);
-
-        // Get process from system
-        let process = self
-            .system
-            .process(pid_obj)
-            .ok_or_else(|| eyre::eyre!("Process {} not found", pid))?;
-
         // Discover subprocesses for aggregation (cached, refreshed by time interval)
         let subprocess_pids = self.subprocess_cache.get(&pid).cloned().unwrap_or_default();
 
-        // Parse /proc/[pid]/stat for accurate CPU times (in clock ticks)
-        // Aggregate from parent + all children
-        let (mut utime, mut stime) = proc_parser::parse_proc_stat(pid)?;
-        let mut rss_bytes = process.memory();
-        let mut vms_bytes = process.virtual_memory();
-        let disk_usage = process.disk_usage();
-        let mut io_read_bytes = disk_usage.total_read_bytes;
-        let mut io_write_bytes = disk_usage.total_written_bytes;
-        let mut num_threads = process.tasks().map(|t| t.len() as u32).unwrap_or(1);
+        // One read of /proc/<pid>/stat per process, parent and descendants.
+        // This replaced sysinfo's per-process refresh, ~1.3 ms a process per
+        // tick on Autoware (it walks every thread's stat for `tasks()`), 64 ms
+        // of a 2 s tick for 49 members.
+        let own = proc_parser::read_proc_stat(pid)?;
+        let (mut utime, mut stime) = (own.utime, own.stime);
+        let mut rss_bytes = own.rss_bytes;
+        let mut vms_bytes = own.vsize_bytes;
+        let mut num_threads = own.num_threads;
+        // Storage I/O, which sysinfo called disk usage. The parent's comes
+        // from the I/O helper, which can read a privileged process's file;
+        // a descendant's is read directly, and absent without permission.
+        let (mut io_read_bytes, mut io_write_bytes) = self
+            .io_stats_cache
+            .get(&pid)
+            .map(|s| (s.read_bytes, s.write_bytes))
+            .or_else(|| proc_parser::read_proc_io_storage(pid))
+            .unwrap_or((0, 0));
 
-        // Aggregate from subprocesses
         for child_pid in &subprocess_pids {
-            // Get CPU times from /proc/[child_pid]/stat
-            if let Ok((child_utime, child_stime)) = proc_parser::parse_proc_stat(*child_pid) {
-                utime += child_utime;
-                stime += child_stime;
+            if let Ok(child) = proc_parser::read_proc_stat(*child_pid) {
+                utime += child.utime;
+                stime += child.stime;
+                rss_bytes += child.rss_bytes;
+                vms_bytes += child.vsize_bytes;
+                num_threads += child.num_threads;
             }
-
-            // Get other metrics from sysinfo
-            let child_pid_obj = Pid::from_u32(*child_pid);
-            if let Some(child_process) = self.system.process(child_pid_obj) {
-                rss_bytes += child_process.memory();
-                vms_bytes += child_process.virtual_memory();
-                let child_disk = child_process.disk_usage();
-                io_read_bytes += child_disk.total_read_bytes;
-                io_write_bytes += child_disk.total_written_bytes;
-                num_threads += child_process.tasks().map(|t| t.len() as u32).unwrap_or(1);
+            if let Some((r, w)) = proc_parser::read_proc_io_storage(*child_pid) {
+                io_read_bytes += r;
+                io_write_bytes += w;
             }
         }
 
@@ -272,12 +272,11 @@ impl ResourceMonitor {
         let num_fds = 0;
 
         // Map sysinfo process status to our ProcessState enum
-        let state = match process.status() {
-            sysinfo::ProcessStatus::Run => ProcessState::Running,
-            sysinfo::ProcessStatus::Sleep => ProcessState::Sleeping,
-            sysinfo::ProcessStatus::Idle => ProcessState::Sleeping,
-            sysinfo::ProcessStatus::Zombie => ProcessState::Zombie,
-            sysinfo::ProcessStatus::Stop => ProcessState::Stopped,
+        let state = match own.state {
+            'R' => ProcessState::Running,
+            'S' | 'D' | 'I' => ProcessState::Sleeping,
+            'Z' => ProcessState::Zombie,
+            'T' | 't' => ProcessState::Stopped,
             _ => ProcessState::Unknown,
         };
 
@@ -292,7 +291,9 @@ impl ResourceMonitor {
             gpu_power_milliwatts,
             gpu_graphics_clock_mhz,
             gpu_memory_clock_mhz,
-        ) = system_stats::collect_gpu_metrics(self.nvml.as_ref(), self.gpu_device_count, pid)?;
+        ) = self
+            .gpu_snapshot
+            .for_pids(std::iter::once(pid).chain(subprocess_pids.iter().copied()));
 
         // Collect network connection counts
         let (tcp_connections, udp_connections) = self.collect_network_connections(pid);
@@ -408,11 +409,13 @@ impl ResourceMonitor {
     /// reuse it for every process, turning ~400 reads into 4.
     #[cfg(target_os = "linux")]
     fn collect_network_connections(&mut self, pid: u32) -> (u32, u32) {
-        if let Some(cached) = self.net_connections_cache {
+        if let Some((at, cached)) = self.net_connections_cache
+            && at.elapsed() < NET_CONNECTIONS_TTL
+        {
             return cached;
         }
         let result = proc_parser::count_network_connections(pid);
-        self.net_connections_cache = Some(result);
+        self.net_connections_cache = Some((std::time::Instant::now(), result));
         result
     }
 
@@ -423,6 +426,10 @@ impl ResourceMonitor {
 }
 
 /// Async monitoring task (tokio-based replacement for old thread-based monitoring)
+/// How long namespace-wide socket counts are reused.
+const NET_CONNECTIONS_TTL: Duration = Duration::from_secs(30);
+
+#[allow(clippy::too_many_arguments)] // two callers, `up` and `run` (which passes Nones)
 pub async fn run_monitoring_task(
     config: MonitorConfig,
     log_dir: PathBuf,
@@ -431,9 +438,11 @@ pub async fn run_monitoring_task(
     mut shutdown_rx: watch::Receiver<bool>,
     metrics_broadcaster: Option<Arc<crate::web::SystemMetricsBroadcaster>>,
     cgroup_root: Option<PathBuf>,
+    trends_tx: Option<watch::Sender<Arc<super::trends::ResourceSnapshot>>>,
 ) -> Result<()> {
     debug!("Starting async monitoring task...");
 
+    let mut trends = super::trends::TrendBook::new(super::trends::TrendConfig::from_env());
     let mut monitor = ResourceMonitor::new(nvml, cgroup_root)?;
 
     // Try to spawn I/O helper (already in async context, no nested runtime!)
@@ -484,31 +493,12 @@ pub async fn run_monitoring_task(
                 // Self-cost: the synchronous sampling up to the first await.
                 let cost = crate::util::self_cost::section(crate::util::self_cost::Subsystem::Monitor);
 
-                // Refresh only the specific processes we're monitoring
-                let pids_to_refresh: Vec<Pid> =
-                    processes.keys().map(|&pid| Pid::from_u32(pid)).collect();
-
-                if !pids_to_refresh.is_empty() {
-
-                    // Refresh global CPU times first (needed for per-process CPU %).
-                    // refresh_cpu_all() is called later in collect_system_stats() which
-                    // is a superset, but we need global times BEFORE process refresh.
-                    monitor.system.refresh_cpu_all();
-
-                    // Refresh processes
-                    monitor.system.refresh_processes_specifics(
-                        sysinfo::ProcessesToUpdate::Some(&pids_to_refresh),
-                        false,
-                        sysinfo::ProcessRefreshKind::new()
-                            .with_cpu()
-                            .with_disk_usage()
-                            .with_memory(),
-                    );
-                }
+                // The GPU's processes and figures, once for every member.
+                monitor.gpu_snapshot =
+                    system_stats::GpuSnapshot::read(monitor.nvml.as_ref(), monitor.gpu_device_count);
 
                 // Clear per-tick caches
                 monitor.io_stats_cache.clear();
-                monitor.net_connections_cache = None;
 
                 // Refresh the subprocess tree cache periodically, OR immediately when the
                 // monitored PID set changes (new process registered).
@@ -525,13 +515,24 @@ pub async fn run_monitoring_task(
                 const SUBPROCESS_CACHE_INTERVAL: Duration = Duration::from_secs(10);
                 let pids_changed = processes.len() != monitor.subprocess_cache.len()
                     || processes.keys().any(|pid| !monitor.subprocess_cache.contains_key(pid));
-                if pids_changed || monitor.subprocess_cache_last_refresh.elapsed() >= SUBPROCESS_CACHE_INTERVAL {
+                if monitor.subprocess_cache_last_refresh.elapsed() >= SUBPROCESS_CACHE_INTERVAL {
                     monitor.subprocess_cache.clear();
                     for &pid in processes.keys() {
                         let children = proc_parser::find_subprocess_pids(pid);
                         monitor.subprocess_cache.insert(pid, children);
                     }
                     monitor.subprocess_cache_last_refresh = std::time::Instant::now();
+                } else if pids_changed {
+                    // Only the members that came or went: a member in a
+                    // crash loop changes the set every few seconds, and a
+                    // full walk each time was 8 ms a tick on Autoware.
+                    monitor.subprocess_cache.retain(|pid, _| processes.contains_key(pid));
+                    for &pid in processes.keys() {
+                        monitor
+                            .subprocess_cache
+                            .entry(pid)
+                            .or_insert_with(|| proc_parser::find_subprocess_pids(pid));
+                    }
                 }
 
                 drop(cost);
@@ -571,6 +572,22 @@ pub async fn run_monitoring_task(
                 for (pid, output_dir) in &processes {
                     match monitor.collect_metrics(*pid) {
                         Ok(metrics) => {
+                            if trends_tx.is_some() {
+                                let group = monitor.cgroup_root.as_deref().and_then(|root| {
+                                    crate::execution::cgroup::CgroupTree::group_of_pid(root, *pid)
+                                });
+                                trends.observe(
+                                    output_dir,
+                                    super::trends::Sample {
+                                        pid: *pid,
+                                        rss_bytes: metrics.rss_bytes,
+                                        threads: metrics.num_threads,
+                                        fds: metrics.num_fds,
+                                    },
+                                    group.as_deref(),
+                                    std::time::Instant::now(),
+                                );
+                            }
                             match monitor.csv_state.write_csv(output_dir, &metrics) {
                                 Ok(_) => {
                                     // Success - no logging to avoid noise
@@ -594,6 +611,15 @@ pub async fn run_monitoring_task(
                             );
                         }
                     }
+                }
+
+                if let Some(tx) = trends_tx.as_ref() {
+                    let live: std::collections::HashSet<String> = processes
+                        .values()
+                        .filter_map(|d| d.file_name().map(|n| n.to_string_lossy().into_owned()))
+                        .collect();
+                    trends.retain(|name| live.contains(name));
+                    let _ = tx.send(Arc::new(trends.snapshot()));
                 }
 
                 // Collect and write system-wide statistics

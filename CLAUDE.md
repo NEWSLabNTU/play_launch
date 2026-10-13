@@ -680,6 +680,22 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-13**: **Resource trends, and the monitor at 1/25th of its
+  cost** (`big-system-observability.md` §K). The resource monitor was
+  play_launch's largest own cost apart from the Fast DDS listener: 8.9% of
+  a core on Autoware's 49 members. A per-phase profile of one 2 s tick
+  (~180 ms CPU) put it in four places: NVML queried per process (87 ms),
+  sysinfo's per-process refresh walking every thread (64 ms), namespace-wide
+  socket counting (15 ms), and a full subprocess walk on every pid change
+  (8 ms, and rviz2's crash loop changes the set every few seconds). Now:
+  `GpuSnapshot` once per tick (which also finds an `isolated` container's
+  children on the GPU, which the per-pid lookup never did),
+  `proc_parser::read_proc_stat`/`read_proc_io_storage`, socket counts
+  reused for 30 s, an incremental walk: 0.34%. `monitoring/trends.rs`
+  fits RSS and fds over 30 min (`PLAY_LAUNCH_RESOURCE_TREND_WINDOW_S`)
+  and Health reports `memory_growth`, `fd_growth`, `cpu_throttled`,
+  `memory_high`. sysinfo still serves the system-wide figures.
+
 - **2026-10-13**: **Host checks** (`big-system-observability.md` §L,
   `health/host.rs`), read every 60 s on a blocking thread and shown as a
   Host section on the Health page. The one that matters most here:

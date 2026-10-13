@@ -8,6 +8,15 @@ allowance heavily.
 
 ## Unreleased
 
+- **New:** resource trends on the Health page: each member's memory and
+  open files fitted over the last 30 minutes, with a warning for steady
+  growth (over 1 MiB a minute, or 20 more open files), plus thread counts
+  and, where a member has a cgroup, CPU throttling and `memory.high`
+  reclaim.
+- **Performance:** resource monitoring costs about 0.3% of a core instead
+  of about 9% on a 49-process launch. GPU usage is read once per tick
+  instead of once per process (and now includes a container's forked
+  children), and per-process figures come from one read of `/proc`.
 - **Fix:** `--parser python` with nav2_bringup: the dumper merged every
   node's section of a substituted parameter file into each node, and dropped
   parameter files holding lists (`node_names`). Such files now stay
