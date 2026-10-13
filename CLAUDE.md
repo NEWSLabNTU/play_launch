@@ -491,7 +491,8 @@ play_log/<timestamp>/
 │   ├── events.jsonl                # per-message record read by `measure`; only when
 │                                   #   asked for (--record-events / web UI toggle)
 │   ├── chains.json                 # carried edges (a node re-sent a stamp it took),
-│   │                               #   sampled edges, and the chains (phase 88)
+│   │                               #   sampled edges, chains, data age per topic
+│   │                               #   (phase 88)
 │   ├── endpoint_stats.json         # every pub/sub created: messages, rate, est. bytes,
 │                                   #   publish-to-take latency per subscription —
 │                                   #   silent endpoints included, busiest first
@@ -703,6 +704,17 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   own take, a multi-threaded executor read 4–10 s for the behavior
   planner's status topics against 60–74 ms. Autoware: 623 sampled edges,
   the planner's path attributed to the map 0.73 / costmap 0.26.
+  **C3, data age**: each publish carries an origin (time, source topic,
+  estimated flag, last 8 topics) along carried hops and the ATTRIBUTED
+  sampled input, resolved at the taking node's next publish from a
+  64-stamp-per-topic map; `ages` per topic. Not the design's oldest-input
+  rule (stuck states, and a feedback loop never refreshes); an origin that
+  returns to a topic it passed starts anew there. `/rosout` and
+  `/parameter_events` takes are never attributed inputs (a timer node read
+  12 s of age from its startup `/parameter_events` take). Autoware:
+  `control_cmd` p50 19.5 ms, p99 442 ms, from `kinematic_state`; an input
+  that does not trigger (the controller's trajectory) is not in the age.
+  150 ns per event.
 
 - **2026-10-14**: **Lifecycle activation on the startup timeline.** The
   interceptor reads each `lifecycle_msgs/TransitionEvent` a node publishes

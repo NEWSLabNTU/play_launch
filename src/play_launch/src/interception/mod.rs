@@ -13,7 +13,7 @@ mod endpoint_stats;
 mod latency;
 mod live;
 mod tf;
-pub use chains::{CarriedEdge, Chain, ChainSnapshot, SampledEdge};
+pub use chains::{CarriedEdge, Chain, ChainSnapshot, SampledEdge, TopicAge};
 pub(crate) use endpoint_stats::Direction;
 pub use endpoint_stats::{LifecycleMark, StartupMark};
 pub use live::{ClockStatus, EntitySnapshot};

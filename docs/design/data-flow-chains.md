@@ -70,8 +70,11 @@ it: origin time propagated per node.
   message it took (for a stamp seen before: when that stamp was first
   published; else its publish time).
 - On a publish, the output's origin is the carried stamp's origin if the
-  stamp was carried; otherwise the oldest origin among the node's latest
-  takes on its sampled inputs.
+  stamp was carried; otherwise the origin of the node's latest take of the
+  input C2 attributes the publish to. (C3: the oldest among all sampled
+  inputs was the plan, and is dominated by states taken once and never
+  refreshes around a feedback loop. An origin returning to a topic it passed
+  through starts a new one there.)
 - `age = t_pub − origin`, recorded per topic as a distribution (the W5
   histogram). On `/control/command/control_cmd` that is how old the newest
   sensor data behind a command is — the number the question asks for.
@@ -116,5 +119,5 @@ one container is one "node" here unless the endpoint's owner (already shipped,
 |---|---|---|
 | C1 | carried edges and per-node latency, `stale_stamp` | Autoware: the 8-topic planning chain and the 25.9 s gear stamp, from a live run |
 | C2 | sampled edges, guarded by subscriptions and a minimum count | the behavior planner's inputs reported as sampled, not as triggers. Done |
-| C3 | origin propagation, data age per topic | age on `/control/command/control_cmd` reported, upper-bound flagged |
+| C3 | origin propagation, data age per topic | age on `/control/command/control_cmd` reported, upper-bound flagged. Done (flagged as `estimated_share`) |
 | C4 | chain view: source/sink picker, per-hop table, age distribution | fixture: a three-node pipeline with a restamping middle node shows one carried and one sampled hop |

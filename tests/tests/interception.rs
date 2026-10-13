@@ -1230,7 +1230,7 @@ fn test_delivery_latency_separates_a_slow_subscriber_from_a_fast_one() {
 #[test]
 fn test_carried_edges_form_a_chain_and_an_old_stamp_is_reported() {
     // Also phase 88 C2: a timer node's inputs are sampled edges, never
-    // carried ones.
+    // carried ones; and C3: each topic's data age, from where its data began.
     let env = fixtures::install_env();
     let launch = fixtures::test_workspace_path("simple_test").join("launch/chain_probe.launch.xml");
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
@@ -1278,7 +1278,15 @@ fn test_carried_edges_form_a_chain_and_an_old_stamp_is_reported() {
         let fused = chains["sampled"].as_array().map_or(0, |s| {
             s.iter().filter(|e| e["to"] == "/chain/fused").count()
         });
-        if (chained && stale && fused >= 2) || std::time::Instant::now() > deadline {
+        let aged = chains["ages"].as_array().map_or(0, |a| {
+            a.iter()
+                .filter(|a| {
+                    ["/chain/cmd", "/chain/restamped", "/chain/mode_out"]
+                        .contains(&a["topic"].as_str().unwrap_or(""))
+                })
+                .count()
+        });
+        if (chained && stale && fused >= 2 && aged == 3) || std::time::Instant::now() > deadline {
             break (chains, issues);
         }
     };
@@ -1344,6 +1352,30 @@ fn test_carried_edges_form_a_chain_and_an_old_stamp_is_reported() {
     );
     // A carried edge is not stated again as sampled.
     assert!(into("/chain/filtered").is_empty(), "{chains}");
+
+    // Data age: measured along carried hops, estimated across a sampled one,
+    // and as old as the held stamp behind /chain/mode_out.
+    let ages = chains["ages"].as_array().unwrap();
+    let age = |t: &str| {
+        ages.iter()
+            .find(|a| a["topic"] == t)
+            .unwrap_or_else(|| panic!("no age for {t}: {chains}"))
+    };
+    let f = |v: &serde_json::Value| v.as_f64().unwrap();
+    let cmd = age("/chain/cmd");
+    assert_eq!(cmd["source"], "/chain/raw", "{cmd}");
+    assert_eq!(f(&cmd["estimated_share"]), 0.0, "{cmd}");
+    assert!(f(&cmd["p50_ms"]) < 50.0, "{cmd}");
+    let restamped = age("/chain/restamped");
+    assert_eq!(restamped["source"], "/chain/raw", "{restamped}");
+    assert_eq!(f(&restamped["estimated_share"]), 1.0, "{restamped}");
+    let held = age("/chain/mode_out");
+    assert_eq!(held["source"], "/chain/mode", "{held}");
+    assert!(f(&held["p50_ms"]) > 1000.0, "{held}");
+    assert!(
+        ages.iter().all(|a| a["topic"] != "/chain/raw"),
+        "a source has no age: {chains}"
+    );
 
     let stale: Vec<&serde_json::Value> = issues
         .iter()
