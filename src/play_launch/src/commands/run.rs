@@ -173,7 +173,7 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
     };
 
     let runtime = build_tokio_runtime()?;
-    runtime.block_on(run_direct(&launch_dump, &args.common, args.check))
+    super::common::run_to_end(runtime, run_direct(&launch_dump, &args.common, args.check))
 }
 
 async fn run_direct(
@@ -811,7 +811,7 @@ async fn run_direct(
                                 if pgid != 0 {
                                     kill_process_group(pgid, nix::sys::signal::Signal::SIGKILL);
                                 }
-                                std::process::exit(1);
+                                crate::util::teardown::exit_now(1);
                             }
                         }
                     }

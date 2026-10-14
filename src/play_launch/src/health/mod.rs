@@ -593,6 +593,10 @@ async fn probe_parameters(
 ) -> params::ParamsReport {
     let mut nodes = Vec::new();
     for (member, fqn, inst) in params::probe_targets(model, fqns) {
+        // A probe still going when the run ends would ask dying nodes.
+        if crate::util::teardown::shutting_down() {
+            break;
+        }
         let expected = params::expected_params(inst, fqn);
         let names = params::probe_names(&expected);
         match crate::ros::parameter_proxy::get_values(node, fqn, &names, Duration::from_secs(2))
@@ -890,6 +894,9 @@ pub async fn run_health_task(inputs: HealthInputs) {
             _ = tick.tick() => {}
             _ = shutdown.changed() => {
                 if *shutdown.borrow() {
+                    if let Some(job) = params_job.take() {
+                        job.abort();
+                    }
                     break;
                 }
             }

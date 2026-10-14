@@ -8,6 +8,19 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fix:** `launch`, `run` and `up` exit promptly after SIGTERM on a large
+  system. Under `isolated` on Autoware, shutdown took 4 s to 30 s after the
+  nodes were gone, and sometimes never finished. Destroying one of
+  play_launch's own ROS clients or subscriptions announces it to every peer,
+  and under Fast DDS a write to a dead peer's shared-memory port waits about a
+  second; those destructions queued on one lock, and one stuck in a tokio
+  worker held up the runtime's shutdown. Once a run is ending, play_launch
+  now leaks its ROS entities instead of destroying them, stops probing
+  parameters, gives the runtime 3 s to wind down, and exits without libc's
+  exit handlers, where Fast DDS's static destructors spent another 24 s in
+  two of eight runs. Measured: four runs in a row exit 3.9 s to 7.9 s after
+  SIGTERM, each within 0.04 s of the run ending. Our own participant may
+  leave files in `/dev/shm`, as a killed node does.
 - **Breaking (install):** one PyPI package per ROS distribution,
   `play_launch_humble`, `play_launch_jazzy`, `play_launch_kilted`,
   `play_launch_lyrical` and `play_launch_rolling`, all providing the

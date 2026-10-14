@@ -174,6 +174,23 @@ fn main() -> eyre::Result<()> {
         warn!("AMENT_PREFIX_PATH NOT SET!");
     }
 
+    let result = dispatch(&opts);
+    // A run that ended skips libc's exit handlers: Fast DDS's static
+    // destructors can wait on dead peers for tens of seconds there.
+    if play_launch::util::teardown::shutting_down() {
+        let code = match &result {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("Error: {e:?}");
+                1
+            }
+        };
+        play_launch::util::teardown::exit_now(code);
+    }
+    result
+}
+
+fn dispatch(opts: &Options) -> eyre::Result<()> {
     // Route to appropriate handler based on subcommand
     match &opts.command {
         play_launch::cli::options::Command::Launch(args) => {

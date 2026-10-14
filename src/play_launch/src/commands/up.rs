@@ -159,7 +159,10 @@ pub fn handle_up(args: &cli::options::UpArgs) -> eyre::Result<()> {
     // Note: ROS service discovery and anchor process now started in play() async function (Phase 2, 4)
 
     let runtime = build_tokio_runtime()?;
-    runtime.block_on(play(LaunchDump::empty(), system_model, &args.common))
+    super::common::run_to_end(
+        runtime,
+        play(LaunchDump::empty(), system_model, &args.common),
+    )
 }
 
 /// Play the launch: spawn every node/container/composable-node context the
@@ -630,6 +633,11 @@ pub(crate) async fn play(
         match node_rx.recv() {
             Ok((node, diagnostics_node)) => {
                 debug!("Shared ROS node created: /play_launch");
+                // Never destroyed: the last drop is at the end of the run,
+                // when destroying a node waits on peers that are dying
+                // (`util::teardown`). The process exit reclaims it.
+                std::mem::forget(node.clone());
+                std::mem::forget(diagnostics_node.clone());
                 (Some(node), diagnostics_node)
             }
             Err(e) => {
@@ -1619,7 +1627,7 @@ pub(crate) async fn play(
                     let param_broadcaster = state_broadcaster.clone();
 
                     Some(tokio::spawn(async move {
-                        let _sub = param_sub;
+                        let _sub = crate::util::teardown::Held::new(param_sub);
                         loop {
                             tokio::select! {
                                 Some(event) = param_event_rx.recv() => {
@@ -1817,6 +1825,7 @@ pub(crate) async fn play(
             }
         }
         drop(lifecycle_tx); // keep only senders inside callbacks alive
+        let _lifecycle_subs = crate::util::teardown::Held::new(_lifecycle_subs);
 
         // Phase 74 — "apply where accepted, report where it cannot be". The
         // model carries the QoS overrides the contract derived; whether a

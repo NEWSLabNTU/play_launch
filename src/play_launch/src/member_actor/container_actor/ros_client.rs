@@ -84,16 +84,30 @@ impl ContainerClients {
         self.component_event_sub.is_some()
     }
 
-    /// Drop all clients and the event subscription so they're recreated on
-    /// restart.
+    /// Release all clients and the event subscription so they're recreated
+    /// on restart.
     pub(super) fn clear(&mut self) {
-        self.load_client = None;
-        self.list_client = None;
-        self.unload_client = None;
-        self.component_event_sub = None;
+        // Through `util::teardown`: destroying one publishes to every peer,
+        // which blocks on a dead one. A spawned load holding a clone keeps
+        // nothing alive past a leak, since the leaked copy never drops.
+        crate::util::teardown::release((
+            self.load_client.take(),
+            self.list_client.take(),
+            self.unload_client.take(),
+            self.component_event_sub.take(),
+        ));
         self.component_event_rx = None;
     }
+}
 
+impl Drop for ContainerClients {
+    /// The actor's end, on any path: the same release as [`Self::clear`].
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
+impl ContainerClients {
     /// Create the service clients (+ ComponentEvent subscription for
     /// play_launch containers) against a freshly started container.
     /// Failures are logged, not fatal — loads/unloads will surface errors.

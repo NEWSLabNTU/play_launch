@@ -36,6 +36,9 @@ pub(crate) fn initiate_shutdown(
     shutdown_tx: &tokio::sync::watch::Sender<bool>,
     member_handle: &crate::member_actor::MemberHandle,
 ) {
+    // First, so an actor that sees its child die already knows the run is
+    // ending and leaks its ROS entities rather than destroying them.
+    crate::util::teardown::begin_shutdown();
     #[cfg(unix)]
     crate::process::kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
     #[cfg(not(unix))]
@@ -149,7 +152,7 @@ pub(crate) async fn wait_for_completion_unix<F>(
                     _ => {
                         warn!("Immediate kill! Sending SIGKILL");
                         kill_process_group(pgid, nix::sys::signal::Signal::SIGKILL);
-                        std::process::exit(1);
+                        crate::util::teardown::exit_now(1);
                     }
                 }
             }
@@ -259,7 +262,7 @@ pub(crate) async fn wait_for_completion_unix<F>(
                     _ => {
                         warn!("Immediate kill during cleanup! Sending SIGKILL");
                         kill_process_group(pgid, nix::sys::signal::Signal::SIGKILL);
-                        std::process::exit(1);
+                        crate::util::teardown::exit_now(1);
                     }
                 }
             }

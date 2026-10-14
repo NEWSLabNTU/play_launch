@@ -531,6 +531,7 @@ impl MemberHandle {
 
     /// Broadcast shutdown signal to all actors
     pub fn shutdown(&self) -> Result<()> {
+        crate::util::teardown::begin_shutdown();
         self.shutdown_tx
             .send(true)
             .context("Failed to send shutdown signal")

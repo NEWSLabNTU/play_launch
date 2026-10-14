@@ -12,6 +12,31 @@ use tracing::debug;
 // They are re-exported here so the call sites read unchanged.
 pub(crate) use ros_launch_resolve::verbs::build_tokio_runtime;
 
+/// How long the end of a run waits for the runtime's tasks and threads.
+const RUNTIME_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Run a verb's future to completion, then shut the runtime down with a
+/// deadline. Dropping a runtime waits for every worker and blocking thread
+/// with no limit, and at the end of a run one can be inside a ROS entity's
+/// destructor waiting on a peer that died (`util::teardown`); twice on
+/// Autoware that wait never ended and play_launch never exited. Past the
+/// deadline the threads are abandoned to the process exit.
+pub(crate) fn run_to_end<T>(
+    runtime: tokio::runtime::Runtime,
+    future: impl std::future::Future<Output = T>,
+) -> T {
+    let out = runtime.block_on(future);
+    let start = std::time::Instant::now();
+    runtime.shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT);
+    if start.elapsed() >= RUNTIME_SHUTDOWN_TIMEOUT {
+        tracing::warn!(
+            "runtime threads still busy {}s after the run ended; exiting without them",
+            RUNTIME_SHUTDOWN_TIMEOUT.as_secs()
+        );
+    }
+    out
+}
+
 /// Guard that ensures child processes are cleaned up on drop.
 ///
 /// Used by replay and run commands to guarantee process cleanup even on panic.

@@ -37,7 +37,7 @@ pub fn handle_launch(cmd_args: &LaunchCommandArgs) -> Result<()> {
     );
 
     let runtime = super::common::build_tokio_runtime()?;
-    runtime.block_on(async move {
+    super::common::run_to_end(runtime, async move {
         info!("Step 1/3: Parsing launch file...");
         let (dump, launch_path) = ros_launch_resolve::verbs::parse_to_launch_dump(
             &args.package_or_path,

@@ -191,6 +191,10 @@ pub async fn get_values(
     let get_client: rclrs::Client<rcl_interfaces::srv::GetParameters> = ros_node
         .create_client(&format!("{target_fqn}/get_parameters"))
         .context("Failed to create get_parameters client")?;
+    // Released through `util::teardown`: a probe cut short by the end of
+    // the run must not destroy clients against nodes that are dying.
+    let clients = crate::util::teardown::Held::new((list_client, get_client));
+    let (list_client, get_client) = clients.get();
     for ready in [
         list_client.notify_on_service_ready(),
         get_client.notify_on_service_ready(),

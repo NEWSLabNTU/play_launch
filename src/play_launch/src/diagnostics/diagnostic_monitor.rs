@@ -75,6 +75,9 @@ pub async fn run_diagnostic_task(
         // Keep subscription alive
         subscriptions.push(_subscription);
     }
+    // Released through `util::teardown` when the task ends: destroying a
+    // subscription at shutdown would wait on dying peers.
+    let _subscriptions = crate::util::teardown::Held::new(subscriptions);
 
     info!(
         "Diagnostic monitoring active on {} topic(s)",

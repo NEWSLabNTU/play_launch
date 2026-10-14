@@ -684,6 +684,25 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-14**: **A run exits after SIGTERM** (`util/teardown.rs`).
+  Every destruction of one of play_launch's ROS entities publishes a graph
+  change, and under Fast DDS a write into a dead peer's shared-memory port
+  waits ~1 s in `SharedMemTransport::find_port`; destructions hold the
+  rclrs node lock, so fifteen container actors finished a second apart and a
+  tokio worker parked in `rmw_destroy_client` blocked the runtime's drop
+  (twice never exiting). `teardown::begin_shutdown()` is set by
+  `initiate_shutdown` and `MemberHandle::shutdown`; after it, `release`/
+  `Held` leak entities (before it they drop on the blocking pool), the
+  shared node is `mem::forget`-ed, Health stops its parameter probe (whose
+  `ListParameters` clients were the second blocker), `run_to_end` gives the
+  runtime 3 s, and `main` calls `exit_now` (`_exit` after flushing) because
+  libc's exit handlers run Fast DDS's `DomainParticipantFactory` destructor,
+  measured at 24 s there. **Measuring shutdown under gdb (the tracer must
+  be the parent, `ptrace_scope=1`): a stack sample pauses the process and
+  inflates the exit time by 8–30 s**, so time exits with no sample taken.
+  Of what remains, 5 s is isolated containers ignoring SIGTERM until the
+  SIGKILL ladder — not yet examined.
+
 - **2026-10-14**: **Phase 89: DDS help that touches nothing.** D1
   `ros_launch_resolve::ros::dds_env` (one implementation for `check`'s
   `warning[dds-env-split]`, a `warn!` before the first spawn, and Health's
