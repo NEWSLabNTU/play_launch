@@ -269,7 +269,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // Phase 83: the fault-reaction arithmetic the verdicts above were
     // computed from, one row per (hazard, rung).
     if inputs.explain && inputs.format != "json" && !index.budgets.is_empty() {
-        crate::say_raw!("{}", render_budgets(&index.budgets));
+        crate::say_raw!("{}", render_budgets(&index));
     }
 
     // Summary
@@ -391,14 +391,24 @@ pub fn expect_verdict(
 /// windowed rungs waited out on the way, the rung's own route, the settle and
 /// how it was reached -- against the interval. A rung the fault removes is
 /// listed with the reason it was skipped, so the selection is visible too.
-pub fn render_budgets(rows: &[manifest_loader::RungBudget]) -> String {
+pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
+    use crate::ros::budget_book;
     use manifest_loader::RungRole;
+    let rows = &index.budgets;
+    // Phase 10 B7: a SOURCES column once any contract states a source.
+    let with_sources = index
+        .manifests
+        .values()
+        .any(|m| !m.manifest.budget_sources.is_empty());
     let ms = |v: Option<f64>| v.map_or("-".to_string(), |v| format!("{v:.2}"));
     let mut out = String::from("\n-- Fault-reaction budgets (--explain, ms) --\n");
     let head = [
         "HAZARD", "RUNG", "ROLE", "DETECT", "WINDOWS", "ROUTE", "SETTLE", "TOTAL", "FTTI", "SLACK",
     ];
-    let mut table: Vec<[String; 10]> = vec![head.map(str::to_string)];
+    let mut table: Vec<Vec<String>> = vec![head.iter().map(|h| h.to_string()).collect()];
+    if with_sources {
+        table[0].push("SOURCES".to_string());
+    }
     let mut notes: Vec<String> = Vec::new();
     for r in rows {
         let role = match r.role {
@@ -422,7 +432,7 @@ pub fn render_budgets(rows: &[manifest_loader::RungBudget]) -> String {
         } else {
             format!("{:.2}", r.windows_ms)
         };
-        table.push([
+        let mut cells = vec![
             r.hazard.clone(),
             r.rung.clone(),
             role.to_string(),
@@ -433,7 +443,50 @@ pub fn render_budgets(rows: &[manifest_loader::RungBudget]) -> String {
             ms(r.total_ms),
             ms(r.ftti_ms),
             slack,
-        ]);
+        ];
+        // Phase 10 B7: where the row's stated terms come from, and a total
+        // with a measured term in it is not a bound.
+        let measured: Vec<&str> = r
+            .terms
+            .iter()
+            .filter(|t| budget_book::is_measured(index, t))
+            .map(|t| t.1.as_str())
+            .collect();
+        if with_sources {
+            let mut kinds: Vec<String> = r
+                .terms
+                .iter()
+                .map(|t| {
+                    budget_book::source_of(index, t)
+                        .map_or("unstated".to_string(), |s| s.kind.to_string())
+                })
+                .collect();
+            kinds.sort();
+            kinds.dedup();
+            cells.push(if r.role == RungRole::Skipped || kinds.is_empty() {
+                "-".to_string()
+            } else {
+                kinds.join("+")
+            });
+        }
+        table.push(cells);
+        if !measured.is_empty() && r.total_ms.is_some() {
+            // In the order charged, each once (a window's route and the
+            // rung's own can charge the same path).
+            let mut seen = std::collections::BTreeSet::new();
+            let keys: Vec<&str> = measured
+                .iter()
+                .copied()
+                .filter(|k| seen.insert(*k))
+                .collect();
+            notes.push(format!(
+                "  {}/{}: TOTAL {} is measured, not a bound: it contains {}",
+                r.hazard,
+                r.rung,
+                ms(r.total_ms),
+                keys.join(", ")
+            ));
+        }
         if !r.note.is_empty() {
             notes.push(format!("  {}/{}: {}", r.hazard, r.rung, r.note));
         }
@@ -451,7 +504,8 @@ pub fn render_budgets(rows: &[manifest_loader::RungBudget]) -> String {
             ));
         }
     }
-    let widths: Vec<usize> = (0..10)
+    let ncols = table[0].len();
+    let widths: Vec<usize> = (0..ncols)
         .map(|c| table.iter().map(|row| row[c].len()).max().unwrap_or(0))
         .collect();
     for row in &table {
@@ -460,7 +514,7 @@ pub fn render_budgets(rows: &[manifest_loader::RungBudget]) -> String {
             .zip(&widths)
             .enumerate()
             .map(|(c, (cell, w))| {
-                if c < 3 {
+                if !(3..10).contains(&c) {
                     format!("{cell:<w$}")
                 } else {
                     format!("{cell:>w$}")
@@ -477,9 +531,87 @@ pub fn render_budgets(rows: &[manifest_loader::RungBudget]) -> String {
          (`window-expiry`), never a second charge.\n  ROUTE includes the guard edge's link \
          (`max_transport` into the detecting subscriber), except after a window's deadline.\n",
     );
+    if with_sources {
+        out.push_str(
+            "  SOURCES are the provenances of the stated budgets in the row (`source:`); a \
+             measured budget is an observed maximum plus a margin, and a TOTAL that contains one \
+             is measured, not a bound.\n",
+        );
+    }
     for n in notes {
         out.push_str(&n);
         out.push('\n');
+    }
+    out.push_str(&render_stated(index));
+    out
+}
+
+/// `check --explain`'s table of every stated budget (phase 10 B7, B8): its
+/// value, where it comes from, and what checks it.
+fn render_stated(index: &manifest_loader::ManifestIndex) -> String {
+    use crate::ros::budget_book;
+    if index.stated.is_empty() {
+        return String::new();
+    }
+    let files: std::collections::BTreeSet<&str> =
+        index.stated.iter().map(|b| b.file.as_str()).collect();
+    let mut table: Vec<[String; 4]> = vec![[
+        "BUDGET".to_string(),
+        "MS".to_string(),
+        "SOURCE".to_string(),
+        "CHECKED BY".to_string(),
+    ]];
+    for b in &index.stated {
+        let key = if files.len() > 1 {
+            format!("{}: {}", b.file, b.key)
+        } else {
+            b.key.clone()
+        };
+        table.push([
+            key,
+            format!("{:.2}", b.ms),
+            budget_book::source_label(b.source.as_ref()),
+            if b.checked_by.is_empty() {
+                "nothing".to_string()
+            } else {
+                b.checked_by.join("; ")
+            },
+        ]);
+    }
+    let widths: Vec<usize> = (0..4)
+        .map(|c| table.iter().map(|row| row[c].len()).max().unwrap_or(0))
+        .collect();
+    let mut out = String::from("\n-- Stated budgets (--explain, ms) --\n");
+    for row in &table {
+        let line: Vec<String> = row
+            .iter()
+            .zip(&widths)
+            .enumerate()
+            .map(|(c, (cell, w))| {
+                if c == 1 {
+                    format!("{cell:>w$}")
+                } else {
+                    format!("{cell:<w$}")
+                }
+            })
+            .collect();
+        out.push_str(line.join("  ").trim_end());
+        out.push('\n');
+    }
+    out.push_str(
+        "  CHECKED BY: `fault-reaction sum` -- a hazard's detection, route or settle charges it \
+         (the hazards named); a rule that compares it with something; a runtime monitor the \
+         model hands to the realizer; `nothing` -- no check reads the number.\n",
+    );
+    let nothing = index
+        .stated
+        .iter()
+        .filter(|b| b.checked_by.is_empty())
+        .count();
+    if nothing > 0 {
+        out.push_str(&format!(
+            "  {nothing} stated budget(s) checked by nothing.\n"
+        ));
     }
     out
 }

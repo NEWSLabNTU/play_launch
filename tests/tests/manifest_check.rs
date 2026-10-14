@@ -1636,12 +1636,14 @@ fn takeover_ladder_fits_and_explains_itself() {
         "settle-param-unresolved",
         "settle-conflict",
         "reaction-unbudgeted",
-        // `[window-expiry]`, not the bare name: the table's footer names
-        // the rule when it explains where the notice is charged.
-        "[window-expiry]",
+        // As `[rule]`, not the bare name: the table's footer names
+        // `window-expiry` when it explains where the notice is charged, and
+        // the stated-budget table (phase 10 B8) names the rules that check
+        // each budget.
+        "window-expiry",
     ] {
         assert!(
-            !out.contains(rule),
+            !out.contains(&format!("[{rule}]")),
             "`{rule}` must not fire on a correct contract:\n{out}"
         );
     }
@@ -2027,5 +2029,94 @@ fn a_settles_written_response_is_added_to_the_profile() {
         "odd_exit/comfortable: settle = profile 9996.67ms + response 500.00ms",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+}
+
+/// Phase 10 B7: `--explain` says where each stated budget comes from, per
+/// row of the fault-reaction table and per budget, and marks every total
+/// that contains a measured term as measured, not a bound. Measured terms
+/// that reproduce their budgets leave `budget-rule` quiet.
+#[test]
+fn explain_prints_each_budgets_source() {
+    let (code, out) = check_takeover("contract_budget_sources", &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("budget-rule"), "{out}");
+    for needle in [
+        "SLACK  SOURCES",
+        "hpc_loss  estop        floor    500.00      0.00  143.33    2033.33 derived   2676.67   \
+         3000.00    323.33  measured",
+        "9363.33  analysed+measured+requirement",
+        "hpc_loss/estop: TOTAL 2676.67 is measured, not a bound: it contains \
+         nodes.handler.paths.call_mrm.max_latency",
+        "odd_exit/comfortable: TOTAL 20636.67 is measured, not a bound: it contains \
+         nodes.handler.paths.call_mrm.max_latency, nodes.planner.paths.follow.max_latency",
+        "-- Stated budgets (--explain, ms) --",
+        "measured: tick 100 + 5 x 1.2 (n=600) = 106.00 -> 106, work 3.2 x 1.2 (n=12) = 3.84 -> 4",
+        "measured: 250 x 1.2 (n=5) = 300.00 -> 300",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    let row = |key: &str| {
+        out.lines()
+            .find(|l| l.starts_with(key))
+            .unwrap_or_else(|| panic!("no row {key}:\n{out}"))
+            .to_string()
+    };
+    assert!(row("hazards.hpc_loss.ftti").contains("requirement"));
+    assert!(row("nodes.gate.paths.report.max_latency").contains("analysed"));
+    assert!(row("nodes.handler.paths.on_timer.max_latency").contains("unstated"));
+}
+
+/// Phase 10 B7: a measured budget whose stated observations do not give it
+/// under the rule fails `budget-rule`, with the arithmetic.
+#[test]
+fn a_measured_budget_its_observations_do_not_give_is_budget_rule() {
+    let (code, out) = check_takeover("contract_budget_rule", &[]);
+    assert_eq!(code, 1, "{out}");
+    for needle in [
+        "error[budget-rule]: bringup.contract.yaml:123: `nodes.handler.paths.call_mrm.max_latency: \
+         110ms` is measured, but its observations give 112ms (tick 100 + 5 x 1.2 (n=600) = 106.00 \
+         -> 106, work 5 x 1.2 (n=12) = 6.00 -> 6;",
+        "error[budget-rule]: bringup.contract.yaml:156: `nodes.planner.paths.follow.max_latency: \
+         300ms` is measured, but its observations give 288ms (240 x 1.2 (n=5) = 288.00 -> 288;",
+        "(2 errors, 2 warnings)",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+}
+
+/// Phase 10 B8: `--explain` lists, per stated budget, what checks it, and
+/// `declared-not-charged` says the same about a `max_transport` no hazard
+/// charges.
+#[test]
+fn explain_lists_what_checks_each_stated_budget() {
+    let (code, out) = check_takeover("contract_takeover_link", &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    let row = |key: &str| {
+        out.lines()
+            .find(|l| l.starts_with(key))
+            .unwrap_or_else(|| panic!("no row {key}:\n{out}"))
+            .to_string()
+    };
+    assert!(
+        row("hazards.hpc_loss.ftti").ends_with("fault-reaction sum (the interval)"),
+        "{out}"
+    );
+    assert!(
+        row("modes.takeover.window").contains("fault-reaction sum (odd_exit); window-param"),
+        "{out}"
+    );
+    for line in out.lines().filter(|l| l.contains("info[declared-not-charged]")) {
+        let key = line
+            .split('`')
+            .nth(1)
+            .and_then(|k| k.split(':').next())
+            .expect("the message names the key");
+        let by = row(key);
+        if by.ends_with("nothing") {
+            assert!(line.contains("nothing else checks it either"), "{line}");
+        } else {
+            assert!(line.contains("; it is checked by "), "{line}\n{by}");
+        }
     }
 }

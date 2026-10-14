@@ -8,6 +8,28 @@ allowance heavily.
 
 ## Unreleased
 
+- **New (`check --explain`, phase 10 B7, B8):** where each budget comes
+  from, and what checks it. A budget written in its map form `{ duration,
+  source }` (rlm v0.1.58) states its provenance: `requirement`, `measured`,
+  `derived` or `analysed`. `--explain` adds a SOURCES column to the
+  fault-reaction table (the provenances of the stated budgets each row
+  charges) and notes every TOTAL that contains a measured term as
+  "measured, not a bound", and prints a new table, **Stated budgets**: every
+  budget the contracts state, its value, its source (with the rule's
+  arithmetic for a measured one) and what checks it -- the fault-reaction
+  sum (naming the hazards), a rule that compares it with something
+  (`scope-budget`, `reaction-within`, `window-param`, `max-age-param`,
+  `window-expiry`, `jitter-feasibility`, `response-blocking`), a runtime
+  monitor, or nothing. `declared-not-charged` now names what does check the
+  `max_transport` it reports, from the same table, instead of saying
+  "path and chain latencies do" for every one; a link from a publisher
+  outside the tree (`external: pub`) is checked by nothing.
+- **New rule (`check`, phase 10 B7):** `budget-rule` (error). A measured
+  budget that states its observations, `source: { measured: { max, n,
+  margin } }` or `{ measured: { margin, terms: { <name>: { max, n, period }
+  } } }`, must be what they give: each term `period + max x (1 + margin)`,
+  rounded up to the next ms, summed (a timer tick's period takes no
+  margin).
 - **New (`check`, phase 10 B2):** a derived settle includes the vehicle's
   response. `settle: { decel, jerk, response: 256ms }` writes the time from
   the braking command to the deceleration the profile assumes; the settle is

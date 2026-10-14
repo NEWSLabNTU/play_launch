@@ -4,6 +4,7 @@
 //! `graph_builder`, `container_readiness`, `parameter_proxy` and the parameter
 //! conversion helpers stayed in `play_launch` — they talk to a running system,
 //! which is layer 3's job (RFC-0060).
+pub mod budget_book;
 pub mod causal_dag_global;
 pub mod causal_graph;
 pub mod dds_env;

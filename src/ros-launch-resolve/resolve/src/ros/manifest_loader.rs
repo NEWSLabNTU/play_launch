@@ -343,12 +343,90 @@ pub struct RungBudget {
     pub settle_how: &'static str,
     /// The written response delay inside `settle_ms` (phase 10 B2).
     pub settle_response_ms: Option<f64>,
+    /// The stated budgets the row's numbers contain (phase 10 B7): each a
+    /// contract key, so `--explain` can say where each comes from.
+    pub terms: Vec<TermKey>,
     pub total_ms: Option<f64>,
     pub ftti_ms: Option<f64>,
     pub note: String,
     /// How ROUTE divides into the guard edge's link and the path hops, when
     /// a link is charged (phase 85 I1). Empty when none is.
     pub route_note: String,
+}
+
+/// A stated budget in a contract (phase 10 B7): the scope whose manifest
+/// states it, and its dotted contract path (`nodes.h.paths.p.max_latency`).
+pub type TermKey = (usize, String);
+
+/// A detector interval, why, and the stated budgets inside it (phase 10 B7).
+type Detection = (f64, String, Vec<TermKey>);
+
+/// The key `rel` (`paths.p.max_latency`, `sub.e.max_age`) of the contract
+/// node whose launch FQN is `fqn`, when a contract declares it.
+fn node_term(index: &ManifestIndex, fqn: &str, rel: &str) -> Option<TermKey> {
+    super::value_rules::contract_node(index, fqn)
+        .map(|(scope, name, _)| (scope, format!("nodes.{name}.{rel}")))
+}
+
+/// `topics.<t>.max_transport` of the manifest that states the topic-level
+/// transport of `topic_fqn`.
+fn topic_transport_term(index: &ManifestIndex, topic_fqn: &str) -> Option<TermKey> {
+    let mut ms: Vec<&ResolvedManifest> = index.manifests.values().collect();
+    ms.sort_by_key(|m| m.scope_id);
+    ms.into_iter().find_map(|m| {
+        m.manifest.topics.iter().find_map(|(t, d)| {
+            (d.max_transport.is_some() && qualify_name(&m.ns, t) == topic_fqn)
+                .then(|| (m.scope_id, format!("topics.{t}.max_transport")))
+        })
+    })
+}
+
+/// The stated budgets a reaction walk charges (phase 10 B7): each hop's
+/// `max_latency` and its timer's `jitter` when it was a sampling hop, the
+/// guard edge's `max_transport` unless a window's deadline starts the route,
+/// and the settle's written response (or a literal settle).
+fn walk_terms(index: &ManifestIndex, w: &ReactionWalk, after_deadline: bool) -> Vec<TermKey> {
+    let mut out: Vec<TermKey> = Vec::new();
+    for hop in &w.hops {
+        let declared = index.node_paths.iter().any(|p| {
+            p.node_fqn == hop.node && p.path_name == hop.path && p.path.max_latency.is_some()
+        });
+        if declared {
+            out.extend(node_term(
+                index,
+                &hop.node,
+                &format!("paths.{}.max_latency", hop.path),
+            ));
+        }
+        if hop.jitter_ms.is_some() {
+            out.extend(node_term(
+                index,
+                &hop.node,
+                &format!("paths.{}.trigger.timer.jitter", hop.path),
+            ));
+        }
+    }
+    if let Some(l) = w.link.as_ref().filter(|_| !after_deadline) {
+        if l.from == "sub" {
+            if let Some((n, ep)) = split_endpoint_ref_for_check(&l.sub_ref) {
+                out.extend(node_term(index, &n, &format!("sub.{ep}.max_transport")));
+            }
+        } else {
+            out.extend(topic_transport_term(index, &l.topic));
+        }
+    }
+    if let Some(at) = &w.settle {
+        let base = format!("paths.{}.safe_state.settle", at.path);
+        match &at.ss.settle_profile {
+            Some(p) if p.response.is_some() => {
+                out.extend(node_term(index, &at.node, &format!("{base}.response")));
+            }
+            Some(_) => {}
+            None if at.ss.settle.is_some() => out.extend(node_term(index, &at.node, &base)),
+            None => {}
+        }
+    }
+    out
 }
 
 /// The complete resolved manifest index for the launch tree.
@@ -360,6 +438,9 @@ pub struct ManifestIndex {
     /// The fault-reaction arithmetic per (hazard, rung), for `--explain`
     /// (phase 83).
     pub budgets: Vec<RungBudget>,
+    /// Every stated budget with its source and what checks it, for
+    /// `--explain` and `declared-not-charged` (phase 10 B7, B8).
+    pub stated: Vec<super::budget_book::StatedBudget>,
     /// The `max_transport` declarations some reaction route charged on its
     /// guard edge (phase 85 I1): a subscriber endpoint FQN for a sub-level
     /// declaration, a topic FQN for a topic-level one. What
@@ -1022,6 +1103,9 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     check_response_against_blocking(index);
 
     // Phase 85 I7: a stated key the fault arithmetic does not read.
+    // Phase 10 B7/B8: every stated budget, where it comes from and what
+    // checks it -- before `declared-not-charged`, which reads it.
+    index.stated = super::budget_book::stated_budgets(index, &graph);
     note_declared_not_charged(index);
 
     // Phase 85 I8: an endpoint no topic wires.
@@ -1110,8 +1194,23 @@ fn note_declared_not_charged(index: &mut ManifestIndex) {
     let tail = "is not charged by the fault-reaction arithmetic: no hazard's reaction route \
                 enters through it (a route is charged `max_transport` on its guard edge only, \
                 the hop into the subscriber that detects the fault), so hazard detection and \
-                reaction routes (the `--explain` budgets) do not include it; path and chain \
-                latencies do";
+                reaction routes (the `--explain` budgets) do not include it";
+    // Phase 10 B8: what does check it, from the same table `--explain`
+    // prints.
+    let others = |scope_id: usize, key: &str| -> String {
+        let by: Vec<String> = index
+            .stated
+            .iter()
+            .find(|b| b.scope_id == scope_id && b.key == key)
+            .map(|b| b.checked_by.clone())
+            .unwrap_or_default();
+        if by.is_empty() {
+            "; nothing else checks it either (`--explain` lists what checks each stated budget)"
+                .to_string()
+        } else {
+            format!("; it is checked by {}", by.join(", "))
+        }
+    };
     for m in manifests {
         for (node, decl) in &m.manifest.nodes {
             for (side, eps) in [("sub", &decl.subscribers), ("pub", &decl.publishers)] {
@@ -1129,9 +1228,10 @@ fn note_declared_not_charged(index: &mut ManifestIndex) {
                         rule_id: "declared-not-charged".to_string(),
                         severity: Severity::Info,
                         message: format!(
-                            "{}: `{key}: {}ms` on '{fqn}' {tail}",
+                            "{}: `{key}: {}ms` on '{fqn}' {tail}{}",
                             super::value_rules::site(index, m.scope_id, &key),
-                            fmt_ms(t.as_millis_f64())
+                            fmt_ms(t.as_millis_f64()),
+                            others(m.scope_id, &key)
                         ),
                         path: key,
                         span: None,
@@ -1154,10 +1254,11 @@ fn note_declared_not_charged(index: &mut ManifestIndex) {
                 rule_id: "declared-not-charged".to_string(),
                 severity: Severity::Info,
                 message: format!(
-                    "{}: `{key}: {}ms` on topic '{}' {tail}",
+                    "{}: `{key}: {}ms` on topic '{}' {tail}{}",
                     super::value_rules::site(index, m.scope_id, &key),
                     fmt_ms(t.as_millis_f64()),
-                    qualify_name(&m.ns, topic)
+                    qualify_name(&m.ns, topic),
+                    others(m.scope_id, &key)
                 ),
                 path: key,
                 span: None,
@@ -2340,6 +2441,8 @@ struct WaitedWindow {
     /// is charged once a rung below is walked.
     row: usize,
     noted: bool,
+    /// The stated budgets inside `route_ms + window_ms` (phase 10 B7).
+    terms: Vec<TermKey>,
 }
 
 /// The clock a window's owner reads the deadline on (phase 84): its timer
@@ -2586,9 +2689,9 @@ fn check_fault_reaction(
 
         // FDTI per guard group. A group is one fault; the hazard's budget
         // must hold for whichever group faults, so the worst group governs.
-        let mut fdti_worst: Option<(f64, String)> = None;
+        let mut fdti_worst: Option<Detection> = None;
         for g in &h.guards {
-            let mut member_intervals: Vec<(f64, String)> = Vec::new();
+            let mut member_intervals: Vec<Detection> = Vec::new();
             for member in &g.members {
                 let Some(topic) = topics.get(member) else {
                     diags.push(Diagnostic {
@@ -2624,9 +2727,9 @@ fn check_fault_reaction(
                 // that notices and does nothing has not detected anything the
                 // system can use.
                 let reacting = subs.iter().any(|(_, p)| p.on_violation.is_some());
-                let mut per_kind: Vec<(FaultKind, Option<(f64, String)>)> = Vec::new();
+                let mut per_kind: Vec<(FaultKind, Option<Detection>)> = Vec::new();
                 for &kind in &kinds {
-                    let mut best: Option<(f64, String)> = None;
+                    let mut best: Option<Detection> = None;
                     if kind == FaultKind::Reported {
                         // The guard IS a detector's output. Detection = its
                         // input period + its own path latency, both derived,
@@ -2658,7 +2761,28 @@ fn check_fault_reaction(
                                 .fold(0.0, f64::max);
                             if let Some(period) = period_ms {
                                 let v = period + jitter + lat;
-                                if best.as_ref().is_none_or(|(b, _)| v < *b) {
+                                if best.as_ref().is_none_or(|(b, _, _)| v < *b) {
+                                    // Phase 10 B7: the stated keys inside it.
+                                    let mut keys: Vec<TermKey> = Vec::new();
+                                    for p in publishing() {
+                                        if p.path.max_latency.is_some() {
+                                            keys.extend(node_term(
+                                                index,
+                                                &node_fqn,
+                                                &format!("paths.{}.max_latency", p.path_name),
+                                            ));
+                                        }
+                                        if jitter > 0.0 && p.path.timer_jitter().is_some() {
+                                            keys.extend(node_term(
+                                                index,
+                                                &node_fqn,
+                                                &format!(
+                                                    "paths.{}.trigger.timer.jitter",
+                                                    p.path_name
+                                                ),
+                                            ));
+                                        }
+                                    }
                                     let why = if jitter > 0.0 {
                                         format!(
                                             "{pub_ref} reports every {period:.2}ms + \
@@ -2669,7 +2793,7 @@ fn check_fault_reaction(
                                             "{pub_ref} reports every {period:.2}ms + {lat:.2}ms"
                                         )
                                     };
-                                    best = Some((v, why));
+                                    best = Some((v, why, keys));
                                 }
                             }
                         }
@@ -2684,9 +2808,21 @@ fn check_fault_reaction(
                                 topic.drop.as_ref(),
                                 period_ms,
                                 kind,
-                            ) && best.as_ref().is_none_or(|(b, _)| v < *b)
+                            ) && best.as_ref().is_none_or(|(b, _, _)| v < *b)
                             {
-                                best = Some((v, format!("{sub_ref} detects within {v:.2}ms")));
+                                // Phase 10 B7: the stated key, when the
+                                // interval is the subscriber's `max_age`.
+                                let keys: Vec<TermKey> = props
+                                    .max_age
+                                    .filter(|a| (a.as_millis_f64() - v).abs() < 1e-9)
+                                    .and_then(|_| {
+                                        let (n, ep) = split_endpoint_ref_for_check(sub_ref)?;
+                                        node_term(index, &n, &format!("sub.{ep}.max_age"))
+                                    })
+                                    .into_iter()
+                                    .collect();
+                                best =
+                                    Some((v, format!("{sub_ref} detects within {v:.2}ms"), keys));
                             }
                         }
                     }
@@ -2694,7 +2830,7 @@ fn check_fault_reaction(
                 }
                 let intervals: Vec<(FaultKind, Option<f64>)> = per_kind
                     .iter()
-                    .map(|(k, b)| (*k, b.as_ref().map(|(v, _)| *v)))
+                    .map(|(k, b)| (*k, b.as_ref().map(|(v, _, _)| *v)))
                     .collect();
                 let kind = match interval_over_kinds(&intervals, kinds_explicit) {
                     Ok((kind, _)) => kind,
@@ -2718,7 +2854,7 @@ fn check_fault_reaction(
                     .iter()
                     .filter_map(|(k, v)| v.map(|v| (*k, v)))
                     .collect();
-                let (v, why) = per_kind
+                let (v, why, keys) = per_kind
                     .iter()
                     .find(|(k, _)| *k == kind)
                     .and_then(|(_, b)| b.clone())
@@ -2736,7 +2872,7 @@ fn check_fault_reaction(
                 } else {
                     why
                 };
-                member_intervals.push((v, why));
+                member_intervals.push((v, why, keys));
             }
             if member_intervals.is_empty() {
                 continue;
@@ -2744,15 +2880,15 @@ fn check_fault_reaction(
             // all_of: the fault is the loss of EVERY member, detected when the
             // last one is noticed gone — the slowest member. A bare topic is
             // the same formula over one member.
-            let (v, why) = member_intervals
+            let (v, why, keys) = member_intervals
                 .into_iter()
-                .fold(None, |acc: Option<(f64, String)>, (v, why)| match acc {
-                    Some((a, w)) if a >= v => Some((a, w)),
-                    _ => Some((v, why)),
+                .fold(None, |acc: Option<Detection>, (v, why, keys)| match acc {
+                    Some((a, w, k)) if a >= v => Some((a, w, k)),
+                    _ => Some((v, why, keys)),
                 })
                 .unwrap();
-            if fdti_worst.as_ref().is_none_or(|(w, _)| v > *w) {
-                fdti_worst = Some((v, why));
+            if fdti_worst.as_ref().is_none_or(|(w, _, _)| v > *w) {
+                fdti_worst = Some((v, why, keys));
             }
         }
 
@@ -2795,7 +2931,12 @@ fn check_fault_reaction(
                 .find(|m| m.scope_id == h.scope_id && m.name == name)
         };
         let ftti_ms = h.decl.ftti.map(|d| d.as_millis_f64());
-        let fdti_ms = fdti_worst.as_ref().map(|(v, _)| *v);
+        let fdti_ms = fdti_worst.as_ref().map(|(v, _, _)| *v);
+        // Phase 10 B7: the stated keys inside DETECT.
+        let fdti_keys: Vec<TermKey> = fdti_worst
+            .as_ref()
+            .map(|(_, _, k)| k.clone())
+            .unwrap_or_default();
         let guard_topics: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
         // Phase 83: windowed rungs the hazard passes through on the way to a
         // later rung. Each is charged to every rung below it: the system
@@ -2895,6 +3036,20 @@ fn check_fault_reaction(
                     String::new(),
                 ),
             };
+            // Phase 10 B7: the stated budgets ROUTE (and SETTLE) contain.
+            let route_terms: Vec<TermKey> = match &walk {
+                Some(w) => walk_terms(index, w, after_deadline),
+                None => rp
+                    .path
+                    .max_latency
+                    .map(|_| (h.scope_id, format!("paths.{rung_path}.max_latency")))
+                    .into_iter()
+                    .collect(),
+            };
+            let waited_terms: Vec<TermKey> = windows
+                .iter()
+                .flat_map(|w| w.terms.iter().cloned())
+                .collect();
             // A windowed rung is transitional: its sink is a notification,
             // not a safe state, so it has no settle and is not a promise of
             // its own -- which is also why it is exempt from
@@ -2934,6 +3089,8 @@ fn check_fault_reaction(
                         span: None,
                     });
                 }
+                let mut rung_terms = route_terms.clone();
+                rung_terms.push((h.scope_id, format!("modes.{rung_name}.window")));
                 let row = budgets.len();
                 budgets.push(RungBudget {
                     hazard: h.name.clone(),
@@ -2949,6 +3106,7 @@ fn check_fault_reaction(
                          below it up to its deadline"
                     ),
                     route_note,
+                    terms: [fdti_keys.clone(), waited_terms.clone(), rung_terms.clone()].concat(),
                     ..Default::default()
                 });
                 windows.push(WaitedWindow {
@@ -2959,6 +3117,7 @@ fn check_fault_reaction(
                     notice,
                     row,
                     noted: false,
+                    terms: rung_terms.clone(),
                 });
                 continue;
             }
@@ -3010,6 +3169,7 @@ fn check_fault_reaction(
                 total_ms: Some(total),
                 ftti_ms: Some(ftti),
                 route_note,
+                terms: [fdti_keys.clone(), waited_terms.clone(), route_terms.clone()].concat(),
                 ..Default::default()
             });
             if total > ftti {
@@ -3201,6 +3361,21 @@ fn check_fault_reaction(
         }
 
         let waited = windows_ms(&windows);
+        let floor_terms: Vec<TermKey> = [
+            fdti_keys.clone(),
+            windows
+                .iter()
+                .flat_map(|w| w.terms.iter().cloned())
+                .collect(),
+            match &walk {
+                Some(w) => walk_terms(index, w, floor_after_deadline),
+                None if declared_ms.is_some() => {
+                    vec![(h.scope_id, format!("paths.{terminal}.max_latency"))]
+                }
+                None => Vec::new(),
+            },
+        ]
+        .concat();
         budgets.push(RungBudget {
             hazard: h.name.clone(),
             rung: floor_name.clone(),
@@ -3214,12 +3389,13 @@ fn check_fault_reaction(
             total_ms: fdti_ms.map(|f| f + waited + frti),
             ftti_ms,
             route_note: floor_split,
+            terms: floor_terms,
             ..Default::default()
         });
         let Some(ftti) = ftti_ms else {
             continue;
         };
-        let Some((fdti, fdti_why)) = fdti_worst else {
+        let Some((fdti, fdti_why, _)) = fdti_worst else {
             continue;
         };
         let settle_note = settle_ms.map_or(String::new(), |s| format!(" + settle {s:.2}ms"));
@@ -3261,6 +3437,7 @@ fn check_fault_reaction(
     super::value_rules::check_predicates(index, &mut diags);
     super::value_rules::check_windows_and_exits(index, graph, &index.launch_params, &mut diags);
     super::value_rules::check_param_bindings(index, &index.launch_params, &mut diags);
+    super::budget_book::check_budget_rule(index, &mut diags);
 
     check_modes(index, graph, &mut diags);
 
