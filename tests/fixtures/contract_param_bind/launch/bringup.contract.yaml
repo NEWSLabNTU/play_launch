@@ -1,0 +1,54 @@
+# Phase 10 B1: a timer names the parameter that sets its period, and a
+# subscriber's `max_age` the parameter that sets it.
+#
+#   handler/fast  rate_hz 10, param update_rate (10)       -> agrees
+#   handler/slow  rate_hz 1, period_param slow_period (0.5 s = 2 Hz)
+#                                                           -> timer-param
+#   handler/in    max_age 400ms, param timeout (0.5 s)      -> max-age-param
+#   handler/in2   max_age 200ms, param ok_timeout (0.2 s)   -> agrees
+version: 1
+
+nodes:
+  source:
+    pub:
+      out: { min_rate_hz: 10 }
+      out2: { min_rate_hz: 10 }
+    paths:
+      tick:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [out, out2]
+  handler:
+    params:
+      update_rate: { type: integer }
+      slow_period: { type: double }
+      timeout: { type: double }
+      ok_timeout: { type: double }
+    sub:
+      in: { max_age: { duration: 400ms, param: timeout } }
+      in2: { max_age: { duration: 200ms, param: ok_timeout } }
+    pub:
+      status: {}
+    paths:
+      fast:
+        trigger: { timer: { rate_hz: 10, param: update_rate } }
+        output: [status]
+      slow:
+        trigger: { timer: { rate_hz: 1, period_param: slow_period } }
+        output: [status]
+      read:
+        trigger: { input: [in, in2] }
+        output: [status]
+
+topics:
+  /in:
+    type: std_msgs/msg/String
+    pub: [source/out]
+    sub: [handler/in]
+  /in2:
+    type: std_msgs/msg/String
+    pub: [source/out2]
+    sub: [handler/in2]
+  /status:
+    type: std_msgs/msg/String
+    pub: [handler/status]
+    external: sub

@@ -629,6 +629,42 @@ RankedPlan {
     ],
     warnings: [],
 }
+== contract_param_bind/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/handler",
+            path: "fast",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=100)",
+        },
+        RankItem {
+            node: "/source",
+            path: "tick",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=100)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "slow",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=1000)",
+        },
+    ],
+    warnings: [],
+}
 == contract_rates/launch/bringup.launch.xml
 RankedPlan {
     items: [

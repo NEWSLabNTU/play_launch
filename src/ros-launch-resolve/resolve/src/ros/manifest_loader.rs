@@ -3255,6 +3255,7 @@ fn check_fault_reaction(
     // Phase 83: the rules the four takeover keys stand on by themselves.
     super::value_rules::check_predicates(index, &mut diags);
     super::value_rules::check_windows_and_exits(index, graph, &index.launch_params, &mut diags);
+    super::value_rules::check_param_bindings(index, &index.launch_params, &mut diags);
 
     check_modes(index, graph, &mut diags);
 

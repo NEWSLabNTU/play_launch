@@ -8,6 +8,14 @@ allowance heavily.
 
 ## Unreleased
 
+- **New (`check`, phase 10 B1, rlm v0.1.58 keys):** a timer and a staleness
+  bound are the numbers the image runs, as a window already was. A timer
+  trigger may name the parameter that sets it, `trigger: { timer: { rate_hz:
+  10, param: update_rate } }` (Hz) or `period_param:` (seconds), and
+  `max_age: { duration: 500ms, param: <name> }` (seconds); both are
+  resolved from the launch tree's parameter files like `window-param`, and a
+  disagreement is `error[timer-param]` / `error[max-age-param]`. Before,
+  a contract timer at 20 Hz over `update_rate: 10` checked clean.
 - **Fix:** `launch`, `run` and `up` exit promptly after SIGTERM on a large
   system, and play_launch leaves nothing of its own behind. Under
   `isolated` on Autoware, shutdown took 4 s to 30 s after the nodes were

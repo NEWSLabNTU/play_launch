@@ -1987,3 +1987,25 @@ fn an_action_with_no_server_anywhere_is_reported() {
     );
     assert!(out.contains("0 clean, 1 with errors"), "{out}");
 }
+
+/// Phase 10 B1: a timer and a staleness bound are the numbers the image
+/// runs. Each binding that disagrees with its launch value fails its rule
+/// once, with the file and line; the two that agree say nothing.
+#[test]
+fn param_bindings_fail_on_disagreement() {
+    let (code, out) = check_takeover("contract_param_bind", &[]);
+    assert_eq!(code, 1, "{out}");
+    for needle in [
+        "error[timer-param]: bringup.contract.yaml:36: /handler/slow ticks at 1 Hz, bound to \
+         `period_param: slow_period`, and 'slow_period' resolves to 0.5 s = 2.0000 Hz, not the \
+         1 Hz the timer declares",
+        "error[max-age-param]: bringup.contract.yaml:27: /handler/in declares `max_age: \
+         400.00ms`, bound to `param: timeout`, and 'timeout' resolves to 0.5 s = 500.00ms, not \
+         the 400.00ms `max_age` declares",
+        "(2 errors, 0 warnings)",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    assert_eq!(out.matches("error[timer-param]").count(), 1, "{out}");
+    assert_eq!(out.matches("error[max-age-param]").count(), 1, "{out}");
+}

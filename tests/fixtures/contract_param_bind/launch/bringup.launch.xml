@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!-- Phase 10 B1: timers and a staleness bound bound to their parameters.
+     `fast` and `ok_age` agree with the values below; `slow` and `age` do
+     not, and each fails its rule once. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="listener" name="handler">
+    <param name="update_rate" value="10"/>
+    <param name="slow_period" value="0.5"/>
+    <param name="timeout" value="0.5"/>
+    <param name="ok_timeout" value="0.2"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="talker" name="source"/>
+</launch>

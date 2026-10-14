@@ -16,6 +16,9 @@
 //! - `settle-derived`, `settle-entry-missing`, `settle-param-unresolved`,
 //!   `settle-conflict` -- the settle a profile derives, and every reason it
 //!   cannot.
+//! - `timer-param`, `max-age-param` (phase 10 B1) -- a timer's rate and a
+//!   subscriber's staleness bound are the numbers the image runs, as a
+//!   window is.
 //!
 //! Every message starts with the contract file and line it is about, since
 //! these rules run on the merged index where the per-manifest emitter's
@@ -804,6 +807,134 @@ pub(crate) fn check_windows_and_exits(
                 ),
                 format!("{eat}.on"),
             ));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Timers and staleness bounds bound to their parameters (phase 10 B1)
+// ---------------------------------------------------------------------------
+
+/// The resolved launch value of parameter `name` on contract node
+/// `node_name` (launch FQN `fqn`), as a number, or why there is none.
+fn bound_value(
+    params: &HashMap<String, BTreeMap<String, LaunchParam>>,
+    fqn: &str,
+    node_name: &str,
+    decl: &NodeDecl,
+    name: &str,
+) -> Result<(f64, String), String> {
+    let declared = decl.params.as_ref().is_some_and(|ps| ps.contains_key(name));
+    match params.get(fqn).and_then(|v| v.get(name)) {
+        None => Err(format!(
+            "'{name}' has no resolved launch value for {fqn}{}",
+            if declared {
+                String::new()
+            } else {
+                format!(", and '{node_name}' does not declare it under `params:`")
+            }
+        )),
+        Some(LaunchParam { number: None, text }) => Err(format!(
+            "'{name}' resolves to `{text}`, which is not a number"
+        )),
+        Some(LaunchParam {
+            number: Some(v),
+            text,
+        }) => Ok((*v, text.clone())),
+    }
+}
+
+/// `timer-param` and `max-age-param` (phase 10 B1): a timer whose trigger
+/// names the parameter that sets its period, and a subscriber whose
+/// `max_age` names the parameter that sets it, must state the number that
+/// parameter resolves to in the launch tree -- the same agreement
+/// `window-param` asks of a window. A node the launch tree does not start
+/// (no launch values at all) is skipped: there is no image to disagree with.
+pub(crate) fn check_param_bindings(
+    index: &ManifestIndex,
+    params: &HashMap<String, BTreeMap<String, LaunchParam>>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    use ros_launch_manifest_types::{TimerParam, Trigger};
+    let close = |a: f64, b: f64| (a - b).abs() <= 1e-6 * a.abs().max(b.abs()).max(1.0);
+    let mut scopes: Vec<_> = index.manifests.values().collect();
+    scopes.sort_by_key(|m| m.scope_id);
+    for m in scopes {
+        for (node_name, decl) in &m.manifest.nodes {
+            let fqn = resolve_node_fqn(index, m.scope_id, &m.ns, node_name);
+            if !params.contains_key(&fqn) {
+                continue;
+            }
+            for (path_name, path) in &decl.paths {
+                let (Some(bind), Some(Trigger::Timer { rate_hz, .. })) =
+                    (&path.timer_param, &path.trigger)
+                else {
+                    continue;
+                };
+                let at = format!("nodes.{node_name}.paths.{path_name}.trigger.timer");
+                let where_ = site(index, m.scope_id, &at);
+                let problem = match bound_value(params, &fqn, node_name, decl, bind.name()) {
+                    Err(why) => Some(why),
+                    Ok((v, text)) => match bind {
+                        TimerParam::Rate(n) if !close(v, *rate_hz) => Some(format!(
+                            "'{n}' resolves to {text} Hz, not the {rate_hz} Hz the timer \
+                             declares"
+                        )),
+                        TimerParam::Period(n) if !close(v, 1.0 / rate_hz) => Some(format!(
+                            "'{n}' resolves to {text} s = {:.4} Hz, not the {rate_hz} Hz the \
+                             timer declares",
+                            if v != 0.0 { 1.0 / v } else { f64::INFINITY }
+                        )),
+                        _ => None,
+                    },
+                };
+                if let Some(problem) = problem {
+                    let key = match bind {
+                        TimerParam::Rate(_) => "param",
+                        TimerParam::Period(_) => "period_param",
+                    };
+                    diags.push(diag(
+                        "timer-param",
+                        Severity::Error,
+                        format!(
+                            "{where_}: {fqn}/{path_name} ticks at {rate_hz} Hz, bound to \
+                             `{key}: {}`, and {problem}. The contract and the image must read \
+                             one number",
+                            bind.name()
+                        ),
+                        at,
+                    ));
+                }
+            }
+            for (ep, props) in &decl.subscribers {
+                let (Some(name), Some(age)) = (&props.max_age_param, props.max_age) else {
+                    continue;
+                };
+                let ms = age.as_millis_f64();
+                let at = format!("nodes.{node_name}.sub.{ep}.max_age");
+                let where_ = site(index, m.scope_id, &at);
+                let problem = match bound_value(params, &fqn, node_name, decl, name) {
+                    Err(why) => Some(why),
+                    Ok((s, text)) if !close(s * 1000.0, ms) => Some(format!(
+                        "'{name}' resolves to {text} s = {:.2}ms, not the {ms:.2}ms `max_age` \
+                         declares",
+                        s * 1000.0
+                    )),
+                    Ok(_) => None,
+                };
+                if let Some(problem) = problem {
+                    diags.push(diag(
+                        "max-age-param",
+                        Severity::Error,
+                        format!(
+                            "{where_}: {fqn}/{ep} declares `max_age: {ms:.2}ms`, bound to \
+                             `param: {name}`, and {problem}. The contract and the image must \
+                             read one number"
+                        ),
+                        at,
+                    ));
+                }
+            }
         }
     }
 }
