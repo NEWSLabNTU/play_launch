@@ -2106,7 +2106,10 @@ fn explain_lists_what_checks_each_stated_budget() {
         row("modes.takeover.window").contains("fault-reaction sum (odd_exit); window-param"),
         "{out}"
     );
-    for line in out.lines().filter(|l| l.contains("info[declared-not-charged]")) {
+    for line in out
+        .lines()
+        .filter(|l| l.contains("info[declared-not-charged]"))
+    {
         let key = line
             .split('`')
             .nth(1)

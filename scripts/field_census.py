@@ -124,6 +124,10 @@ CONSUMING_PATTERNS = [
     (r"resolve/src/ros/sched_derive\.rs$", "mapper input"),
     (r"resolve/src/ros/sched_loader\.rs$", "scheduling derivation"),
     (r"resolve/src/ros/param_check\.rs$", "parameter check"),
+    # phase 10 B7: `budget-rule` (a measured budget must be what its stated
+    # observations give) and the stated-budgets table `declared-not-charged`
+    # reads.
+    (r"resolve/src/ros/budget_book\.rs$", "budget rule (phase 10)"),
     (r"sched/src/", "scheduling"),
     (r"^rlm/derive/src/", "shared mapper derivation (rlm derive)"),
     (r"check/src/graph\.rs$", "dataflow graph"),
