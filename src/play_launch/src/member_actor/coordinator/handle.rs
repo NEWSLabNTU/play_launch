@@ -35,8 +35,10 @@ pub struct MemberHandle {
     shutdown_tx: Arc<watch::Sender<bool>>,
     /// Virtual member routing: maps composable node names to parent container names (Phase 12)
     virtual_member_routing: HashMap<String, String>,
-    /// Shared ROS node for parameter service calls (Phase 24)
-    shared_ros_node: Option<Arc<rclrs::Node>>,
+    /// Shared ROS node for parameter service calls (Phase 24). Taken at
+    /// shutdown, so play_launch can leave the ROS graph before its nodes stop
+    /// (`util::teardown`).
+    shared_ros_node: std::sync::Mutex<Option<Arc<rclrs::Node>>>,
     /// Member name → fully-qualified ROS node name (Phase 24)
     node_fqn_map: Arc<RwLock<HashMap<String, String>>>,
 }
@@ -88,7 +90,7 @@ impl MemberHandle {
             stopped_by_user: dashmap::DashSet::new(),
             shutdown_tx,
             virtual_member_routing,
-            shared_ros_node,
+            shared_ros_node: std::sync::Mutex::new(shared_ros_node),
             node_fqn_map,
         }
     }
@@ -532,6 +534,10 @@ impl MemberHandle {
     /// Broadcast shutdown signal to all actors
     pub fn shutdown(&self) -> Result<()> {
         crate::util::teardown::begin_shutdown();
+        self.shared_ros_node
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         self.shutdown_tx
             .send(true)
             .context("Failed to send shutdown signal")
@@ -547,8 +553,7 @@ impl MemberHandle {
     /// Get all parameters for a node. Creates a temporary ParameterProxy.
     pub async fn get_parameters(&self, member_name: &str) -> Result<Vec<ParamEntry>> {
         let ros_node = self
-            .shared_ros_node
-            .as_ref()
+            .ros_node()
             .ok_or_else(|| eyre::eyre!("ROS node not available"))?;
 
         let fqn_map = self.node_fqn_map.read().await;
@@ -560,7 +565,7 @@ impl MemberHandle {
 
         debug!("Getting parameters for {} (FQN: {})", member_name, fqn);
 
-        let proxy = crate::ros::parameter_proxy::ParameterProxy::new(ros_node, &fqn)
+        let proxy = crate::ros::parameter_proxy::ParameterProxy::new(&ros_node, &fqn)
             .context("Failed to create parameter proxy")?;
 
         proxy.list_all().await
@@ -574,8 +579,7 @@ impl MemberHandle {
         value: ParamValue,
     ) -> Result<SetParamResult> {
         let ros_node = self
-            .shared_ros_node
-            .as_ref()
+            .ros_node()
             .ok_or_else(|| eyre::eyre!("ROS node not available"))?;
 
         let fqn_map = self.node_fqn_map.read().await;
@@ -590,7 +594,7 @@ impl MemberHandle {
             name, member_name, fqn
         );
 
-        let proxy = crate::ros::parameter_proxy::ParameterProxy::new(ros_node, &fqn)
+        let proxy = crate::ros::parameter_proxy::ParameterProxy::new(&ros_node, &fqn)
             .context("Failed to create parameter proxy")?;
 
         proxy.set(name, value).await
@@ -600,14 +604,16 @@ impl MemberHandle {
 
     /// play_launch's own ROS node, when it has one.
     pub fn ros_node(&self) -> Option<Arc<rclrs::Node>> {
-        self.shared_ros_node.clone()
+        self.shared_ros_node
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Build a full graph snapshot of all topics and services.
     pub async fn build_graph_snapshot(&self) -> Result<crate::ros::graph_builder::GraphSnapshot> {
         let ros_node = self
-            .shared_ros_node
-            .as_ref()
+            .ros_node()
             .ok_or_else(|| eyre::eyre!("ROS node not available"))?;
 
         // Build reverse map: FQN → member_name
@@ -619,7 +625,6 @@ impl MemberHandle {
         drop(fqn_map);
 
         // Synchronous rcl work, O(topics + services): off the async workers.
-        let ros_node = ros_node.clone();
         tokio::task::spawn_blocking(move || {
             crate::ros::graph_builder::build_graph_snapshot(&ros_node, &fqn_to_member)
         })
@@ -632,8 +637,7 @@ impl MemberHandle {
         member_name: &str,
     ) -> Result<crate::ros::graph_builder::NodeTopics> {
         let ros_node = self
-            .shared_ros_node
-            .as_ref()
+            .ros_node()
             .ok_or_else(|| eyre::eyre!("ROS node not available"))?;
 
         let fqn_map = self.node_fqn_map.read().await;
@@ -645,6 +649,6 @@ impl MemberHandle {
 
         debug!("Getting topics for {} (FQN: {})", member_name, fqn);
 
-        crate::ros::graph_builder::build_node_topics(ros_node, &fqn)
+        crate::ros::graph_builder::build_node_topics(&ros_node, &fqn)
     }
 }

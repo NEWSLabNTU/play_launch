@@ -16,6 +16,11 @@ const CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 /// Interval for printing startup progress statistics
 const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// How long the nodes wait for play_launch to leave the ROS graph before they
+/// are signalled anyway (`util::teardown`). Leaving takes milliseconds while
+/// every peer is alive; this bounds a holder that does not let go.
+const LEAVE_ROS_GRAPH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Interval for checking if all nodes have finished loading
 const COMPLETION_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
@@ -36,16 +41,36 @@ pub(crate) fn initiate_shutdown(
     shutdown_tx: &tokio::sync::watch::Sender<bool>,
     member_handle: &crate::member_actor::MemberHandle,
 ) {
-    // First, so an actor that sees its child die already knows the run is
-    // ending and leaks its ROS entities rather than destroying them.
     crate::util::teardown::begin_shutdown();
-    #[cfg(unix)]
-    crate::process::kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
-    #[cfg(not(unix))]
-    let _ = pgid;
     debug!("Sending shutdown signal to background tasks...");
     let _ = shutdown_tx.send(true);
     let _ = member_handle.shutdown();
+
+    // The process group last: play_launch leaves the ROS graph while every
+    // node is still alive to hear it (`util::teardown`). The two levers above
+    // are what make every holder of a ROS entity let go.
+    #[cfg(unix)]
+    {
+        let stop_nodes =
+            move || crate::process::kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(async move {
+                    if !crate::util::teardown::left_ros_graph(LEAVE_ROS_GRAPH_TIMEOUT).await {
+                        warn!(
+                            "play_launch's ROS node still open {}s after shutdown began; \
+                             stopping the nodes anyway",
+                            LEAVE_ROS_GRAPH_TIMEOUT.as_secs()
+                        );
+                    }
+                    stop_nodes();
+                });
+            }
+            Err(_) => stop_nodes(),
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = pgid;
 }
 
 /// Context for completion waiting -- shared between Unix and Windows paths.
@@ -152,7 +177,7 @@ pub(crate) async fn wait_for_completion_unix<F>(
                     _ => {
                         warn!("Immediate kill! Sending SIGKILL");
                         kill_process_group(pgid, nix::sys::signal::Signal::SIGKILL);
-                        crate::util::teardown::exit_now(1);
+                        std::process::exit(1);
                     }
                 }
             }
@@ -262,7 +287,7 @@ pub(crate) async fn wait_for_completion_unix<F>(
                     _ => {
                         warn!("Immediate kill during cleanup! Sending SIGKILL");
                         kill_process_group(pgid, nix::sys::signal::Signal::SIGKILL);
-                        crate::util::teardown::exit_now(1);
+                        std::process::exit(1);
                     }
                 }
             }

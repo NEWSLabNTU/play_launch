@@ -396,6 +396,13 @@ impl ContainerActor {
             self.name
         );
 
+        // play_launch leaves the ROS graph before its nodes are signalled
+        // (`util::teardown`), and nothing below needs ROS: stop the calls in
+        // flight and let go of the clients and the node.
+        self.supervisor.abort_ros_calls();
+        self.clients.clear();
+        self.ros_node = None;
+
         // Drain load queue before shutting down
         self.supervisor.drain_queue("Shutdown");
 

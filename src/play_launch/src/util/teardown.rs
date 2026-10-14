@@ -1,30 +1,36 @@
-//! Releasing play_launch's own ROS entities without blocking the shutdown.
+//! Leaving the ROS graph before the nodes stop.
 //!
-//! Destroying a client, a subscription or a node is not local: rmw publishes
-//! a graph change to every participant it knows, and under Fast DDS that is a
-//! shared-memory write into each peer's port. At the end of a run those peers
-//! are dying or already dead, and a write to the port of a peer killed
-//! mid-way waits in `SharedMemTransport::find_port` (`sem_timedwait`) — about
-//! a second each, and every destruction holds the node's lock, so they queue.
-//! Measured on Autoware under `isolated`: fifteen container actors finishing
-//! a second apart, shutdown from 4 s to 30 s, and twice not at all, with a
-//! tokio worker parked in `rmw_destroy_client` and the runtime's drop waiting
-//! on it.
+//! Destroying a client, a subscription or a node is not local: rmw announces
+//! it to every participant it knows. At the end of a run those participants
+//! are stopping too, and announcing to one that is already gone is slow —
+//! measured on Autoware under `isolated` with Fast DDS, about a second per
+//! destruction, with every destruction holding the node's lock, so they
+//! queued: shutdown took 4 s to 30 s and twice never finished.
 //!
-//! Once the run is ending nobody needs those announcements — the peers are
-//! going away too — so an entity released then is leaked instead: its memory
-//! is reclaimed when the process exits a moment later. Before that (a
-//! container respawning) it is destroyed normally, but on the blocking pool,
-//! so a dead peer delays nothing else. The cost of the leak is that our own
-//! participant may leave its shared-memory files in `/dev/shm`, the same
-//! state a SIGKILLed node leaves; `fastdds shm clean` removes them.
+//! So play_launch leaves first. When the run starts to end
+//! ([`begin_shutdown`]), every holder of a ROS entity or of the node lets go
+//! of it, the executor threads stop and drop theirs, and the context is
+//! finalized while every peer is still alive. Only then are the nodes
+//! signalled ([`left_ros_graph`]). Each step is ordinary destruction, so
+//! whatever the middleware keeps (a DDS participant's shared-memory files,
+//! say) is released the way it releases it — play_launch makes no
+//! assumption about what that is. That holds after a third Ctrl-C too,
+//! since by then the context is long gone; only a SIGKILL of play_launch
+//! itself skips it.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
-/// Mark the run as ending. Called before the process group is signalled, so
-/// an actor that sees its child exit already knows why.
+static CONTEXTS: Mutex<Vec<rclrs::ContextObserver>> = Mutex::new(Vec::new());
+
+/// Mark the run as ending.
 pub fn begin_shutdown() {
     SHUTTING_DOWN.store(true, Ordering::Release);
 }
@@ -34,13 +40,45 @@ pub fn shutting_down() -> bool {
     SHUTTING_DOWN.load(Ordering::Acquire)
 }
 
-/// Let go of ROS entities: leaked once the run is ending, otherwise dropped
-/// on the blocking pool (or here, outside a runtime).
-pub fn release<T: Send + 'static>(entities: T) {
-    if shutting_down() {
-        std::mem::forget(entities);
-        return;
+/// Register a context [`left_ros_graph`] waits for.
+pub fn watch_context(context: &rclrs::Context) {
+    CONTEXTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(context.observer());
+}
+
+fn contexts_finalized() -> bool {
+    CONTEXTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .all(|c| c.is_finalized())
+}
+
+/// Wait until every watched context is finalized, at most `timeout`.
+/// Returns whether it was.
+pub async fn left_ros_graph(timeout: Duration) -> bool {
+    let start = Instant::now();
+    loop {
+        if contexts_finalized() {
+            tracing::debug!(
+                "left the ROS graph {} ms after shutdown began",
+                start.elapsed().as_millis()
+            );
+            return true;
+        }
+        if start.elapsed() >= timeout {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
+}
+
+/// Let go of ROS entities without blocking the caller: dropped on the
+/// blocking pool (or here, outside a runtime), since a destruction talks to
+/// every peer.
+pub fn release<T: Send + 'static>(entities: T) {
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => {
             handle.spawn_blocking(move || drop(entities));
@@ -49,22 +87,32 @@ pub fn release<T: Send + 'static>(entities: T) {
     }
 }
 
-/// End the process once a run is over, without libc's exit handlers.
-///
-/// Those handlers run Fast DDS's static `DomainParticipantFactory`
-/// destructor, which destroys every participant still open — ours, since its
-/// node is never dropped — and each writer's destructor waits for the event
-/// thread, itself sending heartbeats into dead peers' ports (`find_port`).
-/// Measured on Autoware under `isolated`: two runs in six spent 24 s there
-/// after `play()` had returned. Nothing those handlers do matters once the
-/// run is over: the log file is written unbuffered, and the kernel releases
-/// the rest. stdout and stderr are flushed first.
-pub fn exit_now(code: i32) -> ! {
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
-    let _ = std::io::stderr().flush();
-    // SAFETY: `_exit` only ends the process; nothing after it runs.
-    unsafe { libc::_exit(code) }
+/// Keep ROS entities until the run starts to end, then [`release`] them.
+pub fn hold_until_shutdown<T: Send + 'static>(
+    entities: T,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    tokio::spawn(async move {
+        let _ = shutdown.wait_for(|ending| *ending).await;
+        release(entities);
+    });
+}
+
+/// Abort a task that holds ROS entities when the run starts to end.
+pub fn abort_at_shutdown(
+    task: tokio::task::AbortHandle,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = shutdown.wait_for(|ending| *ending) => task.abort(),
+            _ = async {
+                while !task.is_finished() {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            } => {}
+        }
+    });
 }
 
 /// Holds ROS entities and hands them to [`release`] when dropped, for an
@@ -94,16 +142,21 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    // One test: the flag is process-wide and only ever goes one way.
     #[test]
-    fn released_entities_are_dropped_until_shutdown_and_leaked_after() {
-        let before = Arc::new(());
-        release(before.clone());
-        assert_eq!(Arc::strong_count(&before), 1, "dropped outside a runtime");
+    fn released_entities_are_dropped() {
+        let entity = Arc::new(());
+        drop(Held::new(entity.clone()));
+        assert_eq!(Arc::strong_count(&entity), 1, "dropped outside a runtime");
+    }
 
-        begin_shutdown();
-        let after = Arc::new(());
-        drop(Held::new(after.clone()));
-        assert_eq!(Arc::strong_count(&after), 2, "leaked once shutting down");
+    #[tokio::test]
+    async fn released_entities_are_dropped_on_the_blocking_pool() {
+        let entity = Arc::new(());
+        release(entity.clone());
+        let start = Instant::now();
+        while Arc::strong_count(&entity) > 1 && start.elapsed() < Duration::from_secs(5) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(Arc::strong_count(&entity), 1);
     }
 }

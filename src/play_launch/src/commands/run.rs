@@ -811,7 +811,7 @@ async fn run_direct(
                                 if pgid != 0 {
                                     kill_process_group(pgid, nix::sys::signal::Signal::SIGKILL);
                                 }
-                                crate::util::teardown::exit_now(1);
+                                std::process::exit(1);
                             }
                         }
                     }

@@ -168,6 +168,9 @@ pub(super) struct ComposableSupervisor {
     pub(super) load_completion_rx: mpsc::UnboundedReceiver<LoadCompletion>,
     /// Currently processing unload
     pub(super) current_unload: Option<CurrentUnload>,
+    /// Spawned LoadNode/UnloadNode calls, each holding clones of the ROS
+    /// clients. Aborted at shutdown so the clients go with the actor's own.
+    ros_calls: Vec<tokio::task::AbortHandle>,
     /// Tunable LoadNode-path timings (phase-52.2)
     pub(super) timings: LoadTimings,
     /// Phase 61: shared startup admission control, consulted before each
@@ -194,6 +197,7 @@ impl ComposableSupervisor {
             load_completion_tx,
             load_completion_rx,
             current_unload: None,
+            ros_calls: Vec::new(),
             timings,
             startup,
             last_progress_report: None,
@@ -418,7 +422,7 @@ impl ComposableSupervisor {
 
             let startup = self.startup.clone();
 
-            tokio::spawn(async move {
+            let call = tokio::spawn(async move {
                 // Phase 61: hold a load slot for the duration of the call.
                 // Every container dispatches its whole queue here, so without
                 // a shared gate a 16-container launch puts all 84 of its
@@ -471,6 +475,7 @@ impl ComposableSupervisor {
                     );
                 }
             });
+            self.track_ros_call(call.abort_handle());
         }
     }
 
@@ -1085,7 +1090,7 @@ impl ComposableSupervisor {
 
     /// Handle an UnloadNode request by spawning a service call task.
     pub(super) async fn handle_unload_request(
-        &self,
+        &mut self,
         composable_name: String,
         unique_id: u64,
         response_tx: tokio::sync::oneshot::Sender<
@@ -1098,7 +1103,7 @@ impl ComposableSupervisor {
         let unload_timeout = self.timings.service_call_timeout;
 
         // Spawn service call as a task (so it doesn't block the actor)
-        tokio::spawn(async move {
+        let call = tokio::spawn(async move {
             let result = ros_client::call_unload_node_service(
                 container_name,
                 unload_client,
@@ -1115,6 +1120,24 @@ impl ComposableSupervisor {
                 );
             }
         });
+        self.track_ros_call(call.abort_handle());
+    }
+
+    /// Remember a spawned service call, forgetting the finished ones.
+    fn track_ros_call(&mut self, call: tokio::task::AbortHandle) {
+        self.ros_calls.retain(|c| !c.is_finished());
+        self.ros_calls.push(call);
+    }
+
+    /// Abort every service call still in flight: at shutdown nothing waits
+    /// for their answers, and each holds the ROS clients alive.
+    pub(super) fn abort_ros_calls(&mut self) {
+        for call in self.ros_calls.drain(..) {
+            call.abort();
+        }
+        if let Some(unload) = &self.current_unload {
+            unload.task.abort();
+        }
     }
 
     /// Handle completion of an UnloadNode service call task.

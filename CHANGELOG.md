@@ -9,18 +9,24 @@ allowance heavily.
 ## Unreleased
 
 - **Fix:** `launch`, `run` and `up` exit promptly after SIGTERM on a large
-  system. Under `isolated` on Autoware, shutdown took 4 s to 30 s after the
-  nodes were gone, and sometimes never finished. Destroying one of
-  play_launch's own ROS clients or subscriptions announces it to every peer,
-  and under Fast DDS a write to a dead peer's shared-memory port waits about a
-  second; those destructions queued on one lock, and one stuck in a tokio
-  worker held up the runtime's shutdown. Once a run is ending, play_launch
-  now leaks its ROS entities instead of destroying them, stops probing
-  parameters, gives the runtime 3 s to wind down, and exits without libc's
-  exit handlers, where Fast DDS's static destructors spent another 24 s in
-  two of eight runs. Measured: four runs in a row exit 3.9 s to 7.9 s after
-  SIGTERM, each within 0.04 s of the run ending. Our own participant may
-  leave files in `/dev/shm`, as a killed node does.
+  system, and play_launch leaves nothing of its own behind. Under
+  `isolated` on Autoware, shutdown took 4 s to 30 s after the nodes were
+  gone, and sometimes never finished: destroying one of play_launch's own
+  ROS clients announces it to every peer, and announcing to a peer that has
+  already exited is slow, about a second each, queued on one lock. Now
+  play_launch leaves the ROS graph FIRST: when shutdown begins, every
+  holder of a ROS entity lets go, the context is finalized while every node
+  is still alive (tens of milliseconds), and only then are the nodes
+  signalled. Its participant is destroyed normally, so it cleans up after
+  itself even when a third Ctrl-C SIGKILLs the nodes; only a SIGKILL of
+  play_launch itself skips that.
+- **Fix:** `play_launch_container --isolated` no longer SIGKILLs its
+  composables at shutdown. Each was forked by a worker thread with
+  `PR_SET_PDEATHSIG(SIGKILL)`, which fires when the forking THREAD exits,
+  and the container joined its workers before stopping its children: every
+  composable was killed a few milliseconds into handling its own SIGTERM, so
+  none tore down its DDS participant. Children now get SIGTERM together and
+  share one 5 s deadline before the workers are joined.
 - **Breaking (install):** one PyPI package per ROS distribution,
   `play_launch_humble`, `play_launch_jazzy`, `play_launch_kilted`,
   `play_launch_lyrical` and `play_launch_rolling`, all providing the

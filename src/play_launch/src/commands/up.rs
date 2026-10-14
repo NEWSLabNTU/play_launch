@@ -540,6 +540,10 @@ pub(crate) async fn play(
                     }
                 };
 
+                // Shutdown waits for this context to be finalized before it
+                // signals the nodes (`util::teardown`).
+                crate::util::teardown::watch_context(&context);
+
                 let mut executor = context.create_basic_executor();
                 // Unique per process: two play_launch instances in one ROS domain (e.g. an
                 // Autoware stack and a scenario runner) with identical node names trip
@@ -633,11 +637,6 @@ pub(crate) async fn play(
         match node_rx.recv() {
             Ok((node, diagnostics_node)) => {
                 debug!("Shared ROS node created: /play_launch");
-                // Never destroyed: the last drop is at the end of the run,
-                // when destroying a node waits on peers that are dying
-                // (`util::teardown`). The process exit reclaims it.
-                std::mem::forget(node.clone());
-                std::mem::forget(diagnostics_node.clone());
                 (Some(node), diagnostics_node)
             }
             Err(e) => {
@@ -739,6 +738,8 @@ pub(crate) async fn play(
         }
         None
     };
+    // The task holds its own copy and lets go of it at shutdown.
+    drop(diagnostics_ros_node);
     debug!("Diagnostic monitoring initialization complete");
 
     // Start ROS service discovery task if enabled (default: true) (Phase 2: async task)
@@ -1825,7 +1826,7 @@ pub(crate) async fn play(
             }
         }
         drop(lifecycle_tx); // keep only senders inside callbacks alive
-        let _lifecycle_subs = crate::util::teardown::Held::new(_lifecycle_subs);
+        crate::util::teardown::hold_until_shutdown(_lifecycle_subs, shutdown_signal.clone());
 
         // Phase 74 — "apply where accepted, report where it cannot be". The
         // model carries the QoS overrides the contract derived; whether a
@@ -1864,7 +1865,7 @@ pub(crate) async fn play(
             && let Some(ros_node) = shared_ros_node_for_params.as_ref()
         {
             let ros_node = ros_node.clone();
-            tokio::spawn(async move {
+            let report = tokio::spawn(async move {
                 // Give discovery and node construction a moment; a node that
                 // has not come up yet is reported as unreachable, not as
                 // having refused.
@@ -1935,6 +1936,10 @@ pub(crate) async fn play(
                     }
                 }
             });
+            crate::util::teardown::abort_at_shutdown(
+                report.abort_handle(),
+                shutdown_signal.clone(),
+            );
         }
 
         // Phase 36.4: in Strict mode, spawn a watcher task that polls
@@ -2020,6 +2025,9 @@ pub(crate) async fn play(
             task: interception_task,
         });
     }
+    // Every use of the node in this function is behind us; the tasks hold
+    // their own copies and let go of them at shutdown (`util::teardown`).
+    drop(shared_ros_node_for_params);
 
     let total_tasks = named_tasks.len();
     let task_names: Vec<&'static str> = named_tasks.iter().map(|t| t.name).collect();
