@@ -1,0 +1,123 @@
+# Phase 91 - domain extensions: rlx, profiles and the vehicle keys moved out
+
+Status: **draft** (2026-10-15). Stage 2 of 2; starts after phase 90 (a tidy
+grammar) lands. Design: rlm `docs/design/extension-system.md` (with
+`extension-language-exploration.md` and `extension-examples.md`). Work lands
+in rlm (format, language, profiles), play_launch (loader, evaluator, Z3,
+explain, packaging, migration) and the consumers (nano-ros reads the
+exported model; contracts adopt `use:`).
+
+## Units
+
+### E0. Spike: embed a restricted Numbat (1-2 days)
+
+- Embed Numbat in a scratch crate; remove `print`, `assert`, `now`,
+  `random` from the prelude; refuse recursion; port vehicle.braking and
+  rail.ebd; record a trace of every binding and branch; translate one
+  expression to Z3.
+- Gate: a go/no-go note in the design doc: binary size and build time
+  added, what could not be restricted, whether its parser accepts the 5.3
+  character rules or needs a pre-pass. No-go means rlx's own expression
+  core (E2 grows by about 2-3 kLOC).
+
+### E1. Core interface (rlm)
+
+- `hazard.detection` (a bound); `hazard.deadline_by`; `reaction_total` as a
+  read-only per-hazard value; `source: derived` with a derivation record;
+  `derive-conflict`.
+- Gate: fixtures with a hand-written derivation record check as if derived;
+  `--explain` prints `derived by`.
+
+### E2. rlx front end (rlm)
+
+- The extension format (`extension`, `requires`, `key`, `input`, `derive`,
+  `check`, `report`, `fn`, `where`, `worst_case`, `domain`, `dimension`),
+  over E0's expression core.
+- Character rules (5.3): NFC, identifier classes, confusables, reserved
+  symbols, ASCII twins, bidi and zero-width refused; canonical ASCII form;
+  `rlx fmt --ascii | --unicode`.
+- Gate: a corpus of refused files, one per rule, each with its diagnostic;
+  round-trip `fmt` is the identity on the canonical form.
+
+### E3. Units and load-time checks (rlm)
+
+- Dimension checking in every branch at load; key dimensions against
+  contract values (`entry_speed: 15` refused, `15 s` refused with both
+  dimensions named, `km/h` converted).
+- Gate: the exploration's unit-bug example (`sqrt(2 v0 / a)`) refused at
+  load; every reference extension loads clean.
+
+### E4. Evaluator and trace (play_launch)
+
+- Evaluate derives and checks after core timing; feed derived bounds to the
+  core rules; record the trace; `--explain` prints it (and `--pretty`).
+- Gate: the seven domain examples print the derivations in
+  `extension-examples.md`; core verdicts on every existing fixture unchanged.
+
+### E5. Worst-case proofs (play_launch)
+
+- Encode `worst_case` over `domain` for Z3 (monotonicity in each named
+  input, with side conditions for division and `sqrt`); proved / refuted
+  with counterexample / unknown; `--strict`.
+- Gate: vehicle, medical, rail proved; the UAV claim refuted with the
+  counterexample, then proved with the suggested domain; a deliberately
+  wrong direction refuted.
+
+### E6. Profiles (rlm, play_launch)
+
+- The profile format; the core's severity rules read a profile's scale and
+  criticality map; reference profiles `iso26262` (with decomposition as an
+  rlx `fn`), `iec61508`, `iec61511`, `do178c`, `iec62304`, `iso13849`,
+  `en50129`.
+- Gate: derived criticality unchanged on every fixture under `iso26262`;
+  a SIL fixture under `iec61508`.
+
+### E7. Packaging, resolution and identity (play_launch)
+
+- ament resource `rlm_extensions`; `use:` with semver ranges; bare and
+  qualified keys; sha256 of the canonical form in `--explain`; `rlm.lock`,
+  `--locked`, `--update-lock`.
+- Gate: two packages declaring the same key force the qualified spelling;
+  a changed extension under `--locked` is refused.
+
+### E8. vehicle.braking and the migration (all)
+
+- The bundled `vehicle.braking` extension; implicit load with
+  `deprecated-implicit-extension`; the ASIL default moved to the bundled
+  `iso26262` profile on the same schedule; `play_launch migrate` adds
+  `use:`.
+- Gate: every existing contract checks with identical verdicts and totals,
+  with only the deprecation warnings; migrated contracts check clean.
+
+### E9. Reference extensions (rlm or a sibling package)
+
+- `machine.iso13855`, `medical.occlusion`, `uav.descent`, `rail.ebd`,
+  `process.pst` as worked examples and test fixtures, each with its
+  contract and expected `--explain`. Domain constants marked illustrative;
+  standard clauses verified before any is called a reference.
+- Gate: all load, prove their worst cases, and match the examples doc.
+
+### E10. Export to nano-ros (play_launch, nano-ros PR)
+
+- Derived bounds appear in the exported model as plain bounds with their
+  source; nano-ros reads them unchanged.
+- Gate: an image built from a contract using `vehicle.braking` has the same
+  monitors and sizing as one with the values written by hand.
+
+### E11. Docs and releases
+
+- Format reference split into core and extensions; an extension author's
+  guide; rlm minor release, play_launch release, nano-ros pin PR, consumers
+  migrated.
+
+## Order
+
+E0 first (it decides E2's size). E1 and E2 in parallel; E3 after E2; E4
+after E1 and E3; E5 and E6 after E4; E7 alongside E5/E6; E8 after E4, E6,
+E7; E9 alongside E8; E10 after E4; E11 last.
+
+## Not in this phase
+
+- Export to SysML v2 or AADL.
+- An editor extension (abbreviation input, hover traces); `rlx fmt` and the
+  CLI first.

@@ -97,6 +97,8 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 87 | [The Health page](./phase-87-health-page.md) | ✅ | 2026-10-14 |
 | 88 | [Data-flow chains without contracts](./phase-88-data-flow-chains.md) | ✅ C1–C4 | 2026-10-14 |
 | 89 | [Helping with DDS without touching it](./phase-89-dds-assist.md) | ✅ | 2026-10-14 |
+| 90 | [A tidy grammar](./phase-90-a-tidy-grammar.md) | 📝 planned | — |
+| 91 | [Domain extensions](./phase-91-domain-extensions.md) | 📝 planned | — |
 
 ---
 
@@ -312,6 +314,17 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     (`dds_report.txt`). Its own participant was left alone: the busy
     listener did not follow the orphaned segments.
     [phase-89-dds-assist.md](./phase-89-dds-assist.md).
+  - **Phase 90** - planned: a tidy grammar (2026-10-15). Stage 1 of 2: fold,
+    rename and remove contract keys (one bound type underneath the readable
+    keys; one place per fact; one meaning per key; derived-only
+    criticality; one settle shape), with fix-its and a migration command.
+    [phase-90-a-tidy-grammar.md](./phase-90-a-tidy-grammar.md).
+  - **Phase 91** - planned: domain extensions (2026-10-15). Stage 2: rlx
+    extensions (a units-checked, total expression language with traced
+    derivations and Z3-proved worst cases), YAML severity profiles, ament
+    packaging, and the vehicle keys and the ASIL default moved out of the
+    core. Design: rlm `docs/design/extension-system.md`.
+    [phase-91-domain-extensions.md](./phase-91-domain-extensions.md).
   - **Phase 80** - planned: the plan and what was applied (2026-09-21). A
     composable's derived tier is printed by `check --sched --explain`, written
     into the model's `execution.bindings`, and then dropped for every
