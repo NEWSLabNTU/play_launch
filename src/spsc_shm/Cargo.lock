@@ -17,52 +17,52 @@ dependencies = [
 
 [[patch.unused]]
 name = "action_msgs"
-version = "1.2.2"
+version = "0.0.0"
 
 [[patch.unused]]
 name = "builtin_interfaces"
-version = "1.2.2"
+version = "0.0.0"
 
 [[patch.unused]]
 name = "composition_interfaces"
-version = "1.2.2"
+version = "0.0.0"
 
 [[patch.unused]]
 name = "diagnostic_msgs"
-version = "4.9.1"
+version = "0.0.0"
 
 [[patch.unused]]
 name = "example_interfaces"
-version = "0.9.3"
+version = "0.0.0"
 
 [[patch.unused]]
 name = "geometry_msgs"
-version = "4.9.1"
+version = "0.0.0"
 
 [[patch.unused]]
 name = "lifecycle_msgs"
-version = "1.2.2"
+version = "0.0.0"
 
 [[patch.unused]]
 name = "play_launch_msgs"
-version = "0.1.0"
+version = "0.0.0"
 
 [[patch.unused]]
 name = "rcl_interfaces"
-version = "1.2.2"
+version = "0.0.0"
 
 [[patch.unused]]
 name = "rosgraph_msgs"
-version = "1.2.2"
+version = "0.0.0"
 
 [[patch.unused]]
 name = "std_msgs"
-version = "4.9.1"
+version = "0.0.0"
 
 [[patch.unused]]
 name = "test_msgs"
-version = "1.2.2"
+version = "0.0.0"
 
 [[patch.unused]]
 name = "unique_identifier_msgs"
-version = "2.2.1"
+version = "0.0.0"
