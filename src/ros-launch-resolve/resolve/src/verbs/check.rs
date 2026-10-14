@@ -441,6 +441,15 @@ pub fn render_budgets(rows: &[manifest_loader::RungBudget]) -> String {
         if !r.route_note.is_empty() {
             notes.push(format!("  {}/{}: {}", r.hazard, r.rung, r.route_note));
         }
+        // Phase 10 B2: a settle with a written response, in its two parts.
+        if let (Some(s), Some(resp)) = (r.settle_ms, r.settle_response_ms) {
+            notes.push(format!(
+                "  {}/{}: settle = profile {:.2}ms + response {resp:.2}ms",
+                r.hazard,
+                r.rung,
+                s - resp
+            ));
+        }
     }
     let widths: Vec<usize> = (0..10)
         .map(|c| table.iter().map(|row| row[c].len()).max().unwrap_or(0))

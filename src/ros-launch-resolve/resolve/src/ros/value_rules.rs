@@ -950,6 +950,9 @@ pub struct Settle {
     pub ms: Option<f64>,
     /// `derived` | `literal` | `none`, for the budget table.
     pub how: &'static str,
+    /// The written response delay inside `ms` (phase 10 B2), when the
+    /// profile states one: `ms` = profile + response.
+    pub response_ms: Option<f64>,
 }
 
 /// The settle a safe state contributes for hazard `h`, with the
@@ -969,6 +972,7 @@ pub(crate) fn settle_for(
     let literal_settle = Settle {
         ms: literal,
         how: if literal.is_some() { "literal" } else { "none" },
+        response_ms: None,
     };
     let Some(profile) = &ss.settle_profile else {
         return literal_settle;
@@ -1053,20 +1057,31 @@ pub(crate) fn settle_for(
         ));
         return literal_settle;
     };
-    let ms = t * 1000.0;
+    let profile_ms = t * 1000.0;
+    // Phase 10 B2: the vehicle's response, written beside the profile, is
+    // added to it.
+    let response_ms = profile.response.map(|d| d.as_millis_f64());
+    let ms = profile_ms + response_ms.unwrap_or(0.0);
     let v_r = a * a / (2.0 * j);
     let arithmetic = if v0 <= v_r {
         format!(
             "v_r = a^2/(2j) = {a}^2/(2*{j}) = {v_r:.4} m/s; v0 = {v0} <= v_r, so t = sqrt(2 v0/j) \
-             = sqrt(2*{v0}/{j}) = {ms:.2}ms"
+             = sqrt(2*{v0}/{j}) = {profile_ms:.2}ms"
         )
     } else {
         format!(
             "v_r = a^2/(2j) = {a}^2/(2*{j}) = {v_r:.4} m/s; v0 = {v0} > v_r, so t = a/j + \
-             (v0 - v_r)/a = {a}/{j} + ({v0} - {v_r:.4})/{a} = {:.2} + {:.2} = {ms:.2}ms",
+             (v0 - v_r)/a = {a}/{j} + ({v0} - {v_r:.4})/{a} = {:.2} + {:.2} = {profile_ms:.2}ms",
             a / j * 1000.0,
             (v0 - v_r) / a * 1000.0
         )
+    };
+    let arithmetic = match response_ms {
+        Some(r) => format!(
+            "{arithmetic}; + response {r:.2}ms (written) = settle {ms:.2}ms (profile \
+             {profile_ms:.2}ms + response {r:.2}ms)"
+        ),
+        None => arithmetic,
     };
     diags.push(diag(
         "settle-derived",
@@ -1097,6 +1112,7 @@ pub(crate) fn settle_for(
     Settle {
         ms: Some(ms),
         how: "derived",
+        response_ms,
     }
 }
 

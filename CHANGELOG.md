@@ -8,6 +8,12 @@ allowance heavily.
 
 ## Unreleased
 
+- **New (`check`, phase 10 B2):** a derived settle includes the vehicle's
+  response. `settle: { decel, jerk, response: 256ms }` writes the time from
+  the braking command to the deceleration the profile assumes; the settle is
+  `response + a/j + (v0 - v_r)/a`, `settle-derived` prints the profile and
+  the response, and the rung totals (and `--explain`'s SETTLE column) carry
+  the sum, with a `settle = profile + response` note per row.
 - **New (`check`, phase 10 B1, rlm v0.1.58 keys):** a timer and a staleness
   bound are the numbers the image runs, as a window already was. A timer
   trigger may name the parameter that sets it, `trigger: { timer: { rate_hz:

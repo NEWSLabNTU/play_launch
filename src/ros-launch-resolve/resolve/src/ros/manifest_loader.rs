@@ -341,6 +341,8 @@ pub struct RungBudget {
     pub settle_ms: Option<f64>,
     /// `derived` | `literal` | `none`.
     pub settle_how: &'static str,
+    /// The written response delay inside `settle_ms` (phase 10 B2).
+    pub settle_response_ms: Option<f64>,
     pub total_ms: Option<f64>,
     pub ftti_ms: Option<f64>,
     pub note: String,
@@ -2837,6 +2839,7 @@ fn check_fault_reaction(
             None => super::value_rules::Settle {
                 ms: None,
                 how: "none",
+                response_ms: None,
             },
         };
         for (rung_name, rung_path) in rungs.iter().take(rungs.len().saturating_sub(1)) {
@@ -3003,6 +3006,7 @@ fn check_fault_reaction(
                 route_ms: Some(route_ms),
                 settle_ms: settle.ms,
                 settle_how: settle.how,
+                settle_response_ms: settle.response_ms,
                 total_ms: Some(total),
                 ftti_ms: Some(ftti),
                 route_note,
@@ -3206,6 +3210,7 @@ fn check_fault_reaction(
             route_ms: Some(frti_route),
             settle_ms,
             settle_how: settle.how,
+            settle_response_ms: settle.response_ms,
             total_ms: fdti_ms.map(|f| f + waited + frti),
             ftti_ms,
             route_note: floor_split,

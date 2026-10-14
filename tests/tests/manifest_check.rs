@@ -2009,3 +2009,23 @@ fn param_bindings_fail_on_disagreement() {
     assert_eq!(out.matches("error[timer-param]").count(), 1, "{out}");
     assert_eq!(out.matches("error[max-age-param]").count(), 1, "{out}");
 }
+
+/// Phase 10 B2: a written response beside a braking profile is added to the
+/// derived settle; `settle-derived` prints both parts and the totals and
+/// `--explain` carry the sum.
+#[test]
+fn a_settles_written_response_is_added_to_the_profile() {
+    let (code, out) = check_takeover("contract_takeover_response", &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    for needle in [
+        "1666.67 + 366.67 = 2033.33ms; + response 300.00ms (written) = settle 2333.33ms \
+         (profile 2033.33ms + response 300.00ms)",
+        "3333.33 + 6663.33 = 9996.67ms; + response 500.00ms (written) = settle 10496.67ms",
+        "= 2976.67ms fits the fault-tolerant time interval 3000.00ms with 23.33ms of slack",
+        "odd_exit  comfortable  rung     120.00  10110.00  410.00   10496.67 derived  21136.67",
+        "hpc_loss/estop: settle = profile 2033.33ms + response 300.00ms",
+        "odd_exit/comfortable: settle = profile 9996.67ms + response 500.00ms",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+}
