@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 82 phases total (1–80, plus 14.5 and 30b); 64 complete, 11 in progress, 6 planned, 1 dropped — as of 2026-09-21.
+Started October 2025. 91 phases total (1–89, plus 14.5 and 30b); 71 complete, 14 in progress, 5 planned, 1 dropped — as of 2026-10-15.
 
 Phase docs through phase 28 are in `archive/`; from phase 29 on, a phase's doc
 stays in this directory whatever its status, and its status line (the first
@@ -57,6 +57,46 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 47 | [CLI cleanup + hard record.json removal](./phase-47-cli_and_record_hard_removal.md) | ✅ A1–A2, B1–B6 | 2026-07-20 |
 | 48 | [Detangle namespace from scope tree](./phase-48-scope_namespace_detangle.md) | ✅ minimal + full | 2026-07-20 |
 | 49 | [Retire last record.json reader + replay --model degradations](./phase-49-context_model_and_replay_degradations.md) | 🔄 A + B1 shipped; B2/B3 accepted as degradations | 2026-07-21 |
+| 50 | [FQN member identity + full web visibility](./phase-50-fqn-identity-and-web-visibility.md) | ✅ | 2026-07-25 |
+| 51 | [State ownership refactor](./phase-51-state-ownership-refactor.md) | ✅ | 2026-07-25 |
+| 52 | [Timing config + failure surfacing](./phase-52-config-and-failure-surfacing.md) | ✅ | 2026-07-25 |
+| 53 | [Web UI organization](./phase-53-web-ui-organization.md) | ✅ | 2026-07-25 |
+| 54 | [Parameter source ordering](./phase-54-param-source-ordering.md) | ✅ | 2026-08-02 |
+| 55 | [Launch toolchain consolidation](./phase-55-launch-toolchain-consolidation.md) | ✅ | 2026-08-03 |
+| 56 | [CLI verb reshape for 0.9.0](./phase-56-cli-verb-reshape.md) | ✅ | 2026-08-03 |
+| 57 | [Mixed-criticality RT demo + Chrome timeline](./phase-57-rt-mixed-criticality-demo.md) | ✅ | 2026-08-05 |
+| 58 | [Deriving scheduling from contracts](./phase-58-scheduling-derivation.md) | 🔄 W2, W3.a done; W3.b–d, W5 open | — |
+| 59 | [Timing vocabulary](./phase-59-timing-vocabulary.md) | 📋 decided; executed as phase 63 | — |
+| 60 | [Linux scheduling realizer](./phase-60-linux-sched-surface.md) | ✅ | 2026-08-12 |
+| 61 | [Edge startup storm](./phase-61-edge-startup-storm.md) | 🔄 W1–W2 done; W3 is phase 65 | — |
+| 62 | [Diagnostics observability](./phase-62-diagnostics-observability.md) | ✅ | 2026-08-21 |
+| 63 | [Duration type campaign](./phase-63-duration-type-campaign.md) | 🔄 W1–W5 done; W6 blocked on nano-ros, Autoware | — |
+| 64 | [Private load channel for the isolated container](./phase-64-isolated-container-ipc.md) | ✅ | 2026-08-22 |
+| 65 | [Mixed isolation granularity](./phase-65-mixed-isolation-granularity.md) | 📋 proposed | — |
+| 66 | [cgroup per container](./phase-66-cgroup-per-container.md) | ✅ | 2026-08-24 |
+| 67 | [Contract primitives](./phase-67-contract-primitives.md) | ✅ | 2026-08-29 |
+| 68 | [Contract consequences](./phase-68-contract-consequences.md) | ✅ | 2026-08-29 |
+| 69 | [Contract field table](./phase-69-contract-field-table.md) | ✅ | 2026-09-05 |
+| 70 | [Consumer census](./phase-70-consumer-census.md) | ✅ | 2026-09-06 |
+| 71 | [Fault detection and reaction](./phase-71-fault-reaction.md) | ✅ | 2026-09-06 |
+| 72 | [Criticality from hazards](./phase-72-criticality-from-hazards.md) | ✅ | 2026-09-06 |
+| 73 | [Live fault observer](./phase-73-live-fault-observer.md) | ✅ | 2026-09-06 |
+| 74 | [Contract QoS applied](./phase-74-contract-qos-applied.md) | ✅ | 2026-09-06 |
+| 75 | [Operational modes](./phase-75-operational-modes.md) | ✅ | 2026-09-07 |
+| 76 | [Topic graph from remaps](./phase-76-graph-from-remaps.md) | ✅ | 2026-09-08 |
+| 77 | [Inferred graph, measured](./phase-77-graph-verified.md) | ✅ | 2026-09-09 |
+| 78 | [One derivation, two consumers](./phase-78-one-derivation-two-consumers.md) | ✅ | 2026-09-22 |
+| 79 | [Runtime enforcement is a gate](./phase-79-runtime-enforcement-is-a-gate.md) | 📋 planned | — |
+| 80 | [The plan and what was applied](./phase-80-the-plan-and-what-was-applied.md) | 📋 planned | — |
+| 81 | [The docs describe the code](./phase-81-the-docs-describe-the-code.md) | ✅ | 2026-09-23 |
+| 82 | [What a detector may see](./phase-82-what-a-detector-may-see.md) | ✅ | 2026-09-25 |
+| 83 | [A takeover the contract can state](./phase-83-a-takeover-the-contract-can-state.md) | ✅ | 2026-09-28 |
+| 84 | [A window is a least time](./phase-84-a-window-is-a-least-time.md) | ✅ | 2026-09-29 |
+| 85 | [What the island left open](./phase-85-what-the-island-left-open.md) | 🔄 | — |
+| 86 | [Lifecycle autostart from the launch file](./phase-86-lifecycle-autostart-from-the-launch-file.md) | 🔄 W0–W5 landed | — |
+| 87 | [The Health page](./phase-87-health-page.md) | ✅ | 2026-10-14 |
+| 88 | [Data-flow chains without contracts](./phase-88-data-flow-chains.md) | ✅ C1–C4 | 2026-10-14 |
+| 89 | [Helping with DDS without touching it](./phase-89-dds-assist.md) | ✅ | 2026-10-14 |
 
 ---
 

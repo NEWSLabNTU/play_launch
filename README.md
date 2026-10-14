@@ -31,7 +31,7 @@ play_launch` installs nothing usable. On Ubuntu 24.04 and later add
 
 This installs the `play_launch` command, which carries the whole surface:
 `launch`, `run`, `up`, `resolve`, `dump`, `check`, `plot`, `contract`,
-`context`, `setcap`, `verify`.
+`context`, `setcap`, `verify`, `measure`.
 
 Optional: grant the helper binaries the capabilities they need for per-process I/O
 monitoring and non-root RT scheduling (requires sudo):

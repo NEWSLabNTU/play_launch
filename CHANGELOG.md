@@ -27,6 +27,12 @@ allowance heavily.
   composable was killed a few milliseconds into handling its own SIGTERM, so
   none tore down its DDS participant. Children now get SIGTERM together and
   share one 5 s deadline before the workers are joined.
+- **Fix:** no more `[QoSProfile.conversion]: History policy is unknown`
+  errors while the web UI reads the graph. DDS discovery does not carry an
+  endpoint's history policy, so the graph reports it as unknown; rclrs
+  logged an error for each endpoint and reported `keep_last(0)`, which the
+  Topics tab showed as `KL(0)`. The graph now says `unknown` and the tab
+  shows no history badge.
 - **Breaking (install):** one PyPI package per ROS distribution,
   `play_launch_humble`, `play_launch_jazzy`, `play_launch_kilted`,
   `play_launch_lyrical` and `play_launch_rolling`, all providing the

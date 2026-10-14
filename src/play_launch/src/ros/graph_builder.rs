@@ -107,6 +107,8 @@ pub fn qos_summary(p: &QoSProfile) -> QosSummary {
             QoSHistoryPolicy::KeepLast { depth } => format!("keep_last({})", depth),
             QoSHistoryPolicy::KeepAll => "keep_all".into(),
             QoSHistoryPolicy::SystemDefault { depth } => format!("system_default({})", depth),
+            // DDS discovery does not carry another participant's history policy.
+            QoSHistoryPolicy::Unknown { .. } => "unknown".into(),
         },
         deadline_ms: duration_str(&p.deadline),
         lifespan_ms: duration_str(&p.lifespan),
