@@ -8,7 +8,8 @@ allowance heavily.
 
 ## Unreleased
 
-Phase 90 G3 (its bound part) and G6, on rlm v0.1.60.
+Phase 90 G3 (its bound part) and G6, on rlm v0.1.60; phase 93 (supervised
+budgets), on rlm v0.1.61.
 
 - **Fixed (shutdown):** play_launch stops its nodes one process at a time
   (5 ms apart, at most 1 s, children before the process that forked them)
