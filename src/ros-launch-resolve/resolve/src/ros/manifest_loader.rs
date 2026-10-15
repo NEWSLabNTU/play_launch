@@ -410,14 +410,20 @@ fn walk_terms(index: &ManifestIndex, w: &ReactionWalk, after_deadline: bool) -> 
         }
     }
     if let Some(at) = &w.settle {
+        // Phase 90 G6: the map form keys its duration `settle.duration`;
+        // the response is the settle's, charged beside a written duration
+        // as beside a profile.
         let base = format!("paths.{}.safe_state.settle", at.path);
-        match &at.ss.settle_profile {
-            Some(p) if p.response.is_some() => {
-                out.extend(node_term(index, &at.node, &format!("{base}.response")));
-            }
-            Some(_) => {}
-            None if at.ss.settle.is_some() => out.extend(node_term(index, &at.node, &base)),
-            None => {}
+        if at.ss.settle_profile.is_none() && at.ss.settle.is_some() {
+            let key = if at.ss.settle_map {
+                format!("{base}.duration")
+            } else {
+                base.clone()
+            };
+            out.extend(node_term(index, &at.node, &key));
+        }
+        if at.ss.settle_response.is_some() {
+            out.extend(node_term(index, &at.node, &format!("{base}.response")));
         }
     }
     out
@@ -1056,6 +1062,7 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
 
     // Critical-path latency check via the global dataflow graph.
     check_scope_path_critical_path(index, &graph);
+    check_scope_path_drop_tightness(index, &graph);
     check_route_exclusion_blocking(index, &graph);
     check_lifespan_against_age(index, &graph);
 
@@ -4356,6 +4363,116 @@ fn check_scope_path_critical_path(
     }
 }
 
+/// `drop-tightness` (phase 90 G3) on the global graph: no topic on a scope
+/// path's route permits a larger drop rate (`max_count`, `n / w`) than the
+/// scope path's end-to-end `drop:` -- a hop that may lose more than the whole
+/// is a part larger than its whole. The route is the path's input and
+/// output topics and every causal edge between a node reachable from the
+/// inputs and one that reaches the outputs, within the path's scope
+/// subtree, so a topic declared in another contract of the tree is compared
+/// too. rlm's per-manifest rule of the same id sees one manifest; where a
+/// route is traced here, its findings are this check's and the per-manifest
+/// ones are dropped (as `scope-budget`'s are).
+fn check_scope_path_drop_tightness(
+    index: &mut ManifestIndex,
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) {
+    use super::manifest_graph::{subgraph_for_scope_path, subtree_scope_ids};
+    use std::collections::{BTreeSet, HashSet, VecDeque};
+
+    let scope_paths = index.scope_paths.clone();
+    let mut traced: Vec<(usize, String)> = Vec::new();
+    let mut out: Vec<Diagnostic> = Vec::new();
+    for sp in &scope_paths {
+        let Some(whole) = sp.path.drop.as_ref().and_then(|d| d.max_count.count_per()) else {
+            continue;
+        };
+        let subtree = subtree_scope_ids(index, sp.scope_id);
+        let sub = subgraph_for_scope_path(graph, subtree, &sp.input_topics, &sp.output_topics);
+        if sub.sources.is_empty() || sub.sinks.is_empty() {
+            continue; // no route: rlm's per-manifest finding stands
+        }
+        traced.push((sp.scope_id, sp.path_name.clone()));
+        let mut fwd: HashSet<String> = sub.sources.iter().cloned().collect();
+        let mut queue: VecDeque<String> = sub.sources.iter().cloned().collect();
+        while let Some(n) = queue.pop_front() {
+            for e in sub.out_causal_edges(&n) {
+                if fwd.insert(e.to.clone()) {
+                    queue.push_back(e.to.clone());
+                }
+            }
+        }
+        let mut bwd: HashSet<String> = sub.sinks.iter().cloned().collect();
+        let mut queue: VecDeque<String> = sub.sinks.iter().cloned().collect();
+        while let Some(n) = queue.pop_front() {
+            for e in graph
+                .edges
+                .iter()
+                .filter(|e| e.to == n && !e.is_state && sub.contains_node(&e.from))
+            {
+                if bwd.insert(e.from.clone()) {
+                    queue.push_back(e.from.clone());
+                }
+            }
+        }
+        let on = |n: &str| fwd.contains(n) && bwd.contains(n);
+        let mut topics: BTreeSet<String> = sp
+            .input_topics
+            .iter()
+            .chain(sp.output_topics.iter())
+            .cloned()
+            .collect();
+        for e in &graph.edges {
+            if !e.is_state && on(&e.from) && on(&e.to) {
+                topics.insert(e.topic.clone());
+            }
+        }
+        for t in topics {
+            let Some(part) = index
+                .topics
+                .get(&t)
+                .and_then(|rt| rt.drop.as_ref())
+                .and_then(|d| d.max_count.count_per())
+            else {
+                continue;
+            };
+            if part.drop_rate() > whole.drop_rate() {
+                out.push(Diagnostic {
+                    rule_id: "drop-tightness".to_string(),
+                    severity: Severity::Warning,
+                    message: format!(
+                        "{}: scope path '{}' permits a loss of {whole} ({:.2}%) end to end, but \
+                         topic '{t}' on its route permits {part} ({:.2}%) on one hop: a part \
+                         looser than the whole. Tighten the topic's `drop:` or loosen the scope \
+                         path's",
+                        super::value_rules::site(
+                            index,
+                            sp.scope_id,
+                            &format!("paths.{}.drop", sp.path_name)
+                        ),
+                        sp.path_name,
+                        whole.drop_rate() * 100.0,
+                        part.drop_rate() * 100.0
+                    ),
+                    path: format!("paths.{}.drop", sp.path_name),
+                    span: None,
+                });
+            }
+        }
+    }
+    for (scope_id, path_name) in traced {
+        let key = format!("paths.{path_name}.drop");
+        if let Some(m) = index.manifests.get_mut(&scope_id) {
+            let before = m.diagnostics.len();
+            m.diagnostics
+                .retain(|d| !(d.rule_id == "drop-tightness" && d.path == key));
+            let dropped = before - m.diagnostics.len();
+            index.total_warnings = index.total_warnings.saturating_sub(dropped);
+        }
+    }
+    index.merge_diagnostics.extend(out);
+}
+
 /// `path-exclusion` — report that a route's total omits blocking it is
 /// subject to.
 ///
@@ -4721,7 +4838,7 @@ fn collect_externals(index: &mut ManifestIndex) {
 }
 
 /// Split an endpoint FQN like `/ns/node/endpoint` into `(node_fqn, endpoint_name)`.
-fn split_endpoint_ref_for_check(ep_ref: &str) -> Option<(String, String)> {
+pub(crate) fn split_endpoint_ref_for_check(ep_ref: &str) -> Option<(String, String)> {
     let pos = ep_ref.rfind('/')?;
     let node = &ep_ref[..pos];
     let ep = &ep_ref[pos + 1..];
@@ -5863,7 +5980,7 @@ fn resolve_hazards(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifest
 /// If `ns` is empty or "/", returns `/<name>`.
 /// If `ns` is "/perception", returns `/perception/<name>`.
 /// If `name` already starts with "/", returns it as-is (absolute).
-fn qualify_name(ns: &str, name: &str) -> String {
+pub(crate) fn qualify_name(ns: &str, name: &str) -> String {
     if name.starts_with('/') {
         return name.to_string();
     }

@@ -186,10 +186,18 @@ fn resolve_merges_launch_and_contracts_into_full_model() {
     assert_eq!(e2e["drop"]["max_drop_rate"], 0.08);
     assert_eq!(e2e["drop"]["max_consecutive"], 5);
     // topic channel contract: fields merged from BOTH scopes' declarations
-    // (qos from the root decl; rate/transport/drop from the child decl)
+    // (qos from the root decl; rate/drop from the child decl). The 5ms
+    // transport was the child's topic-level default until phase 90 G3; it is
+    // the root's subscriber's own now.
     let tc = &c["topics"]["/perception/objects"];
     assert_eq!(tc["rate_hz"], 10.0);
-    assert_eq!(tc["max_transport_ms"], 5.0);
+    assert!(tc["max_transport_ms"].is_null(), "{tc}");
+    let planner_objects = c["sub_endpoints"]
+        .as_object()
+        .and_then(|m| m.iter().find(|(k, _)| k.ends_with("planner/objects")))
+        .map(|(_, v)| v.clone())
+        .expect("the planner's objects subscriber");
+    assert_eq!(planner_objects["max_transport_ms"], 5.0);
     assert_eq!(tc["drop"]["max_drop_rate"], 0.05);
     assert_eq!(tc["drop"]["max_consecutive"], 3);
     assert_eq!(tc["qos"]["reliability"], "reliable");

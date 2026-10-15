@@ -24,8 +24,8 @@ use ros_launch_manifest_derive::{DeriveFacts, resolve_chains};
 use ros_launch_manifest_model::SystemModel;
 use ros_launch_manifest_sched::chain::ChainElement;
 
-/// The subscriber that states its own transport, and the one that inherits
-/// the topic's.
+/// The collocated subscriber (0ms), and the one across the network (10ms:
+/// the topic's default it inherited until phase 90 G3 moved it onto it).
 const OVERRIDING_SUB: &str = "/et/fast/objects";
 const INHERITING_SUB: &str = "/et/slow/objects";
 
@@ -89,16 +89,16 @@ fn a_subscribers_max_transport_reaches_the_model() {
         "the endpoint's declared 0ms must reach the model"
     );
 
-    // The other subscriber declares nothing, so it must carry no transport of
-    // its own — an absent override is what makes the topic's value apply.
-    assert!(
+    // Phase 90 G3: the other subscriber states the 10ms it used to inherit
+    // from the topic, and the topic states none.
+    assert_eq!(
         model
             .contracts
             .sub_endpoints
             .get(INHERITING_SUB)
-            .and_then(|s| s.max_transport_ms)
-            .is_none(),
-        "{INHERITING_SUB} declares no transport; the topic's default is what it pays"
+            .and_then(|s| s.max_transport_ms),
+        Some(10.0),
+        "{INHERITING_SUB} states its own 10ms"
     );
     assert_eq!(
         model
@@ -106,8 +106,8 @@ fn a_subscribers_max_transport_reaches_the_model() {
             .topics
             .get("/et/objects")
             .and_then(|t| t.max_transport_ms),
-        Some(10.0),
-        "the topic default must still be carried"
+        None,
+        "no topic-level default"
     );
 }
 
@@ -138,8 +138,8 @@ fn the_resolver_and_the_shared_derivation_take_the_same_route() {
     );
     assert!(
         text.contains(EXPECTED_TOTAL),
-        "the resolver must charge the endpoint override on its own edge and the \
-         topic default on the other: expected `{EXPECTED_TOTAL}` in\n{text}"
+        "the resolver must charge each subscriber's transport on its own edge: \
+         expected `{EXPECTED_TOTAL}` in\n{text}"
     );
 
     // --- consumer 2: the shared derivation, over the model above ------

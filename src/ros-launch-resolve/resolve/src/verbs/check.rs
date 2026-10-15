@@ -494,12 +494,18 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
         if !r.route_note.is_empty() {
             notes.push(format!("  {}/{}: {}", r.hazard, r.rung, r.route_note));
         }
-        // Phase 10 B2: a settle with a written response, in its two parts.
+        // Phase 10 B2: a settle with a written response, in its two parts
+        // (phase 90 G6: the first is a profile or a written duration).
         if let (Some(s), Some(resp)) = (r.settle_ms, r.settle_response_ms) {
             notes.push(format!(
-                "  {}/{}: settle = profile {:.2}ms + response {resp:.2}ms",
+                "  {}/{}: settle = {} {:.2}ms + response {resp:.2}ms",
                 r.hazard,
                 r.rung,
+                if r.settle_how == "literal" {
+                    "written"
+                } else {
+                    "profile"
+                },
                 s - resp
             ));
         }

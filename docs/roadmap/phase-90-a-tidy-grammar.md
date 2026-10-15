@@ -1,10 +1,9 @@
 # Phase 90 - a tidy grammar: fold, rename and remove contract keys
 
 Status: **in progress** (2026-10-15): G1 done (inventory, decisions
-below); G2 done (one bound type, internal); G4, G5 and G7 done; G3's
-non-bound part done (`external_topics`, `paths.<n>.input`; its bound part
-is next, on G2's `Bound`); G8 started (the `migrate` verb and its rewrite
-table, with the G3, G4 and G7 rewrites). Stage 1 of 2. Stage 2 (an extension system
+below); G2 done (one bound type, internal); G3 done (both parts); G4, G5,
+G6 and G7 done; G8 started (the `migrate` verb and its rewrite table, with
+the G3, G4 and G7 rewrites). Stage 1 of 2. Stage 2 (an extension system
 for domain vocabulary, and moving the domain keys into it) gets its own
 phase once its design is settled; nothing here depends on that design, and
 nothing here moves a key out of the core.
@@ -256,10 +255,11 @@ Gate:
   migration command rewrites it; fixtures and the island's contracts
   migrated.
 
-#### G3 status: non-bound part done (2026-10-15)
+#### G3 status: done (2026-10-15)
 
-rlm `phase90-g3-g7` (main `26739f9`), play_launch `phase90-g3-g7`. The
-bound part (`max_transport` topic form, node-path `drop`) waits for G2.
+Non-bound part: rlm `phase90-g3-g7` (main `26739f9`), play_launch
+`phase90-g3-g7`. Bound part: rlm and play_launch `phase90-g3b-g6`, on G2's
+`Bound` (block below the non-bound one).
 
 - `external_topics:` is deprecated (rlm `field_table::Status::Deprecated`,
   a new status: parses for one release, its fact's one place is elsewhere;
@@ -310,6 +310,83 @@ bound part (`max_transport` topic form, node-path `drop`) waits for G2.
 - Would apply downstream (not changed): the island, 0 G3/G7 edits (its 21
   G4 edits in 9 files are still pending, G8); nano-ros (27 contracts
   outside its vendored play_launch), 0 edits.
+
+Bound part (rlm and play_launch `phase90-g3b-g6`; play_launch pins that
+rlm commit until v0.1.60):
+
+- `topics.<t>.max_transport` is deprecated (`Status::Deprecated`). It is
+  read as before, the transport of each subscriber of the topic that states
+  none, and warned once per topic naming them: `warning[deprecated-spelling]:
+  bringup.contract.yaml:86: topic '/safety/obstacles': max_transport: 3ms on
+  a topic is deprecated; a transport is the hop into one subscriber and is
+  stated on it, nodes.<n>.sub.<ep>.max_transport. It is read as the
+  transport of 1 subscriber(s) that state none:
+  '/safety/brake_controller/obstacles'. Fix: write max_transport: 3ms on
+  each of them and delete this key; play_launch migrate <contract> --write
+  does it when they are declared in the same contract` (a topic no
+  subscriber reads: `... so it charges nothing. Fix: delete it`). Rewrite
+  `topic-max-transport-subscribers`: the value (its text, map form kept)
+  onto each subscriber in the topic's `sub:` list that states none, added
+  to a flow or block endpoint map; the topic's key deleted. A topic whose
+  listed subscribers are not all declared in the same file, or that lists
+  none, is left for a hand edit and named (the value may belong to another
+  contract's subscribers).
+- `drop:` on a node path is a parse error (exit 3): `at
+  'nodes.obstacle_detector.paths.detect.drop': Removed in v0.1.60 (phase 90
+  G3) -- a node path's drop: was read by nothing (no rule, monitor or code
+  generator), while the same loss stated on the topic is ... State it on the
+  topic the path outputs, topics: { <t>: { drop: ... } }; play_launch
+  migrate moves it when the path has one output. On a scope path drop:
+  stays: the end-to-end loss budget.` Rewrite `node-path-drop-topic`: onto
+  the topic of the same file whose `pub:` lists the path's one output (a
+  block value is written in flow form), or deleted when that topic states
+  the same drop; several outputs, no or two carrying topics, or a different
+  drop already there are left for a hand edit.
+- The scope-path form stays, with contract-theory's scope-vs-topic check,
+  `drop-tightness` (warning): `scope path 'e2e' permits a loss of 1 / 25
+  (4.00%) end to end, but topic '/perception/objects' on its route permits
+  1 / 20 (5.00%) on one hop: a part looser than the whole.` rlm rule 20
+  checks the topics of the path's own manifest; play_launch checks the
+  route on the merged graph (the path's inputs, outputs and every causal
+  edge between them in its scope subtree, across contracts) and supersedes
+  rlm's finding where it traces a route. Only `max_count` is compared
+  (consecutive runs reset at periodic nodes).
+- rlm's per-manifest `scope-budget` flat sum still reads only the
+  topic-level transport, so a migrated contract carries none in that sum:
+  rlm's `manifest_endpoint_transport` (45 -> 35ms) and
+  `manifest_mixed_transport` (120 -> 100ms) keep their warnings with
+  smaller totals. Reading the subscribers' transports there would add
+  warnings to island contracts checked standalone (design issue #55's third
+  reader); play_launch's topology-aware check, which supersedes it where a
+  route exists, reads each subscriber's and is unchanged.
+- Fixtures migrated in-repo: rlm `manifest_endpoint_transport`,
+  `manifest_mixed_transport` (topic transport), `manifest_pipeline`,
+  `manifest_violations` (node-path drop; `node_b`'s two-output drop moved to
+  `b_to_a` by hand); play_launch `endpoint_transport` (migrate) and
+  `contract_merge` (by hand: the topic-level 5ms in `perception.contract.yaml`
+  is the default of a subscriber in `bringup.contract.yaml`, which now states
+  it). Kept on the deprecated spelling on purpose: `contract_transport_notice`
+  (its topic-level `/dx/cmd` transport has no subscriber and is what the
+  test of `declared-not-charged` on a topic reads). New fixtures: rlm
+  `manifest_drop_tightness`; play_launch `contract_spelling_deprecated_g3b`,
+  `contract_node_path_drop_removed`, `contract_drop_tightness`.
+- Gate (old = play_launch main `6f3fc1c3` / rlm `238c9bb` on the originals,
+  new on the migrated): play_launch `check`, `--explain` and `--format
+  json` on all fixture launches and the island's 16 contracts (337 old
+  outputs): the island's outputs and its `check-contracts.sh` are
+  byte-identical; every fixture's verdict, findings and `--explain` totals
+  are unchanged except the `deprecated-spelling` warnings and their counts,
+  the rlm version string, and `declared-not-charged` naming the moved key
+  (`nodes.slow.sub.objects.max_transport` for `topics./et/objects...`; the
+  child launch of `contract_merge` checked alone loses its one, since the
+  subscriber is in the parent). The new checker on the unmigrated play_launch
+  fixtures differs from the old only by deprecation warnings. rlm
+  `run_checks` on its 31 fixture manifests: the same diagnostics but the two
+  flat-sum totals above (and source lines).
+- Would apply downstream (not changed): island 0 edits (16 contracts; only
+  the 21 pending G4 edits), nano-ros (the island's pin `43fc1c2f`, 27
+  contracts) 0 edits. Neither writes a topic-level transport, a node-path
+  drop or a settle's map without a profile.
 
 ### G4. One meaning per key: `reaction`
 
@@ -381,6 +458,31 @@ on the migrated. The island is unaffected (its one labelled file,
 - Gate: settle-derived output unchanged; a written duration plus response
   sums in `--explain`.
 
+#### G6 status: done (2026-10-15)
+
+rlm and play_launch `phase90-g3b-g6`. `settle: <d>` is shorthand for
+`settle: { duration: <d> }`; the map is `{ duration | decel, jerk ;
+response ; source }` (`bound::Form::Settle`). `response` moved from
+`SettleProfile` to `SafeState.settle_response` and is added to a written
+duration as to a derived profile, omitted 0 (`SafeState::written_settle_ms`);
+`source` (new, since 0.1.60) states where a written duration comes from and
+requires one. A map with neither a duration nor a profile, or a `source`
+with no duration, is a parse error. `settle-conflict` stays and compares
+the two totals (each with the response; the message adds `(both include
+the written response <r>ms)` when there is one). `settle.response`'s kind is
+fact. Bounds keyed as written: `safe_state.settle` for the scalar,
+`.settle.duration` / `.settle.response` for the map (a written duration
+beside a profile is still not a budget of its own). The model's
+`settle_ms` is the written duration plus its response.
+
+- Gate: no contract that parses today changes (the golden run of G3's
+  bound part above covers every settle form written: 12 durations, 39
+  profiles, the profile-plus-duration and the two profile-plus-response
+  fixtures). New fixture `contract_settle_written_response`: `settle: {
+  duration: 200ms, response: 150ms, source: measured }` charges 350ms and
+  `--explain` prints `350.00 literal` and `drive_blind/safety.stop: settle =
+  written 200.00ms + response 150.00ms`.
+
 ### G7. Dead keys
 
 - What: remove what G1 finds no consumer reads and no contract writes, with
@@ -440,13 +542,16 @@ The rewrites are rlm `types::migrate::REWRITES` (id, unit, since, from, to,
 when, and a function of one parsed file): each rewrite reads the YAML to
 decide what changes and edits only the key tokens it names, so comments,
 quoting and layout survive; a rewrite that would turn a parsing contract
-into a non-parsing one is refused. G3's bound part and G6 add rows there.
-Rows now: `hazard-reaction-enters` (G4; only when the name is a mode of the
-same file, the checker's lookup), `exit-on-holds` (G4),
-`path-input-trigger` (G3), `external-topics-to-topics` (G3; moves and
-merges entries, so its edits are line insertions and deletions, not key
-renames) and `guard-all-of-function` (G7). The G8 release notes record
-`external_topics:` and `paths.<n>.input` as removed in the release after.
+into a non-parsing one is refused. Rows now: `hazard-reaction-enters` (G4;
+only when the name is a mode of the same file, the checker's lookup),
+`exit-on-holds` (G4), `path-input-trigger` (G3), `external-topics-to-topics`
+(G3; moves and merges entries, so its edits are line insertions and
+deletions, not key renames), `topic-max-transport-subscribers` and
+`node-path-drop-topic` (G3's bound part, since 0.1.60) and
+`guard-all-of-function` (G7). G6 needs no row: every settle that parsed
+still parses to the same numbers. The G8 release notes record
+`external_topics:`, `paths.<n>.input` and `topics.<t>.max_transport` as
+removed in the release after.
 
 Gate run (old play_launch 0.16.0 on the originals, new on the migrated, in
 scratch copies): play_launch 44 contracts, 17 rewritten (46 edits: 32

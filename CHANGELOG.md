@@ -6,6 +6,30 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+Phase 90 G3 (its bound part) and G6, pinned to rlm main until v0.1.60.
+
+- **Changed (`check`, phase 90 G3):** a topic-level `max_transport` is
+  deprecated: it is still read as the transport of every subscriber of the
+  topic that states none, with one `warning[deprecated-spelling]` per topic
+  naming those subscribers (or saying none reads it). `migrate` copies the
+  value onto each such subscriber declared in the same contract
+  (`topic-max-transport-subscribers`).
+- **Changed (`check`, phase 90 G3):** `drop:` on a node path is a parse
+  error (exit 3) naming `topics.<t>.drop`; `migrate` moves it to the topic
+  the path's one output publishes (`node-path-drop-topic`). On a scope path
+  it stays, the end-to-end loss budget.
+- **Added (`check`, phase 90 G3):** `drop-tightness` (warning): a topic on
+  a scope path's route permits a larger drop rate than the scope path. The
+  route is the merged graph's, across contracts; rlm's per-manifest rule of
+  the same id is superseded where a route is traced.
+- **Changed (`check`, phase 90 G6):** `settle: { duration, response }`: a
+  written settle's response is added to it as to a braking profile's
+  (omitted: 0), and `--explain` prints `settle = written <d> + response
+  <r>`. With a profile and a duration, `settle-conflict` compares the two
+  totals. No contract that parsed changes its numbers.
+
 ## 0.17.0 - 2026-10-15
 
 A tidier contract grammar (phase 90 G3, G4, G5, G7, rlm v0.1.59) with a

@@ -675,6 +675,59 @@ fn g3_spellings(
             }
         }
     }
+    // G3 (the bound part, v0.1.60): a topic's `max_transport` is the
+    // default of every subscriber that states none; the transport is the
+    // subscriber's. Named: the subscribers that read it (across the tree).
+    let ns = index
+        .manifests
+        .get(&scope_id)
+        .map(|m| m.ns.as_str())
+        .unwrap_or("/");
+    for (name, t) in &manifest.topics {
+        let Some(d) = t.max_transport.duration() else {
+            continue;
+        };
+        let at = format!("{prefix}topics.{name}.max_transport");
+        let fqn = super::manifest_loader::qualify_name(ns, name);
+        let mut inheriting: Vec<String> = Vec::new();
+        if let Some(rt) = index.topics.get(&fqn) {
+            for sub in &rt.subscribers {
+                let own = super::manifest_loader::split_endpoint_ref_for_check(sub)
+                    .and_then(|(node, ep)| {
+                        let (_, _, decl) = contract_node(index, &node)?;
+                        Some(decl.subscribers.get(&ep)?.max_transport.is_some())
+                    })
+                    .unwrap_or(false);
+                if !own {
+                    inheriting.push(format!("'{sub}'"));
+                }
+            }
+        }
+        let read_as = if inheriting.is_empty() {
+            "No subscriber reads it (each states its own, or the topic has none), so it \
+             charges nothing. Fix: delete it"
+                .to_string()
+        } else {
+            format!(
+                "It is read as the transport of {} subscriber(s) that state none: {}. Fix: \
+                 write `max_transport: {d}` on each of them and delete this key; `play_launch \
+                 migrate <contract> --write` does it when they are declared in the same contract",
+                inheriting.len(),
+                inheriting.join(", ")
+            )
+        };
+        diags.push(diag(
+            "deprecated-spelling",
+            Severity::Warning,
+            format!(
+                "{}: topic '{fqn}': `max_transport: {d}` on a topic is deprecated; a transport \
+                 is the hop into one subscriber and is stated on it, \
+                 `nodes.<n>.sub.<ep>.max_transport`. {read_as}",
+                site(index, scope_id, &at)
+            ),
+            at,
+        ));
+    }
     for (name, inc) in &manifest.includes {
         if let Some(inner) = inc.inline() {
             g3_spellings(
@@ -1127,7 +1180,8 @@ pub struct Settle {
     /// `derived` | `literal` | `none`, for the budget table.
     pub how: &'static str,
     /// The written response delay inside `ms` (phase 10 B2), when the
-    /// profile states one: `ms` = profile + response.
+    /// settle states one: `ms` = profile + response, or (phase 90 G6) the
+    /// written duration + response.
     pub response_ms: Option<f64>,
 }
 
@@ -1144,11 +1198,14 @@ pub(crate) fn settle_for(
     ss: &SafeState,
     diags: &mut Vec<Diagnostic>,
 ) -> Settle {
-    let literal = ss.settle.ms();
+    // Phase 90 G6: the response is the settle's, added to a written
+    // duration as to a profile (omitted: 0).
+    let written_response = ss.settle_response.ms();
+    let literal = ss.written_settle_ms();
     let literal_settle = Settle {
         ms: literal,
         how: if literal.is_some() { "literal" } else { "none" },
-        response_ms: None,
+        response_ms: literal.and(written_response),
     };
     let Some(profile) = &ss.settle_profile else {
         return literal_settle;
@@ -1236,7 +1293,7 @@ pub(crate) fn settle_for(
     let profile_ms = t * 1000.0;
     // Phase 10 B2: the vehicle's response, written beside the profile, is
     // added to it.
-    let response_ms = profile.response.ms();
+    let response_ms = written_response;
     let ms = profile_ms + response_ms.unwrap_or(0.0);
     let v_r = a * a / (2.0 * j);
     let arithmetic = if v0 <= v_r {
@@ -1278,9 +1335,12 @@ pub(crate) fn settle_for(
             format!(
                 "{where_}: hazard '{}', rung '{rung}': the literal settle {l:.2}ms and the \
                  profile's {ms:.2}ms differ by {:.1}% -- one of them describes a different \
-                 vehicle or a different speed. The derived value is charged",
+                 vehicle or a different speed. The derived value is charged{}",
                 h.name,
-                (l - ms).abs() / ms * 100.0
+                (l - ms).abs() / ms * 100.0,
+                response_ms
+                    .map(|r| format!(" (both include the written response {r:.2}ms)"))
+                    .unwrap_or_default()
             ),
             at.clone(),
         ));

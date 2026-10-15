@@ -1,0 +1,35 @@
+# Phase 90 G3: `drop-tightness` across scopes. The scope path e2e permits a
+# loss of 1 / 25 (4%) from /sensing/raw to /perception/tracks; the hop
+# /perception/objects, declared in the child contract, permits 1 / 20 (5%)
+# on its own: a part looser than the whole. rlm's per-manifest rule cannot
+# see it (the topic's drop is in the other file); the checker's route on
+# the merged graph does. A warning: exit 0.
+version: 1
+
+nodes:
+  tracker:
+    sub:
+      objects: {}
+    pub:
+      tracks: {}
+    paths:
+      main:
+        trigger: { input: [objects] }
+        output: [tracks]
+        max_latency: 20ms
+
+topics:
+  /perception/objects:
+    type: std_msgs/msg/String
+    sub: [tracker/objects]
+  /perception/tracks:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [tracker/tracks]
+
+paths:
+  e2e:
+    trigger: { input: [/sensing/raw] }
+    output: [/perception/tracks]
+    max_latency: 80ms
+    drop: 1 / 25
