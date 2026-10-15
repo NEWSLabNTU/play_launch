@@ -6,7 +6,12 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.17.0 - 2026-10-15
+
+A tidier contract grammar (phase 90 G3, G4, G5, G7, rlm v0.1.59) with a
+`migrate` verb that rewrites the old spellings, and budgets that say where
+they come from (phase 10, rlm v0.1.58). Pins `ros-launch-manifest`
+`v0.1.59`.
 
 - **Changed (`check`, phase 90 G4, rlm v0.1.59):** a hazard that enters a
   mode writes `enters: <mode>`; `reaction:` names a scope path (one rung)
