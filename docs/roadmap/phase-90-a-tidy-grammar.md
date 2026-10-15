@@ -533,6 +533,16 @@ naming the replacement (`error[manifest-parse]`, exit 3):
 
 #### G8 status: started (2026-10-15)
 
+**Release order (2026-10-15): after phase 92.** The phase-90 release (rlm
+v0.1.60, the next play_launch minor) waits for phase 92 (one PyPI package,
+the ROS distribution picked at run time), so the grammar ships with working
+PyPI packaging instead of a second per-distribution upload that the trusted
+publisher cannot create. Until then main pins rlm by rev (336d6c2) and the
+three rlm-tag version tests fail; consumers that need 0.17.0 install it from
+the GitHub release assets. Remaining for G8 once phase 92 lands: tag rlm
+v0.1.60, re-pin, release; the nano-ros pin PR; the island's `migrate --write`
+(21 G4 edits) and pin bump.
+
 `play_launch migrate <contract|dir>...` (also `ros-launch-resolve
 migrate`; library `verbs::migrate`): prints each edit and a unified diff,
 `--write` applies, `--check` exits 1 when anything would change, `-q` drops
