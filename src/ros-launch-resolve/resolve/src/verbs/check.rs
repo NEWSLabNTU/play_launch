@@ -38,7 +38,7 @@ use eyre::Result;
 use ros_launch_manifest_check::{
     Diagnostic, Severity, emit::diagnostic::emit_diagnostics_to, run_checks_with_spans,
 };
-use ros_launch_manifest_types::parse_manifest_str_with_spans;
+use ros_launch_manifest_types::{OptBound, parse_manifest_str_with_spans};
 
 use crate::ros::manifest_loader;
 
@@ -399,7 +399,7 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
     let with_sources = index
         .manifests
         .values()
-        .any(|m| !m.manifest.budget_sources.is_empty());
+        .any(|m| !m.manifest.budget_sources().is_empty());
     let ms = |v: Option<f64>| v.map_or("-".to_string(), |v| format!("{v:.2}"));
     let mut out = String::from("\n-- Fault-reaction budgets (--explain, ms) --\n");
     let head = [
@@ -821,15 +821,15 @@ pub fn emit_diagnostics_params(index: &manifest_loader::ManifestIndex) -> String
                 body.push_str(&format!("      {ep}:\n"));
                 if props.min_rate_hz.is_some() || props.max_rate_hz.is_some() {
                     body.push_str("        frequency:\n");
-                    if let Some(v) = props.min_rate_hz {
+                    if let Some(v) = props.min_rate_hz.hz() {
                         body.push_str(&format!("          min: {v}\n"));
                     }
-                    if let Some(v) = props.max_rate_hz {
+                    if let Some(v) = props.max_rate_hz.hz() {
                         body.push_str(&format!("          max: {v}\n"));
                     }
                     body.push_str("          tolerance: 0.1\n          window_size: 10\n");
                 }
-                if let Some(age) = props.max_age {
+                if let Some(age) = props.max_age.duration() {
                     body.push_str(&format!(
                         "        timestamp:\n          min_acceptable: 0.0\n          max_acceptable: {}\n",
                         age.as_millis_f64() / 1000.0

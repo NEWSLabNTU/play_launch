@@ -21,6 +21,7 @@ use super::{
     manifest_loader::ManifestIndex,
 };
 use eyre::Result;
+use ros_launch_manifest_types::OptBound;
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
@@ -419,8 +420,8 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
                 topic: topic.fqn.clone(),
                 endpoint: ep,
                 rate_hz: topic.rate_hz,
-                min_rate_hz: props.and_then(|p| p.min_rate_hz),
-                max_rate_hz: props.and_then(|p| p.max_rate_hz),
+                min_rate_hz: props.and_then(|p| p.min_rate_hz.hz()),
+                max_rate_hz: props.and_then(|p| p.max_rate_hz.hz()),
                 on_demand: props.is_some_and(|p| p.on_demand == Some(true)),
             });
         }
@@ -438,10 +439,10 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
                 causal: !state,
                 state,
                 required,
-                min_rate_hz: props.and_then(|p| p.min_rate_hz),
-                max_age_ms: props.and_then(|p| p.max_age.map(|d| d.as_millis_f64())),
+                min_rate_hz: props.and_then(|p| p.min_rate_hz.hz()),
+                max_age_ms: props.and_then(|p| p.max_age.ms()),
                 max_transport_ms: props
-                    .and_then(|p| p.max_transport.map(|d| d.as_millis_f64()))
+                    .and_then(|p| p.max_transport.ms())
                     .or(topic.max_transport_ms),
                 on_violation: props.and_then(|p| p.on_violation.as_ref()).map(|ov| {
                     OnViolationOut {
@@ -471,10 +472,10 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             trigger: trigger_out(&p.path),
             safe_state: p.path.safe_state.as_ref().map(|ss| SafeStateOut {
                 emits: ss.emits.clone(),
-                settle_ms: ss.settle.map(|d| d.as_millis_f64()),
+                settle_ms: ss.settle.ms(),
                 derived: ss.settle_profile.is_some(),
             }),
-            max_latency_ms: p.path.max_latency.map(|d| d.as_millis_f64()),
+            max_latency_ms: p.path.max_latency.ms(),
             tolerance_ms: p.path.tolerance.map(|d| d.as_millis_f64()),
             scope_id: p.scope_id,
             cross_node: false,
@@ -492,7 +493,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             path_name: p.path_name.clone(),
             input_topics: p.input_topics.clone(),
             output_topics: p.output_topics.clone(),
-            max_latency_ms: p.path.max_latency.map(|d| d.as_millis_f64()),
+            max_latency_ms: p.path.max_latency.ms(),
             tolerance_ms: p.path.tolerance.map(|d| d.as_millis_f64()),
             cross_node: true,
         })
@@ -541,7 +542,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
                 })
                 .collect(),
             on: h.decl.on.iter().map(|k| fault_kind(*k)).collect(),
-            ftti_ms: h.decl.ftti.map(|d| d.as_millis_f64()),
+            ftti_ms: h.decl.ftti.ms(),
             reaction: h.decl.entry().cloned(),
             entry_speed_mps: h.decl.entry_speed,
         })
@@ -565,7 +566,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             requires: m.decl.requires.clone(),
             fallback: m.decl.fallback.clone(),
             reaction: m.decl.reaction.clone(),
-            window_ms: m.decl.window.as_ref().map(|w| w.duration.as_millis_f64()),
+            window_ms: m.decl.window.as_ref().map(|w| w.ms().unwrap_or_default()),
             exit: m.decl.exit.as_ref().map(|e| ExitOut {
                 on: e.holds.clone(),
                 to: e.to.clone(),
@@ -595,7 +596,9 @@ fn trigger_out(path: &ros_launch_manifest_types::PathDecl) -> TriggerOut {
     match path.effective_trigger() {
         T::Timer { rate_hz } => TriggerOut::Timer {
             rate_hz,
-            jitter_ms: path.timer_jitter().map(|d| d.as_millis_f64()),
+            jitter_ms: path
+                .timer_jitter()
+                .and_then(ros_launch_manifest_types::Bound::ms),
         },
         T::Input(eps) => TriggerOut::Input(eps),
         T::Once => TriggerOut::Once,

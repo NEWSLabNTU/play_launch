@@ -17,7 +17,9 @@ use super::{
     value_rules::site,
 };
 use ros_launch_manifest_check::{Diagnostic, Severity};
-use ros_launch_manifest_types::{BudgetSource, DetectMechanism, Manifest, Measurement, SourceKind};
+use ros_launch_manifest_types::{
+    BudgetSource, DetectMechanism, Manifest, Measurement, OptBound, SourceKind,
+};
 use std::collections::BTreeSet;
 
 /// One budget as a contract states it.
@@ -34,66 +36,16 @@ pub struct StatedBudget {
     pub checked_by: Vec<String>,
 }
 
-/// Every budget a manifest states, as (dotted path, ms), in a stable order.
+/// Every budget a manifest states, as (dotted path, ms), in a stable order:
+/// the duration bounds of [`Manifest::bounds`] that are budgets (phase 90
+/// G2). A settle's written `duration` beside a braking profile is the
+/// profile's fallback, not a budget of its own: the profile's `response` is.
 pub(crate) fn enumerate(m: &Manifest) -> Vec<(String, f64)> {
-    let mut out: Vec<(String, f64)> = Vec::new();
-    let mut put = |k: String, d: Option<ros_launch_manifest_types::duration::Duration>| {
-        if let Some(d) = d {
-            out.push((k, d.as_millis_f64()));
-        }
-    };
-    for (h, d) in &m.hazards {
-        put(format!("hazards.{h}.ftti"), d.ftti);
-    }
-    for (name, d) in &m.modes {
-        put(
-            format!("modes.{name}.window"),
-            d.window.as_ref().map(|w| w.duration),
-        );
-    }
-    for (n, nd) in &m.nodes {
-        for (p, pd) in &nd.paths {
-            let at = format!("nodes.{n}.paths.{p}");
-            put(format!("{at}.max_latency"), pd.max_latency);
-            put(format!("{at}.max_jitter"), pd.max_jitter);
-            put(format!("{at}.trigger.timer.jitter"), pd.timer_jitter());
-            if let Some(ss) = &pd.safe_state {
-                match &ss.settle_profile {
-                    Some(prof) => put(format!("{at}.safe_state.settle.response"), prof.response),
-                    None => put(format!("{at}.safe_state.settle"), ss.settle),
-                }
-            }
-        }
-        for (side, eps) in [
-            ("sub", &nd.subscribers),
-            ("pub", &nd.publishers),
-            ("cli", &nd.cli),
-        ] {
-            for (ep, props) in eps {
-                let at = format!("nodes.{n}.{side}.{ep}");
-                put(format!("{at}.max_age"), props.max_age);
-                put(format!("{at}.max_transport"), props.max_transport);
-                put(
-                    format!("{at}.on_violation.within"),
-                    props.on_violation.as_ref().and_then(|ov| ov.within),
-                );
-            }
-        }
-        for (ep, props) in &nd.srv {
-            put(
-                format!("nodes.{n}.srv.{ep}.max_response"),
-                props.max_response,
-            );
-        }
-    }
-    for (t, d) in &m.topics {
-        put(format!("topics.{t}.max_transport"), d.max_transport);
-    }
-    for (p, d) in &m.paths {
-        put(format!("paths.{p}.max_latency"), d.max_latency);
-        put(format!("paths.{p}.max_jitter"), d.max_jitter);
-    }
-    out
+    m.bounds()
+        .into_iter()
+        .filter(|(k, b)| b.is_budget() && !k.ends_with(".safe_state.settle.duration"))
+        .filter_map(|(k, b)| b.ms().map(|ms| (k, ms)))
+        .collect()
 }
 
 fn fmt_ms(v: f64) -> String {
@@ -132,11 +84,11 @@ pub(crate) fn check_budget_rule(index: &ManifestIndex, diags: &mut Vec<Diagnosti
     ms.sort_by_key(|m| m.scope_id);
     for m in ms {
         let stated = enumerate(&m.manifest);
-        for (key, src) in &m.manifest.budget_sources {
+        for (key, src) in m.manifest.budget_sources() {
             let Some(obs) = &src.measured else {
                 continue;
             };
-            let Some((_, v)) = stated.iter().find(|(k, _)| k == key) else {
+            let Some((_, v)) = stated.iter().find(|(k, _)| *k == key) else {
                 continue;
             };
             let rule = obs.budget_ms();
@@ -151,13 +103,13 @@ pub(crate) fn check_budget_rule(index: &ManifestIndex, diags: &mut Vec<Diagnosti
                      term is the observed maximum plus {}%, rounded up to the next ms, and a \
                      timer's period takes no margin). State the maxima the budget was sized \
                      from, or a different source",
-                    site(index, m.scope_id, key),
+                    site(index, m.scope_id, &key),
                     fmt_ms(*v),
                     fmt_ms(rule),
                     rule_arithmetic(obs),
                     fmt_ms(obs.margin * 100.0)
                 ),
-                path: key.clone(),
+                path: key,
                 span: None,
             });
         }
@@ -181,7 +133,7 @@ pub fn source_of<'a>(index: &'a ManifestIndex, term: &TermKey) -> Option<&'a Bud
     index
         .manifests
         .get(&term.0)
-        .and_then(|m| m.manifest.budget_sources.get(&term.1))
+        .and_then(|m| m.manifest.budget_sources().get(&term.1).copied())
 }
 
 /// Whether a term is measured.
@@ -209,7 +161,7 @@ pub(crate) fn stated_budgets(
             out.push(StatedBudget {
                 scope_id: m.scope_id,
                 file: file.clone(),
-                source: m.manifest.budget_sources.get(&key).cloned(),
+                source: m.manifest.budget_sources().get(&key).copied().cloned(),
                 key,
                 ms: v,
                 checked_by,
@@ -303,7 +255,7 @@ fn checks_of(
                 md.window
                     .as_ref()
                     .and_then(|w| w.param.as_ref())
-                    .is_some_and(|pr| pr.node == *n)
+                    .is_some_and(|pr| pr.node() == Some(*n))
             });
             let timer = m
                 .manifest
@@ -328,7 +280,7 @@ fn checks_of(
                 .nodes
                 .get(*n)
                 .and_then(|d| d.subscribers.get(*ep));
-            if props.is_some_and(|p| p.max_age_param.is_some()) {
+            if props.is_some_and(|p| p.max_age.param().is_some()) {
                 out.push("max-age-param".to_string());
             }
             match props
@@ -392,7 +344,7 @@ mod tests {
              max: 25.04ms } } } } }\n",
         )
         .unwrap();
-        let src = &m.budget_sources;
+        let src = m.budget_sources();
         let link = src["nodes.h.sub.a.max_transport"]
             .measured
             .as_ref()

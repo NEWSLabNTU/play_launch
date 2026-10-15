@@ -9,6 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use ros_launch_manifest_model as model;
+use ros_launch_manifest_types::OptBound;
 
 use ros_launch_resolve::ros::manifest_loader::ManifestIndex;
 
@@ -137,7 +138,7 @@ impl ContractView {
                     max_drop_rate: t
                         .drop
                         .as_ref()
-                        .and_then(|d| d.max_count.as_ref())
+                        .and_then(|d| d.max_count.count_per())
                         .map(|c| c.drop_rate()),
                 },
             );
@@ -151,12 +152,12 @@ impl ContractView {
                     view.lifecycle_nodes.insert(node_fqn.clone());
                 }
                 for (ep, props) in &node.publishers {
-                    if let Some(min) = props.min_rate_hz {
+                    if let Some(min) = props.min_rate_hz.hz() {
                         view.pub_min_rate.insert(format!("{node_fqn}/{ep}"), min);
                     }
                 }
                 for (ep, props) in &node.subscribers {
-                    if let Some(max) = props.max_age.map(|d| d.as_millis_f64()) {
+                    if let Some(max) = props.max_age.ms() {
                         view.sub_max_age.insert(format!("{node_fqn}/{ep}"), max);
                     }
                 }
@@ -168,7 +169,7 @@ impl ContractView {
                 name: sp.path_name.clone(),
                 input_topics: sp.input_topics.clone(),
                 output_topics: sp.output_topics.clone(),
-                max_latency_ms: sp.path.max_latency.map(|d| d.as_millis_f64()),
+                max_latency_ms: sp.path.max_latency.ms(),
             });
         }
         for h in &index.hazards {
@@ -199,7 +200,7 @@ impl ContractView {
                                 .get(t)
                                 .is_some_and(|tp| tp.publishers.contains(&emits))
                         })
-                        .then_some(ss.settle.map(|d| d.as_millis_f64()))
+                        .then_some(ss.settle.ms())
                         .flatten()
                 })
                 .fold(None, |a: Option<f64>, v| Some(a.map_or(v, |x| x.max(v))));
@@ -228,12 +229,9 @@ impl ContractView {
                     )
                     .lease_duration
                     .map(|d| d.as_millis_f64());
-                    for a in [
-                        props.and_then(|p| p.max_age).map(|d| d.as_millis_f64()),
-                        lease,
-                    ]
-                    .into_iter()
-                    .flatten()
+                    for a in [props.and_then(|p| p.max_age.ms()), lease]
+                        .into_iter()
+                        .flatten()
                     {
                         silence_ms = Some(silence_ms.map_or(a, |s: f64| s.min(a)));
                     }
@@ -269,7 +267,7 @@ impl ContractView {
                 key: h.name.clone(),
                 guards,
                 sinks,
-                ftti_ms: h.decl.ftti.map(|d| d.as_millis_f64()),
+                ftti_ms: h.decl.ftti.ms(),
                 settle_ms,
                 silence_ms,
                 via_diagnostics,
@@ -503,8 +501,16 @@ mod tests {
                 derived_rate_hz: None,
                 max_transport_ms: None,
                 drop: Some(ros_launch_manifest_types::DropSpec {
-                    max_count: Some(ros_launch_manifest_types::DropCount { n: 1, w: 20 }),
-                    max_consecutive: Some(3),
+                    max_count: Some(ros_launch_manifest_types::spelled(
+                        ros_launch_manifest_types::field_table::Context::Drop,
+                        "max_count",
+                        ros_launch_manifest_types::DropCount { n: 1, w: 20 },
+                    )),
+                    max_consecutive: Some(ros_launch_manifest_types::spelled(
+                        ros_launch_manifest_types::field_table::Context::Drop,
+                        "max_consecutive",
+                        3u32,
+                    )),
                 }),
                 scope_ids: vec![0],
             },
@@ -517,7 +523,11 @@ mod tests {
         node.publishers.insert(
             "points".to_string(),
             ros_launch_manifest_types::EndpointProps {
-                min_rate_hz: Some(10.0),
+                min_rate_hz: Some(ros_launch_manifest_types::spelled(
+                    ros_launch_manifest_types::field_table::Context::Endpoint,
+                    "min_rate_hz",
+                    10.0,
+                )),
                 ..Default::default()
             },
         );
@@ -526,7 +536,11 @@ mod tests {
         sub_node.subscribers.insert(
             "points".to_string(),
             ros_launch_manifest_types::EndpointProps {
-                max_age: Some(ros_launch_manifest_types::duration::Duration::from_millis_f64(50.0)),
+                max_age: Some(ros_launch_manifest_types::spelled(
+                    ros_launch_manifest_types::field_table::Context::Endpoint,
+                    "max_age",
+                    ros_launch_manifest_types::duration::Duration::from_millis_f64(50.0),
+                )),
                 ..Default::default()
             },
         );

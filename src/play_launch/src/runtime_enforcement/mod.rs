@@ -1880,7 +1880,11 @@ mod tests {
             ..Default::default()
         };
         let pub_props = ros_launch_manifest_types::EndpointProps {
-            min_rate_hz: Some(30.0),
+            min_rate_hz: Some(ros_launch_manifest_types::spelled(
+                ros_launch_manifest_types::field_table::Context::Endpoint,
+                "min_rate_hz",
+                30.0,
+            )),
             ..Default::default()
         };
         talker.publishers.insert("chatter".to_string(), pub_props);
@@ -2045,7 +2049,11 @@ mod tests {
         let mut nodes = std::collections::BTreeMap::new();
         let mut sub_node = NodeDecl::default();
         let sub_props = ros_launch_manifest_types::EndpointProps {
-            max_age: Some(ros_launch_manifest_types::duration::Duration::from_millis_f64(10.0)),
+            max_age: Some(ros_launch_manifest_types::spelled(
+                ros_launch_manifest_types::field_table::Context::Endpoint,
+                "max_age",
+                ros_launch_manifest_types::duration::Duration::from_millis_f64(10.0),
+            )),
             ..Default::default()
         };
         sub_node.subscribers.insert("in".to_string(), sub_props);
@@ -2142,7 +2150,11 @@ mod tests {
         talker.publishers.insert(
             "chatter".to_string(),
             ros_launch_manifest_types::EndpointProps {
-                min_rate_hz: Some(30.0),
+                min_rate_hz: Some(ros_launch_manifest_types::spelled(
+                    ros_launch_manifest_types::field_table::Context::Endpoint,
+                    "min_rate_hz",
+                    30.0,
+                )),
                 ..Default::default()
             },
         );

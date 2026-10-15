@@ -14,6 +14,7 @@
 //! crate on every contract fixture, and W3 deleted it. The `tests` module
 //! now pins the crate's plan over every fixture to a committed snapshot.
 
+use ros_launch_manifest_types::OptBound;
 use std::collections::{BTreeMap, BTreeSet};
 
 use ros_launch_manifest_derive::{DeriveFacts, DeriveReport, mapper_input_from_model};
@@ -100,9 +101,9 @@ pub(crate) fn convert_miss(
     use ros_launch_manifest_sched::{MapperMiss, MapperMissAction};
     use ros_launch_manifest_types::MissAction as A;
     MapperMiss {
-        tolerate_n: m.tolerate.as_ref().map(|c| c.n),
-        tolerate_w: m.tolerate.as_ref().map(|c| c.w),
-        consecutive: m.consecutive,
+        tolerate_n: m.tolerate.count_per().map(|c| c.n),
+        tolerate_w: m.tolerate.count_per().map(|c| c.w),
+        consecutive: m.consecutive.count(),
         action: m.action.map(|a| match a {
             A::Continue => MapperMissAction::Continue,
             A::SkipNext => MapperMissAction::SkipNext,
@@ -245,7 +246,11 @@ mod tests {
                     m.insert(
                         "chatter".to_string(),
                         ros_launch_manifest_types::EndpointProps {
-                            min_rate_hz: Some(30.0),
+                            min_rate_hz: Some(ros_launch_manifest_types::spelled(
+                                ros_launch_manifest_types::field_table::Context::Endpoint,
+                                "min_rate_hz",
+                                30.0,
+                            )),
                             ..Default::default()
                         },
                     );
@@ -268,7 +273,11 @@ mod tests {
                     m.insert(
                         "echo".to_string(),
                         ros_launch_manifest_types::EndpointProps {
-                            min_rate_hz: Some(30.0),
+                            min_rate_hz: Some(ros_launch_manifest_types::spelled(
+                                ros_launch_manifest_types::field_table::Context::Endpoint,
+                                "min_rate_hz",
+                                30.0,
+                            )),
                             ..Default::default()
                         },
                     );
@@ -334,9 +343,11 @@ mod tests {
             node_fqn: "/talker".to_string(),
             path_name: "loose".to_string(),
             path: PathDecl {
-                max_latency: Some(
+                max_latency: Some(ros_launch_manifest_types::spelled(
+                    ros_launch_manifest_types::field_table::Context::Path,
+                    "max_latency",
                     ros_launch_manifest_types::duration::Duration::from_millis_f64(50.0),
-                ),
+                )),
                 ..Default::default()
             },
             scope_id: 0,
@@ -345,9 +356,11 @@ mod tests {
             node_fqn: "/talker".to_string(),
             path_name: "tight".to_string(),
             path: PathDecl {
-                max_latency: Some(
+                max_latency: Some(ros_launch_manifest_types::spelled(
+                    ros_launch_manifest_types::field_table::Context::Path,
+                    "max_latency",
                     ros_launch_manifest_types::duration::Duration::from_millis_f64(10.0),
-                ),
+                )),
                 ..Default::default()
             },
             scope_id: 0,
@@ -487,9 +500,11 @@ mod tests {
                     "in_ep".to_string(),
                 ])),
                 output: vec!["out_ep".to_string()],
-                max_latency: Some(
+                max_latency: Some(ros_launch_manifest_types::spelled(
+                    ros_launch_manifest_types::field_table::Context::Path,
+                    "max_latency",
                     ros_launch_manifest_types::duration::Duration::from_millis_f64(12.5),
-                ),
+                )),
                 ..Default::default()
             },
             scope_id: 0,
@@ -548,7 +563,11 @@ mod tests {
                 jitter: None,
             }),
             output: vec!["chatter".to_string()],
-            max_latency: Some(ms(2.0)),
+            max_latency: Some(ros_launch_manifest_types::spelled(
+                ros_launch_manifest_types::field_table::Context::Path,
+                "max_latency",
+                ms(2.0),
+            )),
             ..Default::default()
         };
         let react = PathDecl {
@@ -556,7 +575,11 @@ mod tests {
                 "chatter".to_string(),
             ])),
             output: vec!["reaction".to_string()],
-            max_latency: Some(ms(8.0)),
+            max_latency: Some(ros_launch_manifest_types::spelled(
+                ros_launch_manifest_types::field_table::Context::Path,
+                "max_latency",
+                ms(8.0),
+            )),
             ..Default::default()
         };
 
@@ -601,7 +624,11 @@ mod tests {
             input_topics: vec!["/chatter".to_string()],
             output_topics: vec!["/reaction".to_string()],
             path: PathDecl {
-                max_latency: Some(ms(100.0)),
+                max_latency: Some(ros_launch_manifest_types::spelled(
+                    ros_launch_manifest_types::field_table::Context::Path,
+                    "max_latency",
+                    ms(100.0),
+                )),
                 ..Default::default()
             },
         });
@@ -1130,7 +1157,11 @@ mod tests {
                 jitter: None,
             }),
             output: vec!["diag".to_string()],
-            max_latency: Some(ms(1.0)),
+            max_latency: Some(ros_launch_manifest_types::spelled(
+                ros_launch_manifest_types::field_table::Context::Path,
+                "max_latency",
+                ms(1.0),
+            )),
             ..Default::default()
         };
         let talker = index

@@ -11,8 +11,8 @@ use super::{
 };
 use ros_launch_manifest_check::{Diagnostic, Severity, run_checks_with_spans};
 use ros_launch_manifest_types::{
-    EffectiveTrigger, Manifest, filter_manifest, parse_manifest_with_spans, resolve_args,
-    substitute_manifest,
+    EffectiveTrigger, Manifest, OptBound, ParamBinding, field_table::Context, filter_manifest,
+    parse_manifest_with_spans, resolve_args, substitute_manifest,
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
@@ -1216,7 +1216,7 @@ fn note_declared_not_charged(index: &mut ManifestIndex) {
         for (node, decl) in &m.manifest.nodes {
             for (side, eps) in [("sub", &decl.subscribers), ("pub", &decl.publishers)] {
                 for (ep, props) in eps {
-                    let Some(t) = props.max_transport else {
+                    let Some(t) = props.max_transport.duration() else {
                         continue;
                     };
                     let key = format!("nodes.{node}.{side}.{ep}.max_transport");
@@ -1241,7 +1241,7 @@ fn note_declared_not_charged(index: &mut ManifestIndex) {
             }
         }
         for (topic, decl) in &m.manifest.topics {
-            let Some(t) = decl.max_transport else {
+            let Some(t) = decl.max_transport.duration() else {
                 continue;
             };
             let key = format!("topics.{topic}.max_transport");
@@ -1306,7 +1306,7 @@ fn check_response_against_blocking(index: &mut ManifestIndex) {
             let longest = node
                 .paths
                 .iter()
-                .filter_map(|(name, p)| p.max_latency.map(|d| (name.clone(), d.as_millis_f64())))
+                .filter_map(|(name, p)| p.max_latency.ms().map(|ms| (name.clone(), ms)))
                 .fold(None, |acc: Option<(String, f64)>, v| match acc {
                     Some(a) if a.1 >= v.1 => Some(a),
                     _ => Some(v),
@@ -1315,7 +1315,7 @@ fn check_response_against_blocking(index: &mut ManifestIndex) {
                 continue;
             };
             for (srv_name, props) in &node.srv {
-                let Some(max_response) = props.max_response.map(|d| d.as_millis_f64()) else {
+                let Some(max_response) = props.max_response.ms() else {
                     continue;
                 };
                 if slow_ms >= max_response {
@@ -1569,14 +1569,17 @@ fn detector_interval_ms(
     match kind {
         F::Omission => {
             let age = if max_age_evaluated(props) {
-                ms(props.max_age)
+                ms(props.max_age.duration())
             } else {
                 None
             };
             min(ms(qos.lease_duration), age)
         }
-        F::Late => min(ms(qos.deadline), ms(props.max_age)),
-        F::Loss => match (topic_drop.and_then(|d| d.max_consecutive), topic_period_ms) {
+        F::Late => min(ms(qos.deadline), ms(props.max_age.duration())),
+        F::Loss => match (
+            topic_drop.and_then(|d| d.max_consecutive.count()),
+            topic_period_ms,
+        ) {
             (Some(n), Some(period)) => Some(n as f64 * period).filter(|v| *v > 0.0),
             _ => None,
         },
@@ -1695,7 +1698,7 @@ fn declared_detectors_not_counting(
             ms(d)
         ));
     }
-    if let Some(d) = props.max_age {
+    if let Some(d) = props.max_age.duration() {
         match kind {
             F::Late => {}
             F::Omission if max_age_evaluated(props) => {}
@@ -1765,7 +1768,7 @@ fn hazard_unguarded(
                 if let Some(v) = qos.deadline {
                     d.push(format!("`deadline: {}ms`", v.as_millis_f64()));
                 }
-                if let Some(v) = props.max_age {
+                if let Some(v) = props.max_age.duration() {
                     d.push(format!("`max_age: {}ms`", v.as_millis_f64()));
                 }
                 (!d.is_empty()).then(|| {
@@ -2030,14 +2033,13 @@ fn walk_reaction(
                     let jitter = path
                         .path
                         .timer_jitter()
-                        .map(|d| d.as_millis_f64())
+                        .and_then(ros_launch_manifest_types::Bound::ms)
                         .filter(|j| *j > 0.0);
                     (Some(1000.0 / rate_hz + jitter.unwrap_or(0.0)), jitter)
                 }
                 _ => (None, None),
             };
-            let hop_ms = path.path.max_latency.map_or(0.0, |d| d.as_millis_f64())
-                + sampling_ms.unwrap_or(0.0);
+            let hop_ms = path.path.max_latency.ms().unwrap_or(0.0) + sampling_ms.unwrap_or(0.0);
             let hop = ReactionHop {
                 node: node_fqn.to_string(),
                 path: path.path_name.clone(),
@@ -2214,9 +2216,7 @@ fn walk_reaction(
             // Phase 85 I1: the guard edge. Only at the guard: past it the
             // walk charges path latencies and clocks, as before.
             if depth == 0 {
-                let own = props
-                    .and_then(|p| p.max_transport)
-                    .map(|d| d.as_millis_f64());
+                let own = props.and_then(|p| p.max_transport.ms());
                 let link = match (own, topic.max_transport_ms) {
                     (Some(ms), _) => Some((ms, "sub")),
                     (None, Some(ms)) => Some((ms, "topic")),
@@ -2504,7 +2504,11 @@ fn owner_notice(
                 publishes.then(|| Notice {
                     path: p.path_name.clone(),
                     period_ms: 1000.0 / rate_hz,
-                    jitter_ms: p.path.timer_jitter().map_or(0.0, |d| d.as_millis_f64()),
+                    jitter_ms: p
+                        .path
+                        .timer_jitter()
+                        .and_then(ros_launch_manifest_types::Bound::ms)
+                        .unwrap_or(0.0),
                 })
             }
             _ => None,
@@ -2666,10 +2670,8 @@ fn check_fault_reaction(
                     span: None,
                 });
             }
-            if let (Some(within), Some(budget)) = (
-                ov.within.map(|d| d.as_millis_f64()),
-                reaction.path.max_latency.map(|d| d.as_millis_f64()),
-            ) && budget > within
+            if let (Some(within), Some(budget)) = (ov.within.ms(), reaction.path.max_latency.ms())
+                && budget > within
             {
                 diags.push(Diagnostic {
                     rule_id: "reaction-within".to_string(),
@@ -2755,7 +2757,7 @@ fn check_fault_reaction(
                                 })
                             };
                             let lat = publishing()
-                                .filter_map(|p| p.path.max_latency.map(|d| d.as_millis_f64()))
+                                .filter_map(|p| p.path.max_latency.ms())
                                 .fold(0.0, f64::max);
                             let jitter = publishing()
                                 .filter(|p| {
@@ -2764,7 +2766,11 @@ fn check_fault_reaction(
                                         ros_launch_manifest_types::EffectiveTrigger::Timer { .. }
                                     )
                                 })
-                                .filter_map(|p| p.path.timer_jitter().map(|d| d.as_millis_f64()))
+                                .filter_map(|p| {
+                                    p.path
+                                        .timer_jitter()
+                                        .and_then(ros_launch_manifest_types::Bound::ms)
+                                })
                                 .fold(0.0, f64::max);
                             if let Some(period) = period_ms {
                                 let v = period + jitter + lat;
@@ -2821,7 +2827,8 @@ fn check_fault_reaction(
                                 // interval is the subscriber's `max_age`.
                                 let keys: Vec<TermKey> = props
                                     .max_age
-                                    .filter(|a| (a.as_millis_f64() - v).abs() < 1e-9)
+                                    .ms()
+                                    .filter(|a| (a - v).abs() < 1e-9)
                                     .and_then(|_| {
                                         let (n, ep) = split_endpoint_ref_for_check(sub_ref)?;
                                         node_term(index, &n, &format!("sub.{ep}.max_age"))
@@ -2938,7 +2945,7 @@ fn check_fault_reaction(
                 .iter()
                 .find(|m| m.scope_id == h.scope_id && m.name == name)
         };
-        let ftti_ms = h.decl.ftti.map(|d| d.as_millis_f64());
+        let ftti_ms = h.decl.ftti.ms();
         let fdti_ms = fdti_worst.as_ref().map(|(v, _, _)| *v);
         // Phase 10 B7: the stated keys inside DETECT.
         let fdti_keys: Vec<TermKey> = fdti_worst
@@ -3039,10 +3046,7 @@ fn check_fault_reaction(
                     }
                     (Some(ms), note)
                 }
-                None => (
-                    rp.path.max_latency.map(|d| d.as_millis_f64()),
-                    String::new(),
-                ),
+                None => (rp.path.max_latency.ms(), String::new()),
             };
             // Phase 10 B7: the stated budgets ROUTE (and SETTLE) contain.
             let route_terms: Vec<TermKey> = match &walk {
@@ -3050,6 +3054,7 @@ fn check_fault_reaction(
                 None => rp
                     .path
                     .max_latency
+                    .as_ref()
                     .map(|_| (h.scope_id, format!("paths.{rung_path}.max_latency")))
                     .into_iter()
                     .collect(),
@@ -3063,11 +3068,11 @@ fn check_fault_reaction(
             // its own -- which is also why it is exempt from
             // `reaction-unbudgeted`. What it costs is charged below it.
             if let Some(win) = mode.and_then(|m| m.decl.window.as_ref()) {
-                let d = win.duration.as_millis_f64();
+                let d = win.ms().unwrap_or_default();
                 let r = route_ms.unwrap_or(0.0);
                 // Phase 84: who enforces the window, and on what clock it
                 // notices the deadline.
-                let owner = win.param.as_ref().map(|p| {
+                let owner = win.param.as_ref().and_then(ParamBinding::as_ref).map(|p| {
                     let ns = index
                         .manifests
                         .get(&h.scope_id)
@@ -3249,7 +3254,7 @@ fn check_fault_reaction(
             None => super::value_rules::Settle::default(),
         };
         let settle_ms = settle.ms;
-        let declared_ms = reaction.path.max_latency.map(|d| d.as_millis_f64());
+        let declared_ms = reaction.path.max_latency.ms();
         // Phase 85 I1: the floor's route, with the guard edge's link unless a
         // window's deadline starts it.
         let floor_after_deadline = !windows.is_empty();
@@ -3599,7 +3604,7 @@ fn apply_mode_overrides(
                         }
                         "max_transport" => {
                             if let Some(v) = dur() {
-                                t.max_transport = Some(v);
+                                set_bound(&mut t.max_transport, Context::Topic, "max_transport", v);
                                 applied += 1;
                             }
                         }
@@ -3666,6 +3671,20 @@ fn apply_mode_overrides(
     applied
 }
 
+/// A mode override's value for a bound: the value changes, and what the
+/// bound states besides it (its `source`, its `param`) stays.
+fn set_bound(
+    slot: &mut Option<ros_launch_manifest_types::Bound>,
+    context: Context,
+    key: &str,
+    v: impl Into<ros_launch_manifest_types::Quantity>,
+) {
+    match slot {
+        Some(b) => b.value = v.into(),
+        None => *slot = Some(ros_launch_manifest_types::spelled(context, key, v)),
+    }
+}
+
 fn set_path_field(
     p: &mut ros_launch_manifest_types::PathDecl,
     field: &str,
@@ -3675,9 +3694,9 @@ fn set_path_field(
         return false;
     };
     match field {
-        "max_latency" => p.max_latency = Some(v),
-        "min_latency" => p.min_latency = Some(v),
-        "max_jitter" => p.max_jitter = Some(v),
+        "max_latency" => set_bound(&mut p.max_latency, Context::Path, "max_latency", v),
+        "min_latency" => set_bound(&mut p.min_latency, Context::Path, "min_latency", v),
+        "max_jitter" => set_bound(&mut p.max_jitter, Context::Path, "max_jitter", v),
         "tolerance" => p.tolerance = Some(v),
         _ => return false,
     }
@@ -3692,19 +3711,19 @@ fn set_endpoint_field(
 ) -> bool {
     match field {
         "min_rate_hz" => match num() {
-            Some(v) => e.min_rate_hz = Some(v),
+            Some(v) => set_bound(&mut e.min_rate_hz, Context::Endpoint, "min_rate_hz", v),
             None => return false,
         },
         "max_rate_hz" => match num() {
-            Some(v) => e.max_rate_hz = Some(v),
+            Some(v) => set_bound(&mut e.max_rate_hz, Context::Endpoint, "max_rate_hz", v),
             None => return false,
         },
         "max_age" => match dur() {
-            Some(v) => e.max_age = Some(v),
+            Some(v) => set_bound(&mut e.max_age, Context::Endpoint, "max_age", v),
             None => return false,
         },
         "max_transport" => match dur() {
-            Some(v) => e.max_transport = Some(v),
+            Some(v) => set_bound(&mut e.max_transport, Context::Endpoint, "max_transport", v),
             None => return false,
         },
         _ => return false,
@@ -4115,7 +4134,7 @@ fn derive_and_check_endpoint_rates(
                     .nodes
                     .get(&node_fqn)
                     .and_then(|n| n.publishers.get(&ep))
-                    .and_then(|p| p.min_rate_hz)
+                    .and_then(|p| p.min_rate_hz.hz())
             {
                 let path = format!("nodes.{node_fqn}.pub.{ep}.min_rate_hz");
                 if agrees(declared, hz) {
@@ -4152,7 +4171,7 @@ fn derive_and_check_endpoint_rates(
                     .nodes
                     .get(&node_fqn)
                     .and_then(|n| n.subscribers.get(&ep))
-                    .and_then(|p| p.min_rate_hz)
+                    .and_then(|p| p.min_rate_hz.hz())
                 && needed > hz
                 && !agrees(needed, hz)
             {
@@ -4192,7 +4211,7 @@ fn check_scope_path_critical_path(
     let mut superseded: Vec<(usize, String)> = Vec::new();
 
     for scope_path in &scope_paths {
-        let Some(declared) = scope_path.path.max_latency.map(|d| d.as_millis_f64()) else {
+        let Some(declared) = scope_path.path.max_latency.ms() else {
             continue;
         };
 
@@ -4230,7 +4249,7 @@ fn check_scope_path_critical_path(
         // fact. Execution jitter needs `min_latency`, which is optional and
         // usually measured; sampling jitter is derivable from the trigger
         // alone.
-        if let Some(max_jitter) = scope_path.path.max_jitter.map(|d| d.as_millis_f64())
+        if let Some(max_jitter) = scope_path.path.max_jitter.ms()
             && cp.sampling_cost_ms > max_jitter
         {
             index.merge_diagnostics.push(Diagnostic {
@@ -4386,8 +4405,8 @@ fn check_route_exclusion_blocking(
                 .filter_map(|sib| {
                     node.paths
                         .get(&sib)
-                        .and_then(|p| p.max_latency)
-                        .map(|d| (sib, d.as_millis_f64()))
+                        .and_then(|p| p.max_latency.ms())
+                        .map(|ms| (sib, ms))
                 })
                 .collect();
             if blockers.is_empty() {
@@ -4455,7 +4474,7 @@ fn check_cross_scope_rate_hierarchy(
         let drop_rate = topic
             .drop
             .as_ref()
-            .and_then(|d| d.max_count.as_ref())
+            .and_then(|d| d.max_count.count_per())
             .map(|c| c.drop_rate())
             .unwrap_or(0.0);
         let effective_delivery = rate * (1.0 - drop_rate);
@@ -4471,7 +4490,7 @@ fn check_cross_scope_rate_hierarchy(
             let Some(props) = node.publishers.get(&ep_name) else {
                 continue;
             };
-            let Some(pub_min) = props.min_rate_hz else {
+            let Some(pub_min) = props.min_rate_hz.hz() else {
                 continue;
             };
             if pub_min < rate {
@@ -4503,7 +4522,7 @@ fn check_cross_scope_rate_hierarchy(
             if props.state.unwrap_or(false) {
                 continue;
             }
-            let Some(sub_min) = props.min_rate_hz else {
+            let Some(sub_min) = props.min_rate_hz.hz() else {
                 continue;
             };
             if effective_delivery < sub_min {
@@ -4585,7 +4604,7 @@ fn check_cross_scope_on_demand(
             if props.state == Some(true) || (local(sub_scope) && local(first_scope)) {
                 continue;
             }
-            if let Some(rate) = props.min_rate_hz {
+            if let Some(rate) = props.min_rate_hz.hz() {
                 out.push(Diagnostic {
                     rule_id: "rate-hierarchy".to_string(),
                     severity: Severity::Error,
@@ -4889,7 +4908,7 @@ fn durability_compatible(pub_v: &str, sub_v: &str) -> bool {
 fn check_sync_window_budget(index: &mut ManifestIndex) {
     let paths = index.node_paths.clone();
     for np in &paths {
-        let Some(budget) = np.path.max_latency.map(|d| d.as_millis_f64()) else {
+        let Some(budget) = np.path.max_latency.ms() else {
             continue;
         };
         // Each window is a lower bound on how long this path can take.
@@ -4964,7 +4983,7 @@ fn check_lifespan_against_age(
             else {
                 continue;
             };
-            let Some(max_age) = props.max_age.map(|d| d.as_millis_f64()) else {
+            let Some(max_age) = props.max_age.ms() else {
                 continue;
             };
             let effective = QosDecl::effective(topic_qos.as_ref(), props.qos.as_ref());
@@ -5056,7 +5075,7 @@ fn check_path_budget_overflow(index: &mut ManifestIndex) {
     // For each pair (child, ancestor) of paths with matching (input, output),
     // verify child budget ≤ ancestor budget.
     for child in &paths {
-        let Some(child_lat) = child.path.max_latency.map(|d| d.as_millis_f64()) else {
+        let Some(child_lat) = child.path.max_latency.ms() else {
             continue;
         };
         let Some(ancestors) = ancestors_of.get(&child.scope_id) else {
@@ -5066,7 +5085,7 @@ fn check_path_budget_overflow(index: &mut ManifestIndex) {
             if !ancestors.contains(&ancestor.scope_id) {
                 continue;
             }
-            let Some(ancestor_lat) = ancestor.path.max_latency.map(|d| d.as_millis_f64()) else {
+            let Some(ancestor_lat) = ancestor.path.max_latency.ms() else {
                 continue;
             };
             if !path_endpoints_match(child, ancestor) {
@@ -5269,7 +5288,7 @@ fn resolve_topics(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestI
                     // whole tree is merged — a rate propagates across scopes,
                     // so it cannot be known while one scope is being read.
                     derived_rate_hz: None,
-                    max_transport_ms: topic_decl.max_transport.map(|d| d.as_millis_f64()),
+                    max_transport_ms: topic_decl.max_transport.ms(),
                     drop: topic_decl.drop.clone(),
                     scope_ids: vec![scope.id],
                 },
@@ -5462,10 +5481,7 @@ fn merge_topic(
     }
 
     // Validate max_transport_ms agreement
-    if let (Some(a), Some(b)) = (
-        existing.max_transport_ms,
-        decl.max_transport.map(|d| d.as_millis_f64()),
-    ) {
+    if let (Some(a), Some(b)) = (existing.max_transport_ms, decl.max_transport.ms()) {
         if (a - b).abs() > f64::EPSILON {
             diagnostics.push(Diagnostic {
                 rule_id: "consistency".to_string(),
@@ -5484,7 +5500,7 @@ fn merge_topic(
             });
         }
     } else if existing.max_transport_ms.is_none() {
-        existing.max_transport_ms = decl.max_transport.map(|d| d.as_millis_f64());
+        existing.max_transport_ms = decl.max_transport.ms();
     }
 
     // Validate QoS agreement
@@ -5513,9 +5529,9 @@ fn merge_topic(
     // budgets are a consistency error like rate_hz/qos.
     match (existing.drop.as_ref(), decl.drop.as_ref()) {
         (Some(a), Some(b)) => {
-            let same = a.max_consecutive == b.max_consecutive
-                && a.max_count.as_ref().map(|c| (c.n, c.w))
-                    == b.max_count.as_ref().map(|c| (c.n, c.w));
+            let same = a.max_consecutive.count() == b.max_consecutive.count()
+                && a.max_count.count_per().map(|c| (c.n, c.w))
+                    == b.max_count.count_per().map(|c| (c.n, c.w));
             if !same {
                 diagnostics.push(Diagnostic {
                     rule_id: "consistency".to_string(),
@@ -6714,10 +6730,7 @@ mod tests {
             .find(|p| p.path_name == "main")
             .expect("cropbox.main path resolved");
         assert_eq!(main_path.node_fqn, real_fqn);
-        assert_eq!(
-            main_path.path.max_latency.map(|d| d.as_millis_f64()),
-            Some(5.0)
-        );
+        assert_eq!(main_path.path.max_latency.ms(), Some(5.0));
 
         // The pub/sub endpoint refs on the merged topics reconcile the same
         // way — `cropbox/raw_points`/`cropbox/cropped_points` must key on
@@ -7007,10 +7020,7 @@ mod tests {
             .collect();
         assert_eq!(ndt_paths.len(), 1);
         assert_eq!(ndt_paths[0].path_name, "main");
-        assert_eq!(
-            ndt_paths[0].path.max_latency.map(|d| d.as_millis_f64()),
-            Some(30.0)
-        );
+        assert_eq!(ndt_paths[0].path.max_latency.ms(), Some(30.0));
 
         // EKF has 2 paths
         let ekf_paths: Vec<_> = index
@@ -8017,7 +8027,11 @@ mod tests {
                         fdti_sub("        min_rate_hz: 50\n"),
                         Some(DropSpec {
                             max_count: None,
-                            max_consecutive: Some(3),
+                            max_consecutive: Some(ros_launch_manifest_types::spelled(
+                                Context::Drop,
+                                "max_consecutive",
+                                3u32,
+                            )),
                         }),
                         Some(20.0),
                     ),

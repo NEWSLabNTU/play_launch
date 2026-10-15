@@ -32,8 +32,8 @@ use super::{
 };
 use ros_launch_manifest_check::{Diagnostic, Severity};
 use ros_launch_manifest_types::{
-    EffectiveTrigger, FaultKind, NodeDecl, PredicateValue, SafeState, SettleProfile, SpanIndex,
-    ValuePredicate,
+    EffectiveTrigger, FaultKind, NodeDecl, OptBound, ParamBinding, PredicateValue, SafeState,
+    SettleProfile, SpanIndex, ValuePredicate,
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -784,7 +784,7 @@ pub(crate) fn check_windows_and_exits(
                      must be a safe state the system can stay in",
                     site(index, floor.scope_id, &format!("modes.{last}.window")),
                     m.name,
-                    w.duration.as_millis_f64()
+                    w.ms().unwrap_or_default()
                 ),
                 format!("{at}.fallback"),
             ));
@@ -792,8 +792,8 @@ pub(crate) fn check_windows_and_exits(
         if let Some(w) = &m.decl.window {
             let wat = format!("{at}.window");
             let where_ = site(index, m.scope_id, &wat);
-            let ms = w.duration.as_millis_f64();
-            match &w.param {
+            let ms = w.ms().unwrap_or_default();
+            match w.param.as_ref().and_then(ParamBinding::as_ref) {
                 None => diags.push(diag(
                     "window-unbound",
                     Severity::Warning,
@@ -801,7 +801,8 @@ pub(crate) fn check_windows_and_exits(
                         "{where_}: mode '{}' waits {ms:.0}ms, but the window names no `param:` \
                          -- nothing ties the number to what the image runs. Write \
                          `window: {{ duration: {}, param: <node>.<parameter> }}`",
-                        m.name, w.duration
+                        m.name,
+                        w.duration().unwrap_or_default()
                     ),
                     wat.clone(),
                 )),
@@ -1080,10 +1081,12 @@ pub(crate) fn check_param_bindings(
                 }
             }
             for (ep, props) in &decl.subscribers {
-                let (Some(name), Some(age)) = (&props.max_age_param, props.max_age) else {
+                let (Some(name), Some(ms)) = (
+                    props.max_age.param().map(ParamBinding::name),
+                    props.max_age.ms(),
+                ) else {
                     continue;
                 };
-                let ms = age.as_millis_f64();
                 let at = format!("nodes.{node_name}.sub.{ep}.max_age");
                 let where_ = site(index, m.scope_id, &at);
                 let problem = match bound_value(params, &fqn, node_name, decl, name) {
@@ -1141,7 +1144,7 @@ pub(crate) fn settle_for(
     ss: &SafeState,
     diags: &mut Vec<Diagnostic>,
 ) -> Settle {
-    let literal = ss.settle.map(|d| d.as_millis_f64());
+    let literal = ss.settle.ms();
     let literal_settle = Settle {
         ms: literal,
         how: if literal.is_some() { "literal" } else { "none" },
@@ -1233,7 +1236,7 @@ pub(crate) fn settle_for(
     let profile_ms = t * 1000.0;
     // Phase 10 B2: the vehicle's response, written beside the profile, is
     // added to it.
-    let response_ms = profile.response.map(|d| d.as_millis_f64());
+    let response_ms = profile.response.ms();
     let ms = profile_ms + response_ms.unwrap_or(0.0);
     let v_r = a * a / (2.0 * j);
     let arithmetic = if v0 <= v_r {

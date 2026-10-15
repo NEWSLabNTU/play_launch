@@ -15,7 +15,7 @@ use std::{
 
 use ros_launch_manifest_model as model;
 use ros_launch_manifest_sched::{DEFAULT_TIER, EffectiveTrigger, TierDef, TierPlatformSpec};
-use ros_launch_manifest_types::{DropSpec, EndpointProps, QosDecl};
+use ros_launch_manifest_types::{Bound, DropSpec, EndpointProps, OptBound, ParamBinding, QosDecl};
 use sha2::{Digest, Sha256};
 
 use crate::ros::{
@@ -199,8 +199,8 @@ fn pub_contract(p: &EndpointProps, topic_qos: Option<&QosDecl>) -> Option<model:
         return None;
     }
     Some(model::PubContract {
-        min_rate_hz: p.min_rate_hz,
-        max_rate_hz: p.max_rate_hz,
+        min_rate_hz: p.min_rate_hz.hz(),
+        max_rate_hz: p.max_rate_hz.hz(),
         qos,
         on_demand,
     })
@@ -278,7 +278,7 @@ fn on_violation_contract(
     model::OnViolationContract {
         on: ov.on.iter().map(|k| fault_kind(*k)).collect(),
         reaction: format!("{node_fqn}/{}", ov.reaction),
-        within_ms: ov.within.map(|d| d.as_millis_f64()),
+        within_ms: ov.within.ms(),
         mechanism: match ov.mechanism {
             M::Qos => model::DetectMechanism::Qos,
             M::Diagnostics => model::DetectMechanism::Diagnostics,
@@ -308,9 +308,9 @@ fn sub_contract(
         return None;
     }
     Some(model::SubContract {
-        min_rate_hz: p.min_rate_hz,
-        max_rate_hz: p.max_rate_hz,
-        max_age_ms: p.max_age.map(|d| d.as_millis_f64()),
+        min_rate_hz: p.min_rate_hz.hz(),
+        max_rate_hz: p.max_rate_hz.hz(),
+        max_age_ms: p.max_age.ms(),
         state,
         required,
         qos,
@@ -331,14 +331,14 @@ fn sub_contract(
         // every edge and the two computed different route totals. Carrying
         // it here is what lets `TopicView::transport_ms` apply the same
         // precedence the resolver applies.
-        max_transport_ms: p.max_transport.map(|d| d.as_millis_f64()),
+        max_transport_ms: p.max_transport.ms(),
     })
 }
 
 fn drop_contract(d: &DropSpec) -> model::DropContract {
     model::DropContract {
-        max_drop_rate: d.max_count.as_ref().map(|c| c.drop_rate()),
-        max_consecutive: d.max_consecutive,
+        max_drop_rate: d.max_count.count_per().map(|c| c.drop_rate()),
+        max_consecutive: d.max_consecutive.count(),
     }
 }
 
@@ -371,11 +371,11 @@ fn path_contract(
     let timer_jitter_ms = trigger
         .as_ref()
         .and(decl.timer_jitter())
-        .map(|d| d.as_millis_f64());
+        .and_then(Bound::ms);
     model::PathContract {
         safe_state: decl.safe_state.as_ref().map(|s| model::SafeStateContract {
             emits: emits_key(&s.emits),
-            settle_ms: s.settle.map(|d| d.as_millis_f64()),
+            settle_ms: s.settle.ms(),
             settle_profile: s
                 .settle_profile
                 .as_ref()
@@ -403,8 +403,8 @@ fn path_contract(
             max_interval_ms: sy.max_interval.map(|d| d.as_millis_f64()),
             timeout_ms: sy.timeout.map(|d| d.as_millis_f64()),
         }),
-        max_latency_ms: decl.max_latency.map(|d| d.as_millis_f64()),
-        min_latency_ms: decl.min_latency.map(|d| d.as_millis_f64()),
+        max_latency_ms: decl.max_latency.ms(),
+        min_latency_ms: decl.min_latency.ms(),
         tolerance_ms: decl.tolerance.map(|d| d.as_millis_f64()),
         drop: decl.drop.as_ref().map(drop_contract),
         // Phase 67 added these to the contract and to the sched crate's
@@ -414,7 +414,7 @@ fn path_contract(
         // or miss policy at all; the two toolchains were scheduling the same
         // system from different information, which is the seam
         // `contract-axes.md` §5 names.
-        max_jitter_ms: decl.max_jitter.map(|d| d.as_millis_f64()),
+        max_jitter_ms: decl.max_jitter.ms(),
         miss: decl.miss.as_ref().map(super::sched_derive::convert_miss),
         timer_jitter_ms,
     }
@@ -1088,7 +1088,7 @@ pub fn build_system_model(
                 }
             }
             for (ep, props) in &decl.srv {
-                if let Some(ms) = props.max_response.map(|d| d.as_millis_f64()) {
+                if let Some(ms) = props.max_response.ms() {
                     contracts.srv_endpoints.insert(
                         format!("{node_fqn}/{ep}"),
                         model::SrvContract {
@@ -1276,8 +1276,8 @@ pub fn build_system_model(
                 // launch FQN, the same identity `node_params` uses, so a
                 // consumer can look the value up without re-resolving.
                 window: m.decl.window.as_ref().map(|w| model::WindowContract {
-                    duration_ms: w.duration.as_millis_f64(),
-                    param: w.param.as_ref().map(|p| {
+                    duration_ms: w.ms().unwrap_or_default(),
+                    param: w.param.as_ref().and_then(ParamBinding::as_ref).map(|p| {
                         let ns = index
                             .manifests
                             .get(&m.scope_id)
@@ -1313,7 +1313,7 @@ pub fn build_system_model(
                     })
                     .collect(),
                 on: h.decl.on.iter().map(|k| fault_kind(*k)).collect(),
-                ftti_ms: h.decl.ftti.map(|d| d.as_millis_f64()),
+                ftti_ms: h.decl.ftti.ms(),
                 // A mode key when the hazard enters a mode, else a scope path
                 // key: the model keeps one field (rlm `HazardContract`).
                 reaction: h
@@ -2767,8 +2767,16 @@ mod tests {
                     max_interval: Some(Duration::from_millis_f64(20.0)),
                     timeout: None,
                 }),
-                min_latency: Some(Duration::from_millis_f64(2.5)),
-                max_latency: Some(Duration::from_millis_f64(15.0)),
+                min_latency: Some(ros_launch_manifest_types::spelled(
+                    ros_launch_manifest_types::field_table::Context::Path,
+                    "min_latency",
+                    Duration::from_millis_f64(2.5),
+                )),
+                max_latency: Some(ros_launch_manifest_types::spelled(
+                    ros_launch_manifest_types::field_table::Context::Path,
+                    "max_latency",
+                    Duration::from_millis_f64(15.0),
+                )),
                 ..Default::default()
             },
         ));
@@ -2935,7 +2943,11 @@ mod tests {
             input_topics: vec!["/perception/points_raw".to_string()],
             output_topics: vec!["/control/cmd".to_string()],
             path: PathDecl {
-                max_latency: Some(Duration::from_millis_f64(30.0)),
+                max_latency: Some(ros_launch_manifest_types::spelled(
+                    ros_launch_manifest_types::field_table::Context::Path,
+                    "max_latency",
+                    Duration::from_millis_f64(30.0),
+                )),
                 ..Default::default()
             },
         });

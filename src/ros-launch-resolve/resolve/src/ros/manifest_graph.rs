@@ -15,7 +15,7 @@ use super::manifest_loader::ManifestIndex;
 // The shared transport precedence, and the only reason this graph knows the
 // manifest crate's `derive` layer at all — see `build_global_graph`.
 use ros_launch_manifest_derive::TopicView;
-use ros_launch_manifest_types::PathDecl;
+use ros_launch_manifest_types::{OptBound, PathDecl};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// A node in the global dataflow graph (one ROS 2 node).
@@ -49,7 +49,7 @@ impl GlobalNode {
     pub fn max_latency_ms(&self) -> f64 {
         self.paths
             .values()
-            .filter_map(|p| p.max_latency.map(|d| d.as_millis_f64()))
+            .filter_map(|p| p.max_latency.ms())
             .fold(0.0_f64, f64::max)
     }
 
@@ -104,7 +104,7 @@ impl GlobalNode {
         let Some(decl) = path.and_then(|name| self.paths.get(name)) else {
             return self.max_latency_ms();
         };
-        let exec = decl.max_latency.map(|d| d.as_millis_f64()).unwrap_or(0.0);
+        let exec = decl.max_latency.ms().unwrap_or(0.0);
         self.sampling_cost_ms(path) + exec
     }
 
@@ -183,7 +183,11 @@ impl GlobalNode {
         match path.and_then(|name| self.paths.get(name)) {
             Some(decl) => match decl.effective_trigger() {
                 EffectiveTrigger::Timer { rate_hz } if rate_hz > 0.0 => {
-                    1000.0 / rate_hz + decl.timer_jitter().map_or(0.0, |d| d.as_millis_f64())
+                    1000.0 / rate_hz
+                        + decl
+                            .timer_jitter()
+                            .and_then(ros_launch_manifest_types::Bound::ms)
+                            .unwrap_or(0.0)
                 }
                 _ => 0.0,
             },
@@ -345,8 +349,8 @@ pub fn build_global_graph(index: &ManifestIndex) -> GlobalDataflowGraph {
                         .get(sub_node)?
                         .subscribers
                         .get(sub_ep)?
-                        .max_transport?
-                        .as_millis_f64();
+                        .max_transport
+                        .ms()?;
                     Some((ep_ref.to_string(), ms))
                 })
                 .collect(),
@@ -994,7 +998,7 @@ fn path_rate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ros_launch_manifest_types::{PathDecl, Trigger};
+    use ros_launch_manifest_types::{PathDecl, Trigger, field_table::Context, spelled};
 
     fn timer_path(rate_hz: f64, out: &[&str], latency_ms: Option<f64>) -> PathDecl {
         PathDecl {
@@ -1003,8 +1007,13 @@ mod tests {
                 jitter: None,
             }),
             output: out.iter().map(|s| s.to_string()).collect(),
-            max_latency: latency_ms
-                .map(ros_launch_manifest_types::duration::Duration::from_millis_f64),
+            max_latency: latency_ms.map(|ms| {
+                spelled(
+                    Context::Path,
+                    "max_latency",
+                    ros_launch_manifest_types::duration::Duration::from_millis_f64(ms),
+                )
+            }),
             ..Default::default()
         }
     }
@@ -1014,8 +1023,13 @@ mod tests {
             trigger: (!trigger_in.is_empty())
                 .then(|| Trigger::Input(trigger_in.iter().map(|s| s.to_string()).collect())),
             output: out.iter().map(|s| s.to_string()).collect(),
-            max_latency: latency_ms
-                .map(ros_launch_manifest_types::duration::Duration::from_millis_f64),
+            max_latency: latency_ms.map(|ms| {
+                spelled(
+                    Context::Path,
+                    "max_latency",
+                    ros_launch_manifest_types::duration::Duration::from_millis_f64(ms),
+                )
+            }),
             ..Default::default()
         }
     }
@@ -1325,7 +1339,11 @@ mod tests {
         let mut tick = timer_path(10.0, &["out"], Some(20.0));
         tick.trigger = Some(Trigger::Timer {
             rate_hz: 10.0,
-            jitter: Some(ros_launch_manifest_types::duration::Duration::from_millis_f64(6.0)),
+            jitter: Some(spelled(
+                Context::TriggerTimer,
+                "jitter",
+                ros_launch_manifest_types::duration::Duration::from_millis_f64(6.0),
+            )),
         });
         let g = assemble(
             vec![

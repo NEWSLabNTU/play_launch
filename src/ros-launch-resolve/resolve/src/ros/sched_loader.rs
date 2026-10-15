@@ -3,6 +3,7 @@
 //! Linux is "validate now, apply later": we resolve for the `posix` target and
 //! report, but do not (yet) apply `sched_setscheduler`/affinity to processes.
 
+use ros_launch_manifest_types::OptBound;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fmt,
@@ -1113,7 +1114,7 @@ fn declared_rate_facts(index: Option<&ManifestIndex>) -> BTreeMap<String, f64> {
     for (scope_id, rm) in &index.manifests {
         for (bare_name, decl) in &rm.manifest.nodes {
             for props in decl.publishers.values() {
-                if let Some(v) = props.min_rate_hz {
+                if let Some(v) = props.min_rate_hz.hz() {
                     let fqn = resolve_node_fqn(index, *scope_id, &rm.ns, bare_name);
                     consider(&fqn, v);
                 }
@@ -2657,9 +2658,11 @@ mod tests {
                 // placement, so this fixture doesn't also (correctly, but
                 // distractingly for this test's purpose) trip that
                 // unrelated warning.
-                max_latency: Some(
+                max_latency: Some(ros_launch_manifest_types::spelled(
+                    ros_launch_manifest_types::field_table::Context::Path,
+                    "max_latency",
                     ros_launch_manifest_types::duration::Duration::from_millis_f64(20.0),
-                ),
+                )),
                 ..Default::default()
             },
             scope_id: 0,
@@ -2670,9 +2673,11 @@ mod tests {
             path: PathDecl {
                 trigger: Some(Trigger::Input(vec!["react_in".to_string()])),
                 output: vec!["react_out".to_string()],
-                max_latency: Some(
+                max_latency: Some(ros_launch_manifest_types::spelled(
+                    ros_launch_manifest_types::field_table::Context::Path,
+                    "max_latency",
                     ros_launch_manifest_types::duration::Duration::from_millis_f64(1.0),
-                ),
+                )),
                 ..Default::default()
             },
             scope_id: 0,
@@ -2717,9 +2722,11 @@ mod tests {
             input_topics: vec!["/link_topic".to_string()],
             output_topics: vec!["/sink_topic".to_string()],
             path: PathDecl {
-                max_latency: Some(
+                max_latency: Some(ros_launch_manifest_types::spelled(
+                    ros_launch_manifest_types::field_table::Context::Path,
+                    "max_latency",
                     ros_launch_manifest_types::duration::Duration::from_millis_f64(100.0),
-                ),
+                )),
                 ..Default::default()
             },
         });
@@ -2741,9 +2748,11 @@ mod tests {
                             jitter: None,
                         }),
                         output: vec!["tick_out".to_string()],
-                        max_latency: Some(
+                        max_latency: Some(ros_launch_manifest_types::spelled(
+                            ros_launch_manifest_types::field_table::Context::Path,
+                            "max_latency",
                             ros_launch_manifest_types::duration::Duration::from_millis_f64(20.0),
-                        ),
+                        )),
                         ..Default::default()
                     },
                 )]),
@@ -2758,9 +2767,11 @@ mod tests {
                     PathDecl {
                         trigger: Some(Trigger::Input(vec!["react_in".to_string()])),
                         output: vec!["react_out".to_string()],
-                        max_latency: Some(
+                        max_latency: Some(ros_launch_manifest_types::spelled(
+                            ros_launch_manifest_types::field_table::Context::Path,
+                            "max_latency",
                             ros_launch_manifest_types::duration::Duration::from_millis_f64(1.0),
-                        ),
+                        )),
                         ..Default::default()
                     },
                 )]),
@@ -3724,9 +3735,11 @@ nodes = ["fast_node"]
                 input_topics: vec![topic.to_string()],
                 output_topics: vec![topic.to_string()],
                 path: PathDecl {
-                    max_latency: Some(
+                    max_latency: Some(ros_launch_manifest_types::spelled(
+                        ros_launch_manifest_types::field_table::Context::Path,
+                        "max_latency",
                         ros_launch_manifest_types::duration::Duration::from_millis_f64(1000.0),
-                    ),
+                    )),
                     ..Default::default()
                 },
             });
