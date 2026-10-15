@@ -105,8 +105,11 @@ pub enum Command {
     Check(CheckArgs),
 
     /// Rewrite contracts from deprecated spellings to current ones (a
-    /// hazard's `reaction: <mode>` to `enters:`, `exit.on` to `exit.holds`).
-    /// Prints the diff; `--write` applies it. Comments and layout are kept.
+    /// hazard's `reaction: <mode>` to `enters:`, `exit.on` to `exit.holds`,
+    /// a path's `input:` to `trigger: { input }`, `external_topics:` into
+    /// `topics:`, an inline `all_of` guard into `functions:`; `--list` has
+    /// them all). Prints the diff; `--write` applies it. Comments and layout
+    /// are kept.
     #[command(after_help = "Examples:\n  \
         ros-launch-resolve migrate --list\n  \
         ros-launch-resolve migrate bringup.contract.yaml\n  \

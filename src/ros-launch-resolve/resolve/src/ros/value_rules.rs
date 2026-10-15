@@ -580,7 +580,7 @@ pub(crate) fn removed_by(h: &ResolvedHazard, index: &ManifestIndex) -> BTreeSet<
 }
 
 // ---------------------------------------------------------------------------
-// Spellings (phase 90 G4)
+// Spellings (phase 90 G3, G4)
 // ---------------------------------------------------------------------------
 
 /// The fix-it every deprecated spelling ends with.
@@ -593,7 +593,102 @@ const MIGRATE_HINT: &str = "`play_launch migrate <contract> --write` rewrites it
 /// the hazard's scope first), so the warning fires exactly where the old
 /// spelling means a ladder. `enters:` must name a mode: it is never read as
 /// a path. `exit.on` is the old spelling of `exit.holds`.
+///
+/// G3: an `external_topics:` entry is the second place for
+/// `topics.<name>.external`, and a path's `input:` list the legacy spelling
+/// of `trigger: { input: [...] }`. Both still check as before (the loader
+/// merges the externals, and the path's trigger is `effective_trigger()`);
+/// each gets one warning naming the kept spelling.
 pub(crate) fn check_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
+    let mut manifests: Vec<_> = index.manifests.values().collect();
+    manifests.sort_by_key(|m| m.scope_id);
+    for m in manifests {
+        g3_spellings(index, m.scope_id, &m.manifest, "", diags);
+    }
+    g4_spellings(index, diags);
+}
+
+/// The G3 warnings for one manifest level (and its inline includes, under
+/// `prefix`).
+fn g3_spellings(
+    index: &ManifestIndex,
+    scope_id: usize,
+    manifest: &ros_launch_manifest_types::Manifest,
+    prefix: &str,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for (name, e) in &manifest.external_topics {
+        let at = format!("{prefix}external_topics.{name}");
+        let side = match e.side {
+            ros_launch_manifest_types::ExternalSide::Pub => "pub",
+            ros_launch_manifest_types::ExternalSide::Sub => "sub",
+            ros_launch_manifest_types::ExternalSide::Both => "both",
+        };
+        let ty = e
+            .msg_type
+            .as_deref()
+            .map(|t| format!(", type: {t}"))
+            .unwrap_or_default();
+        diags.push(diag(
+            "deprecated-spelling",
+            Severity::Warning,
+            format!(
+                "{}: topic '{name}': the `external_topics:` section is deprecated; a topic's \
+                 external side is stated on the topic, `topics: {{ {name}: {{ external: \
+                 {side}{ty} }} }}`. Fix: move the entry under `topics:`; {MIGRATE_HINT}",
+                site(index, scope_id, &at)
+            ),
+            at,
+        ));
+    }
+    let legacy = |at: String, path: &str, p: &ros_launch_manifest_types::PathDecl| {
+        let list = p.input.join(", ");
+        let fix = if p.trigger.is_some() {
+            "delete it (the `trigger:` beside it is what is read)".to_string()
+        } else {
+            format!("write `trigger: {{ input: [{list}] }}`")
+        };
+        diag(
+            "deprecated-spelling",
+            Severity::Warning,
+            format!(
+                "{}: path '{path}': `input: [{list}]` is the legacy spelling of `trigger: {{ \
+                 input: [...] }}`. Fix: {fix}; {MIGRATE_HINT}",
+                site(index, scope_id, &at)
+            ),
+            at,
+        )
+    };
+    for (name, p) in &manifest.paths {
+        if !p.input.is_empty() {
+            diags.push(legacy(format!("{prefix}paths.{name}.input"), name, p));
+        }
+    }
+    for (node, decl) in &manifest.nodes {
+        for (name, p) in &decl.paths {
+            if !p.input.is_empty() {
+                diags.push(legacy(
+                    format!("{prefix}nodes.{node}.paths.{name}.input"),
+                    &format!("{node}/{name}"),
+                    p,
+                ));
+            }
+        }
+    }
+    for (name, inc) in &manifest.includes {
+        if let Some(inner) = inc.inline() {
+            g3_spellings(
+                index,
+                scope_id,
+                inner,
+                &format!("{prefix}includes.{name}."),
+                diags,
+            );
+        }
+    }
+}
+
+fn g4_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
     let is_mode = |scope_id: usize, name: &str| {
         index
             .modes

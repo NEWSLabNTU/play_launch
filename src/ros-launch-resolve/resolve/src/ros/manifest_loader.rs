@@ -1128,11 +1128,18 @@ fn check_endpoint_unwired(index: &mut ManifestIndex) {
     manifests.sort_by_key(|m| m.scope_id);
     for m in manifests {
         for (node, decl) in &m.manifest.nodes {
-            let in_paths: HashSet<&str> = decl
+            // A path's inputs in either spelling (`trigger: { input }` or the
+            // legacy `input:`), as the `wiring` rule reads them.
+            let in_paths: HashSet<String> = decl
                 .paths
                 .values()
-                .flat_map(|p| p.input.iter().chain(p.output.iter()))
-                .map(String::as_str)
+                .flat_map(|p| {
+                    let inputs = match p.effective_trigger() {
+                        ros_launch_manifest_types::EffectiveTrigger::Input(v) => v,
+                        _ => Vec::new(),
+                    };
+                    inputs.into_iter().chain(p.output.iter().cloned())
+                })
                 .collect();
             for (side, eps, wired, list) in [
                 ("sub", &decl.subscribers, &wired_sub, "sub"),

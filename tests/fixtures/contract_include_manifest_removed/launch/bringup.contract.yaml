@@ -1,0 +1,20 @@
+# Phase 90 G7: `includes.<name>: { manifest: <file> }` was removed in rlm
+# v0.1.59. Nothing ever loaded the file it named, so the include declared
+# nothing; the contract is refused (exit 3) with a message naming the inline
+# form.
+version: 1
+
+nodes:
+  detector:
+    pub: { boxes: {} }
+
+includes:
+  tracking:
+    manifest: tracking.contract.yaml
+    if: "true"
+
+topics:
+  /perception/boxes:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [detector/boxes]

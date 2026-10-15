@@ -1,0 +1,62 @@
+# Phase 90 G3: the deprecated spellings, kept on purpose. `play_launch
+# migrate` rewrites every one of them, and the migrated contract checks the
+# same, without the `deprecated-spelling` warnings
+# (manifest_check.rs::g3_deprecated_spellings_warn_and_migrate_to_the_same_verdict).
+#
+#   /image -> detector -> /perception/boxes -> tracker -> /tracks
+#
+# - `external_topics:` states the external side of /image (whose topic is
+#   declared below: migrate adds `external:` to it) and of /diagnostics
+#   (declared nowhere else: migrate moves the entry under `topics:`).
+# - `input:` on two node paths and the scope path is the legacy spelling of
+#   `trigger: { input }`; the tracker's sits beside the trigger it repeats.
+version: 1
+
+nodes:
+  detector:
+    sub: { image: { min_rate_hz: 10 } }
+    pub: { boxes: { min_rate_hz: 10 } }
+    paths:
+      main:
+        input: image
+        output: [boxes]
+        max_latency: 20ms
+  tracker:
+    sub: { boxes: { min_rate_hz: 10 } }
+    pub: { tracks: { min_rate_hz: 10 } }
+    paths:
+      main:
+        input: [boxes]
+        trigger: { input: [boxes] }
+        output: [tracks]
+        max_latency: 10ms
+
+topics:
+  /image:
+    type: sensor_msgs/msg/Image
+    sub: [detector/image]
+    rate_hz: 10
+  /perception/boxes:
+    type: std_msgs/msg/String
+    pub: [detector/boxes]
+    sub: [tracker/boxes]
+    rate_hz: 10
+  /tracks:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [tracker/tracks]
+    rate_hz: 10
+
+external_topics:
+  /image:
+    side: pub
+    type: sensor_msgs/msg/Image
+  /diagnostics:
+    side: both
+    type: diagnostic_msgs/msg/DiagnosticArray
+
+paths:
+  image_to_tracks:
+    input: /image
+    output: [/tracks]
+    max_latency: 40ms

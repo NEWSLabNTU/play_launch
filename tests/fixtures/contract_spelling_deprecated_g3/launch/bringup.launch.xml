@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!-- Phase 90 G3: the pre-0.1.59 spellings of a topic's external side and a
+     path's input trigger. camera -> detector -> tracker, both external ends. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="listener" name="detector" namespace="/perception"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="tracker"  namespace="/perception"/>
+</launch>

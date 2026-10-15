@@ -67,7 +67,7 @@ paths:
   # unknown, not zero.
   # -> jitter-range (phase 70 W2)
   raw_to_fused:
-    input: /s/raw
+    trigger: { input: [/s/raw] }
     output: [/s/fused]
     max_latency: 200ms
     min_latency: 20ms

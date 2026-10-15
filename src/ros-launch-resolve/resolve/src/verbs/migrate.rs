@@ -145,14 +145,25 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 fn print_edits(file: &Path, src: &str, m: &Migration) {
     for e in &m.edits {
         println!(
-            "{}:{}: {}: `{}` -> `{}` ({})",
+            "{}:{}: {}: {} -> {} ({})",
             file.display(),
             e.line,
             e.rewrite,
-            &src[e.range.clone()],
-            e.replacement,
+            brief(&src[e.range.clone()]),
+            brief(&e.replacement),
             e.path
         );
+    }
+}
+
+/// An edit's text on one line: a key rename prints whole; a moved or
+/// deleted block prints its first line and how many lines it spans.
+fn brief(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    match lines.as_slice() {
+        [] => "(nothing)".to_string(),
+        [one] => format!("`{}`", one.trim()),
+        [first, ..] => format!("`{} ...` ({} lines)", first.trim(), lines.len()),
     }
 }
 
@@ -161,7 +172,7 @@ pub fn rewrite_table() -> String {
     let mut out = String::from("rewrites, applied in this order:\n");
     for r in REWRITES {
         out.push_str(&format!(
-            "  {:<24} {} (v{}): {}  ->  {}\n  {:<24} when {}\n",
+            "  {:<26} {} (v{}): {}  ->  {}\n  {:<26} when {}\n",
             r.id, r.unit, r.since, r.from, r.to, "", r.when
         ));
     }

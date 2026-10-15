@@ -2261,6 +2261,164 @@ fn enters_and_reaction_together_refuse_the_contract() {
     );
 }
 
+/// `play_launch check [extra] <launch>`: (exit code, stdout + stderr).
+fn check_launch(launch: &std::path::Path, extra: &[&str]) -> (i32, String) {
+    let out = play_launch_cmd()
+        .arg("check")
+        .args(extra)
+        .arg(launch)
+        .output()
+        .expect("play_launch check runs");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr),
+    )
+}
+
+/// A fixture's `launch/` directory copied into a temporary directory, so a
+/// test can migrate it in place.
+fn fixture_copy(dir: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = fixtures::repo_root().join("tests/fixtures").join(dir).join("launch");
+    let dst = tmp.path().join("launch");
+    std::fs::create_dir(&dst).unwrap();
+    for e in std::fs::read_dir(&src).unwrap() {
+        let e = e.unwrap();
+        std::fs::copy(e.path(), dst.join(e.file_name())).unwrap();
+    }
+    (tmp, dst)
+}
+
+/// `play_launch migrate <args> <file>`: (exit code, stdout).
+fn migrate(file: &std::path::Path, args: &[&str]) -> (i32, String) {
+    let out = play_launch_cmd()
+        .arg("migrate")
+        .args(args)
+        .arg(file)
+        .output()
+        .expect("play_launch migrate runs");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).to_string(),
+    )
+}
+
+/// Phase 90 G3: an `external_topics:` entry and a path's legacy `input:`
+/// still check as before, with one `deprecated-spelling` warning each naming
+/// the kept spelling and `migrate`; after `migrate --write` the contract
+/// checks to the same findings and `--explain` sums, without them.
+#[test]
+fn g3_deprecated_spellings_warn_and_migrate_to_the_same_verdict() {
+    let (_tmp, dir) = fixture_copy("contract_spelling_deprecated_g3");
+    let launch = dir.join("bringup.launch.xml");
+    let contract = dir.join("bringup.contract.yaml");
+    let (code, old) = check_launch(&launch, &["--explain"]);
+    assert_eq!(code, 0, "{old}");
+    let deprecated: Vec<&str> = old
+        .lines()
+        .filter(|l| l.contains("warning[deprecated-spelling]"))
+        .collect();
+    assert_eq!(deprecated.len(), 5, "{old}");
+    for needle in [
+        "topic '/image': the `external_topics:` section is deprecated; a topic's external side \
+         is stated on the topic, `topics: { /image: { external: pub, type: \
+         sensor_msgs/msg/Image } }`",
+        "topic '/diagnostics': the `external_topics:` section is deprecated",
+        "path 'detector/main': `input: [image]` is the legacy spelling of `trigger: { input: \
+         [...] }`. Fix: write `trigger: { input: [image] }`",
+        "path 'tracker/main': `input: [boxes]` is the legacy spelling of `trigger: { input: \
+         [...] }`. Fix: delete it (the `trigger:` beside it is what is read)",
+        "path 'image_to_tracks': `input: [/image]` is the legacy spelling",
+        "`play_launch migrate <contract> --write` rewrites it",
+    ] {
+        assert!(old.contains(needle), "expected `{needle}`:\n{old}");
+    }
+
+    let (code, out) = migrate(&contract, &["--write"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("1 rewritten (6 edit(s))"), "{out}");
+    let migrated = std::fs::read_to_string(&contract).unwrap();
+    assert!(!migrated.contains("external_topics") && !migrated.contains("    input:"));
+    assert_eq!(migrate(&contract, &["--check"]).0, 0);
+
+    let (code_new, new) = check_launch(&launch, &["--explain"]);
+    assert_eq!(code_new, 0, "{new}");
+    assert!(!new.contains("deprecated-spelling"), "{new}");
+    let findings = |out: &str| {
+        let mut v: Vec<String> = out
+            .lines()
+            .filter(|l| {
+                l.contains("info[")
+                    || l.contains("error[")
+                    || l.contains("warning[")
+                    || l.contains("note[")
+            })
+            .filter(|l| !l.contains("deprecated-spelling") && !l.contains("explicit-trigger"))
+            .map(without_lines)
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(findings(&old), findings(&new));
+}
+
+/// Phase 90 G7: the two removed keys refuse the contract (exit 3) with a
+/// message naming the replacement.
+#[test]
+fn g7_removed_keys_refuse_the_contract_with_a_fix_it() {
+    for (dir, needles) in [
+        (
+            "contract_include_manifest_removed",
+            &[
+                "at 'includes.tracking.manifest': Removed in v0.1.59",
+                "Write the child contract inline as `includes.<name>: { nodes: ..., ... }`",
+            ],
+        ),
+        (
+            "contract_guard_all_of_removed",
+            &[
+                "at 'hazards.pose_lost.guards[0].all_of': Removed in v0.1.59",
+                "Declare the function and guard it by name: `guards: [<f>]`; `play_launch \
+                 migrate` does it",
+            ],
+        ),
+    ] {
+        let launch = fixtures::repo_root()
+            .join("tests/fixtures")
+            .join(dir)
+            .join("launch/bringup.launch.xml");
+        let (code, out) = check_launch(&launch, &[]);
+        assert_eq!(code, 3, "{dir}:\n{out}");
+        assert!(out.contains("error[manifest-parse]"), "{dir}:\n{out}");
+        for needle in needles {
+            assert!(out.contains(needle), "{dir}: expected `{needle}`:\n{out}");
+        }
+    }
+}
+
+/// Phase 90 G7: `migrate` hoists an inline `all_of` guard into `functions:`,
+/// and the contract it writes loads.
+#[test]
+fn g7_migrate_hoists_an_inline_all_of_guard_into_a_function() {
+    let (_tmp, dir) = fixture_copy("contract_guard_all_of_removed");
+    let contract = dir.join("bringup.contract.yaml");
+    let (code, out) = migrate(&contract, &["--write"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("guard-all-of-function: `all_of: [/loc/ndt, /loc/gnss]` -> `pose_lost_all_of`"),
+        "{out}"
+    );
+    let migrated = std::fs::read_to_string(&contract).unwrap();
+    assert!(
+        migrated.contains("      - pose_lost_all_of\n")
+            && migrated.contains("functions:\n  pose_lost_all_of: { all_of: [/loc/ndt, /loc/gnss] }\n"),
+        "{migrated}"
+    );
+    let (code, out) = check_launch(&dir.join("bringup.launch.xml"), &[]);
+    assert_ne!(code, 3, "{out}");
+    assert!(!out.contains("manifest-parse"), "{out}");
+}
+
 /// Phase 90 G8: `migrate` rewrites the deprecated fixture into its current
 /// twin's spellings, shows the diff, and `--check` gates on it.
 #[test]

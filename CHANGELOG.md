@@ -22,13 +22,28 @@ allowance heavily.
   `criticality-mismatch`, was warning); the fix is to delete it. On a node
   no hazard reaches the label stands. The severity-to-criticality map is
   rlm's (`types::severity`), printed in its format reference.
+- **Changed (`check`, phase 90 G3, rlm v0.1.59):** the `external_topics:`
+  section and a path's legacy `input:` list are deprecated: a topic's
+  external side is `topics.<name>.external`, a path's input trigger is
+  `trigger: { input: [...] }`. Both still check exactly as before, with
+  `warning[deprecated-spelling]` naming the kept spelling; rlm removes them
+  in the next grammar release. The `wiring` rule and `endpoint-unwired`
+  read a path's inputs in either spelling, so a migrated contract gives the
+  same findings.
+- **Removed (`check`, phase 90 G7, rlm v0.1.59):** `includes.<name>: {
+  manifest: <file> }` (nothing loaded the file) and the inline `{ all_of:
+  [...] }` hazard guard (the same group is `functions.<f>: { all_of }`,
+  guarded by name). Either is now `error[manifest-parse]` (exit 3) with a
+  message naming the replacement; nothing in the consumers wrote them.
 - **New verb (`migrate`, phase 90 G8):** `play_launch migrate
   <contract|dir>` rewrites deprecated spellings to current ones as minimal
   textual edits (comments and layout kept): prints the diff, `--write`
   applies it, `--check` exits 1 when anything would change, `--list` prints
-  the rewrite table (`hazard-reaction-enters`, `exit-on-holds`). Also on
-  `ros-launch-resolve`. The play_launch fixtures and `rt_av_demo` are
-  migrated.
+  the rewrite table (`hazard-reaction-enters`, `exit-on-holds`; G3 adds
+  `path-input-trigger` and `external-topics-to-topics`, G7
+  `guard-all-of-function`). Also on `ros-launch-resolve`. The play_launch
+  fixtures and `rt_av_demo` are migrated, except the ones that keep an old
+  spelling on purpose (`contract_spelling_deprecated`, `_g3`).
 
 - **New (`check --explain`, phase 10 B7, B8):** where each budget comes
   from, and what checks it. A budget written in its map form `{ duration,

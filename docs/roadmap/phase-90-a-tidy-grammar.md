@@ -1,8 +1,9 @@
 # Phase 90 - a tidy grammar: fold, rename and remove contract keys
 
 Status: **in progress** (2026-10-15): G1 done (inventory, decisions
-below); G4 and G5 done, G8 started (the `migrate` verb and its rewrite
-table, with G4's rewrites). Stage 1 of 2. Stage 2 (an extension system
+below); G4, G5 and G7 done; G3's non-bound part done (`external_topics`,
+`paths.<n>.input`; its bound part waits for G2); G8 started (the `migrate`
+verb and its rewrite table, with the G3, G4 and G7 rewrites). Stage 1 of 2. Stage 2 (an extension system
 for domain vocabulary, and moving the domain keys into it) gets its own
 phase once its design is settled; nothing here depends on that design, and
 nothing here moves a key out of the core.
@@ -182,6 +183,57 @@ New candidates, not scheduled in this phase:
   migration command rewrites it; fixtures and the island's contracts
   migrated.
 
+#### G3 status: non-bound part done (2026-10-15)
+
+rlm `phase90-g3-g7` (main `f57c865`), play_launch `phase90-g3-g7`. The
+bound part (`max_transport` topic form, node-path `drop`) waits for G2.
+
+- `external_topics:` is deprecated (rlm `field_table::Status::Deprecated`,
+  a new status: parses for one release, its fact's one place is elsewhere;
+  removed in G8's release notes). The checker warns once per entry:
+  `warning[deprecated-spelling]: bringup.contract.yaml:51: topic '/image':
+  the external_topics: section is deprecated; a topic's external side is
+  stated on the topic, topics: { /image: { external: pub, type:
+  sensor_msgs/msg/Image } }. Fix: move the entry under topics:; play_launch
+  migrate <contract> --write rewrites it`. Rewrite
+  `external-topics-to-topics`: no `topics:` section, the section key is
+  renamed (and `side:` becomes `external:`); otherwise each entry moves to
+  the end of `topics:`, or, when its topic is declared there, adds
+  `external:` (and a missing `type:`) to it. An entry with no `type:` (a
+  topic needs one), two sides, two types, or a QoS to merge is left for a
+  hand edit, the whole section at once.
+- A path's `input:` is deprecated for `trigger: { input: [...] }`, same
+  status. Warning: `path 'detector/main': input: [image] is the legacy
+  spelling of trigger: { input: [...] }. Fix: write trigger: { input:
+  [image] }; ...` (beside a written `trigger:`: `Fix: delete it (the
+  trigger: beside it is what is read)`). Rewrite `path-input-trigger`
+  (scalar, flow list, block list, flow-map entry; deleted beside a
+  `trigger:`).
+- Readers moved so the two spellings check alike: rlm's `wiring` rule and
+  play_launch's `endpoint-unwired` read a path's inputs through
+  `effective_trigger()`, and rlm substitutes `$(var ...)` in `trigger: {
+  input }` (it did only in `input:`). On every contract that does not
+  migrate (play_launch, island) the new checker's output is identical to
+  the old one's apart from the new warnings.
+- Fixtures migrated in-repo: rlm 17 files (52 edits: 50 `input`, 2 for
+  `manifest_external_pub`); play_launch 4 (`contract_concurrency`,
+  `_merge`, `_w1d`, `endpoint_transport`; 7 edits). New fixture
+  `contract_spelling_deprecated_g3` (both old spellings, kept: five
+  warnings, and after `migrate --write` the same findings and `--explain`
+  without them).
+- Gate (scratch copies; old = rlm `b179a0a` / play_launch `7df90ed2` on
+  the originals, new on the migrated): rlm `run_checks` on all 34 fixture
+  manifests gives the same diagnostics, except rlm's `explicit-trigger`
+  info, which fires on the legacy spelling only; play_launch `check` and
+  `check --explain` on 42 fixture launches give the same verdicts, findings
+  and totals, apart from the deprecation warnings and the warning counts
+  (`contract_spelling_deprecated` also loses its G4 warnings when
+  migrated). The island (16 contracts, `check` and `--explain`, under
+  `env -i` with Humble) is byte-identical between the old and new checker.
+- Would apply downstream (not changed): the island, 0 G3/G7 edits (its 21
+  G4 edits in 9 files are still pending, G8); nano-ros (27 contracts
+  outside its vendored play_launch), 0 edits.
+
 ### G4. One meaning per key: `reaction`
 
 - What: split the three meanings. Proposal: a hazard `enters:` a mode (the
@@ -258,6 +310,36 @@ on the migrated. The island is unaffected (its one labelled file,
   a fix-it for one release, or document why each stays.
 - Gate: G1's table has no unexplained dead key.
 
+#### G7 status: done (2026-10-15)
+
+rlm `phase90-g3-g7` (main `f57c865`), play_launch `phase90-g3-g7`. Nothing
+writes either key (G1), so both are removed outright, as parse errors
+naming the replacement (`error[manifest-parse]`, exit 3):
+
+- `includes.<n>: { manifest: <file> }` and its `if`/`unless` rows:
+  `at 'includes.tracking.manifest': Removed in v0.1.59 (phase 90 G7) --
+  nothing ever loaded the named file, so the include declared nothing.
+  Write the child contract inline as includes.<name>: { nodes: ..., ... }
+  (its if/unless at that inline manifest's root), or delete the entry; a
+  launch include's own contract is found next to its launch file.` rlm's
+  `IncludeKind::External` and `IncludeDecl::external()` are gone (no
+  caller). No rewrite: the entry declared nothing, and inlining a file is
+  not a key edit.
+- The inline `hazards.<h>.guards: [{ all_of: [...] }]`: `at
+  'hazards.pose_lost.guards[0].all_of': Removed in v0.1.59 (phase 90 G7)
+  -- an inline redundant group is the same group functions.<f>: { all_of:
+  [...] } states by name. Declare the function and guard it by name:
+  guards: [<f>]; play_launch migrate does it.` Rewrite
+  `guard-all-of-function`: the group becomes `functions.<h>_all_of`
+  (appended to `functions:`, or a new section after `hazards:`) and the
+  guard names it. `functions.<n>.all_of` stays.
+- Fixtures: `contract_include_manifest_removed`,
+  `contract_guard_all_of_removed` (exit 3; the second loads after
+  `migrate --write`). rlm's launch-manifest.md examples no longer use
+  either form.
+- The other unread or unwritten rows stay, with the reasons in the
+  decision table above and rlm `docs/key-inventory.md`.
+
 ### G8. Migration and release
 
 - What: `play_launch` gains (or extends) a migration command that rewrites
@@ -281,9 +363,13 @@ The rewrites are rlm `types::migrate::REWRITES` (id, unit, since, from, to,
 when, and a function of one parsed file): each rewrite reads the YAML to
 decide what changes and edits only the key tokens it names, so comments,
 quoting and layout survive; a rewrite that would turn a parsing contract
-into a non-parsing one is refused. G3, G6 and G7 add rows there. Rows now:
-`hazard-reaction-enters` (G4; only when the name is a mode of the same
-file, the checker's lookup) and `exit-on-holds` (G4).
+into a non-parsing one is refused. G3's bound part and G6 add rows there.
+Rows now: `hazard-reaction-enters` (G4; only when the name is a mode of the
+same file, the checker's lookup), `exit-on-holds` (G4),
+`path-input-trigger` (G3), `external-topics-to-topics` (G3; moves and
+merges entries, so its edits are line insertions and deletions, not key
+renames) and `guard-all-of-function` (G7). The G8 release notes record
+`external_topics:` and `paths.<n>.input` as removed in the release after.
 
 Gate run (old play_launch 0.16.0 on the originals, new on the migrated, in
 scratch copies): play_launch 44 contracts, 17 rewritten (46 edits: 32

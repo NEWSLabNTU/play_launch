@@ -678,6 +678,16 @@ RankedPlan {
     items: [],
     warnings: [],
 }
+== contract_guard_all_of_removed/launch/bringup.launch.xml
+RankedPlan {
+    items: [],
+    warnings: [],
+}
+== contract_include_manifest_removed/launch/bringup.launch.xml
+RankedPlan {
+    items: [],
+    warnings: [],
+}
 == contract_merge/launch/bringup.launch.xml
 RankedPlan {
     items: [],
@@ -1016,6 +1026,32 @@ RankedPlan {
                 2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+        },
+    ],
+    warnings: [],
+}
+== contract_spelling_deprecated_g3/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/perception/tracker",
+            path: "main",
+            fine_group: 0,
+            coarse_group: Some(
+                "image_to_tracks",
+            ),
+            tie_group: None,
+            provenance: "derived(chain_aware: image_to_tracks segment drain 1/2)",
+        },
+        RankItem {
+            node: "/perception/detector",
+            path: "main",
+            fine_group: 0,
+            coarse_group: Some(
+                "image_to_tracks",
+            ),
+            tie_group: None,
+            provenance: "derived(chain_aware: image_to_tracks segment drain 2/2)",
         },
     ],
     warnings: [],

@@ -89,11 +89,11 @@ paths:
   # True critical path: 20 (to_boxes) + 10 (tracker) = 30ms. Before phase 68
   # W1.a this was charged 45ms — the node's max over ALL paths.
   to_tracks:
-    input: /image
+    trigger: { input: [/image] }
     output: [/tracks]
     max_latency: 30ms
   # 35 (to_masks) + 5 (segmenter) = 40ms.
   to_seg:
-    input: /image
+    trigger: { input: [/image] }
     output: [/seg]
     max_latency: 40ms

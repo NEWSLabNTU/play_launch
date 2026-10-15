@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<!-- Phase 90 G7: a contract with the removed file-reference include. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="listener" name="detector" namespace="/perception"/>
+</launch>

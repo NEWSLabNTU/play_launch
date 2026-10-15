@@ -1,0 +1,29 @@
+# Phase 90 G7: the inline `{ all_of: [...] }` guard was removed in rlm
+# v0.1.59; the same redundant group is `functions.<f>: { all_of: [...] }`,
+# guarded by name. The contract is refused (exit 3) with a message naming
+# that form, and `play_launch migrate` writes it (`guard-all-of-function`).
+version: 1
+
+nodes:
+  localizer:
+    sub:
+      ndt: { max_age: 200ms }
+      gnss: { max_age: 200ms }
+
+topics:
+  /loc/ndt:
+    type: std_msgs/msg/String
+    external: pub
+    sub: [localizer/ndt]
+  /loc/gnss:
+    type: std_msgs/msg/String
+    external: pub
+    sub: [localizer/gnss]
+
+hazards:
+  pose_lost:
+    severity: ASIL_B
+    guards:
+      - all_of: [/loc/ndt, /loc/gnss]
+    on: omission
+    ftti: 1s
