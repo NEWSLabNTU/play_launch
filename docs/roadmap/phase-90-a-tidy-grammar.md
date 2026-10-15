@@ -1,7 +1,8 @@
 # Phase 90 - a tidy grammar: fold, rename and remove contract keys
 
 Status: **in progress** (2026-10-15): G1 done (inventory, decisions
-below). Stage 1 of 2. Stage 2 (an extension system
+below); G4 and G5 done, G8 started (the `migrate` verb and its rewrite
+table, with G4's rewrites). Stage 1 of 2. Stage 2 (an extension system
 for domain vocabulary, and moving the domain keys into it) gets its own
 phase once its design is settled; nothing here depends on that design, and
 nothing here moves a key out of the core.
@@ -191,6 +192,26 @@ New candidates, not scheduled in this phase:
 - Gate: the hazard form that names a mode, and the one that names a path
   (if any contract does), both migrate; a fixture of each.
 
+#### G4 status: done (2026-10-15)
+
+rlm `phase90-g4-g5`, play_launch `phase90-g4-g5`. Names as G1 decided: a
+hazard writes `enters: <mode>` (the ladder) or `reaction: <scope path>`
+(one rung), never both (a parse error); `reaction` names a path in all
+three contexts. `modes.<m>.exit` is `{ holds: <function>, to: <mode> }`.
+rlm: `HazardDecl.enters`, `HazardDecl::entry()` (the name the reaction
+starts from), `ModeExit.holds` and `ModeExit.spelled_on`; `exit.on` is a
+deprecated alias row; field-table texts rewritten to match. The model keeps
+its wire form (`HazardContract.reaction`, `ExitContract.on`), so no model
+reader moves. The checker resolves `entry()` by the same lookup as before
+(a mode of the scope first) and adds `deprecated-spelling` (warning, names
+the new key and `play_launch migrate`) for `reaction: <mode>` and
+`exit.on`, and `enters-unknown-mode` (error) for `enters:` naming no mode;
+`enters:` is never read as a path. Fixtures: `contract_spelling_deprecated`
+(old spellings, checks like its migrated twin `contract_takeover_jitter`
+plus three warnings), `contract_enters_unknown`, `contract_enters_and_reaction`
+(exit 3). The path form (`reaction: <scope path>`, `contract_fault` and 5
+more) is unchanged and not rewritten.
+
 ### G5. Severity and criticality
 
 - What: `severity` stays a label on a declared ordered scale; the
@@ -200,6 +221,26 @@ New candidates, not scheduled in this phase:
   (stage 2 moves scales to profiles).
 - Gate: a contract writing `criticality` gets the fix-it; derived
   criticality unchanged on every fixture.
+
+#### G5 status: done (2026-10-15)
+
+The map is rlm `types::severity` (`DEFAULT_SEVERITY_LEVELS`,
+`criticality_of(rank, len)`: rank 0 none, the rest by `ceil(3 rank / n)`,
+1 low, 2 medium, 3 high), printed in the format reference under "Severity
+to criticality"; `sched::Criticality::from_severity` wraps it and
+play_launch's `DerivedCriticality::bucket` calls it (its own copy and its
+`DEFAULT_SEVERITY_SCALE` are gone). A written `criticality` on a node a
+hazard reaches is an error with a delete fix-it (`derivable-criticality`,
+was info; `criticality-mismatch`, was warning); on a node no hazard reaches
+it stands, documented in the field table and rlm's launch-manifest.md. The
+labels in `contract_fault`, `_latch`, `_service` and `_late` are deleted (by
+hand: which nodes a hazard reaches needs the graph, so this is not a
+`migrate` rewrite); new fixture `contract_criticality_written` (one
+agreeing label, one disagreeing, one on an unreached node that stands).
+Derived `node_criticality` is identical on all 32 contracts with hazards
+(island 16, play_launch fixtures), old binary on the original against new
+on the migrated. The island is unaffected (its one labelled file,
+`stage3-partitions`, has no hazards).
 
 ### G6. Settle's shape
 
@@ -228,6 +269,33 @@ New candidates, not scheduled in this phase:
 - Gate: the migration command run on every contract in the consumers
   produces contracts that check with the same verdicts and `--explain`
   totals; nano-ros images build from the migrated contracts.
+
+#### G8 status: started (2026-10-15)
+
+`play_launch migrate <contract|dir>...` (also `ros-launch-resolve
+migrate`; library `verbs::migrate`): prints each edit and a unified diff,
+`--write` applies, `--check` exits 1 when anything would change, `-q` drops
+the diff, `--list` prints the rewrite table. A directory is searched for
+`*.contract.yaml`, skipping hidden, `build*`, `install`, `log`, `target`.
+The rewrites are rlm `types::migrate::REWRITES` (id, unit, since, from, to,
+when, and a function of one parsed file): each rewrite reads the YAML to
+decide what changes and edits only the key tokens it names, so comments,
+quoting and layout survive; a rewrite that would turn a parsing contract
+into a non-parsing one is refused. G3, G6 and G7 add rows there. Rows now:
+`hazard-reaction-enters` (G4; only when the name is a mode of the same
+file, the checker's lookup) and `exit-on-holds` (G4).
+
+Gate run (old play_launch 0.16.0 on the originals, new on the migrated, in
+scratch copies): play_launch 44 contracts, 17 rewritten (46 edits: 32
+`enters`, 14 `holds`); island 16, 9 rewritten (21 edits: 15 and 6); nano-ros
+(the island's pin `43fc1c2f`) 27, none. Every verdict is unchanged, and
+every check and `--explain` output is identical once the deprecation
+warnings and the warning counts are set aside, except: the G5 labels
+above (the four fixtures, now deleted), the reworded `mode-exit-unwired`
+message ("exits when 'f' holds"), and the version string. The play_launch
+fixtures and `examples/rt_av_demo` are migrated in-repo; the island and
+nano-ros are not changed by this unit. Left for G8: the release, the
+nano-ros pin, migrating the island.
 
 ## Order
 
