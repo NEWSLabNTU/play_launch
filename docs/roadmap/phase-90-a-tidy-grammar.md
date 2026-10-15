@@ -543,6 +543,24 @@ the GitHub release assets. Remaining for G8 once phase 92 lands: tag rlm
 v0.1.60, re-pin, release; the nano-ros pin PR; the island's `migrate --write`
 (21 G4 edits) and pin bump.
 
+**Released before that (2026-10-15): rlm v0.1.59 and play_launch 0.17.0**
+carry G3's non-bound part, G4, G5, G7 and the `migrate` verb. rlm v0.1.59
+is 442744d (workspace Cargo 0.1.12: `ModeExit.on` -> `holds`,
+`IncludeKind::External` gone); play_launch 0.17.0 is 351f8809, tag
+v0.17.0, pinning it. The wheels are on the GitHub release v0.17.0; PyPI has
+only the code-free `play_launch` 0.17.0 meta wheel, because the
+per-distribution projects (`play_launch_<distro>`) need pending publishers
+before the trusted publisher can create them (release-wheel run
+38677309079, `publish-pypi` 400). Consumers install
+`play_launch[humble]==0.17.0` with `--find-links` on the release's assets
+until then. nano-ros pins both (PR #2257, `79583587cf`). The island is
+migrated: `migrate --write` on its 16 contracts rewrote 9 (21 edits: 15
+`enters`, 6 `holds`), every verdict unchanged (`check-contracts.sh` 16/16
+with 0.17.0) and every `--explain` identical once the deprecation warnings
+and counts are set aside; its CI checks with 0.17.0 and its board image
+builds at the nano-ros pin (island `ed5f53e`). What remains for G8 is the
+v0.1.60 release above (G2, G3's bound part, G6).
+
 `play_launch migrate <contract|dir>...` (also `ros-launch-resolve
 migrate`; library `verbs::migrate`): prints each edit and a unified diff,
 `--write` applies, `--check` exits 1 when anything would change, `-q` drops
