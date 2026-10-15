@@ -10,6 +10,15 @@ allowance heavily.
 
 Phase 90 G3 (its bound part) and G6, pinned to rlm main until v0.1.60.
 
+- **Changed (wheel, phase 92 P1):** the wheel's distribution-linked files
+  live under `play_launch/dist/<distro>/`, and the `play_launch` entry
+  point picks the payload when it runs: `PLAY_LAUNCH_ROS_DISTRO`, then
+  `ROS_DISTRO`, then the only `/opt/ros/<d>` the wheel carries. A
+  distribution the wheel does not carry is an error that names the Python
+  it needs. `python3 -m play_launch.payload` reports the choice, and
+  `play_launch --version` names the ROS distribution the binary links. This
+  is the first step toward one `pip install play_launch` for every
+  distribution.
 - **Changed (`check`, phase 90 G3):** a topic-level `max_transport` is
   deprecated: it is still read as the transport of every subscriber of the
   topic that states none, with one `warning[deprecated-spelling]` per topic

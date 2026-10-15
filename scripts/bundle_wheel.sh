@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# Bundle colcon install/ artifacts into python/play_launch/{bin,lib,share}
-# for wheel packaging. Single source of truth — called by justfile and CI.
+# Bundle colcon install/ artifacts into
+# python/play_launch/dist/$ROS_DISTRO/{bin,lib,share} for wheel packaging.
+# Single source of truth — called by justfile and CI.
+#
+# Everything here links one ROS distribution, so it is that distribution's
+# PAYLOAD (phase 92): a wheel can carry several, and play_launch/payload.py
+# picks one when the tool runs. A local build bundles only the sourced
+# distribution, so any other payload left in dist/ is removed first — a stale
+# one would ship in the wheel, built from whatever tree last produced it.
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
@@ -28,16 +35,26 @@ MARKERS=(
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INSTALL_DIR="$REPO_ROOT/install"
-DEST_ROOT="$REPO_ROOT/python/play_launch"
+PAYLOADS="$REPO_ROOT/python/play_launch/dist"
 
 # ---------------------------------------------------------------------------
 # --clean: remove all bundled artifacts and exit
 # ---------------------------------------------------------------------------
+# bin/lib/share directly under python/play_launch/ are the pre-phase-92
+# layout; removed so they cannot ship beside the payload.
+LEGACY=("$REPO_ROOT/python/play_launch/"{bin,lib,share})
 if [[ "${1:-}" == "--clean" ]]; then
-  rm -rf "$DEST_ROOT/bin" "$DEST_ROOT/lib" "$DEST_ROOT/share"
-  echo "Cleaned bundled artifacts from python/play_launch/{bin,lib,share}"
+  rm -rf "$PAYLOADS" "${LEGACY[@]}"
+  echo "Cleaned bundled artifacts from python/play_launch/dist"
   exit 0
 fi
+
+if [[ -z "${ROS_DISTRO:-}" ]]; then
+  echo "Error: ROS_DISTRO is not set. Source the distribution to bundle (/opt/ros/<distro>/setup.bash)." >&2
+  exit 1
+fi
+DEST_ROOT="$PAYLOADS/$ROS_DISTRO"
+rm -rf "$PAYLOADS" "${LEGACY[@]}"
 
 # ---------------------------------------------------------------------------
 # Verify install/ exists
@@ -158,4 +175,4 @@ for marker in "${MARKERS[@]}"; do
   touch "$marker_path"
 done
 
-echo "Bundled $copied artifacts to python/play_launch/{bin,lib,share}"
+echo "Bundled $copied artifacts to python/play_launch/dist/$ROS_DISTRO/{bin,lib,share}"

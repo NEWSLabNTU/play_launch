@@ -2510,3 +2510,13 @@ Python and no wheel tag tells Jazzy from Kilted or Lyrical from Rolling;
 publishing. A new distribution = one matrix row + one extra in
 `packaging/meta/pyproject.toml.in`. Local: `just build` targets the sourced
 `$ROS_DISTRO`; `just publish-pypi` refuses a local `play_launch-*` wheel.
+
+**Phase 92 replaces this with one package** (P1 done, P2–P4 open): a
+wheel's distribution-linked files sit under `play_launch/dist/<distro>/
+{bin,lib,share}` and `python/play_launch/payload.py` picks one at run time
+(`PLAY_LAUNCH_ROS_DISTRO` > `ROS_DISTRO` > the only `/opt/ros/<d>` carried,
+else an error). `python3 -m play_launch.payload` says which and why. The
+payload's `lib` and prefix still go on `LD_LIBRARY_PATH` and
+`AMENT_PREFIX_PATH` for children: the container is found through the ament
+index and rosidl finds play_launch_msgs' typesupport through
+`LD_LIBRARY_PATH`, so an RPATH cannot replace them.

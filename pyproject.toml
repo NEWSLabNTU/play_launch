@@ -67,7 +67,13 @@ package-dir = {"" = "python"}
 where = ["python"]
 
 [tool.setuptools.package-data]
-"play_launch" = ["bin/*", "lib/*", "lib/play_launch_container/*", "share/**/*"]
+# One payload per ROS distribution the wheel serves (phase 92, payload.py).
+"play_launch" = [
+    "dist/*/bin/*",
+    "dist/*/lib/*",
+    "dist/*/lib/play_launch_container/*",
+    "dist/*/share/**/*",
+]
 
 [tool.ruff]
 line-length = 100

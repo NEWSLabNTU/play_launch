@@ -1,38 +1,14 @@
 """CLI entry point for play_launch_io_helper that dispatches to Rust binary."""
 
-import os
-import shutil
 import subprocess
 import sys
-from pathlib import Path
+
+from play_launch import cli, payload
 
 
 def _find_binary() -> str:
-    """Find bundled play_launch_io_helper binary with fallback to PATH.
-
-    Resolution order:
-    1. Package bin directory (pip install layout)
-    2. PATH search (fallback)
-    """
-    name = "play_launch_io_helper"
-
-    # 1. Check package bin directory (pip install)
-    pkg_dir = Path(__file__).parent
-    bundled = pkg_dir / "bin" / name
-    if bundled.exists() and os.access(bundled, os.X_OK):
-        return str(bundled)
-
-    # 2. Fall back to PATH
-    path_binary = shutil.which(name)
-    if path_binary:
-        return path_binary
-
-    raise FileNotFoundError(
-        f"{name} not found. Ensure play_launch is properly installed.\n"
-        f"Checked locations:\n"
-        f"  - {bundled}\n"
-        f"  - PATH"
-    )
+    """Find the play_launch_io_helper binary: the wheel's payload, then PATH."""
+    return cli._find_binary("play_launch_io_helper")
 
 
 def main():
@@ -43,21 +19,17 @@ def main():
             binary = _find_binary()
             print(binary)
             sys.exit(0)
-        except FileNotFoundError as e:
+        except (FileNotFoundError, payload.PayloadError) as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
 
     try:
         binary = _find_binary()
-    except FileNotFoundError as e:
+    except (FileNotFoundError, payload.PayloadError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Add bundled play_launch_msgs libraries to LD_LIBRARY_PATH
-    lib_dir = str(Path(__file__).parent / "lib")
-    env = os.environ.copy()
-    ld_path = env.get("LD_LIBRARY_PATH", "")
-    env["LD_LIBRARY_PATH"] = f"{lib_dir}:{ld_path}" if ld_path else lib_dir
+    env = cli.payload_env(binary)
 
     # Pass through all arguments to Rust binary
     result = subprocess.run([binary] + sys.argv[1:], env=env)

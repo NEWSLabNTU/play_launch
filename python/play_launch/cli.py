@@ -20,15 +20,24 @@ def _find_binary(name: str) -> str:
     """Find bundled binary with fallback to PATH.
 
     Resolution order:
-    1. Package bin directory (pip install layout)
+    1. The wheel's payload for the selected ROS distribution (pip install
+       layout, ``dist/<distro>/bin``; see ``payload.py``). A wheel that
+       carries payloads but none for this environment is an error, never a
+       fall-through to whatever ``play_launch`` is on PATH.
     2. ROS2 install paths (colcon build)
     3. PATH search (fallback)
     """
-    # 1. Check package bin directory (pip install)
-    pkg_dir = Path(__file__).parent
-    bundled = pkg_dir / "bin" / name
-    if bundled.exists() and os.access(bundled, os.X_OK):
-        return str(bundled)
+    # Imported here, not at module level: the package's __init__ imports this
+    # module, and `python -m play_launch.payload` would otherwise find the
+    # payload module already loaded and warn.
+    from play_launch import payload
+
+    # 1. The wheel's payload (pip install)
+    if payload.carried():
+        bundled = payload.select().bin_dir / name
+        if bundled.exists() and os.access(bundled, os.X_OK):
+            return str(bundled)
+        raise FileNotFoundError(f"{name} is missing from the wheel's payload: {bundled}")
 
     # 2. Check ROS2 install locations (colcon build)
     ros2_paths = [
@@ -50,7 +59,7 @@ def _find_binary(name: str) -> str:
     raise FileNotFoundError(
         f"{name} not found. Ensure play_launch is properly installed.\n"
         f"Checked locations:\n"
-        f"  - {bundled}\n"
+        f"  - {Path(__file__).parent / 'dist' / '<distro>' / 'bin' / name}\n"
         f"  - /opt/ros/humble/lib/play_launch/{name}\n"
         f"  - /usr/lib/play_launch/{name}\n"
         f"  - install/play_launch/lib/play_launch/{name}\n"
@@ -58,24 +67,38 @@ def _find_binary(name: str) -> str:
     )
 
 
-def main():
-    """Main entry point - delegates to Rust binary."""
-    try:
-        binary = _find_binary("play_launch")
-    except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+def payload_env(binary: str) -> dict[str, str]:
+    """The environment to run a bundled binary in.
 
-    # Add bundled libraries to LD_LIBRARY_PATH
-    pkg_dir = str(Path(__file__).parent)
-    lib_dir = str(Path(__file__).parent / "lib")
+    The payload's ``lib`` goes on LD_LIBRARY_PATH and its prefix on
+    AMENT_PREFIX_PATH. Both reach the nodes play_launch spawns, and both have
+    to: the container is found through the ament index, and rosidl finds
+    play_launch_msgs' typesupport libraries through LD_LIBRARY_PATH in a
+    process (the container) that play_launch did not link. An RPATH on our
+    own binaries cannot serve either lookup.
+    """
     env = os.environ.copy()
+    prefix = Path(binary).resolve().parent.parent
+    if not (prefix / "share" / "ament_index").is_dir():
+        return env  # not a wheel payload (colcon install or PATH)
+    lib_dir = str(prefix / "lib")
     ld_path = env.get("LD_LIBRARY_PATH", "")
     env["LD_LIBRARY_PATH"] = f"{lib_dir}:{ld_path}" if ld_path else lib_dir
-
-    # Add bundled directory to AMENT_PREFIX_PATH so ament_index finds play_launch_container
     ament_path = env.get("AMENT_PREFIX_PATH", "")
-    env["AMENT_PREFIX_PATH"] = f"{pkg_dir}:{ament_path}" if ament_path else pkg_dir
+    env["AMENT_PREFIX_PATH"] = f"{prefix}:{ament_path}" if ament_path else str(prefix)
+    return env
+
+
+def main():
+    """Main entry point - delegates to Rust binary."""
+    from play_launch.payload import PayloadError
+
+    try:
+        binary = _find_binary("play_launch")
+    except (FileNotFoundError, PayloadError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    env = payload_env(binary)
 
     # Pass through all arguments.
     #

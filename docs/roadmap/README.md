@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 91 phases total (1–89, plus 14.5 and 30b); 71 complete, 14 in progress, 5 planned, 1 dropped — as of 2026-10-15.
+Started October 2025. 94 phases total (1–92, plus 14.5 and 30b); 71 complete, 15 in progress, 7 planned, 1 dropped — as of 2026-10-15.
 
 Phase docs through phase 28 are in `archive/`; from phase 29 on, a phase's doc
 stays in this directory whatever its status, and its status line (the first
@@ -99,7 +99,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 89 | [Helping with DDS without touching it](./phase-89-dds-assist.md) | ✅ | 2026-10-14 |
 | 90 | [A tidy grammar](./phase-90-a-tidy-grammar.md) | 📝 planned | — |
 | 91 | [Domain extensions](./phase-91-domain-extensions.md) | 📝 planned | — |
-| 92 | [One PyPI package](./phase-92-one-pypi-package.md) | 📝 planned | — |
+| 92 | [One PyPI package](./phase-92-one-pypi-package.md) | 🔄 P1 done | — |
 
 ---
 
@@ -326,7 +326,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     packaging, and the vehicle keys and the ASIL default moved out of the
     core. Design: rlm `docs/design/extension-system.md`.
     [phase-91-domain-extensions.md](./phase-91-domain-extensions.md).
-  - **Phase 92** - planned: one PyPI package (2026-10-15). `pip install
+  - **Phase 92** - in progress, P1 done: one PyPI package (2026-10-15). `pip install
     play_launch` again: one wheel per Python, glibc and CPU carries every ROS
     distribution sharing that tag, and the tool picks the payload at run
     time from `ROS_DISTRO`; the 0.17.0 per-distribution projects and the

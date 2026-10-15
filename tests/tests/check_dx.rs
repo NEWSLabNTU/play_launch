@@ -49,7 +49,11 @@ fn version_names_the_commit_and_the_rlm_tag() {
         .strip_suffix(')')
         .unwrap_or_else(|| panic!("unclosed: {v}"));
     let rlm = inner.rsplit(", ").next().unwrap();
-    assert!(rlm.starts_with("rlm v"), "no rlm tag last: {v}");
+    // A release pins a tag; between releases the pin may be a commit, which
+    // build.rs prints as its short hash.
+    let pin = rlm.strip_prefix("rlm ").unwrap_or("");
+    let is_commit = pin.len() == 7 && pin.chars().all(|c| c.is_ascii_hexdigit());
+    assert!(pin.starts_with('v') || is_commit, "no rlm pin last: {v}");
     // Built from this checkout: when git can read it here, the describe
     // must be there too. (Without git, build.rs omits it rather than
     // inventing one, and the version is still well-formed.)

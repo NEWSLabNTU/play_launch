@@ -72,6 +72,8 @@ REPO = Path(__file__).resolve().parent.parent
 # that must move together (CLAUDE.md, "Repository Layout"). The lockfiles
 # carry the tag AND the commit it resolved to, which is what lets the census
 # find cargo's checkout of exactly that tree without a second copy of the pin.
+# Between releases the manifests may pin a commit (`rev = "..."`) instead;
+# the "tag" is then that commit.
 MANIFEST_LOCKFILES = [
     REPO / "Cargo.lock",
     REPO / "src/ros-launch-resolve/Cargo.lock",
@@ -79,7 +81,7 @@ MANIFEST_LOCKFILES = [
 ]
 MANIFEST_SOURCE_RE = re.compile(
     r'source = "git\+https://github\.com/NEWSLabNTU/ros-launch-manifest'
-    r'(?:\.git)?\?tag=([^#"]+)#([0-9a-f]{40})"'
+    r'(?:\.git)?\?(?:tag|rev)=([^#"]+)#([0-9a-f]{40})"'
 )
 # The layer-2 workspace: it resolves with no ROS installed, so `cargo fetch`
 # against it can populate the checkout on a machine that has not built yet.

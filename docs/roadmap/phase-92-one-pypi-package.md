@@ -1,6 +1,6 @@
 # Phase 92 - one PyPI package: `pip install play_launch`, the distribution picked at run time
 
-Status: **planned** (2026-10-15). Follows the 0.17.0 release, whose PyPI
+Status: **in progress** — P1 done (2026-10-15). Follows the 0.17.0 release, whose PyPI
 upload failed and was yanked.
 
 ## Why
@@ -93,6 +93,37 @@ the existing trusted publisher.
   and a launch on the sourced distribution; with `ROS_DISTRO` unset and one
   `/opt/ros/<d>` it still runs; with a distribution the wheel lacks it fails
   with the documented message; tests for each selection branch.
+
+**Done (2026-10-15).** `python/play_launch/payload.py` selects; both console
+entry points (`cli.py`, `io_helper_cli.py`) run the selected payload's
+binaries, and a wheel that carries payloads but none for the environment
+is an error, never a fall-through to another `play_launch` on `PATH`.
+`scripts/bundle_wheel.sh` writes `dist/$ROS_DISTRO/{bin,lib,share}` and
+removes any other payload and the old flat `bin/lib/share` first.
+`play_launch --version` names the distribution the binary was built for
+(`play_launch 0.17.0 (ROS humble, v0.17.0-7-g027f6868, rlm 336d6c2)`; a
+commit pin of rlm now prints its short hash instead of `unknown`). The
+"doctor" is `python3 -m play_launch.payload`: what the wheel carries, what
+is under `/opt/ros`, which payload this shell gets and why. It is not a
+verb, so the binary's verb surface is unchanged. 12 tests in
+`tests/python/test_payload.py`, run by `just test`.
+
+Gate, on a humble host: the wheel ran `--version` sourced and with an empty
+environment (branch 3: the binary's RPATH already names
+`/opt/ros/humble/lib`), refused `ROS_DISTRO=jazzy` and
+`PLAY_LAUNCH_ROS_DISTRO=kilted` naming Python 3.12, and ran
+`composition composition_demo.launch.py` with the payload's
+`component_container` loading 2/2 composables and exiting cleanly on
+SIGINT.
+
+**One departure from the design: the environment still carries the
+payload.** RPATH was to replace `LD_LIBRARY_PATH` so nothing leaked to
+children, but children need it. The container is found through
+`AMENT_PREFIX_PATH`, and rosidl in the container (a process play_launch
+does not link) finds play_launch_msgs' typesupport libraries through
+`LD_LIBRARY_PATH`. An RPATH on our binaries serves neither lookup. Both
+variables point at the selected payload only, as they pointed at the flat
+`lib/` before.
 
 ### P2. Assemble multi-payload wheels in CI
 

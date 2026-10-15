@@ -158,7 +158,7 @@ build: check-submodules
         echo "       Nothing between those two points should remove it." >&2
         exit 1
     fi
-    scripts/bundle_wheel.sh
+    ROS_DISTRO={{ ros_distro }} scripts/bundle_wheel.sh
     uv build --wheel
     echo ""
     echo "Build complete:"
@@ -296,7 +296,7 @@ build-wheel:
     # survived into a rebuilt 0.9.0 wheel. (build/<pkg>/ is colcon's; only the
     # setuptools staging dirs are removed here.)
     rm -rf build/lib build/bdist.*
-    scripts/bundle_wheel.sh
+    ROS_DISTRO={{ ros_distro }} scripts/bundle_wheel.sh
     uv build --wheel
 
 # Run play_launch with optional arguments (e.g., just run launch demo_nodes_cpp talker_listener.launch.py)
@@ -741,6 +741,11 @@ _run-suites mode="fast":
     run "Parser unit tests" src/ros-launch-resolve/parser -p play_launch_parser
     run "play_launch unit tests" src/play_launch --lib
     run "ros-launch-resolve unit tests (layer 2)" src/ros-launch-resolve -p ros-launch-resolve
+    # The wheel's entry point: which ROS distribution payload it runs (phase 92).
+    echo "=== Wheel entry point (pytest) ==="
+    python3 -m pytest -q tests/python 2>&1 | tee -a "$log" | tail -3
+    [ "${PIPESTATUS[0]}" = 0 ] || failed=1
+    echo ""
     if [ "{{ mode }}" = "all" ]; then
         run "Integration tests (all)" tests
     else

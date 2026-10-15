@@ -108,19 +108,33 @@ fn embed_long_version() {
         }
     }
 
-    // The pinned `ros-launch-manifest` tag, as `just bump-manifest` writes it.
+    // The pinned `ros-launch-manifest` tag, as `just bump-manifest` writes it,
+    // or the first seven characters of a pinned commit.
     let toml_path = manifest_dir.join("Cargo.toml");
     println!("cargo:rerun-if-changed={}", toml_path.display());
     let rlm = std::fs::read_to_string(&toml_path).ok().and_then(|toml| {
         toml.lines()
             .filter(|l| l.contains("ros-launch-manifest.git"))
             .find_map(|l| {
-                let rest = &l[l.find("tag = \"")? + "tag = \"".len()..];
-                Some(rest[..rest.find('"')?].to_string())
+                if let Some(i) = l.find("tag = \"") {
+                    let rest = &l[i + "tag = \"".len()..];
+                    return Some(rest[..rest.find('"')?].to_string());
+                }
+                // Between releases the crate may be pinned to a commit.
+                let rest = &l[l.find("rev = \"")? + "rev = \"".len()..];
+                Some(rest[..rest.find('"')?].chars().take(7).collect())
             })
     });
 
+    // The ROS distribution this binary links. A wheel may carry several
+    // (phase 92), so `--version` is how a user tells which one runs.
+    println!("cargo:rerun-if-env-changed=ROS_DISTRO");
+    let distro = std::env::var("ROS_DISTRO").ok().filter(|s| !s.is_empty());
+
     let mut parts: Vec<String> = Vec::new();
+    if let Some(d) = distro {
+        parts.push(format!("ROS {d}"));
+    }
     if let Some(d) = describe {
         parts.push(d);
     }

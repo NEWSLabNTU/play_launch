@@ -7,7 +7,7 @@ include LICENSE
 recursive-include python *.py
 
 # Include binaries (when present, for wheel building)
-include python/play_launch/bin/*
+recursive-include python/play_launch/dist *
 
 # Exclude build artifacts
 global-exclude __pycache__
