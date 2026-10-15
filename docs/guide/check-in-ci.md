@@ -132,6 +132,33 @@ rung), in milliseconds:
 The per-hop breakdown of a ROUTE is in the matching `fault-reaction-budget`
 info above the table.
 
+## The `--explain` timer-period table
+
+`--explain` also prints, per timer path, its PERIOD and the range it may take
+(phase 93 S5), with every limit named in the notes under the table:
+
+- MAX: how far the period may grow. Each row above that charges the period
+  (a sampling hop, a `reported` detection, a window owner's tick, a measured
+  `tick: { period }` term) allows `period + SLACK / count`, where count is how
+  many periods the row charges (read off the rows by re-running the
+  arithmetic one millisecond longer). The checks a period reaches are then
+  re-run with longer periods, and a rule that fires first (a publisher's or
+  subscriber's `min_rate_hz`, a window's expiry) is a limit of its own; so is
+  a `max_age` the node evaluates on that tick (`mechanism: application` or
+  `diagnostics`). A finding about a `source: derived` budget is not a limit:
+  the budget is recomputed with the period, and the notes name it. `none`
+  when nothing limits the period.
+- MIN: the executor running the timer keeps up, `sum of work / period <= 1`
+  over its timers (a container's composable nodes share one; any other node
+  is its own). A timer's work is the measured work beside its tick in a
+  measured budget (the terms other than `tick`), else its own measured or
+  analysed `max_latency`, else the platform file's `budget_us` for the node.
+  `unknown` when a timer on the executor states none.
+
+A timer whose `rate_hz` states `source: allocated` must lie inside the range:
+`error[period-range]` otherwise, and `warning[period-range]` while the lower
+end is unknown.
+
 ## Two notices about what the arithmetic reads
 
 - `info[declared-not-charged]`: a `max_transport` declaration (subscriber- or
