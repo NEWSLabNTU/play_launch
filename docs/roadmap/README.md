@@ -99,6 +99,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 89 | [Helping with DDS without touching it](./phase-89-dds-assist.md) | ✅ | 2026-10-14 |
 | 90 | [A tidy grammar](./phase-90-a-tidy-grammar.md) | 📝 planned | — |
 | 91 | [Domain extensions](./phase-91-domain-extensions.md) | 📝 planned | — |
+| 92 | [One PyPI package](./phase-92-one-pypi-package.md) | 📝 planned | — |
 
 ---
 
@@ -325,6 +326,12 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     packaging, and the vehicle keys and the ASIL default moved out of the
     core. Design: rlm `docs/design/extension-system.md`.
     [phase-91-domain-extensions.md](./phase-91-domain-extensions.md).
+  - **Phase 92** - planned: one PyPI package (2026-10-15). `pip install
+    play_launch` again: one wheel per Python, glibc and CPU carries every ROS
+    distribution sharing that tag, and the tool picks the payload at run
+    time from `ROS_DISTRO`; the 0.17.0 per-distribution projects and the
+    meta package go away; release as 0.17.1.
+    [phase-92-one-pypi-package.md](./phase-92-one-pypi-package.md).
   - **Phase 80** - planned: the plan and what was applied (2026-09-21). A
     composable's derived tier is printed by `check --sched --explain`, written
     into the model's `execution.bindings`, and then dropped for every
