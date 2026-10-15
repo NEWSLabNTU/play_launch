@@ -100,6 +100,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 90 | [A tidy grammar](./phase-90-a-tidy-grammar.md) | 📝 planned | — |
 | 91 | [Domain extensions](./phase-91-domain-extensions.md) | 📝 planned | — |
 | 92 | [One PyPI package](./phase-92-one-pypi-package.md) | 🔄 P1 done | — |
+| 93 | [Supervised budgets](./phase-93-supervised-budgets.md) | 🔄 | — |
 
 ---
 
@@ -332,6 +333,12 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     time from `ROS_DISTRO`; the 0.17.0 per-distribution projects and the
     meta package go away; release as 0.17.1.
     [phase-92-one-pypi-package.md](./phase-92-one-pypi-package.md).
+  - **Phase 93** - in progress: supervised budgets (2026-10-15). A budget
+    is a bound (analysed) or supervised: `supervise: { reaction, mechanism }`
+    beside `source:` (rlm), an overrun row per supervised budget checked
+    against the FTTI with its detection delay, a LEVEL column, and the
+    lowering nano-ros's deadline monitor reads; a timer period's feasible
+    range (S5). [phase-93-supervised-budgets.md](./phase-93-supervised-budgets.md).
   - **Phase 80** - planned: the plan and what was applied (2026-09-21). A
     composable's derived tier is printed by `check --sched --explain`, written
     into the model's `execution.bindings`, and then dropped for every
