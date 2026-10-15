@@ -1,9 +1,10 @@
 # Phase 90 - a tidy grammar: fold, rename and remove contract keys
 
 Status: **in progress** (2026-10-15): G1 done (inventory, decisions
-below); G4, G5 and G7 done; G3's non-bound part done (`external_topics`,
-`paths.<n>.input`; its bound part waits for G2); G8 started (the `migrate`
-verb and its rewrite table, with the G3, G4 and G7 rewrites). Stage 1 of 2. Stage 2 (an extension system
+below); G2 done (one bound type, internal); G4, G5 and G7 done; G3's
+non-bound part done (`external_topics`, `paths.<n>.input`; its bound part
+is next, on G2's `Bound`); G8 started (the `migrate` verb and its rewrite
+table, with the G3, G4 and G7 rewrites). Stage 1 of 2. Stage 2 (an extension system
 for domain vocabulary, and moving the domain keys into it) gets its own
 phase once its design is settled; nothing here depends on that design, and
 nothing here moves a key out of the core.
@@ -170,6 +171,78 @@ New candidates, not scheduled in this phase:
 - Gate: every existing contract fixture gives byte-identical `check` and
   `--explain` output; the format reference lists the bound keys under one
   heading with their kinds.
+
+#### G2 status: done (2026-10-15)
+
+rlm main `b986434`..`238c9bb`; play_launch `phase90-g2-bound`, which pins
+rlm main `238c9bb` until v0.1.60 (as G3 and G4 did). rlm
+`types/src/bound.rs`. One `Bound`:
+`kind` (`BoundKind`: latency, age, transport, jitter, response, rate,
+count, deadline, least time), `limit` (`Max` / `Min`), `value`
+(`Quantity`: a duration, Hz, a count, or a count per window), `source`
+(the `BudgetSource` of the map form) and `param` (`ParamBinding`: `Own`
+for a bare name on the bound's node, `Node` for `<node>.<parameter>`; a
+timer's `TimerParam` carries one too, so the three bindings G1 found are
+one representation). `BOUND_KEYS` lists every spelling with the kind it
+parses to; the format reference prints it under "Bounds".
+
+| key | where | kind | limit | map form |
+|---|---|---|---|---|
+| `max_latency` | path | latency | max | `{ duration, source }` |
+| `min_latency` | path | latency | min | |
+| `max_jitter` | path | jitter | max | `{ duration, source }` |
+| `jitter` | `trigger.timer` | jitter | max | `{ duration, source }` |
+| `min_rate_hz`, `max_rate_hz` | endpoint | rate | min, max | |
+| `max_age` | endpoint | age | max | `{ duration, source, param }` (own node) |
+| `max_transport` | endpoint, topic | transport | max | `{ duration, source }` |
+| `max_response` | `srv` endpoint | response | max | `{ duration, source }` |
+| `within` | `on_violation` | deadline | max | `{ duration, source }` |
+| `ftti` | hazard | deadline | max | `{ duration, source }` |
+| `window` | mode | least time | min | `{ duration, source, param }` (`<node>.<parameter>`) |
+| `settle`, `settle.duration` | `safe_state` | response | max | |
+| `settle.response` | `safe_state.settle` | response | max | `{ duration, source }` |
+| `max_count`, `max_consecutive` | `drop` | count | max | |
+| `tolerate`, `consecutive` | `miss` | count | max | |
+
+What changed underneath: every field above is `Option<Bound>`;
+`ModeWindow` and the `modes.<name>.window` context are gone (the window's
+map is read with the budget map form); `EndpointProps::max_age_param` is
+the `max_age` bound's `param`; `Manifest::budget_sources` is a method read
+off `Manifest::bounds()`, which lists every bound by its dotted path (the
+parse-time side table is gone). In play_launch, `budget_book::enumerate`
+is `bounds()` filtered to budgets (one rule instead of a list of keys),
+and every rule reads the bound (`OptBound::ms()`, `hz()`, `count()`,
+`count_per()`, `param()`). A mode override changes a bound's value and
+keeps its `source` and `param`. No key is renamed or removed.
+
+Gate:
+
+- Golden outputs: `check`, `check --explain` and `check --format json` on
+  every launch file of play_launch's `tests/fixtures` and on the launch
+  file of each of the island's 16 contracts (112 launch files, 337
+  outputs), plus the island's `.github/check-contracts.sh`, from this
+  branch's binary and from main's (0.17.0, rlm v0.1.59): byte-identical
+  (main's own nondeterministic order in `contract_merge` aside). rlm's
+  fixtures, play_launch's contracts and the island's (103 files: the parse
+  result, `budget_sources` and the rlm checker's diagnostics): identical;
+  only the manifest's JSON serialization changes where a bound states a
+  `source` or `param`, which it now writes in the map form.
+- rlm: 601 tests pass (599 on main, plus 2 for the bound table).
+- play_launch suites (`just _run-suites fast`) on this host: parser
+  514/514, play_launch unit 465/466, ros-launch-resolve 269/270,
+  integration 151 of 222 (main at 4e902948 on the same host: 147). Every
+  failure but three is main's too: the unit `cpuset` readiness test, and
+  interception, container, control-channel, load-policy,
+  runtime-enforcement and `sched_apply` tests that need the container and
+  the interception library this host's build lacks, or a web UI port in
+  time. The three are the tests that name the rlm tag (`check_dx` x2,
+  `the_default_checker_names_the_rlm_tag`), which fail under any rev pin,
+  as they did under G3's and G4's; they pass again at the next rlm tag.
+- nano-ros (origin/main `6f7f6d06`): `nros-orchestration-ir`,
+  `nros-macros` and `nros-cli-core` check clean, all targets, with rlm
+  patched to this branch, exactly as against v0.1.59: they read the model
+  and `Trigger::Timer { rate_hz, .. }`, not the changed fields. Nothing in
+  nano-ros changes; its vendored play_launch moves with play_launch's pin.
 
 ### G3. One place per fact
 
