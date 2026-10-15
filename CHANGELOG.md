@@ -6,10 +6,38 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.18.0 - 2026-10-16
 
-Phase 90 G3 (its bound part) and G6, on rlm v0.1.60; phase 93 (supervised
-budgets), on rlm v0.1.61.
+Supervised budgets (phase 93, rlm v0.1.61): a measured budget is either
+supervised (a runtime monitor catches its miss and starts a fallback, and
+the checker shows the overrun case still fits the FTTI) or reported as
+unsupervised; a timer's period gets a feasible range. Phase 90 G3 (its
+bound part) and G6 (rlm v0.1.60). Pins `ros-launch-manifest` `v0.1.61`.
+
+- **Added (`check`, phase 93 S2):** `supervise: { reaction | enters,
+  mechanism }` on a budget (rlm v0.1.61). Per supervised budget a rung or
+  floor row charges, an OVERRUN row: the time before it + the budget + the
+  detection delay (`supervision: { tick, switch }`; tick + switch for
+  `mechanism: timer`, tick + the longest callback on the node's executor
+  for `executor`) + the reaction's route and settle, against the FTTI
+  (`supervised-fit`). A supervised budget no runtime monitor checks is
+  refused (`supervised-unlowered`); a lowered one reaches the model as
+  `contracts.node_paths.<p>.supervise { route_deadline_ms, reaction,
+  mechanism }`. `--explain` has a LEVEL column (bound, supervised,
+  unsupervised) in place of "measured, not a bound", and CHECKED BY of a
+  supervised budget reads the lowering.
+- **Added (`check`, phase 93 S2):** `measured-unsupervised`, per measured
+  budget nothing supervises: a warning, or an error under `policy: {
+  unsupervised_measured: error }`.
+- **Added (`check`, phase 93):** `supervised-executor-long-callback`: a
+  `mechanism: executor` supervision whose detection a callback with no
+  analysed bound can delay (it is checked between callbacks; the
+  supervised path's own late output is published before the check runs).
+  Recommends `mechanism: timer`. Severity as `measured-unsupervised`.
+- **Added (`check`, phase 93 S5):** `--explain` prints a feasible range
+  per timer's period (MAX from the rows' slack and the checks the period
+  reaches, MIN from the executor's utilisation); `period-range` refuses a
+  `rate_hz: { value, source: allocated }` outside it.
 
 - **Fixed (shutdown):** play_launch stops its nodes one process at a time
   (5 ms apart, at most 1 s, children before the process that forked them)
