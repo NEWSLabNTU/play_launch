@@ -185,7 +185,7 @@ New candidates, not scheduled in this phase:
 
 #### G3 status: non-bound part done (2026-10-15)
 
-rlm `phase90-g3-g7` (main `f57c865`), play_launch `phase90-g3-g7`. The
+rlm `phase90-g3-g7` (main `26739f9`), play_launch `phase90-g3-g7`. The
 bound part (`max_transport` topic form, node-path `drop`) waits for G2.
 
 - `external_topics:` is deprecated (rlm `field_table::Status::Deprecated`,
@@ -212,7 +212,11 @@ bound part (`max_transport` topic form, node-path `drop`) waits for G2.
 - Readers moved so the two spellings check alike: rlm's `wiring` rule and
   play_launch's `endpoint-unwired` read a path's inputs through
   `effective_trigger()`, and rlm substitutes `$(var ...)` in `trigger: {
-  input }` (it did only in `input:`). On every contract that does not
+  input }` (it did only in `input:`), and rlm's `filter_manifest` keeps
+  an endpoint-less topic that marks `external:` (it dropped every
+  endpoint-less topic, so a moved entry lost its mark: `contract_merge`'s
+  model lost `externals: { /sensing/points: pub }`; the migrated model now
+  also lists the topic with its type). On every contract that does not
   migrate (play_launch, island) the new checker's output is identical to
   the old one's apart from the new warnings.
 - Fixtures migrated in-repo: rlm 17 files (52 edits: 50 `input`, 2 for
@@ -312,7 +316,7 @@ on the migrated. The island is unaffected (its one labelled file,
 
 #### G7 status: done (2026-10-15)
 
-rlm `phase90-g3-g7` (main `f57c865`), play_launch `phase90-g3-g7`. Nothing
+rlm `phase90-g3-g7` (main `26739f9`), play_launch `phase90-g3-g7`. Nothing
 writes either key (G1), so both are removed outright, as parse errors
 naming the replacement (`error[manifest-parse]`, exit 3):
 

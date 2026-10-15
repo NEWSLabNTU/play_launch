@@ -2279,7 +2279,10 @@ fn check_launch(launch: &std::path::Path, extra: &[&str]) -> (i32, String) {
 /// test can migrate it in place.
 fn fixture_copy(dir: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
-    let src = fixtures::repo_root().join("tests/fixtures").join(dir).join("launch");
+    let src = fixtures::repo_root()
+        .join("tests/fixtures")
+        .join(dir)
+        .join("launch");
     let dst = tmp.path().join("launch");
     std::fs::create_dir(&dst).unwrap();
     for e in std::fs::read_dir(&src).unwrap() {
@@ -2338,7 +2341,13 @@ fn g3_deprecated_spellings_warn_and_migrate_to_the_same_verdict() {
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("1 rewritten (6 edit(s))"), "{out}");
     let migrated = std::fs::read_to_string(&contract).unwrap();
-    assert!(!migrated.contains("external_topics") && !migrated.contains("    input:"));
+    assert!(
+        !migrated.contains("\nexternal_topics:")
+            && !migrated
+                .lines()
+                .any(|l| l.trim_start().starts_with("input:")),
+        "{migrated}"
+    );
     assert_eq!(migrate(&contract, &["--check"]).0, 0);
 
     let (code_new, new) = check_launch(&launch, &["--explain"]);
@@ -2405,13 +2414,16 @@ fn g7_migrate_hoists_an_inline_all_of_guard_into_a_function() {
     let (code, out) = migrate(&contract, &["--write"]);
     assert_eq!(code, 0, "{out}");
     assert!(
-        out.contains("guard-all-of-function: `all_of: [/loc/ndt, /loc/gnss]` -> `pose_lost_all_of`"),
+        out.contains(
+            "guard-all-of-function: `all_of: [/loc/ndt, /loc/gnss]` -> `pose_lost_all_of`"
+        ),
         "{out}"
     );
     let migrated = std::fs::read_to_string(&contract).unwrap();
     assert!(
         migrated.contains("      - pose_lost_all_of\n")
-            && migrated.contains("functions:\n  pose_lost_all_of: { all_of: [/loc/ndt, /loc/gnss] }\n"),
+            && migrated
+                .contains("functions:\n  pose_lost_all_of: { all_of: [/loc/ndt, /loc/gnss] }\n"),
         "{migrated}"
     );
     let (code, out) = check_launch(&dir.join("bringup.launch.xml"), &[]);
