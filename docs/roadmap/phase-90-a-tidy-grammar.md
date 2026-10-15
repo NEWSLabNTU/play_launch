@@ -311,8 +311,8 @@ Non-bound part: rlm `phase90-g3-g7` (main `26739f9`), play_launch
   G4 edits in 9 files are still pending, G8); nano-ros (27 contracts
   outside its vendored play_launch), 0 edits.
 
-Bound part (rlm and play_launch `phase90-g3b-g6`; play_launch pins that
-rlm commit until v0.1.60):
+Bound part (rlm main `6e48615`..`336d6c2`, play_launch `phase90-g3b-g6`;
+play_launch pins rlm main `336d6c2` until v0.1.60):
 
 - `topics.<t>.max_transport` is deprecated (`Status::Deprecated`). It is
   read as before, the transport of each subscriber of the topic that states
@@ -460,7 +460,7 @@ on the migrated. The island is unaffected (its one labelled file,
 
 #### G6 status: done (2026-10-15)
 
-rlm and play_launch `phase90-g3b-g6`. `settle: <d>` is shorthand for
+rlm main `6e48615`, play_launch `phase90-g3b-g6` (with G3's bound part). `settle: <d>` is shorthand for
 `settle: { duration: <d> }`; the map is `{ duration | decel, jerk ;
 response ; source }` (`bound::Form::Settle`). `response` moved from
 `SettleProfile` to `SafeState.settle_response` and is added to a written
