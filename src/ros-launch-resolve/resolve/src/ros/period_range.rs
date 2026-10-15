@@ -558,14 +558,23 @@ fn range_of(
     upper.sort_by(|a, b| a.ms.total_cmp(&b.ms));
 
     // Cross-check: the checks a period reaches, re-run at the candidate. A
-    // rule that trips first is a limit of its own.
+    // rule that trips first is a limit of its own. What the probes compare
+    // against is what holds at half the period too, so a finding the
+    // current period already causes (a promise it already breaks) is a
+    // limit below it, not background.
+    let lo = t.period_ms / 2.0;
     let base = {
-        let (probe, moved) = probe_at(index, t, t.period_ms);
-        errors(&probe, t, &moved)
+        let (now, moved) = probe_at(index, t, t.period_ms);
+        let now = errors(&now, t, &moved);
+        let (half, moved) = probe_at(index, t, lo);
+        let half = errors(&half, t, &moved);
+        now.into_iter()
+            .filter(|(k, _)| half.contains_key(k))
+            .collect::<BTreeMap<_, _>>()
     };
     let hi = upper.first().map_or(SEARCH_CAP_MS, |l| l.ms - 1e-6);
-    if hi > t.period_ms
-        && let Some((ms, rule, msg)) = search(index, t, t.period_ms, hi, &base)
+    if hi > lo
+        && let Some((ms, rule, msg)) = search(index, t, lo, hi, &base)
     {
         upper.push(Limit {
             ms,
@@ -867,6 +876,27 @@ mod tests {
             .find(|r| r.path == "on_timer" && r.node.ends_with("watchdog"))
             .expect("the watchdog's tick");
         assert!(close(r.lower_ms().expect("known"), 24.0 / 0.9), "{r:#?}");
+    }
+
+    /// A period that already breaks a promise is not measured against
+    /// itself: the limit the promise sets is found below it.
+    #[test]
+    fn a_promise_the_period_already_breaks_is_still_a_limit() {
+        let mut index = index_of("contract_period_range");
+        let brake = timers(&index)
+            .into_iter()
+            .find(|t| t.node == "/safety/brake")
+            .expect("the brake's tick");
+        set_period(&mut index, &brake, 100.0);
+        let ranges = ranges(&index, &BTreeMap::new());
+        let r = ranges
+            .iter()
+            .find(|r| r.node == "/safety/brake")
+            .expect("the brake's range");
+        assert!(close(r.period_ms, 100.0), "{r:#?}");
+        let max = r.upper.first().expect("an upper limit");
+        assert!(close(max.ms, 1000.0 / 15.0), "{r:#?}");
+        assert!(max.why.contains("`min-rate-mismatch`"), "{}", max.why);
     }
 
     /// `--explain` prints the range and the limits by name.
