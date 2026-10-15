@@ -1,8 +1,9 @@
 # Phase 93 - supervised budgets: the keys, the overrun case, a period's range
 
 Status: **in progress** (2026-10-15): S1 (rlm) done on rlm main
-`33577ff`, unreleased; S2 (play_launch) in progress; S5 in progress
-(period-range agent). Nothing released.
+`33577ff`; S2 (play_launch) done on main `bfede19e`; S5 in progress
+(period-range agent). Nothing released: S1 needs rlm v0.1.61, S2 a
+play_launch release pinning it.
 
 The grammar belongs to `ros-launch-manifest` (rlm,
 `~/repos/ros-launch-manifest`); it is tracked here because the checker
@@ -235,7 +236,33 @@ Owner: period-range agent. Uses S1's `SourceKind::Allocated` and the
 - S1: done (2026-10-15), rlm main `33577ff` (ff-pushed; unreleased,
   GRAMMAR_VERSION 0.1.61). `SourceKind::Allocated` and the `rate_hz` map
   form are there for S5. play_launch pins it by `rev` until v0.1.61.
-- S2: in progress, branch `phase93-s2`.
+- S2: done (2026-10-15), play_launch main `b0072401` (the rlm pin) and
+  `bfede19e`. New module `src/ros-launch-resolve/resolve/src/ros/supervision.rs`;
+  `manifest_loader.rs` gets `RungRole::Overrun`, the valued `walk_terms`,
+  `walk_reaction_at` and two `overrun_rows` calls; `budget_book.rs` the
+  LEVEL and the lowering-based CHECKED BY; `check.rs` the LEVEL columns;
+  `model_builder.rs` the `supervise` lowering. Fixtures
+  `contract_supervised` (both mechanisms fit; the executor one is noted
+  "covers slowness, not a hang"), `contract_supervised_overrun`
+  (`supervised-fit` error: 5687.72 ms against 3 s),
+  `contract_supervised_unlowered` (`supervised-unlowered` on a timer path).
+  Tests: `cargo test` in `src/ros-launch-resolve` passes except
+  `producer::tests::the_default_checker_names_the_rlm_tag`, which needs a
+  tag pin (it fails on every `rev` pin, and passes again at v0.1.61);
+  `tests/manifest_check.rs` 66 of 66, run with the `ros-launch-resolve`
+  CLI of this tree standing in for `play_launch` (the installed one is
+  0.17.0).
+  Island (`safety_island.launch.xml`, `check --explain`, against the same
+  CLI built at main before S2): every verdict and every number unchanged;
+  new are the LEVEL columns (all four rows `unsupervised`), the notes
+  "TOTAL ... is unsupervised" in place of "measured, not a bound" (terms now
+  listed in the order charged, the link first), and 8
+  `measured-unsupervised` warnings (5 -> 13 warnings, 0 errors).
+  `.github/check-contracts.sh` gives the same 16 verdicts with both.
+  Not done here: an overrun row for a supervised budget charged inside a
+  window's route (the rung below charges the same path later, which is the
+  larger case); a supervised `max_transport`, `max_age` or settle is
+  refused as unlowered until a runtime check exists for it.
 - S5: in progress (period-range agent).
 
 ## Not in this phase
