@@ -985,6 +985,52 @@ RankedPlan {
     ],
     warnings: [],
 }
+== contract_period_range/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/safety/brake",
+            path: "on_timer",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=50)",
+        },
+        RankItem {
+            node: "/safety/watchdog",
+            path: "on_timer",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/safety/watchdog",
+            path: "react",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=136)",
+        },
+        RankItem {
+            node: "/safety/watchdog",
+            path: "report",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=200)",
+        },
+    ],
+    warnings: [],
+}
 == contract_rates/launch/bringup.launch.xml
 RankedPlan {
     items: [

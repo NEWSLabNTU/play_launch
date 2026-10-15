@@ -1,0 +1,95 @@
+# Phase 93 S5: a feasible range for each timer's period.
+#
+# hpc_lost: detection 300 (max_age, evaluated by the watchdog on its tick)
+# + route: react 136 (tick 100 + 10 x 1.2 = 112, work 20 x 1.2 = 24)
+#          + brake sampling hop 50 + brake on_timer 10
+# + settle 200 = 696 against an FTTI of 1000: slack 304.
+#
+# watchdog/on_timer (100 ms): one period in the row (the tick term of
+#   react), so the FTTI allows 100 + 304 = 404; max_age 300 is checked on
+#   that tick and binds first. Work 24 (beside the tick) over the 90 % that
+#   `report` (20 / 200) leaves: at least 26.67.
+# brake/on_timer (50 ms): one period in the row (the sampling hop), so the
+#   FTTI allows 354; its own promise, `min_rate_hz: 15` on brake_cmd, binds
+#   first at 66.67. Work 10 (its own measured max_latency).
+version: 1
+
+hazards:
+  hpc_lost:
+    severity: ASIL_B
+    description: the heartbeat stops
+    guards: [/safety/heartbeat]
+    on: omission
+    ftti: 1000ms
+    reaction: safety.stop
+
+nodes:
+  watchdog:
+    sub:
+      heartbeat:
+        max_age: 300ms
+        on_violation:
+          on: [omission]
+          mechanism: application
+          reaction: react
+    pub:
+      stop_req: {}
+      status: {}
+    paths:
+      on_timer:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [status]
+      report:
+        trigger: { timer: { rate_hz: 5 } }
+        output: [status]
+        max_latency:
+          duration: 20ms
+          source: { measured: { max: 16ms, n: 10, margin: 0.2 } }
+      react:
+        trigger: { input: [heartbeat] }
+        output: [stop_req]
+        max_latency:
+          duration: 136ms
+          source:
+            measured:
+              margin: 0.2
+              terms:
+                tick: { period: 100ms, max: 10ms, n: 100 }
+                work: { max: 20ms, n: 10 }
+
+  brake:
+    sub:
+      stop_req: { state: true }
+    pub:
+      brake_cmd: { min_rate_hz: 15 }
+    paths:
+      on_timer:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [brake_cmd]
+        max_latency:
+          duration: 10ms
+          source: { measured: { max: 8ms, n: 10, margin: 0.2 } }
+        safe_state: { emits: brake_cmd, settle: 200ms }
+
+paths:
+  safety.stop:
+    trigger: { input: [/safety/heartbeat] }
+    output: [/safety/brake_cmd]
+
+topics:
+  /safety/heartbeat:
+    type: std_msgs/msg/String
+    external: pub
+    sub: [watchdog/heartbeat]
+  /safety/stop_req:
+    type: std_msgs/msg/String
+    pub: [watchdog/stop_req]
+    sub: [brake/stop_req]
+  /safety/status:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [watchdog/status]
+  /safety/brake_cmd:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [brake/brake_cmd]

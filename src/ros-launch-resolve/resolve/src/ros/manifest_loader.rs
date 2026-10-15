@@ -464,6 +464,12 @@ pub struct ManifestIndex {
     /// Every stated budget with its source and what checks it, for
     /// `--explain` and `declared-not-charged` (phase 10 B7, B8).
     pub stated: Vec<super::budget_book::StatedBudget>,
+    /// Every timer's feasible period range (phase 93 S5), for `--explain`
+    /// and `period-range`.
+    pub period_ranges: Vec<super::period_range::PeriodRange>,
+    /// A composable node's container, by node FQN (phase 93 S5): the nodes
+    /// one executor runs. A node absent here is its own executor.
+    pub executor_of: BTreeMap<String, String>,
     /// The `max_transport` declarations some reaction route charged on its
     /// guard edge (phase 85 I1): a subscriber endpoint FQN for a sub-level
     /// declaration, a topic FQN for a topic-level one. What
@@ -618,6 +624,7 @@ pub fn load_manifests(
     let mut provider_loaded = 0usize;
 
     index.launch_params = super::value_rules::launch_param_values(launch_dump);
+    index.executor_of = super::sched_loader::composable_containers(launch_dump);
 
     // Snapshot scope tree (parent links) for cross-scope checks.
     // Includes all scopes (file and group), not just those with manifests.
@@ -1134,6 +1141,11 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // Phase 93: a supervised budget no monitor reads; a measured one nothing
     // supervises.
     super::supervision::check(index);
+
+    // Phase 93 S5: each timer's feasible period, from the rows above and the
+    // executor's utilization. After `stated`; it re-runs the checks a period
+    // reaches on probes, as `check_each_mode` does.
+    super::period_range::check_period_ranges(index);
 
     // Phase 85 I8: an endpoint no topic wires.
     check_endpoint_unwired(index);
@@ -3667,6 +3679,23 @@ fn check_each_mode(index: &mut ManifestIndex) {
     }
     extra.sort_by(|a, b| a.path.cmp(&b.path).then(a.rule_id.cmp(&b.rule_id)));
     index.merge_diagnostics.extend(extra);
+}
+
+/// Phase 93 S5: the checks a timer's period reaches, re-run on a probe whose
+/// period `period_range` changed. The same shape as `check_each_mode`, plus
+/// the rate derivations, which read the timers.
+pub(crate) fn recheck_period_probe(probe: &mut ManifestIndex) {
+    let graph = super::manifest_graph::build_global_graph(probe);
+    derive_and_check_topic_rates(probe, &graph);
+    derive_and_check_endpoint_rates(probe, &graph);
+    check_sync_feasibility_on_derived_rates(probe);
+    check_scope_path_critical_path(probe, &graph);
+    check_scope_path_drop_tightness(probe, &graph);
+    check_sync_window_budget(probe);
+    check_cross_scope_rate_hierarchy(probe, &graph);
+    check_cross_scope_on_demand(probe, &graph);
+    check_lifespan_against_age(probe, &graph);
+    check_fault_reaction(probe, &graph);
 }
 
 /// Apply a mode's overrides to a cloned index, returning how many landed.

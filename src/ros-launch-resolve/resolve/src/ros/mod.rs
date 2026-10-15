@@ -14,6 +14,7 @@ pub mod manifest_graph;
 pub mod manifest_loader;
 pub mod model_builder;
 pub mod param_check;
+pub mod period_range;
 pub mod sched_derive;
 pub mod sched_loader;
 pub mod supervision;

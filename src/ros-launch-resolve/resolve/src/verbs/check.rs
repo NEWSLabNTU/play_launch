@@ -165,7 +165,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // channel is on by default, so `check` works with no manifest flags at
     // all whenever the launch file ships sidecar contracts.
     let sources = inputs.contract_sources()?;
-    let index = manifest_loader::load_manifests(&dump, &sources)?;
+    let mut index = manifest_loader::load_manifests(&dump, &sources)?;
 
     // Phase 71 W5: a consequence, printed rather than written. Every ROS user
     // who runs `diagnostic_updater` configures `FrequencyStatus` and
@@ -220,6 +220,14 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
         if inputs.explain {
             crate::ros::sched_loader::print_explain(&derived, resolved, Some(&index));
         }
+        // Phase 93 S5: the platform file's budgets are a timer's work when
+        // its contract states none.
+        if let Ok(file) = ros_launch_manifest_sched::parse_platform_file(&resolved.path) {
+            crate::ros::period_range::with_platform_budgets(
+                &mut index,
+                &crate::ros::sched_loader::posix_budgets(&file),
+            );
+        }
     } else if inputs.explain && index.budgets.is_empty() {
         crate::say!(
             "note: --explain has no effect without a resolved scheduling platform file \
@@ -270,6 +278,10 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // computed from, one row per (hazard, rung).
     if inputs.explain && inputs.format != "json" && !index.budgets.is_empty() {
         crate::say_raw!("{}", render_budgets(&index));
+    }
+    // Phase 93 S5: each timer's feasible period.
+    if inputs.explain && inputs.format != "json" && !index.period_ranges.is_empty() {
+        crate::say_raw!("{}", render_periods(&index));
     }
 
     // Summary
@@ -566,6 +578,81 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
         out.push('\n');
     }
     out.push_str(&render_stated(index));
+    out
+}
+
+/// `check --explain`'s table of every timer's feasible period (phase 93
+/// S5): the current period, the range, and the limits that bind it.
+pub fn render_periods(index: &manifest_loader::ManifestIndex) -> String {
+    let ms = |v: Option<f64>| v.map_or("-".to_string(), |v| format!("{v:.2}"));
+    let mut table: Vec<[String; 4]> = vec![[
+        "TIMER".to_string(),
+        "PERIOD".to_string(),
+        "MIN".to_string(),
+        "MAX".to_string(),
+    ]];
+    let mut notes: Vec<String> = Vec::new();
+    for r in &index.period_ranges {
+        let timer = format!("{}/{}", r.node, r.path);
+        table.push([
+            timer.clone(),
+            format!("{:.2}", r.period_ms),
+            match &r.lower {
+                Ok(l) => format!("{:.2}", l.ms),
+                Err(_) => "unknown".to_string(),
+            },
+            r.upper_ms().map_or("none".to_string(), |v| ms(Some(v))),
+        ]);
+        match &r.lower {
+            Ok(l) => notes.push(format!("  {timer}: MIN {:.2} <- {}", l.ms, l.why)),
+            Err(why) => notes.push(format!("  {timer}: MIN {why}")),
+        }
+        for (i, l) in r.upper.iter().enumerate() {
+            let tag = if i == 0 { "MAX" } else { "   " };
+            notes.push(format!("  {timer}: {tag} {:.2} <- {}", l.ms, l.why));
+        }
+        if !r.follows.is_empty() {
+            notes.push(format!(
+                "  {timer}: derived from the period, recomputed with it: {}",
+                r.follows.join(", ")
+            ));
+        }
+        if r.upper.is_empty() {
+            notes.push(format!(
+                "  {timer}: MAX none -- no row charges the period and no check \
+                 refuses a longer one"
+            ));
+        }
+    }
+    let widths: Vec<usize> = (0..4)
+        .map(|c| table.iter().map(|row| row[c].len()).max().unwrap_or(0))
+        .collect();
+    let mut out = String::from("\n-- Timer periods (--explain, ms) --\n");
+    for row in &table {
+        let line: Vec<String> = row
+            .iter()
+            .zip(&widths)
+            .enumerate()
+            .map(|(c, (cell, w))| {
+                if c == 0 {
+                    format!("{cell:<w$}")
+                } else {
+                    format!("{cell:>w$}")
+                }
+            })
+            .collect();
+        out.push_str(line.join("  ").trim_end());
+        out.push('\n');
+    }
+    out.push_str(
+        "  MAX: the period may grow until a fault-reaction row runs out of slack (its slack over \
+         the number of periods it charges) or a check refuses it; MIN: the executor that runs \
+         the timer keeps up (sum of work / period <= 1 over its timers).\n",
+    );
+    for n in notes {
+        out.push_str(&n);
+        out.push('\n');
+    }
     out
 }
 

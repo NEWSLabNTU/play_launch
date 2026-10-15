@@ -265,6 +265,27 @@ pub fn composable_fqns(dump: &LaunchDump) -> std::collections::HashSet<String> {
         .collect()
 }
 
+/// Each composable node's container, by node FQN (phase 93 S5): the nodes
+/// a container's executor runs. A standalone node is its own executor and is
+/// absent.
+pub(crate) fn composable_containers(dump: &LaunchDump) -> BTreeMap<String, String> {
+    let by_id: HashMap<usize, &str> = dump.scopes.iter().map(|s| (s.id, s.ns.as_str())).collect();
+    dump.load_node
+        .iter()
+        .filter(|lc| !lc.node_name.is_empty())
+        .map(|lc| {
+            let ns = effective_ns(Some(lc.namespace.as_str()), lc.scope, &by_id);
+            let c = &lc.target_container_name;
+            let container = if c.starts_with('/') {
+                c.clone()
+            } else {
+                join_fqn(&effective_ns(None, lc.scope, &by_id), c)
+            };
+            (join_fqn(&ns, &lc.node_name), container)
+        })
+        .collect()
+}
+
 /// Result of the v2 derive→override→validate pipeline (design §5, §6):
 /// the final per-node plan (one [`ResolvedTier`] per node, except the
 /// synthesized default tier which stays grouped — see
