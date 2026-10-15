@@ -263,7 +263,20 @@ Owner: period-range agent. Uses S1's `SourceKind::Allocated` and the
   window's route (the rung below charges the same path later, which is the
   larger case); a supervised `max_transport`, `max_age` or settle is
   refused as unlowered until a runtime check exists for it.
-- S5: in progress (period-range agent).
+- S5: done (2026-10-15), branch `phase93-s5-r2` (`85c949b7`), not yet on
+  main. `ros/period_range.rs`, called after `stated`; `--explain` prints a
+  timer-period table, `period-range` refuses an allocated `rate_hz` outside
+  its range. The counts are not stored on `RungBudget`: they are read off
+  the rows by re-running the arithmetic with the period 1 ms longer and
+  differencing DETECT, WINDOWS, ROUTE and SETTLE. The cross-check re-runs
+  the period-reaching checks on probes (bisection); a new error or warning
+  is a named limit, a finding on a `source: derived` budget is listed as
+  following the period. Island: `/mrm_handler/on_timer` 100 ms in
+  [31, 111.11] (its `hazard_lights_cmd` `min_rate_hz: 9` promise), then
+  `max_age` 500, then the FTTI rows (odd_exit comfortable stop 4403.17,
+  hpc_loss emergency stop 4934.33). Executors are per node or per
+  container; the island's single spin thread is not visible to the
+  checker, so MIN is per node there.
 
 ## Not in this phase
 
