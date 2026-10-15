@@ -472,7 +472,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             trigger: trigger_out(&p.path),
             safe_state: p.path.safe_state.as_ref().map(|ss| SafeStateOut {
                 emits: ss.emits.clone(),
-                settle_ms: ss.settle.ms(),
+                settle_ms: ss.written_settle_ms(),
                 derived: ss.settle_profile.is_some(),
             }),
             max_latency_ms: p.path.max_latency.ms(),

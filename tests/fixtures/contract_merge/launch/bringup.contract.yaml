@@ -12,6 +12,10 @@ nodes:
         min_rate_hz: 5
         max_age: 200ms
         required: true
+        # The hop's 5ms, stated where it is paid (phase 90 G3: it was the
+        # topic-level default in perception.contract.yaml, which this
+        # subscriber inherited across the include).
+        max_transport: 5ms
       map:
         state: true
     srv:

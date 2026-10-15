@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!-- Phase 90 G3: drop-tightness across scopes. The child scope's detector
+     publishes /perception/objects (its contract states the topic's drop);
+     the root's tracker consumes it, and the root's scope path bounds the
+     whole route's loss. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="listener" name="tracker" namespace="/perception"/>
+  <group>
+    <push-ros-namespace namespace="perception"/>
+    <include file="perception.launch.xml"/>
+  </group>
+</launch>

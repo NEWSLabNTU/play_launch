@@ -9,25 +9,27 @@
 #
 # Topology — one topic fans out to two branches that rejoin at the sink:
 #
-#                        /et/objects  (topic default 10ms)
-#                       ╱  [0ms override on fast/objects]  ╲
+#                        /et/objects
+#                       ╱  [0ms on fast/objects]           ╲
 #   /et/raw → producer (10ms)                               ├→ fast (20ms) ─┐
-#                       ╲  [10ms default on slow/objects]  ╱                ├→ sink (5ms) → /et/cmd
+#                       ╲  [10ms on slow/objects]          ╱                ├→ sink (5ms) → /et/cmd
 #                        ╰────────────────────────────────→ slow (15ms) ───┘
 #
-# Arrival at the sink, per hypothesis about the precedence:
+# Phase 90 G3: the 10ms was the topic's default, inherited by slow/objects;
+# `play_launch migrate` moved it onto that subscriber, which is what it
+# meant. Arrival at the sink, per hypothesis about the per-edge weight:
 #
-#   CORRECT (endpoint wins where declared, topic elsewhere):
+#   CORRECT (each subscriber's own transport on its edge):
 #       fast branch  10 +  0 + 20 = 30
 #       slow branch  10 + 10 + 15 = 35   <- critical
 #       total        35 + 5 = 40ms, route producer → slow → sink
 #
-#   override IGNORED (topic value on every edge — the pre-#0042 `derive`):
+#   fast's 0ms IGNORED (10ms on every edge — the pre-#0042 `derive`):
 #       fast 10 + 10 + 20 = 40           <- critical
 #       slow 10 + 10 + 15 = 35
 #       total 45ms, route producer → fast → sink
 #
-#   override applied to EVERY subscriber:
+#   fast's 0ms applied to EVERY subscriber:
 #       fast 10 + 0 + 20 = 30            <- critical
 #       slow 10 + 0 + 15 = 25
 #       total 35ms, route producer → fast → sink
@@ -66,10 +68,10 @@ nodes:
         output: [out]
         max_latency: 20ms
 
-  # On another machine, so it inherits the topic's 10ms.
+  # On another machine: the network's 10ms.
   slow:
     sub:
-      objects: {}
+      objects: { max_transport: 10ms }
     pub:
       out: {}
     paths:
@@ -99,7 +101,6 @@ topics:
     type: std_msgs/msg/String
     pub: [producer/objects]
     sub: [fast/objects, slow/objects]
-    max_transport: 10ms
 
   /et/fast_out:
     type: std_msgs/msg/String

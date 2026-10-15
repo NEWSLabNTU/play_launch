@@ -40,10 +40,29 @@ pub struct StatedBudget {
 /// the duration bounds of [`Manifest::bounds`] that are budgets (phase 90
 /// G2). A settle's written `duration` beside a braking profile is the
 /// profile's fallback, not a budget of its own: the profile's `response` is.
+/// A written duration with no profile (`settle: { duration, response }`,
+/// phase 90 G6) is one.
 pub(crate) fn enumerate(m: &Manifest) -> Vec<(String, f64)> {
+    let mut beside_profile: BTreeSet<String> = BTreeSet::new();
+    let mut note = |at: String, p: &ros_launch_manifest_types::PathDecl| {
+        if p.safe_state
+            .as_ref()
+            .is_some_and(|ss| ss.settle_profile.is_some())
+        {
+            beside_profile.insert(format!("{at}.safe_state.settle.duration"));
+        }
+    };
+    for (n, nd) in &m.nodes {
+        for (p, pd) in &nd.paths {
+            note(format!("nodes.{n}.paths.{p}"), pd);
+        }
+    }
+    for (p, pd) in &m.paths {
+        note(format!("paths.{p}"), pd);
+    }
     m.bounds()
         .into_iter()
-        .filter(|(k, b)| b.is_budget() && !k.ends_with(".safe_state.settle.duration"))
+        .filter(|(k, b)| b.is_budget() && !beside_profile.contains(k))
         .filter_map(|(k, b)| b.ms().map(|ms| (k, ms)))
         .collect()
 }

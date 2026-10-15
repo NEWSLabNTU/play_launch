@@ -375,7 +375,7 @@ fn path_contract(
     model::PathContract {
         safe_state: decl.safe_state.as_ref().map(|s| model::SafeStateContract {
             emits: emits_key(&s.emits),
-            settle_ms: s.settle.ms(),
+            settle_ms: s.written_settle_ms(),
             settle_profile: s
                 .settle_profile
                 .as_ref()

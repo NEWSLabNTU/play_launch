@@ -1,0 +1,25 @@
+# The child scope (/perception): the detector and the hop it publishes on,
+# which may lose 1 of every 20 messages (5%).
+version: 1
+
+nodes:
+  detector:
+    sub:
+      raw: {}
+    pub:
+      objects: {}
+    paths:
+      main:
+        trigger: { input: [raw] }
+        output: [objects]
+        max_latency: 15ms
+
+topics:
+  /sensing/raw:
+    type: std_msgs/msg/String
+    external: pub
+    sub: [detector/raw]
+  objects:
+    type: std_msgs/msg/String
+    pub: [detector/objects]
+    drop: 1 / 20

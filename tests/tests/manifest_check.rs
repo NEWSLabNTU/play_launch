@@ -2371,6 +2371,159 @@ fn g3_deprecated_spellings_warn_and_migrate_to_the_same_verdict() {
     assert_eq!(findings(&old), findings(&new));
 }
 
+/// Phase 90 G3 (the bound part): a topic-level `max_transport` warns once
+/// per topic, naming the subscribers that read it (or that none does), and
+/// `migrate` moves it onto the one subscriber of the same file; the topic
+/// with no subscriber is left for a hand edit. The migrated contract checks
+/// to the same findings and `--explain` sums.
+#[test]
+fn g3b_a_topic_transport_warns_and_migrates_to_the_same_verdict() {
+    let (_tmp, dir) = fixture_copy("contract_spelling_deprecated_g3b");
+    let launch = dir.join("bringup.launch.xml");
+    let contract = dir.join("bringup.contract.yaml");
+    let (code, old) = check_launch(&launch, &["--explain"]);
+    assert_eq!(code, 0, "{old}");
+    let deprecated = |out: &str| {
+        out.lines()
+            .filter(|l| l.contains("warning[deprecated-spelling]"))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(deprecated(&old).len(), 2, "{old}");
+    for needle in [
+        "topic '/safety/obstacles': `max_transport: 3ms` on a topic is deprecated; a transport \
+         is the hop into one subscriber and is stated on it, `nodes.<n>.sub.<ep>.max_transport`. \
+         It is read as the transport of 1 subscriber(s) that state none: \
+         '/safety/brake_controller/obstacles'. Fix: write `max_transport: 3ms` on each of them \
+         and delete this key",
+        "topic '/safety/brake_cmd': `max_transport: 1ms` on a topic is deprecated",
+        "No subscriber reads it (each states its own, or the topic has none), so it charges \
+         nothing. Fix: delete it",
+    ] {
+        assert!(old.contains(needle), "expected `{needle}`:\n{old}");
+    }
+
+    let (code, out) = migrate(&contract, &["--write"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains(
+            "topic-max-transport-subscribers: `max_transport: 3ms` -> (nothing) \
+             (topics./safety/obstacles.max_transport)"
+        ) && out.contains("1 rewritten (2 edit(s))"),
+        "{out}"
+    );
+    let migrated = std::fs::read_to_string(&contract).unwrap();
+    assert!(
+        migrated.contains("        max_age: 60ms\n")
+            && migrated.contains("        max_transport: 3ms\n")
+            && migrated.contains("    max_transport: 1ms\n"),
+        "the subscriber states 3ms; /safety/brake_cmd is left:\n{migrated}"
+    );
+
+    let (code_new, new) = check_launch(&launch, &["--explain"]);
+    assert_eq!(code_new, 0, "{new}");
+    assert_eq!(
+        deprecated(&new).len(),
+        1,
+        "only the hand edit is left:\n{new}"
+    );
+    let findings = |out: &str| {
+        let mut v: Vec<String> = out
+            .lines()
+            .filter(|l| {
+                l.contains("info[")
+                    || l.contains("error[")
+                    || l.contains("warning[")
+                    || l.contains("note[")
+            })
+            .filter(|l| !l.contains("deprecated-spelling") && !l.contains("declared-not-charged"))
+            .map(without_lines)
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(findings(&old), findings(&new));
+    // `declared-not-charged` names the key, which moved from the topic to
+    // the subscriber: one each, before and after.
+    let ndc = |out: &str| out.matches("info[declared-not-charged]").count();
+    assert_eq!(ndc(&old), ndc(&new), "{old}\n---\n{new}");
+    let table = |out: &str| {
+        out.lines()
+            .skip_while(|l| !l.starts_with("HAZARD"))
+            .take_while(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert!(!table(&old).is_empty(), "{old}");
+    assert_eq!(table(&old), table(&new));
+}
+
+/// Phase 90 G3: a node path's `drop:` refuses the contract (exit 3) naming
+/// the topic form; `migrate` moves it to the path's one output topic and
+/// the contract loads.
+#[test]
+fn g3b_a_node_path_drop_is_refused_and_migrates_to_its_topic() {
+    let (_tmp, dir) = fixture_copy("contract_node_path_drop_removed");
+    let launch = dir.join("bringup.launch.xml");
+    let contract = dir.join("bringup.contract.yaml");
+    let (code, out) = check_launch(&launch, &[]);
+    assert_eq!(code, 3, "{out}");
+    for needle in [
+        "error[manifest-parse]",
+        "at 'nodes.obstacle_detector.paths.detect.drop': Removed in v0.1.60",
+        "`topics: { <t>: { drop: ... } }`; `play_launch migrate` moves it",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    let (code, out) = migrate(&contract, &["--write"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("node-path-drop-topic"), "{out}");
+    let migrated = std::fs::read_to_string(&contract).unwrap();
+    assert!(
+        migrated.contains("    sub: [brake_controller/obstacles]\n    drop: 1 / 100\n"),
+        "{migrated}"
+    );
+    let (code, out) = check_launch(&launch, &[]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("manifest-parse"), "{out}");
+}
+
+/// Phase 90 G3: `drop-tightness` on the merged graph. The scope path's
+/// 1 / 25 is tighter than the 1 / 20 the child contract states for a topic
+/// on its route; only the checker's cross-scope route sees both.
+#[test]
+fn g3b_drop_tightness_compares_a_scope_path_with_a_topic_of_another_contract() {
+    let out = check_fixture("contract_drop_tightness");
+    let hits: Vec<&str> = out
+        .lines()
+        .filter(|l| l.contains("warning[drop-tightness]"))
+        .collect();
+    assert_eq!(hits.len(), 1, "{out}");
+    assert!(
+        hits[0].contains(
+            "scope path 'e2e' permits a loss of 1 / 25 (4.00%) end to end, but topic \
+             '/perception/objects' on its route permits 1 / 20 (5.00%) on one hop"
+        ),
+        "{out}"
+    );
+}
+
+/// Phase 90 G6: a written settle's `response` is added to it, as to a
+/// braking profile's: `--explain` charges 200 + 150 and prints both parts.
+#[test]
+fn g6_a_written_settle_adds_its_response() {
+    let launch = fixtures::repo_root()
+        .join("tests/fixtures/contract_settle_written_response/launch/bringup.launch.xml");
+    let (code, out) = check_launch(&launch, &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    for needle in [
+        "350.00 literal",
+        "drive_blind/safety.stop: settle = written 200.00ms + response 150.00ms",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+}
+
 /// Phase 90 G7: the two removed keys refuse the contract (exit 3) with a
 /// message naming the replacement.
 #[test]
