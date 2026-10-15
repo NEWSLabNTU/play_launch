@@ -16,16 +16,18 @@ sudo apt install libz3-dev
 sudo apt install ros-${ROS_DISTRO}-rclcpp-components ros-${ROS_DISTRO}-class-loader
 ```
 
-Install from PyPI, naming your ROS distribution:
+Install from PyPI:
 
 ```bash
-pip install "play_launch[${ROS_DISTRO}]"     # humble, jazzy, kilted, lyrical, rolling
+pip install play_launch
 ```
 
-play_launch is built against one ROS distribution and uses its libraries at
-run time, so each distribution has its own package (`play_launch_humble`,
-`play_launch_jazzy`, ...); the extra picks it. A plain `pip install
-play_launch` installs nothing usable. On Ubuntu 24.04 and later add
+One wheel serves every supported ROS distribution that shares your Python
+(Humble on 3.10; Jazzy and Kilted on 3.12; Lyrical and Rolling on 3.14), for
+x86_64 and aarch64. It uses the distribution you sourced (`ROS_DISTRO`), or
+the only one under `/opt/ros` when nothing is sourced;
+`PLAY_LAUNCH_ROS_DISTRO` overrides both, and `python3 -m play_launch.payload`
+says which one it picked and why. On Ubuntu 24.04 and later add
 `--break-system-packages` (or use a virtual environment with
 `--system-site-packages`, so ROS's Python packages stay visible).
 

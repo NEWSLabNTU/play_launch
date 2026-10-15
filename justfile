@@ -571,14 +571,15 @@ publish-pypi:
         exit 1
     fi
 
-    # `play_launch` on PyPI is the code-free meta package; the binaries ship
-    # as play_launch_<distro>, built by the release workflow on a v* tag. A
-    # local `just build` wheel is still named play_launch and would replace it.
+    # A local `just build` wheel carries one distribution's payload and is
+    # tagged py3-none-any, so pip would install it on any Python and CPU. The
+    # published wheels are assembled by the release workflow on a v* tag,
+    # one per (Python, glibc, CPU), each with every distribution that tag
+    # serves (phase 92).
     for whl in dist/*.whl; do
-        if [[ $(basename "$whl") == play_launch-* ]] \
-            && python3 -m zipfile -l "$whl" | grep -q 'play_launch/bin/'; then
-            echo "Error: $whl is a local build named play_launch, which PyPI reserves" >&2
-            echo "       for the meta package. Release from CI: push a v* tag." >&2
+        if [[ $(basename "$whl") == *-py3-none-any.whl ]]; then
+            echo "Error: $whl is a local one-payload build tagged py3-none-any." >&2
+            echo "       Release from CI: push a v* tag." >&2
             exit 1
         fi
     done
@@ -602,14 +603,15 @@ publish-testpypi:
         exit 1
     fi
 
-    # `play_launch` on PyPI is the code-free meta package; the binaries ship
-    # as play_launch_<distro>, built by the release workflow on a v* tag. A
-    # local `just build` wheel is still named play_launch and would replace it.
+    # A local `just build` wheel carries one distribution's payload and is
+    # tagged py3-none-any, so pip would install it on any Python and CPU. The
+    # published wheels are assembled by the release workflow on a v* tag,
+    # one per (Python, glibc, CPU), each with every distribution that tag
+    # serves (phase 92).
     for whl in dist/*.whl; do
-        if [[ $(basename "$whl") == play_launch-* ]] \
-            && python3 -m zipfile -l "$whl" | grep -q 'play_launch/bin/'; then
-            echo "Error: $whl is a local build named play_launch, which PyPI reserves" >&2
-            echo "       for the meta package. Release from CI: push a v* tag." >&2
+        if [[ $(basename "$whl") == *-py3-none-any.whl ]]; then
+            echo "Error: $whl is a local one-payload build tagged py3-none-any." >&2
+            echo "       Release from CI: push a v* tag." >&2
             exit 1
         fi
     done

@@ -2507,24 +2507,32 @@ Entity counts match between parsers (100% functional equivalence). Remaining cos
 
 ## Distribution
 
-PyPI: `pip install "play_launch[<distro>]"` (x86_64 + aarch64). One package
-per ROS distribution, `play_launch_<distro>` (module and command
-`play_launch`), because the binaries link that distribution's libraries and
-Python and no wheel tag tells Jazzy from Kilted or Lyrical from Rolling;
-`play_launch` itself is a code-free meta package whose extras pin
-`play_launch_<distro>==<version>` (`packaging/meta/`). All are built by
-`.github/workflows/release-wheel.yml` (matrix: distro x arch, plus
-`build-meta`) and published from it on a `v*` tag through PyPI trusted
-publishing. A new distribution = one matrix row + one extra in
-`packaging/meta/pyproject.toml.in`. Local: `just build` targets the sourced
-`$ROS_DISTRO`; `just publish-pypi` refuses a local `play_launch-*` wheel.
-
-**Phase 92 replaces this with one package** (P1 done, P2–P4 open): a
-wheel's distribution-linked files sit under `play_launch/dist/<distro>/
-{bin,lib,share}` and `python/play_launch/payload.py` picks one at run time
+PyPI: `pip install play_launch` (x86_64 + aarch64), one project, six wheels:
+one per (Python, glibc, CPU) — cp310/manylinux_2_35 for Humble,
+cp312/manylinux_2_39 for Jazzy and Kilted, cp314/manylinux_2_43 for Lyrical
+and Rolling (phase 92). The binaries link one distribution's libraries and
+Python and no wheel tag tells Jazzy from Kilted, so a wheel carries one
+PAYLOAD per distribution under `play_launch/dist/<distro>/{bin,lib,share}`
+and `python/play_launch/payload.py` picks one at run time
 (`PLAY_LAUNCH_ROS_DISTRO` > `ROS_DISTRO` > the only `/opt/ros/<d>` carried,
-else an error). `python3 -m play_launch.payload` says which and why. The
-payload's `lib` and prefix still go on `LD_LIBRARY_PATH` and
-`AMENT_PREFIX_PATH` for children: the container is found through the ament
-index and rosidl finds play_launch_msgs' typesupport through
-`LD_LIBRARY_PATH`, so an RPATH cannot replace them.
+else an error naming the Python a distribution needs).
+`python3 -m play_launch.payload` says which and why. The payload's `lib`
+and prefix still go on `LD_LIBRARY_PATH` and `AMENT_PREFIX_PATH` for
+children: the container is found through the ament index and rosidl finds
+play_launch_msgs' typesupport through `LD_LIBRARY_PATH`, so an RPATH cannot
+replace them.
+
+`.github/workflows/release-wheel.yml`: `build-wheel` (distro x arch, each in
+its distribution's container) builds one-payload rows; `assemble-wheels`
+merges rows by tag (`scripts/assemble_wheels.py`, which refuses a missing or
+doubled distribution and a shared file that differs between rows);
+`smoke-test` installs each wheel in each distribution's container and runs
+`scripts/smoke_wheel.sh` (both selection paths, `check`, and
+`composition_demo.launch.py` to startup complete and a clean SIGINT exit);
+on a `v*` tag `release` and `publish-pypi` (trusted publishing) follow. A
+new distribution = a row in `build-wheel` and `smoke-test` plus its Python
+in `payload.DISTRO_PYTHON`. Local: `just build` builds the sourced
+`$ROS_DISTRO`'s payload into a `py3-none-any` wheel, which
+`just publish-pypi` refuses. 0.17.0's per-distribution packages
+(`play_launch_<distro>` behind a meta package) are gone; the
+`play_launch[<distro>]` extras remain as no-ops until 0.20.

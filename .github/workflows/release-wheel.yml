@@ -7,16 +7,19 @@ on:
   workflow_dispatch:
 
 jobs:
-  # One package per ROS distribution, play_launch_<distro>: the binaries
-  # link that distribution's libraries and Python, and nothing in a wheel tag
-  # tells Jazzy from Kilted (both Ubuntu 24.04, Python 3.12), or Lyrical
-  # from Rolling (both 26.04, Python 3.14).
-  # Each wheel is still tagged with the Python and glibc it needs, so pip
-  # refuses it on the wrong system. `play_launch` itself is a meta package
-  # (build-meta below): `pip install "play_launch[jazzy]"`.
+  # One PyPI project, `play_launch`, with one wheel per wheel tag (phase 92).
+  # The binaries link one ROS distribution's libraries and Python, and no
+  # wheel tag tells Jazzy from Kilted (both Ubuntu 24.04, Python 3.12) or
+  # Lyrical from Rolling (both 26.04, Python 3.14). So each matrix row builds
+  # one distribution's PAYLOAD (play_launch/dist/<distro>/) in that
+  # distribution's container, assemble-wheels merges the rows that share a
+  # tag into one wheel, and play_launch/payload.py picks the payload at run
+  # time. pip picks the wheel by Python, glibc and CPU, as for any binary
+  # wheel.
   #
-  # A new distribution is one more matrix row: rcl_interception_sys
-  # generates its struct layouts from the distribution's headers.
+  # A new distribution is one more matrix row here and in smoke-test, plus
+  # its Python in payload.py's DISTRO_PYTHON: rcl_interception_sys generates
+  # its struct layouts from the distribution's headers.
   build-wheel:
     runs-on: ubuntu-22.04
     strategy:
@@ -63,10 +66,6 @@ jobs:
         # Taken before the sed below dirties the tree; build.rs embeds it in
         # `play_launch --version`.
         DESCRIBE=$(git describe --tags --always --dirty)
-        # The distribution's package name; the module stays `play_launch`.
-        sed -i "0,/^name = \"play_launch\"/s//name = \"play_launch_${ROS}\"/" pyproject.toml
-        grep -m1 '^name = ' pyproject.toml
-
         # Set up architecture-specific variables
         if [ "${{ matrix.arch }}" = "arm64" ]; then
           DOCKER_ARCH="linux/arm64"
@@ -168,39 +167,115 @@ jobs:
 
         ls -lh dist/
 
-    - name: Upload wheel artifact
+    # One payload per row. Rows of one tag build wheels of the same file
+    # name, so each is its own artifact, merged by assemble-wheels.
+    - name: Upload the row's wheel
       uses: actions/upload-artifact@v5
       with:
-        name: wheel-${{ matrix.ros }}-${{ matrix.arch }}
+        name: row-${{ matrix.ros }}-${{ matrix.arch }}
         path: dist/*.whl
         retention-days: 7
 
-  # The `play_launch` meta package: extras naming each distribution's build.
-  build-meta:
+  # Merge the rows that share a wheel tag: six wheels, one per
+  # (Python, glibc, CPU), each carrying every distribution that tag serves.
+  # Refuses a missing or doubled distribution, and a shared file that
+  # differs between the rows of one tag.
+  assemble-wheels:
+    needs: build-wheel
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v5
-    - name: Build the meta package
+    - name: Check the tag against pyproject
       run: |
         VERSION=$(grep -m1 '^version = ' pyproject.toml | sed 's/.*"\(.*\)".*/\1/')
         if [ "${GITHUB_REF#refs/tags/v}" != "$GITHUB_REF" ] && [ "${GITHUB_REF#refs/tags/v}" != "$VERSION" ]; then
           echo "tag ${GITHUB_REF#refs/tags/} does not match pyproject version $VERSION" >&2
           exit 1
         fi
-        mkdir -p /tmp/meta dist
-        sed "s/@VERSION@/$VERSION/g" packaging/meta/pyproject.toml.in > /tmp/meta/pyproject.toml
-        cp packaging/meta/README.md /tmp/meta/
-        python3 -m pip wheel --no-deps -w dist /tmp/meta
-        ls -l dist
-        python3 -m zipfile -l dist/play_launch-*.whl
+    - name: Download the rows
+      uses: actions/download-artifact@v5
+      with:
+        pattern: row-*
+        path: rows
+    - name: Assemble
+      run: |
+        python3 scripts/assemble_wheels.py rows wheels \
+          --expect humble,jazzy,kilted,lyrical,rolling
+        ls -lh wheels/
     - uses: actions/upload-artifact@v5
       with:
-        name: wheel-meta
-        path: dist/*.whl
+        name: wheels
+        path: wheels/*.whl
         retention-days: 7
 
+  # Install each assembled wheel in each distribution's own container and
+  # run every payload it carries (scripts/smoke_wheel.sh).
+  smoke-test:
+    needs: assemble-wheels
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        ros: [humble, jazzy, kilted, lyrical, rolling]
+        include:
+          - {ros: humble, ubuntu: "22.04", codename: jammy, glibc: "2_35", python: cp310}
+          - {ros: jazzy, ubuntu: "24.04", codename: noble, glibc: "2_39", python: cp312}
+          - {ros: kilted, ubuntu: "24.04", codename: noble, glibc: "2_39", python: cp312}
+          - {ros: lyrical, ubuntu: "26.04", codename: resolute, glibc: "2_43", python: cp314}
+          - {ros: rolling, ubuntu: "26.04", codename: resolute, glibc: "2_43", python: cp314, repo: ros2-testing}
+    steps:
+    - uses: actions/checkout@v5
+    - name: Set up QEMU (for arm64)
+      if: matrix.arch == 'arm64'
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
+    - uses: actions/download-artifact@v5
+      with:
+        name: wheels
+        path: wheels
+    - name: Smoke test (${{ matrix.ros }}, ${{ matrix.arch }})
+      run: |
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          DOCKER_ARCH=linux/arm64; DEB_ARCH=arm64; CPU=aarch64
+        else
+          DOCKER_ARCH=linux/amd64; DEB_ARCH=amd64; CPU=x86_64
+        fi
+        WHEEL=$(ls wheels/play_launch-*-${{ matrix.python }}-*-manylinux_${{ matrix.glibc }}_${CPU}.whl)
+        echo "Testing $WHEEL"
+        docker run --rm --platform=${DOCKER_ARCH} \
+          -v $PWD:/workspace -w /workspace \
+          -e SMOKE_STARTUP_WAIT=600 \
+          ubuntu:${{ matrix.ubuntu }} \
+          bash -c "
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt_install() {
+              for attempt in 1 2 3; do
+                apt-get install -y \"\$@\" && return 0
+                dpkg --configure -a || true
+              done
+              return 1
+            }
+            apt-get update
+            apt_install curl ca-certificates python3-pip
+            curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+              -o /usr/share/keyrings/ros-archive-keyring.gpg
+            echo \"deb [arch=${DEB_ARCH} signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/${{ matrix.repo || 'ros2' }}/ubuntu ${{ matrix.codename }} main\" \
+              > /etc/apt/sources.list.d/ros2.list
+            apt-get update
+            apt_install ros-${{ matrix.ros }}-ros-core \
+              ros-${{ matrix.ros }}-demo-nodes-cpp \
+              ros-${{ matrix.ros }}-composition \
+              ros-${{ matrix.ros }}-rclcpp-components
+            export PIP_BREAK_SYSTEM_PACKAGES=1
+            pip3 install $WHEEL
+            scripts/smoke_wheel.sh ${{ matrix.ros }} /tmp/smoke
+          "
+
   release:
-    needs: [build-wheel, build-meta]
+    needs: [assemble-wheels, smoke-test]
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -213,8 +288,7 @@ jobs:
     - name: Download the wheels
       uses: actions/download-artifact@v5
       with:
-        pattern: wheel-*
-        merge-multiple: true
+        name: wheels
         path: release-assets
 
     - name: Show release assets
@@ -234,7 +308,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-pypi:
-    needs: [build-wheel, build-meta]
+    needs: [assemble-wheels, smoke-test]
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/v')
     environment: pypi
@@ -245,8 +319,7 @@ jobs:
     - name: Download the wheels
       uses: actions/download-artifact@v5
       with:
-        pattern: wheel-*
-        merge-multiple: true
+        name: wheels
         path: dist
 
     - name: Show wheels to publish

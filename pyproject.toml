@@ -47,6 +47,15 @@ dev = [
     "ruff>=0.8.0",
     "build",
 ]
+# No-ops, kept for one release so `pip install "play_launch[jazzy]"` lines
+# written for 0.17.0's per-distribution packages still work. The wheel now
+# carries every distribution its Python serves and picks one at run time
+# (phase 92); remove these at 0.20.
+humble = []
+jazzy = []
+kilted = []
+lyrical = []
+rolling = []
 
 [project.scripts]
 play_launch = "play_launch.cli:main"
