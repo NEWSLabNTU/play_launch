@@ -1,7 +1,8 @@
 # Phase 93 - supervised budgets: the keys, the overrun case, a period's range
 
-Status: **in progress** (2026-10-15): S1 (rlm) and S2 (play_launch) in
-progress; S5 in progress (period-range agent). Nothing released.
+Status: **in progress** (2026-10-15): S1 (rlm) done on rlm main
+`33577ff`, unreleased; S2 (play_launch) in progress; S5 in progress
+(period-range agent). Nothing released.
 
 The grammar belongs to `ros-launch-manifest` (rlm,
 `~/repos/ros-launch-manifest`); it is tracked here because the checker
@@ -231,7 +232,9 @@ Owner: period-range agent. Uses S1's `SourceKind::Allocated` and the
 
 ## Status
 
-- S1: in progress, branch `phase93-s1`.
+- S1: done (2026-10-15), rlm main `33577ff` (ff-pushed; unreleased,
+  GRAMMAR_VERSION 0.1.61). `SourceKind::Allocated` and the `rate_hz` map
+  form are there for S5. play_launch pins it by `rev` until v0.1.61.
 - S2: in progress, branch `phase93-s2`.
 - S5: in progress (period-range agent).
 
