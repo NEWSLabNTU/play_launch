@@ -168,6 +168,22 @@ What changes:
 - Under `mechanism: executor`, a reaction whose first hop runs on the
   supervised budget's node is noted "covers slowness, not a hang": a stuck
   callback holds the check and the reaction both.
+- Rule `supervised-executor-long-callback` (added 2026-10-16, after S2):
+  a `mechanism: executor` supervision is flagged when a callback on the
+  node's executor has no analysed bound (`max_latency` measured,
+  supervised, or unstated). Its detection (tick + longest callback) then
+  rests on an observed number, and when the supervised path's own callback
+  is the one that overruns, the late output is published before the
+  overdue check runs, so the miss is seen only at completion, late by the
+  overrun. The finding recommends `mechanism: timer`. Severity is the
+  policy's, as `measured-unsupervised`: warning by default, error under
+  `policy: { unsupervised_measured: error }`. An analysed `max_latency`
+  now also counts as a callback's length in the executor detection delay
+  (before, only a measured `work` term did). Background: on the island
+  board an executor-mechanism deadline never fired for a single 327 ms
+  callback against a 149 ms budget; the nano-ros deadline monitor (S3)
+  records a late completion, which is detection at completion, late by the
+  overrun.
 - CHECKED BY of a supervised budget is read from the lowering (`runtime
   monitor (route-deadline-runtime: <reaction>, <mechanism>)` only when the
   budget was lowered to a monitor row with a reaction), not from the key.
@@ -263,6 +279,16 @@ Owner: period-range agent. Uses S1's `SourceKind::Allocated` and the
   window's route (the rung below charges the same path later, which is the
   larger case); a supervised `max_transport`, `max_age` or settle is
   refused as unlowered until a runtime check exists for it.
+- `supervised-executor-long-callback`: done (2026-10-16), in
+  `supervision.rs` (`executor_long_callback`, `policy_severity`); tests
+  `an_executor_supervision_over_a_long_callback_follows_the_policy`,
+  `an_executor_supervision_over_bounded_callbacks_is_not_flagged`, and a
+  needle in `supervised_budgets_print_their_overrun_case`
+  (`contract_supervised`'s planner `follow` is flagged). The island
+  contract on main (no `supervise:`) and the S6 draft (`call_mrm`
+  supervised with `mechanism: timer`) are not flagged; the draft with
+  `mechanism: executor` would be (call_mrm's own callback, and
+  driver_exit and on_timer on the same executor).
 - S5: done (2026-10-15), branch `phase93-s5-r2` (`85c949b7`), not yet on
   main. `ros/period_range.rs`, called after `stated`; `--explain` prints a
   timer-period table, `period-range` refuses an allocated `rate_hz` outside

@@ -159,6 +159,37 @@ A timer whose `rate_hz` states `source: allocated` must lie inside the range:
 `error[period-range]` otherwise, and `warning[period-range]` while the lower
 end is unknown.
 
+## Supervised budgets
+
+A budget with `supervise: { reaction | enters, mechanism }` (rlm v0.1.61) is
+a claim that the runtime catches its miss and starts a fallback (phase 93).
+The rules that read it:
+
+- `supervised-fit`: per supervised budget a rung or floor row charges, an
+  OVERRUN row (time before it + the budget + the detection delay + the
+  reaction's route and settle) against the hazard's FTTI. `error` when it
+  does not fit or cannot be computed, `info` with the arithmetic when it
+  fits. The detection delay is `supervision.tick` + `supervision.switch`
+  for `mechanism: timer`, and `supervision.tick` + the longest callback on
+  the node's executor for `mechanism: executor`.
+- `supervised-unlowered` (error): a supervised budget no runtime monitor
+  checks (only an input-triggered node path's `max_latency` lowers to the
+  route deadline monitor).
+- `supervised-executor-long-callback`: a `mechanism: executor` supervision
+  whose detection a callback can delay. The executor checks the deadline in
+  its spin loop, between callbacks, so detection is the tick + the longest
+  callback on that executor, and that is a bound only when every callback
+  on it has an analysed bound. A callback that is only measured (or
+  supervised, or unstated) can run past it; and when the supervised path's
+  own callback is the one that overruns, its late output is published
+  before the check runs, so the miss is seen only when the callback
+  completes, late by the overrun. Fix: `mechanism: timer` (an independent
+  timer and thread, which catches a long or stuck callback), or `source:
+  analysed` on every callback of the executor. A warning, or an error under
+  `policy: { unsupervised_measured: error }`.
+- `measured-unsupervised`: a measured budget nothing supervises, a warning,
+  or an error under `policy: { unsupervised_measured: error }`.
+
 ## Two notices about what the arithmetic reads
 
 - `info[declared-not-charged]`: a `max_transport` declaration (subscriber- or

@@ -2688,6 +2688,13 @@ fn supervised_budgets_print_their_overrun_case() {
         "runtime monitor (route-deadline-runtime: reaction /planner/stop_now, executor)",
         "warning[measured-unsupervised]",
         "`nodes.planner.paths.stop_now.max_latency: 5.00ms` is measured and nothing supervises it",
+        // The executor supervision rests on callbacks with no analysed bound.
+        "warning[supervised-executor-long-callback]: bringup.contract.yaml:154: \
+         `nodes.planner.paths.follow.max_latency` is supervised with `mechanism: executor`",
+        "its own callback, /planner/follow, has no analysed bound (supervised only) and \
+         can itself overrun: the late output is published before the overdue check runs",
+        "a callback with no analysed bound can run past it (stop_now (measured only))",
+        "Use `mechanism: timer`",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
@@ -2701,6 +2708,99 @@ fn supervised_budgets_print_their_overrun_case() {
     assert!(row("nodes.handler.paths.call_mrm.max_latency").contains("supervised"));
     assert!(row("nodes.gate.paths.report.max_latency").contains("bound"));
     assert!(row("nodes.planner.paths.stop_now.max_latency").contains("unsupervised"));
+}
+
+/// Check a copy of `contract_supervised` with `edit` applied to its contract,
+/// with the `ros-launch-resolve` CLI of this tree.
+fn check_supervised_edited(edit: impl Fn(String) -> String) -> Option<(i32, String)> {
+    let bin = ros_launch_resolve_bin()?;
+    let root = fixtures::repo_root().join("tests/fixtures");
+    let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_dir = tmp.path().join("launch");
+    std::fs::create_dir_all(&launch_dir).unwrap();
+    let src = root.join("contract_supervised/launch");
+    std::fs::copy(
+        src.join("bringup.launch.xml"),
+        launch_dir.join("bringup.launch.xml"),
+    )
+    .unwrap();
+    let contract = std::fs::read_to_string(src.join("bringup.contract.yaml")).unwrap();
+    std::fs::write(launch_dir.join("bringup.contract.yaml"), edit(contract)).unwrap();
+    let out = resolve_cmd(&bin)
+        .arg("check")
+        .arg(launch_dir.join("bringup.launch.xml"))
+        .env("AMENT_PREFIX_PATH", root.join("contract_takeover/ament"))
+        .output()
+        .expect("ros-launch-resolve check runs");
+    Some((
+        out.status.code().unwrap_or(-1),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    ))
+}
+
+/// Phase 93: `supervised-executor-long-callback` follows the policy: an error
+/// under `policy: { unsupervised_measured: error }`.
+#[test]
+fn an_executor_supervision_over_a_long_callback_follows_the_policy() {
+    let Some((code, out)) = check_supervised_edited(|c| {
+        c.replacen(
+            "supervision: { tick: 1ms, switch: 0.05ms }",
+            "supervision: { tick: 1ms, switch: 0.05ms }\npolicy: { unsupervised_measured: error }",
+            1,
+        )
+    }) else {
+        eprintln!("Skipping: ros-launch-resolve not built");
+        return;
+    };
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains(
+            "error[supervised-executor-long-callback]: bringup.contract.yaml:155: \
+             `nodes.planner.paths.follow.max_latency` is supervised with `mechanism: executor`"
+        ),
+        "{out}"
+    );
+    // The timer supervision is not flagged.
+    assert!(!out.contains("`nodes.handler.paths.call_mrm.max_latency` is supervised with"));
+}
+
+/// Phase 93: an executor supervision whose every callback on the executor is
+/// analysed is bounded by the tick, and not flagged; `mechanism: timer` is
+/// never flagged.
+#[test]
+fn an_executor_supervision_over_bounded_callbacks_is_not_flagged() {
+    let analysed = |c: String| {
+        c.replacen(
+            "source: { measured: { margin: 0.2, terms: { work: { max: 250ms, n: 5 } } } }",
+            "source: analysed",
+            1,
+        )
+        .replacen(
+            "max_latency: { duration: 5ms, source: { measured: { margin: 0.2, terms: { work: \
+             { max: 4ms, n: 20 } } } } }",
+            "max_latency: { duration: 5ms, source: analysed }",
+            1,
+        )
+    };
+    let Some((_, out)) = check_supervised_edited(analysed) else {
+        eprintln!("Skipping: ros-launch-resolve not built");
+        return;
+    };
+    assert!(!out.contains("supervised-executor-long-callback"), "{out}");
+    let Some((_, out)) = check_supervised_edited(|c| {
+        c.replacen(
+            "supervise: { reaction: stop_now, mechanism: executor }",
+            "supervise: { reaction: stop_now, mechanism: timer }",
+            1,
+        )
+    }) else {
+        return;
+    };
+    assert!(!out.contains("supervised-executor-long-callback"), "{out}");
 }
 
 /// Phase 93: an overrun case over the interval is refused.

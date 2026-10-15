@@ -17,8 +17,10 @@
 //!   detection + the reaction's route and settle, against the FTTI
 //!   (`supervised-fit`).
 //! - [`check`] -- `supervised-unlowered` (a supervised budget no monitor
-//!   reads) and `measured-unsupervised` (a measured budget nothing
-//!   supervises, at the severity of `policy.unsupervised_measured`).
+//!   reads), `supervised-executor-long-callback` (an `executor` supervision
+//!   whose detection a callback's overrun can delay past the tick) and
+//!   `measured-unsupervised` (a measured budget nothing supervises); the
+//!   last two at the severity of `policy.unsupervised_measured`.
 
 use super::{
     manifest_loader::{
@@ -271,8 +273,8 @@ pub(crate) fn detection(index: &ManifestIndex, s: &Supervised) -> Result<(f64, S
 }
 
 /// The longest callback on `node`'s executor: the largest measured `work`
-/// term over its paths, sized as `budget-rule` sizes it. A path with no
-/// `work` term makes it unknown.
+/// term over its paths, sized as `budget-rule` sizes it, or an analysed
+/// path's `max_latency`. A path with neither makes it unknown.
 fn longest_callback(index: &ManifestIndex, node: &str) -> Result<(f64, String), String> {
     let mut best: Option<(f64, String)> = None;
     for p in index.node_paths.iter().filter(|p| p.node_fqn == node) {
@@ -288,11 +290,20 @@ fn longest_callback(index: &ManifestIndex, node: &str) -> Result<(f64, String), 
                     .find(|t| t.name.as_deref() == Some("work"))
                     .map(|t| t.budget_ms(m.margin))
             });
+        // An analysed `max_latency` bounds the callback with it.
+        let work = work.or_else(|| {
+            p.path
+                .max_latency
+                .as_ref()
+                .filter(|b| b.level() == Some(BudgetLevel::Bound))
+                .and_then(Bound::ms)
+        });
         let Some(w) = work else {
             return Err(format!(
                 "the detection delay is unknown: an `executor` supervision waits for the longest \
-                 callback on {node}'s executor, and {node}/{} states no measured `work` term \
-                 (`max_latency: {{ source: {{ measured: {{ terms: {{ work: ... }} }} }} }}`)",
+                 callback on {node}'s executor, and {node}/{} states neither a measured `work` \
+                 term (`max_latency: {{ source: {{ measured: {{ terms: {{ work: ... }} }} }} }}`) \
+                 nor an analysed `max_latency`",
                 p.path_name
             ));
         };
@@ -602,7 +613,96 @@ pub(crate) fn level_of(index: &ManifestIndex, term: &TermKey) -> Option<BudgetLe
         .and_then(|s| BudgetLevel::of(Some(s), None))
 }
 
-/// `supervised-unlowered` and `measured-unsupervised` (phase 93).
+/// The severity of `policy.unsupervised_measured` for scope `scope_id`: its
+/// own `policy:`, else the root contract's; warning by default.
+fn policy_severity(index: &ManifestIndex, scope_id: usize) -> Severity {
+    let policy = index
+        .manifests
+        .get(&scope_id)
+        .and_then(|m| m.manifest.policy.as_ref())
+        .or_else(|| {
+            let mut ms: Vec<_> = index.manifests.values().collect();
+            ms.sort_by_key(|m| m.scope_id);
+            ms.into_iter().find_map(|m| m.manifest.policy.as_ref())
+        })
+        .and_then(|p| p.unsupervised_measured)
+        .unwrap_or_default();
+    match policy {
+        PolicySeverity::Warn => Severity::Warning,
+        PolicySeverity::Error => Severity::Error,
+    }
+}
+
+/// `supervised-executor-long-callback`: an `executor` supervision is checked
+/// in the spin loop, between callbacks. Its detection is the tick + the
+/// longest callback on that executor, and that is a bound only when every
+/// callback on it is: a callback with no analysed bound can run past it, and
+/// the check waits for it. When the supervised path's own callback is the
+/// one that overruns, the late output is published before the check runs,
+/// so the miss is seen at completion, late by the overrun. `mechanism:
+/// timer` is checked off the executor and catches both.
+fn executor_long_callback(index: &ManifestIndex, s: &Supervised) -> Option<Diagnostic> {
+    if s.sv.mechanism != SuperviseMechanism::Executor {
+        return None;
+    }
+    let node = s.node.as_deref()?;
+    let own = s
+        .path
+        .as_deref()
+        .filter(|_| s.term.1.ends_with(".max_latency"));
+    let mut why: Vec<String> = Vec::new();
+    let mut others: Vec<String> = Vec::new();
+    for p in index.node_paths.iter().filter(|p| p.node_fqn == node) {
+        let level = p.path.max_latency.as_ref().and_then(|b| b.level());
+        if level == Some(BudgetLevel::Bound) {
+            continue;
+        }
+        let what = match level {
+            Some(BudgetLevel::Supervised) => "supervised only",
+            Some(BudgetLevel::Unsupervised) => "measured only",
+            _ if p.path.max_latency.is_none() => "unstated",
+            _ => "not analysed",
+        };
+        if own == Some(p.path_name.as_str()) {
+            why.push(format!(
+                "its own callback, {node}/{}, has no analysed bound ({what}) and can itself \
+                 overrun: the late output is published before the overdue check runs, so the \
+                 miss is seen only when the callback completes, late by the overrun",
+                p.path_name
+            ));
+        } else {
+            others.push(format!("{} ({what})", p.path_name));
+        }
+    }
+    if !others.is_empty() {
+        why.push(format!(
+            "its detection, the tick + the longest callback on {node}'s executor, is not \
+             bounded: a callback with no analysed bound can run past it ({})",
+            others.join(", ")
+        ));
+    }
+    if why.is_empty() {
+        return None;
+    }
+    let key = &s.term.1;
+    Some(Diagnostic {
+        rule_id: "supervised-executor-long-callback".to_string(),
+        severity: policy_severity(index, s.term.0),
+        message: format!(
+            "{}: `{key}` is supervised with `mechanism: executor`, which is checked in the spin \
+             loop between callbacks; {}. Use `mechanism: timer` (an independent timer and \
+             thread, `supervision: {{ tick, switch }}`), or state an analysed bound for every \
+             callback on the executor (`source: analysed`)",
+            site(index, s.term.0, key),
+            why.join("; and ")
+        ),
+        path: format!("{key}.supervise.mechanism"),
+        span: None,
+    })
+}
+
+/// `supervised-unlowered`, `supervised-executor-long-callback` and
+/// `measured-unsupervised` (phase 93).
 pub(crate) fn check(index: &mut ManifestIndex) {
     let mut diags: Vec<Diagnostic> = Vec::new();
     for s in supervised(index) {
@@ -622,6 +722,11 @@ pub(crate) fn check(index: &mut ManifestIndex) {
             });
         }
     }
+    for s in supervised(index) {
+        if let Some(d) = executor_long_callback(index, &s) {
+            diags.push(d);
+        }
+    }
     for b in &index.stated {
         let term: TermKey = (b.scope_id, b.key.clone());
         if level_of(index, &term) != Some(BudgetLevel::Unsupervised) {
@@ -632,21 +737,7 @@ pub(crate) fn check(index: &mut ManifestIndex) {
                 .as_ref()
                 .is_some_and(|s| s.kind == SourceKind::Measured)
         );
-        let policy = index
-            .manifests
-            .get(&b.scope_id)
-            .and_then(|m| m.manifest.policy.as_ref())
-            .or_else(|| {
-                let mut ms: Vec<_> = index.manifests.values().collect();
-                ms.sort_by_key(|m| m.scope_id);
-                ms.into_iter().find_map(|m| m.manifest.policy.as_ref())
-            })
-            .and_then(|p| p.unsupervised_measured)
-            .unwrap_or_default();
-        let severity = match policy {
-            PolicySeverity::Warn => Severity::Warning,
-            PolicySeverity::Error => Severity::Error,
-        };
+        let severity = policy_severity(index, b.scope_id);
         diags.push(Diagnostic {
             rule_id: "measured-unsupervised".to_string(),
             severity,
