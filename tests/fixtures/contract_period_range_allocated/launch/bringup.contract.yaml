@@ -1,0 +1,86 @@
+# Phase 93 S5: the same contract with both rates chosen (`source:
+# allocated`): the watchdog's 10 Hz inside its range [26.67, 300], the
+# brake's 10 Hz (100 ms) outside its range [10, 66.67] (its own min_rate_hz
+# 15 promise). `period-range` refuses the second, not the first.
+# Otherwise contract_period_range, which states the arithmetic.
+version: 1
+
+hazards:
+  hpc_lost:
+    severity: ASIL_B
+    description: the heartbeat stops
+    guards: [/safety/heartbeat]
+    on: omission
+    ftti: 1000ms
+    reaction: safety.stop
+
+nodes:
+  watchdog:
+    sub:
+      heartbeat:
+        max_age: 300ms
+        on_violation:
+          on: [omission]
+          mechanism: application
+          reaction: react
+    pub:
+      stop_req: {}
+      status: {}
+    paths:
+      on_timer:
+        trigger: { timer: { rate_hz: { value: 10, source: allocated } } }
+        output: [status]
+      report:
+        trigger: { timer: { rate_hz: 5 } }
+        output: [status]
+        max_latency:
+          duration: 20ms
+          source: { measured: { max: 16ms, n: 10, margin: 0.2 } }
+      react:
+        trigger: { input: [heartbeat] }
+        output: [stop_req]
+        max_latency:
+          duration: 136ms
+          source:
+            measured:
+              margin: 0.2
+              terms:
+                tick: { period: 100ms, max: 10ms, n: 100 }
+                work: { max: 20ms, n: 10 }
+
+  brake:
+    sub:
+      stop_req: { state: true }
+    pub:
+      brake_cmd: { min_rate_hz: 15 }
+    paths:
+      on_timer:
+        trigger: { timer: { rate_hz: { value: 10, source: allocated } } }
+        output: [brake_cmd]
+        max_latency:
+          duration: 10ms
+          source: { measured: { max: 8ms, n: 10, margin: 0.2 } }
+        safe_state: { emits: brake_cmd, settle: 200ms }
+
+paths:
+  safety.stop:
+    trigger: { input: [/safety/heartbeat] }
+    output: [/safety/brake_cmd]
+
+topics:
+  /safety/heartbeat:
+    type: std_msgs/msg/String
+    external: pub
+    sub: [watchdog/heartbeat]
+  /safety/stop_req:
+    type: std_msgs/msg/String
+    pub: [watchdog/stop_req]
+    sub: [brake/stop_req]
+  /safety/status:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [watchdog/status]
+  /safety/brake_cmd:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [brake/brake_cmd]

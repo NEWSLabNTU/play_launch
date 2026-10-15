@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!-- Phase 93 S5: each timer's feasible period. A watchdog notices a lost
+     heartbeat on its own 10 Hz tick and asks the brake, which acts on its
+     20 Hz tick. See bringup.contract.yaml for the expected ranges. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="listener" name="watchdog" namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="brake"    namespace="/safety"/>
+</launch>

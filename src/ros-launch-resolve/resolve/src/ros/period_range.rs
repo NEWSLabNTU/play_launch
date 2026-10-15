@@ -899,6 +899,31 @@ mod tests {
         assert!(max.why.contains("`min-rate-mismatch`"), "{}", max.why);
     }
 
+    /// `source: allocated` holds a rate to its range: the brake's 10 Hz is
+    /// past its own 15 Hz promise and refused, the watchdog's 10 Hz is inside
+    /// [26.67, 300] and passes.
+    #[test]
+    fn an_allocated_period_outside_its_range_is_refused() {
+        let index = index_of("contract_period_range_allocated");
+        let found: Vec<&Diagnostic> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "period-range")
+            .collect();
+        assert_eq!(found.len(), 1, "{found:#?}");
+        let d = found[0];
+        assert_eq!(d.severity, Severity::Error);
+        assert_eq!(d.path, "nodes.brake.paths.on_timer.trigger.timer.rate_hz");
+        assert!(
+            d.message.contains(
+                "/safety/brake/on_timer is allocated a period of 100ms, above the longest \
+                 that holds, 66.67ms"
+            ),
+            "{}",
+            d.message
+        );
+    }
+
     /// `--explain` prints the range and the limits by name.
     #[test]
     fn explain_names_the_limits() {
