@@ -31,7 +31,7 @@ hazards:
     on: omission
     entry_speed: 8.33
     ftti: 10s
-    reaction: engaged
+    enters: engaged
   odd_exit:
     severity: ASIL_B
     guards: [/availability]
@@ -39,7 +39,7 @@ hazards:
     when: { field: autonomous, equals: false }
     entry_speed: 8.33
     ftti: 30s
-    reaction: engaged
+    enters: engaged
 
 modes:
   engaged:
@@ -49,7 +49,7 @@ modes:
     requires: [hpc_alive]
     reaction: sys.tor
     window: { duration: 10s, param: handler.takeover_timeout }
-    exit: { on: driver_took_over, to: manual }
+    exit: { holds: driver_took_over, to: manual }
   comfortable:
     requires: [hpc_alive]
     reaction: sys.comfortable

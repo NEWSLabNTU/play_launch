@@ -1,0 +1,95 @@
+# Phase 90 G5 -- a written criticality on a node a hazard reaches is an
+# error; on a node no hazard reaches it stands (the scheduler mapper's input).
+#
+# contract_fault's chain and numbers. drive_blind is ASIL_D, which derives
+# `high` (the format reference's "Severity to criticality"):
+#   brake_controller   reacts, writes `high`  -> error[derivable-criticality]
+#   obstacle_detector  detects, writes `low`  -> error[criticality-mismatch]
+#   trip_logger        reached by no hazard, writes `low` -> no diagnostic
+version: 1
+
+hazards:
+  drive_blind:
+    severity: ASIL_D
+    description: vehicle continues with no obstacle data
+    guards: [/safety/scan]
+    on: omission
+    ftti: 500ms
+    reaction: safety.stop
+
+nodes:
+  lidar_driver:
+    pub:
+      scan: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 50 } }
+        output: [scan]
+        max_latency: 2ms
+
+  obstacle_detector:
+    criticality: low           # ASIL_D derives high -> criticality-mismatch
+    sub:
+      scan:
+        min_rate_hz: 50
+        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
+        on_violation:
+          on: [omission]
+          reaction: declare_lost
+          within: 10ms
+    pub:
+      obstacles: {}
+    paths:
+      detect:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 12ms
+      declare_lost:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 2ms
+
+  brake_controller:
+    criticality: high          # what ASIL_D derives -> derivable-criticality
+    sub:
+      obstacles:
+        max_age: 60ms
+        on_violation:
+          on: [late, omission]
+          reaction: emergency_stop
+          within: 20ms
+    pub:
+      brake_cmd: {}
+    paths:
+      brake:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 8ms
+      emergency_stop:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 5ms
+        safe_state: { emits: brake_cmd, settle: 200ms }
+
+  trip_logger:
+    criticality: low           # no hazard reaches it: the label stands
+
+paths:
+  safety.stop:
+    trigger: { input: [/safety/scan] }
+    output: [/safety/brake_cmd]
+    max_latency: 100ms
+
+topics:
+  /safety/scan:
+    type: std_msgs/msg/String
+    pub: [lidar_driver/scan]
+    sub: [obstacle_detector/scan]
+  /safety/obstacles:
+    type: std_msgs/msg/String
+    pub: [obstacle_detector/obstacles]
+    sub: [brake_controller/obstacles]
+  /safety/brake_cmd:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [brake_controller/brake_cmd]

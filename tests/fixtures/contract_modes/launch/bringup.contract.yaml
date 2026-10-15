@@ -12,7 +12,7 @@
 version: 1
 
 # Phase 75 — a function is a named guard group; a mode is the functions it
-# requires plus the ladder to fall to. The hazard's reaction names a MODE,
+# requires plus the ladder to fall to. The hazard enters a MODE (`enters:`),
 # so the ladder IS the reaction: `degraded` is checked in its own right by
 # `ladder-rung-budget`, and `stopped` — the floor, requiring nothing the
 # fault can remove — is what `fault-reaction-budget` measures.
@@ -43,7 +43,7 @@ hazards:
     guards: [perception]          # the function, by name
     on: omission
     ftti: 500ms
-    reaction: driving             # a MODE: take its ladder
+    enters: driving             # a MODE: take its ladder
 
 nodes:
   lidar_driver:

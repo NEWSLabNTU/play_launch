@@ -12,6 +12,7 @@
 mod check;
 mod contract;
 mod dump;
+mod migrate;
 mod options;
 mod plot;
 mod resolve;
@@ -65,6 +66,7 @@ fn main() -> eyre::Result<()> {
         Command::Resolve(args) => resolve::handle_resolve(args),
         Command::Dump(args) => dump::handle_dump(args),
         Command::Check(args) => check::handle_check(args),
+        Command::Migrate(args) => migrate::handle_migrate(args),
         // `contract` is a subcommand group: the two ways to get a contract
         // file to edit — copy the package's own, or write one from a run.
         Command::Contract(args) => match &args.subcommand {

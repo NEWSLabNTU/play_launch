@@ -45,7 +45,7 @@ hazards:
     when: { field: autonomous, equals: false }
     entry_speed: 8.33
     ftti: 30s
-    reaction: engaged
+    enters: engaged
   hpc_loss:
     severity: ASIL_D
     guards: [/availability]
@@ -53,7 +53,7 @@ hazards:
     when: { field: stop, equals: true }
     entry_speed: 3.0
     ftti: 3s
-    reaction: engaged
+    enters: engaged
 
 modes:
   engaged:
@@ -63,7 +63,7 @@ modes:
     requires: [hpc_alive]
     reaction: sys.tor
     window: 10s
-    exit: { on: driver_took_over, to: estop }
+    exit: { holds: driver_took_over, to: estop }
   comfortable:
     requires: [hpc_alive]
     reaction: sys.comfortable
@@ -79,7 +79,7 @@ modes:
     requires: []
     reaction: sys.hold
     window: 5s
-    exit: { on: driver_took_over, to: manual }
+    exit: { holds: driver_took_over, to: manual }
   parked:
     requires: []
     reaction: sys.estop

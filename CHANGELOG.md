@@ -8,6 +8,28 @@ allowance heavily.
 
 ## Unreleased
 
+- **Changed (`check`, phase 90 G4, rlm v0.1.59):** a hazard that enters a
+  mode writes `enters: <mode>`; `reaction:` names a scope path (one rung)
+  in every context. A hazard's `reaction: <mode>` still checks exactly as
+  before, with `warning[deprecated-spelling]` naming `enters:`. `exit: { on:
+  <function> }` is now `exit: { holds: <function> }` (`on` names fault
+  classes only); the old key parses with the same warning. New rule
+  `enters-unknown-mode` (error): `enters:` naming no mode of the hazard's
+  scope (it is never read as a path). `enters:` and `reaction:` together
+  are a parse error.
+- **Changed (`check`, phase 90 G5):** a written `criticality` on a node a
+  hazard reaches is an error (`derivable-criticality`, was info;
+  `criticality-mismatch`, was warning); the fix is to delete it. On a node
+  no hazard reaches the label stands. The severity-to-criticality map is
+  rlm's (`types::severity`), printed in its format reference.
+- **New verb (`migrate`, phase 90 G8):** `play_launch migrate
+  <contract|dir>` rewrites deprecated spellings to current ones as minimal
+  textual edits (comments and layout kept): prints the diff, `--write`
+  applies it, `--check` exits 1 when anything would change, `--list` prints
+  the rewrite table (`hazard-reaction-enters`, `exit-on-holds`). Also on
+  `ros-launch-resolve`. The play_launch fixtures and `rt_av_demo` are
+  migrated.
+
 - **New (`check --explain`, phase 10 B7, B8):** where each budget comes
   from, and what checks it. A budget written in its map form `{ duration,
   source }` (rlm v0.1.58) states its provenance: `requirement`, `measured`,

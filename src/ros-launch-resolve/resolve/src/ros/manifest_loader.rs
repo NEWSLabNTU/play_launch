@@ -296,17 +296,11 @@ impl DerivedCriticality {
     /// scale's first entry) is no requirement; the rest split evenly, top
     /// third to `High`. On the default five-level scale: A → Low, B → Medium,
     /// C and D → High.
+    ///
+    /// The map is the grammar's (rlm `types::severity`, phase 90 G5), printed
+    /// in the format reference; this only applies it.
     pub fn bucket(&self) -> Option<ros_launch_manifest_sched::Criticality> {
-        use ros_launch_manifest_sched::Criticality;
-        let n = self.scale_len.saturating_sub(1);
-        if self.rank == 0 || n == 0 {
-            return None;
-        }
-        Some(match (self.rank * 3).div_ceil(n) {
-            0 | 1 => Criticality::Low,
-            2 => Criticality::Medium,
-            _ => Criticality::High,
-        })
+        ros_launch_manifest_sched::Criticality::from_severity(self.rank, self.scale_len)
     }
 }
 
@@ -2329,7 +2323,13 @@ fn resolve_ladder(
             .iter()
             .find(|m| m.scope_id == h.scope_id && m.name == name)
     };
+    let rk = h.decl.entry_key();
     let Some(top) = mode_of(reaction_name) else {
+        // `enters:` naming no mode is `enters-unknown-mode` (reported once,
+        // by `check_spellings`); it is never read as a path.
+        if h.decl.enters.is_some() {
+            return None;
+        }
         // Not a mode: the reaction is a scope path, one rung.
         return Some((
             vec![(reaction_name.to_string(), reaction_name.to_string())],
@@ -2348,7 +2348,7 @@ fn resolve_ladder(
                      mode in its scope",
                     h.name
                 ),
-                path: format!("{at}.reaction"),
+                path: format!("{at}.{rk}"),
                 span: None,
             });
             return None;
@@ -2362,7 +2362,7 @@ fn resolve_ladder(
                      to it reaches no safe state",
                     h.name
                 ),
-                path: format!("{at}.reaction"),
+                path: format!("{at}.{rk}"),
                 span: None,
             });
             return None;
@@ -2379,7 +2379,7 @@ fn resolve_ladder(
                  reaches no safe state",
                 h.name
             ),
-            path: format!("{at}.reaction"),
+            path: format!("{at}.{rk}"),
             span: None,
         });
         return None;
@@ -2416,7 +2416,7 @@ fn resolve_ladder(
                  nothing the fault can remove",
                 h.name
             ),
-            path: format!("{at}.reaction"),
+            path: format!("{at}.{rk}"),
             span: None,
         });
     }
@@ -2893,14 +2893,15 @@ fn check_fault_reaction(
         }
 
         // FRTI: the reaction's derived route + the sink's settle.
-        let Some(reaction_name) = &h.decl.reaction else {
+        let rk = h.decl.entry_key();
+        let Some(reaction_name) = h.decl.entry() else {
             if h.decl.ftti.is_some() {
                 diags.push(Diagnostic {
                     rule_id: "reaction-unreachable".to_string(),
                     severity: Severity::Error,
                     message: format!(
-                        "hazard '{}' declares an ftti but no `reaction:` path — there is nothing \
-                         to fit inside it",
+                        "hazard '{}' declares an ftti but neither `enters:` a mode nor a \
+                         `reaction:` path — there is nothing to fit inside it",
                         h.name
                     ),
                     path: at.clone(),
@@ -2962,7 +2963,7 @@ fn check_fault_reaction(
             if mode_of(rung).is_some() {
                 super::value_rules::site(index, h.scope_id, &format!("modes.{rung}"))
             } else {
-                super::value_rules::site(index, h.scope_id, &format!("{at}.reaction"))
+                super::value_rules::site(index, h.scope_id, &format!("{at}.{rk}"))
             }
         };
         let settle_of = |w: &ReactionWalk, rung: &str, diags: &mut Vec<Diagnostic>| match &w.settle
@@ -3146,7 +3147,7 @@ fn check_fault_reaction(
                         h.name,
                         rp.output_topics.join(", ")
                     ),
-                    path: format!("{at}.reaction"),
+                    path: format!("{at}.{rk}"),
                     span: None,
                 });
             }
@@ -3186,7 +3187,7 @@ fn check_fault_reaction(
                         h.name,
                         windows_note(&windows),
                     ),
-                    path: format!("{at}.reaction"),
+                    path: format!("{at}.{rk}"),
                     span: None,
                 });
             }
@@ -3204,7 +3205,7 @@ fn check_fault_reaction(
                      scope",
                     h.name
                 ),
-                path: format!("{at}.reaction"),
+                path: format!("{at}.{rk}"),
                 span: None,
             });
             continue;
@@ -3288,7 +3289,7 @@ fn check_fault_reaction(
                         h.name,
                         reaction.output_topics.join(", ")
                     ),
-                    path: format!("{at}.reaction"),
+                    path: format!("{at}.{rk}"),
                     span: None,
                 });
                 (
@@ -3306,7 +3307,7 @@ fn check_fault_reaction(
                          runs on INCOMPLETE EVIDENCE",
                         h.name
                     ),
-                    path: format!("{at}.reaction"),
+                    path: format!("{at}.{rk}"),
                     span: None,
                 });
                 (0.0, "unknown route".to_string())
@@ -3323,7 +3324,7 @@ fn check_fault_reaction(
                     h.name,
                     reaction.output_topics.join(", ")
                 ),
-                path: format!("{at}.reaction"),
+                path: format!("{at}.{rk}"),
                 span: None,
             });
         }
@@ -3355,7 +3356,7 @@ fn check_fault_reaction(
                     h.name,
                     reaction.output_topics.join(", ")
                 ),
-                path: format!("{at}.reaction"),
+                path: format!("{at}.{rk}"),
                 span: None,
             });
         }
@@ -3435,6 +3436,7 @@ fn check_fault_reaction(
 
     // Phase 83: the rules the four takeover keys stand on by themselves.
     super::value_rules::check_predicates(index, &mut diags);
+    super::value_rules::check_spellings(index, &mut diags);
     super::value_rules::check_windows_and_exits(index, graph, &index.launch_params, &mut diags);
     super::value_rules::check_param_bindings(index, &index.launch_params, &mut diags);
     super::budget_book::check_budget_rule(index, &mut diags);
@@ -3870,7 +3872,8 @@ fn endpoint_field_declared(e: &ros_launch_manifest_types::EndpointProps, field: 
 // Phase 72 — criticality from hazards
 // ---------------------------------------------------------------------------
 
-const DEFAULT_SEVERITY_SCALE: &[&str] = &["QM", "ASIL_A", "ASIL_B", "ASIL_C", "ASIL_D"];
+const DEFAULT_SEVERITY_SCALE: &[&str] =
+    &ros_launch_manifest_types::severity::DEFAULT_SEVERITY_LEVELS;
 
 /// Which nodes a hazard reaches, and why. `criticality-from-hazards.md`'s
 /// rule: severity is never a property of a component, it is allocated
@@ -3982,6 +3985,9 @@ fn derive_criticality_from_hazards(
         }
 
         // Reacts: the walk to the safe state.
+        // A scope path the hazard reacts by: `reaction:` only. `enters:`
+        // names a mode and is never read as a path (the deprecated
+        // `reaction: <mode>` finds no path here, as before).
         if let Some(reaction_name) = &h.decl.reaction
             && let Some(reaction) = scope_paths
                 .iter()
@@ -4020,10 +4026,11 @@ fn derive_criticality_from_hazards(
         if declared == bucket {
             diags.push(Diagnostic {
                 rule_id: "derivable-criticality".to_string(),
-                severity: Severity::Info,
+                severity: Severity::Error,
                 message: format!(
                     "node {node} declares criticality '{label}', which the hazards already \
-                     derive ({} {} hazard '{}'). The label is redundant and can be deleted",
+                     derive ({} {} hazard '{}'). A hazard reaches this node, so its criticality \
+                     is derived, never written. Fix: delete `criticality: {label}`",
                     d.level, d.role, d.hazard
                 ),
                 path: format!("nodes.{node}.criticality"),
@@ -4032,11 +4039,13 @@ fn derive_criticality_from_hazards(
         } else {
             diags.push(Diagnostic {
                 rule_id: "criticality-mismatch".to_string(),
-                severity: Severity::Warning,
+                severity: Severity::Error,
                 message: format!(
                     "node {node} declares criticality '{label}', but it {} hazard '{}' ({}), \
-                     which derives {}. The derivation wins for scheduling; one of the two \
-                     is wrong and nothing else checks this",
+                     which derives {}. A hazard reaches this node, so its criticality is \
+                     derived, never written, and the derivation is what schedules it. Fix: \
+                     delete `criticality: {label}` (if the derived value is wrong, the \
+                     hazard's severity is)",
                     d.role,
                     d.hazard,
                     d.level,

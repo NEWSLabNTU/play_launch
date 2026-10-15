@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<!-- Phase 85 T2 (D1): the island's takeover ladder with the availability
+     publisher outside the tree, behind a link the handler's subscriber
+     states as `max_transport`. The timers state their release jitter, and
+     what waits for a tick is charged period + jitter. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="listener" name="handler">
+    <param name="takeover_timeout" value="10.0"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="listener" name="comfort_op">
+    <param name="min_acceleration" value="-1.0"/>
+    <param name="min_jerk" value="-0.3"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="listener" name="estop_op">
+    <param name="target_acceleration" value="-2.5"/>
+    <param name="target_jerk" value="-1.5"/>
+  </node>
+</launch>

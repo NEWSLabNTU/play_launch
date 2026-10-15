@@ -1430,9 +1430,11 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   26262's `[QM, ASIL_A..ASIL_D]`); out-of-scale is `severity-unknown`, not
   the silent `None` the old parser had. The model carries it as
   `Contracts.node_criticality`, and rlm's `derive` crate reads that before
-  any label. `derivable-criticality` (info) / `criticality-mismatch`
-  (warning) compare the label to it; a node no hazard reaches keeps its
-  label — the underivable case, which is why the key stays live as
+  any label. Since phase 90 G5 a label on a node a hazard reaches is an
+  error, `derivable-criticality` (agrees) / `criticality-mismatch`
+  (disagrees), fixed by deleting it; the severity-to-criticality map is
+  rlm's (`types::severity`, `Criticality::from_severity`). A node no hazard
+  reaches keeps its label — the underivable case, which is why the key stays live as
   `Kind::Consequence` (the pinned list is now two). `rt_av_demo`'s three
   `high` labels all derive from `drive_blind`; schedule byte-identical.
   **Census blind spot found**: `hazards.<h>.severity` was write-only and

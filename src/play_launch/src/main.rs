@@ -30,6 +30,7 @@ fn logs_to_stderr(command: &Command) -> bool {
         Command::Resolve(_)
             | Command::Dump(_)
             | Command::Check(_)
+            | Command::Migrate(_)
             | Command::Plot(_)
             | Command::Contract(_)
     )
@@ -209,6 +210,9 @@ fn dispatch(opts: &Options) -> eyre::Result<()> {
         }
         play_launch::cli::options::Command::Check(args) => {
             play_launch::commands::handle_check(args)?;
+        }
+        play_launch::cli::options::Command::Migrate(args) => {
+            play_launch::commands::handle_migrate(args)?;
         }
         play_launch::cli::options::Command::Plot(args) => {
             play_launch::commands::handle_plot(args)?;

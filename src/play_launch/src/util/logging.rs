@@ -36,6 +36,7 @@ fn get_verbose_flag(opts: &Options) -> bool {
         crate::cli::options::Command::Resolve(_) => false,
         crate::cli::options::Command::Dump(_) => false,
         crate::cli::options::Command::Check(_) => false,
+        crate::cli::options::Command::Migrate(_) => false,
         crate::cli::options::Command::Plot(_) => false,
         crate::cli::options::Command::Measure(_) => false,
         crate::cli::options::Command::Contract(_) => false,

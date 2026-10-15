@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<!-- Phase 90 G5: contract_fault's chain, with criticality WRITTEN on nodes the
+     hazard reaches (an error) and on one it does not (stands). -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="lidar_driver"      namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="obstacle_detector" namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="brake_controller"  namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="trip_logger"       namespace="/safety"/>
+</launch>

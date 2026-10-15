@@ -45,7 +45,7 @@ hazards:
     guards: [/system/operation_mode/availability]
     on: omission
     ftti: 2s
-    reaction: autonomous          # a MODE: the ladder is the reaction
+    enters: autonomous          # a MODE: the ladder is the reaction
   mode_unavailable_tight:
     description: the same chain against a 1.5 s interval, which it cannot meet
     guards: [/system/operation_mode/availability]

@@ -1290,7 +1290,7 @@ pub fn build_system_model(
                     }),
                 }),
                 exit: m.decl.exit.as_ref().map(|e| model::ExitContract {
-                    on: key(&e.on),
+                    on: key(&e.holds),
                     to: key(&e.to),
                 }),
             },
@@ -1314,10 +1314,11 @@ pub fn build_system_model(
                     .collect(),
                 on: h.decl.on.iter().map(|k| fault_kind(*k)).collect(),
                 ftti_ms: h.decl.ftti.map(|d| d.as_millis_f64()),
+                // A mode key when the hazard enters a mode, else a scope path
+                // key: the model keeps one field (rlm `HazardContract`).
                 reaction: h
                     .decl
-                    .reaction
-                    .as_ref()
+                    .entry()
                     .map(|r| scope_scoped_key(&scope_key(Some(h.scope_id)), r)),
                 when: h.decl.when.as_ref().map(predicate),
                 entry_speed_mps: h.decl.entry_speed,

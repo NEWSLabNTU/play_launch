@@ -1325,9 +1325,9 @@ fn fault_reaction_budget_fits_and_names_its_terms() {
     );
     // Who watches the watcher: the reaction's sink is deliberately unguarded.
     assert!(out.contains("reaction-unguarded"), "{out}");
-    // Phase 72: the `high` label on the brake is what ASIL_D already derives.
-    assert!(out.contains("derivable-criticality"), "{out}");
-    assert!(out.contains("ASIL_D reacts hazard 'drive_blind'"), "{out}");
+    // Phase 90 G5: the brake's label is gone (a hazard reaches it, so it is
+    // derived); `contract_criticality_written` keeps one to refuse.
+    assert!(!out.contains("criticality"), "{out}");
     assert!(!out.contains("error[fault-reaction-budget]"), "{out}");
 }
 
@@ -1341,8 +1341,6 @@ fn fault_reaction_rules_fire_on_a_broken_chain() {
         "not a scope path",
         "error[hazard-unguarded]",
         "nothing would ever notice",
-        // Phase 72: a `low` label on a node that reacts for an ASIL_D hazard.
-        "warning[criticality-mismatch]",
     ] {
         assert!(
             out.contains(needle),
@@ -1372,17 +1370,45 @@ fn a_reaction_crossing_a_service_is_walked_like_one_crossing_a_topic() {
         "/safety/brake_controller/emergency_stop = 7.00ms",
         "settle 200.00ms",
         "= 307.00ms",
-        // The severity reaches the node that ACTS.
-        "node /safety/brake_controller declares criticality 'high'",
-        "ASIL_D reacts hazard 'drive_blind'",
     ] {
         assert!(
             out.contains(needle),
             "expected `{needle}` on contract_fault_service:\n{out}"
         );
     }
+    // The severity reaches the node that ACTS: ASIL_D derives `high`
+    // (phase 90 G5 removed the label that used to show it as an info).
+    assert_eq!(
+        derived_criticality("contract_fault_service", "/safety/brake_controller").as_deref(),
+        Some("high")
+    );
     // The route exists, so nothing falls back to the declared budget.
     assert!(!out.contains("reaction-unreachable"), "{out}");
+}
+
+/// The model's derived criticality of `node` (`contracts.node_criticality`),
+/// from `play_launch resolve` on the fixture.
+fn derived_criticality(dir: &str, node: &str) -> Option<String> {
+    let launch = fixtures::repo_root()
+        .join("tests/fixtures")
+        .join(dir)
+        .join("launch/bringup.launch.xml");
+    let out = play_launch_cmd()
+        .arg("resolve")
+        .arg(&launch)
+        .args(["-o", "-"])
+        .output()
+        .expect("resolve runs");
+    let model = String::from_utf8_lossy(&out.stdout).to_string();
+    let section = model.split("  node_criticality:\n").nth(1)?;
+    section
+        .lines()
+        .take_while(|l| l.starts_with("    "))
+        .find_map(|l| {
+            l.trim()
+                .strip_prefix(&format!("{node}: "))
+                .map(str::to_string)
+        })
 }
 
 /// Phase 82 W4: a server that LATCHES the request and acts on its own timer
@@ -1404,14 +1430,16 @@ fn a_server_that_latches_the_request_is_a_sampling_hop() {
         "/safety/brake_controller/apply_brake (+33.33ms sampling) = 40.33ms",
         "settle 200.00ms",
         "= 340.33ms",
-        "node /safety/brake_controller declares criticality 'high'",
-        "ASIL_D reacts hazard 'drive_blind'",
     ] {
         assert!(
             out.contains(needle),
             "expected `{needle}` on contract_fault_latch:\n{out}"
         );
     }
+    assert_eq!(
+        derived_criticality("contract_fault_latch", "/safety/brake_controller").as_deref(),
+        Some("high")
+    );
     assert!(!out.contains("reaction-unreachable"), "{out}");
     // The trigger-driven service fixture is untouched: no clock in its route.
     assert!(!check_fixture("contract_fault_service").contains("sampling)"));
@@ -1877,7 +1905,7 @@ fn takeover_structure_rules_fire_on_their_fixture() {
         "error[mode-exit-target]",
         "exits to 'estop', which is a rung of the `fallback:` ladder of 'engaged'",
         "error[mode-exit-unwired]",
-        "mode 'hold' exits on 'driver_took_over' (/control_mode), but no node that implements the rung (/holder) takes it on a path trigger",
+        "mode 'hold' exits when 'driver_took_over' holds (/control_mode), but no node that implements the rung (/holder) takes it on a path trigger",
         "warning[window-unbound]",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
@@ -2122,4 +2150,160 @@ fn explain_lists_what_checks_each_stated_budget() {
             assert!(line.contains("; it is checked by "), "{line}\n{by}");
         }
     }
+}
+
+/// Phase 90 G5: a written criticality on a node a hazard reaches is an
+/// error, agreeing (`derivable-criticality`) or not (`criticality-mismatch`),
+/// and the fix is to delete it. A label on a node no hazard reaches stands.
+#[test]
+fn a_written_criticality_on_a_reached_node_is_an_error() {
+    let out = check_fixture("contract_criticality_written");
+    for needle in [
+        "error[derivable-criticality]: node /safety/brake_controller declares criticality 'high'",
+        "ASIL_D reacts hazard 'drive_blind'",
+        "Fix: delete `criticality: high`",
+        "error[criticality-mismatch]: node /safety/obstacle_detector declares criticality 'low'",
+        "detects hazard 'drive_blind' (ASIL_D), which derives high",
+        "Fix: delete `criticality: low`",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    assert!(
+        !out.contains("trip_logger"),
+        "an unreached node's label stands:\n{out}"
+    );
+    assert!(out.contains("(2 errors,"), "{out}");
+}
+
+/// Phase 90 G4: the pre-0.1.59 spellings (`reaction: <mode>` on a hazard,
+/// `exit: { on }`) still check exactly as the current ones do, with one
+/// `deprecated-spelling` warning each naming the new key and `migrate`.
+#[test]
+fn deprecated_spellings_warn_and_check_like_the_current_ones() {
+    let (code, old) = check_takeover("contract_spelling_deprecated", &["--explain"]);
+    let (code_new, new) = check_takeover("contract_takeover_jitter", &["--explain"]);
+    assert_eq!((code, code_new), (0, 0), "{old}");
+    let deprecated: Vec<&str> = old
+        .lines()
+        .filter(|l| l.contains("warning[deprecated-spelling]"))
+        .collect();
+    assert_eq!(deprecated.len(), 3, "{old}");
+    for needle in [
+        "hazard 'hpc_loss': `reaction: engaged` names a mode. A hazard enters a mode with `enters: engaged`",
+        "hazard 'odd_exit': `reaction: engaged` names a mode",
+        "mode 'takeover': `exit: { on: driver_took_over }` is the old spelling",
+        "`exit: { holds: driver_took_over, to: manual }`",
+        "`play_launch migrate <contract> --write` rewrites it",
+    ] {
+        assert!(old.contains(needle), "expected `{needle}`:\n{old}");
+    }
+    assert!(!new.contains("deprecated-spelling"), "{new}");
+    // Everything else is the migrated twin's: the same findings and sums.
+    let findings = |out: &str| {
+        let mut v: Vec<String> = out
+            .lines()
+            .filter(|l| l.contains("info[") || l.contains("error[") || l.contains("warning["))
+            .filter(|l| !l.contains("deprecated-spelling"))
+            .map(without_lines)
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(findings(&old), findings(&new));
+}
+
+/// A finding with its `bringup.contract.yaml:<line>` site reduced to the
+/// file: the deprecated fixture carries a longer header comment.
+fn without_lines(l: &str) -> String {
+    let key = "bringup.contract.yaml:";
+    let mut out = String::new();
+    let mut rest = l;
+    while let Some(i) = rest.find(key) {
+        out.push_str(&rest[..i + key.len()]);
+        rest = rest[i + key.len()..].trim_start_matches(|c: char| c.is_ascii_digit());
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Phase 90 G4: `enters:` names a mode of the hazard's scope, never a path.
+#[test]
+fn enters_naming_no_mode_is_an_error() {
+    let out = check_fixture("contract_enters_unknown");
+    assert!(
+        out.contains(
+            "error[enters-unknown-mode]: bringup.contract.yaml:38: hazard 'drive_blind' enters \
+             'safety.stop', which is not a mode in its scope. A hazard that reacts by one scope \
+             path writes `reaction: safety.stop`"
+        ),
+        "{out}"
+    );
+    // Not read as a path either: no reaction is walked or charged.
+    assert!(!out.contains("fault-reaction-budget"), "{out}");
+}
+
+/// Phase 90 G4: a hazard enters a mode or reacts by a path, not both.
+#[test]
+fn enters_and_reaction_together_refuse_the_contract() {
+    let launch = fixtures::repo_root()
+        .join("tests/fixtures/contract_enters_and_reaction/launch/bringup.launch.xml");
+    let out = play_launch_cmd()
+        .arg("check")
+        .arg(&launch)
+        .output()
+        .expect("play_launch check runs");
+    let text =
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    assert!(
+        text.contains("error[manifest-parse]") && text.contains("not both"),
+        "{text}"
+    );
+}
+
+/// Phase 90 G8: `migrate` rewrites the deprecated fixture into its current
+/// twin's spellings, shows the diff, and `--check` gates on it.
+#[test]
+fn migrate_rewrites_the_deprecated_spellings_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = fixtures::repo_root()
+        .join("tests/fixtures/contract_spelling_deprecated/launch/bringup.contract.yaml");
+    let c = dir.path().join("bringup.contract.yaml");
+    std::fs::copy(&src, &c).unwrap();
+    let run = |args: &[&str]| {
+        let out = play_launch_cmd()
+            .arg("migrate")
+            .args(args)
+            .arg(&c)
+            .output()
+            .expect("play_launch migrate runs");
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+        )
+    };
+    let (code, out) = run(&["--check"]);
+    assert_eq!(code, 1, "{out}");
+    for needle in [
+        "hazard-reaction-enters: `reaction` -> `enters` (hazards.hpc_loss.reaction)",
+        "hazard-reaction-enters: `reaction` -> `enters` (hazards.odd_exit.reaction)",
+        "exit-on-holds: `on` -> `holds` (modes.takeover.exit.on)",
+        "-    reaction: engaged",
+        "+    enters: engaged",
+        "1 contract(s) scanned, 1 to rewrite (3 edit(s))",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    let (code, _) = run(&["--write"]);
+    assert_eq!(code, 0);
+    let (code, out) = run(&["--check"]);
+    assert_eq!(code, 0, "{out}");
+    // The migrated text is the current twin's, below the header comment.
+    let migrated = std::fs::read_to_string(&c).unwrap();
+    let twin = std::fs::read_to_string(
+        fixtures::repo_root()
+            .join("tests/fixtures/contract_takeover_jitter/launch/bringup.contract.yaml"),
+    )
+    .unwrap();
+    assert!(migrated.ends_with(&twin), "{migrated}");
 }

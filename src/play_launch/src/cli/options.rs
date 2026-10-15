@@ -171,6 +171,20 @@ pub enum Command {
         3  a contract file was refused (error[manifest-parse]): it was not checked at all")]
     Check(CheckArgs),
 
+    /// Rewrite contracts from deprecated spellings to current ones (a
+    /// hazard's `reaction: <mode>` to `enters:`, `exit.on` to `exit.holds`).
+    /// Prints the diff; `--write` applies it. Comments and layout are kept.
+    #[command(after_help = "Examples:\n  \
+        play_launch migrate --list\n  \
+        play_launch migrate bringup.contract.yaml\n  \
+        play_launch migrate src/ --write\n  \
+        play_launch migrate . --check\n\n\
+        Exit status:\n  \
+        0  done, or nothing to rewrite\n  \
+        1  with --check: a file would change\n  \
+        2  a file could not be read or migrated")]
+    Migrate(MigrateArgs),
+
     /// Plot resource usage from execution logs
     #[command(after_help = "Examples:\n  \
         play_launch plot\n  \
@@ -304,6 +318,28 @@ pub struct ContextArgs {
 /// issue 0013 deleted it as "dead code" while the verb still existed; the
 /// 0.9.0 reshape then removed the verb and kept the struct only so a hidden
 /// migration variant could echo the caller's invocation back. Both are over.
+/// Arguments for `migrate` (phase 90 G8).
+#[derive(Args)]
+pub struct MigrateArgs {
+    /// Contract files, or directories to search for `*.contract.yaml`
+    /// (build, install, log and hidden directories are skipped).
+    #[arg(value_name = "CONTRACT_OR_DIR")]
+    pub paths: Vec<std::path::PathBuf>,
+    /// Rewrite the files in place. Without it nothing is written and the
+    /// diff is printed.
+    #[arg(long)]
+    pub write: bool,
+    /// Exit 1 when any file would change.
+    #[arg(long)]
+    pub check: bool,
+    /// Print the edits only, not the diff.
+    #[arg(long, short)]
+    pub quiet: bool,
+    /// Print the rewrite table and exit.
+    #[arg(long)]
+    pub list: bool,
+}
+
 /// `Command::Check` is a real, advertised verb whose handler
 /// (`commands::check`) maps these fields onto
 /// `ros_launch_resolve::verbs::CheckInputs`. The `--target`/`--format`

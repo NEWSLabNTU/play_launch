@@ -198,9 +198,11 @@ a mapper hint with no numbers attached. `chain_aware` uses it (derived routes
 are ordered by criticality, and nodes on no route bucket by it before their
 rate/deadline budget); `rate_monotonic`/`deadline_monotonic` ignore it.
 Since Phase 72 the label is itself a consequence where a `hazards:` block
-reaches the node — `check` reports `derivable-criticality` when the label
-agrees with the hazard-derived value and `criticality-mismatch` when it does
-not.
+reaches the node, and since phase 90 writing it there is an error: `check`
+reports `derivable-criticality` when the label agrees with the
+hazard-derived value and `criticality-mismatch` when it does not, and the
+fix for both is to delete the label. On a node no hazard reaches the label
+stands, and it is what the mapper reads there.
 
 ### 1.2 The platform file — facts + overrides
 

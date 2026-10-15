@@ -104,12 +104,48 @@ pub enum Command {
         ros-launch-resolve check --contracts ~/contracts launch/system.launch.xml mode:=lidar")]
     Check(CheckArgs),
 
+    /// Rewrite contracts from deprecated spellings to current ones (a
+    /// hazard's `reaction: <mode>` to `enters:`, `exit.on` to `exit.holds`).
+    /// Prints the diff; `--write` applies it. Comments and layout are kept.
+    #[command(after_help = "Examples:\n  \
+        ros-launch-resolve migrate --list\n  \
+        ros-launch-resolve migrate bringup.contract.yaml\n  \
+        ros-launch-resolve migrate src/ --write\n  \
+        ros-launch-resolve migrate . --check\n\n\
+        Exit status:\n  \
+        0  done, or nothing to rewrite\n  \
+        1  with --check: a file would change\n  \
+        2  a file could not be read or migrated")]
+    Migrate(MigrateArgs),
+
     /// Get a contract file to edit: eject a package's sidecar, or capture
     /// the structure of a run that has none.
     Contract(ContractArgs),
 
     /// Plot resource usage from execution logs.
     Plot(PlotArgs),
+}
+
+/// Arguments for `migrate` (phase 90 G8).
+#[derive(Args)]
+pub struct MigrateArgs {
+    /// Contract files, or directories to search for `*.contract.yaml`
+    /// (build, install, log and hidden directories are skipped).
+    #[arg(value_name = "CONTRACT_OR_DIR")]
+    pub paths: Vec<std::path::PathBuf>,
+    /// Rewrite the files in place. Without it nothing is written and the
+    /// diff is printed.
+    #[arg(long)]
+    pub write: bool,
+    /// Exit 1 when any file would change.
+    #[arg(long)]
+    pub check: bool,
+    /// Print the edits only, not the diff.
+    #[arg(long, short)]
+    pub quiet: bool,
+    /// Print the rewrite table and exit.
+    #[arg(long)]
+    pub list: bool,
 }
 
 /// Arguments for `ros-launch-resolve contract`

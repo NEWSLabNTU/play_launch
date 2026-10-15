@@ -42,7 +42,7 @@ hazards:
     guards: [perception]
     on: omission
     ftti: 500ms
-    reaction: driving
+    enters: driving
 
 nodes:
   lidar_driver:

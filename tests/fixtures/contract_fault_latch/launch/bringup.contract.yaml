@@ -61,7 +61,6 @@ nodes:
         max_latency: 2ms
 
   brake_controller:
-    criticality: high          # what ASIL_D on drive_blind already derives -> derivable-criticality
     srv:
       # The request handler latches and returns; no path is triggered by it.
       stop: {}

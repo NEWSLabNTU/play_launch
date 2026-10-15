@@ -542,7 +542,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
                 .collect(),
             on: h.decl.on.iter().map(|k| fault_kind(*k)).collect(),
             ftti_ms: h.decl.ftti.map(|d| d.as_millis_f64()),
-            reaction: h.decl.reaction.clone(),
+            reaction: h.decl.entry().cloned(),
             entry_speed_mps: h.decl.entry_speed,
         })
         .collect();
@@ -567,7 +567,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             reaction: m.decl.reaction.clone(),
             window_ms: m.decl.window.as_ref().map(|w| w.duration.as_millis_f64()),
             exit: m.decl.exit.as_ref().map(|e| ExitOut {
-                on: e.on.clone(),
+                on: e.holds.clone(),
                 to: e.to.clone(),
             }),
         })

@@ -580,6 +580,82 @@ pub(crate) fn removed_by(h: &ResolvedHazard, index: &ManifestIndex) -> BTreeSet<
 }
 
 // ---------------------------------------------------------------------------
+// Spellings (phase 90 G4)
+// ---------------------------------------------------------------------------
+
+/// The fix-it every deprecated spelling ends with.
+const MIGRATE_HINT: &str = "`play_launch migrate <contract> --write` rewrites it";
+
+/// `deprecated-spelling` and `enters-unknown-mode`.
+///
+/// A hazard's `reaction:` that names a mode is the pre-0.1.59 spelling of
+/// `enters:`. It is told apart the way the ladder resolves it (a mode of
+/// the hazard's scope first), so the warning fires exactly where the old
+/// spelling means a ladder. `enters:` must name a mode: it is never read as
+/// a path. `exit.on` is the old spelling of `exit.holds`.
+pub(crate) fn check_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
+    let is_mode = |scope_id: usize, name: &str| {
+        index
+            .modes
+            .iter()
+            .any(|m| m.scope_id == scope_id && m.name == name)
+    };
+    for h in &index.hazards {
+        let at = format!("hazards.{}", h.name);
+        if let Some(e) = &h.decl.enters
+            && !is_mode(h.scope_id, e)
+        {
+            let where_ = site(index, h.scope_id, &format!("{at}.enters"));
+            diags.push(diag(
+                "enters-unknown-mode",
+                Severity::Error,
+                format!(
+                    "{where_}: hazard '{}' enters '{e}', which is not a mode in its scope. A \
+                     hazard that reacts by one scope path writes `reaction: {e}`",
+                    h.name
+                ),
+                format!("{at}.enters"),
+            ));
+        }
+        if let Some(r) = &h.decl.reaction
+            && is_mode(h.scope_id, r)
+        {
+            let where_ = site(index, h.scope_id, &format!("{at}.reaction"));
+            diags.push(diag(
+                "deprecated-spelling",
+                Severity::Warning,
+                format!(
+                    "{where_}: hazard '{}': `reaction: {r}` names a mode. A hazard enters a \
+                     mode with `enters: {r}`; `reaction:` names a scope path. Fix: rename the \
+                     key to `enters`; {MIGRATE_HINT}",
+                    h.name
+                ),
+                format!("{at}.reaction"),
+            ));
+        }
+    }
+    for m in &index.modes {
+        let Some(exit) = &m.decl.exit else { continue };
+        if !exit.spelled_on {
+            continue;
+        }
+        let at = format!("modes.{}.exit.on", m.name);
+        let where_ = site(index, m.scope_id, &at);
+        diags.push(diag(
+            "deprecated-spelling",
+            Severity::Warning,
+            format!(
+                "{where_}: mode '{}': `exit: {{ on: {} }}` is the old spelling; an exit names \
+                 the function that holds, `exit: {{ holds: {}, to: {} }}` (`on` names fault \
+                 classes). Fix: rename the key to `holds`; {MIGRATE_HINT}",
+                m.name, exit.holds, exit.holds, exit.to
+            ),
+            at,
+        ));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Windows and exits
 // ---------------------------------------------------------------------------
 
@@ -689,6 +765,7 @@ pub(crate) fn check_windows_and_exits(
             continue;
         };
         let eat = format!("{at}.exit");
+        let hk = if exit.spelled_on { "on" } else { "holds" };
         let where_ = site(index, m.scope_id, &eat);
         // mode-exit-target
         match in_scope(&exit.to) {
@@ -733,16 +810,17 @@ pub(crate) fn check_windows_and_exits(
         let Some(f) = index
             .functions
             .iter()
-            .find(|f| f.scope_id == m.scope_id && f.name == exit.on)
+            .find(|f| f.scope_id == m.scope_id && f.name == exit.holds)
         else {
             diags.push(diag(
                 "mode-exit-unwired",
                 Severity::Error,
                 format!(
-                    "{where_}: mode '{}' exits on '{}', which is not a function in its scope",
-                    m.name, exit.on
+                    "{where_}: mode '{}' exits when '{}' holds, which is not a function in its \
+                     scope",
+                    m.name, exit.holds
                 ),
-                format!("{eat}.on"),
+                format!("{eat}.{hk}"),
             ));
             continue;
         };
@@ -760,7 +838,7 @@ pub(crate) fn check_windows_and_exits(
                      implements the rung and nothing can take the input that ends it",
                     m.name
                 ),
-                format!("{eat}.on"),
+                format!("{eat}.{hk}"),
             ));
             continue;
         };
@@ -793,11 +871,11 @@ pub(crate) fn check_windows_and_exits(
                 "mode-exit-unwired",
                 Severity::Error,
                 format!(
-                    "{where_}: mode '{}' exits on '{}' ({}), but no node that implements the \
+                    "{where_}: mode '{}' exits when '{}' holds ({}), but no node that implements the \
                      rung ({}) takes it on a path trigger -- without a trigger there is no take \
                      to trace and no evidence the exit was seen",
                     m.name,
-                    exit.on,
+                    exit.holds,
                     f.group.members.join(", "),
                     if implementers.is_empty() {
                         "none publishes its output".to_string()
