@@ -10,6 +10,14 @@ allowance heavily.
 
 Phase 90 G3 (its bound part) and G6, pinned to rlm main until v0.1.60.
 
+- **Fixed (shutdown):** play_launch stops its nodes one process at a time
+  (5 ms apart, at most 1 s, children before the process that forked them)
+  instead of with one signal to the whole group. Nodes leaving the DDS
+  domain all at once sometimes crashed or hung in Fast DDS's own teardown,
+  and each one left its shared-memory files. On 40 nodes the crashes went
+  from 3 runs in 15 to none; Autoware under `--container-mode isolated` now
+  exits in about 4 s with no node SIGKILLed, where it took 7–9 s and killed
+  up to 38.
 - **Changed (wheel, phase 92 P1):** the wheel's distribution-linked files
   live under `play_launch/dist/<distro>/`, and the `play_launch` entry
   point picks the payload when it runs: `PLAY_LAUNCH_ROS_DISTRO`, then

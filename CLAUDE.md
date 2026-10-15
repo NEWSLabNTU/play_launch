@@ -704,12 +704,20 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   when the forking THREAD exits, and the isolated manager joined its fork
   workers before stopping its children, so every composable was SIGKILLed
   ~4 ms into its own SIGTERM handling (strace); children are now stopped
-  together first. **What remains is not ours**: stock rclcpp nodes
-  sometimes crash or hang in their own teardown when many participants
-  leave at once — a Fast DDS 2.6 race (`EDP::unpairWriterProxy` segfault in
-  two receive threads during `rcl_node_fini`), reproduced with 40 bare
-  `demo_nodes_cpp` nodes and no launcher; each such node leaves its
-  participant's files. **Measuring shutdown under gdb or strace: either one
+  together first. Stock rclcpp nodes sometimes crash or hang in their own
+  teardown when many participants leave at once — a Fast DDS 2.6 race
+  (`EDP::unpairWriterProxy` segfault in two receive threads during
+  `rcl_node_fini`), reproduced with 40 bare `demo_nodes_cpp` nodes and no
+  launcher; each such node leaves its participant's files. **So the nodes
+  are stopped one at a time** (`process::stop_process_group_staggered`):
+  SIGTERM per process, 5 ms apart and at most 1 s for the whole group,
+  deepest first (an `isolated` container stops all its composables together
+  the moment it is told to, which would undo the stagger), rescanning the
+  group until nothing new appears. Bare nodes: 5 of 15 runs crashed one at
+  once, 0 of 30 staggered; 40 nodes under play_launch: 3 of 15 → 0 of 15;
+  Autoware `isolated`: exit 7.0–9.2 s with 0–38 SIGKILLs → 4.0 s with none,
+  `observable` 4.4–7.0 s → 3.4–3.9 s. Only the first signal staggers; a
+  second Ctrl-C is still one `killpg`. **Measuring shutdown under gdb or strace: either one
   slows the process enough to change the result** — a gdb stack sample
   inflates exit time by 8–30 s, and strace pushed 40 demo nodes past the
   5 s ladder.

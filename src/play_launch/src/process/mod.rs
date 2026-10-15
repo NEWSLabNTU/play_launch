@@ -10,4 +10,4 @@ pub mod pgid;
 pub use cleanup::kill_all_descendants;
 
 #[cfg(unix)]
-pub use pgid::kill_process_group;
+pub use pgid::{kill_process_group, stop_process_group_staggered};

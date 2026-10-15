@@ -51,8 +51,8 @@ pub(crate) fn initiate_shutdown(
     // are what make every holder of a ROS entity let go.
     #[cfg(unix)]
     {
-        let stop_nodes =
-            move || crate::process::kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
+        // One process at a time, not one `killpg`: nodes leaving the DDS
+        // domain all at once is what crashes them (`stop_process_group_staggered`).
         match tokio::runtime::Handle::try_current() {
             Ok(runtime) => {
                 runtime.spawn(async move {
@@ -63,10 +63,10 @@ pub(crate) fn initiate_shutdown(
                             LEAVE_ROS_GRAPH_TIMEOUT.as_secs()
                         );
                     }
-                    stop_nodes();
+                    crate::process::stop_process_group_staggered(pgid).await;
                 });
             }
-            Err(_) => stop_nodes(),
+            Err(_) => crate::process::kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM),
         }
     }
     #[cfg(not(unix))]
