@@ -130,6 +130,11 @@ CONSUMING_PATTERNS = [
     # observations give) and the stated-budgets table `declared-not-charged`
     # reads.
     (r"resolve/src/ros/budget_book\.rs$", "budget rule (phase 10)"),
+    # phase 93: the overrun case of a supervised budget (`supervised-fit`,
+    # `measured-unsupervised`, ...) and a timer period's feasible range
+    # (`period-range`).
+    (r"resolve/src/ros/supervision\.rs$", "supervised budgets (phase 93)"),
+    (r"resolve/src/ros/period_range\.rs$", "timer period range (phase 93)"),
     (r"sched/src/", "scheduling"),
     (r"^rlm/derive/src/", "shared mapper derivation (rlm derive)"),
     (r"check/src/graph\.rs$", "dataflow graph"),

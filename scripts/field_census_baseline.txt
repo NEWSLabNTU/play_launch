@@ -73,3 +73,10 @@ timer_jitter_ms    # PathContract (model, rlm v0.1.49, phase 85 D1). The
                    # notice. The model copy is for nano-ros, which does not
                    # read it yet, and rlm's `derive` crate charges a timer
                    # one period without it.
+
+timer_rate_source  # PathDecl (rlm v0.1.61, phase 93 S1). Read only through
+                   # `Manifest::budget_sources()` (rlm types/src/bound.rs, an
+                   # accessor the census does not classify), which lists it
+                   # as `...trigger.timer.rate_hz`; `period-range`
+                   # (period_range.rs) reads that list and refuses an
+                   # allocated rate outside its range. Consumed one call away.
