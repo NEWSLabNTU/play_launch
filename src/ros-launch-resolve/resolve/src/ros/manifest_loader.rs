@@ -316,6 +316,10 @@ pub enum RungRole {
     Skipped,
     /// The floor, measured by `fault-reaction-budget`.
     Floor,
+    /// A supervised budget on the rung above overruns (phase 93): the time
+    /// before it + the budget + the detection delay + the supervision's
+    /// reaction and settle, against the interval (`supervised-fit`).
+    Overrun,
 }
 
 /// One (hazard, rung) row of the fault-reaction arithmetic, kept so
@@ -375,38 +379,47 @@ fn topic_transport_term(index: &ManifestIndex, topic_fqn: &str) -> Option<TermKe
     })
 }
 
-/// The stated budgets a reaction walk charges (phase 10 B7): each hop's
-/// `max_latency` and its timer's `jitter` when it was a sampling hop, the
-/// guard edge's `max_transport` unless a window's deadline starts the route,
-/// and the settle's written response (or a literal settle).
-fn walk_terms(index: &ManifestIndex, w: &ReactionWalk, after_deadline: bool) -> Vec<TermKey> {
-    let mut out: Vec<TermKey> = Vec::new();
-    for hop in &w.hops {
-        let declared = index.node_paths.iter().any(|p| {
-            p.node_fqn == hop.node && p.path_name == hop.path && p.path.max_latency.is_some()
-        });
-        if declared {
-            out.extend(node_term(
-                index,
-                &hop.node,
-                &format!("paths.{}.max_latency", hop.path),
-            ));
-        }
-        if hop.jitter_ms.is_some() {
-            out.extend(node_term(
-                index,
-                &hop.node,
-                &format!("paths.{}.trigger.timer.jitter", hop.path),
-            ));
-        }
-    }
+/// The stated budgets a reaction walk charges (phase 10 B7), in the order
+/// charged and with the value each is charged (phase 93): the guard edge's
+/// `max_transport` unless a window's deadline starts the route, each hop's
+/// timer `jitter` when it was a sampling hop and its `max_latency`, and the
+/// settle's written duration (a literal settle) and response.
+pub(crate) fn walk_terms(
+    index: &ManifestIndex,
+    w: &ReactionWalk,
+    after_deadline: bool,
+) -> Vec<(TermKey, f64)> {
+    let mut out: Vec<(TermKey, f64)> = Vec::new();
     if let Some(l) = w.link.as_ref().filter(|_| !after_deadline) {
-        if l.from == "sub" {
-            if let Some((n, ep)) = split_endpoint_ref_for_check(&l.sub_ref) {
-                out.extend(node_term(index, &n, &format!("sub.{ep}.max_transport")));
-            }
+        let key = if l.from == "sub" {
+            split_endpoint_ref_for_check(&l.sub_ref)
+                .and_then(|(n, ep)| node_term(index, &n, &format!("sub.{ep}.max_transport")))
         } else {
-            out.extend(topic_transport_term(index, &l.topic));
+            topic_transport_term(index, &l.topic)
+        };
+        out.extend(key.map(|k| (k, l.ms)));
+    }
+    for hop in &w.hops {
+        if let Some(j) = hop.jitter_ms {
+            out.extend(
+                node_term(
+                    index,
+                    &hop.node,
+                    &format!("paths.{}.trigger.timer.jitter", hop.path),
+                )
+                .map(|k| (k, j)),
+            );
+        }
+        let declared = index
+            .node_paths
+            .iter()
+            .find(|p| p.node_fqn == hop.node && p.path_name == hop.path)
+            .and_then(|p| p.path.max_latency.ms());
+        if let Some(ms) = declared {
+            out.extend(
+                node_term(index, &hop.node, &format!("paths.{}.max_latency", hop.path))
+                    .map(|k| (k, ms)),
+            );
         }
     }
     if let Some(at) = &w.settle {
@@ -414,19 +427,29 @@ fn walk_terms(index: &ManifestIndex, w: &ReactionWalk, after_deadline: bool) -> 
         // the response is the settle's, charged beside a written duration
         // as beside a profile.
         let base = format!("paths.{}.safe_state.settle", at.path);
-        if at.ss.settle_profile.is_none() && at.ss.settle.is_some() {
+        if at.ss.settle_profile.is_none()
+            && let Some(ms) = at.ss.settle.ms()
+        {
             let key = if at.ss.settle_map {
                 format!("{base}.duration")
             } else {
                 base.clone()
             };
-            out.extend(node_term(index, &at.node, &key));
+            out.extend(node_term(index, &at.node, &key).map(|k| (k, ms)));
         }
-        if at.ss.settle_response.is_some() {
-            out.extend(node_term(index, &at.node, &format!("{base}.response")));
+        if let Some(ms) = at.ss.settle_response.ms() {
+            out.extend(node_term(index, &at.node, &format!("{base}.response")).map(|k| (k, ms)));
         }
     }
     out
+}
+
+/// The keys of [`walk_terms`], in order.
+fn walk_keys(index: &ManifestIndex, w: &ReactionWalk, after_deadline: bool) -> Vec<TermKey> {
+    walk_terms(index, w, after_deadline)
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect()
 }
 
 /// The complete resolved manifest index for the launch tree.
@@ -1108,6 +1131,9 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // checks it -- before `declared-not-charged`, which reads it.
     index.stated = super::budget_book::stated_budgets(index, &graph);
     note_declared_not_charged(index);
+    // Phase 93: a supervised budget no monitor reads; a measured one nothing
+    // supervises.
+    super::supervision::check(index);
 
     // Phase 85 I8: an endpoint no topic wires.
     check_endpoint_unwired(index);
@@ -1590,7 +1616,9 @@ fn detector_interval_ms(
             (Some(n), Some(period)) => Some(n as f64 * period).filter(|v| *v > 0.0),
             _ => None,
         },
-        F::Reported => None,
+        // A supervision's verdict (phase 93), never a subscriber's class:
+        // the parser refuses it in an `on:` list.
+        F::Reported | F::Overrun => None,
     }
 }
 
@@ -1660,6 +1688,7 @@ fn fault_kind_name(kind: ros_launch_manifest_types::FaultKind) -> &'static str {
         F::Late => "late",
         F::Loss => "loss",
         F::Reported => "reported",
+        F::Overrun => "overrun",
     }
 }
 
@@ -1673,6 +1702,7 @@ fn detectors_that_count(kind: ros_launch_manifest_types::FaultKind) -> &'static 
         F::Late => "a QoS `deadline`, or `max_age` on the subscriber",
         F::Loss => "`drop.max_consecutive` on the guard topic, whose rate is known",
         F::Reported => "a publisher of the guard topic whose rate is known",
+        F::Overrun => "a `supervise:` on the budget (not a guard's class)",
     }
 }
 
@@ -1834,20 +1864,20 @@ fn hazard_unguarded(
 }
 
 /// The reaction route a hazard actually runs (phase 71).
-struct ReactionWalk {
+pub(crate) struct ReactionWalk {
     /// Longest-branch sum of the reaction paths' `max_latency`.
-    route_ms: f64,
+    pub(crate) route_ms: f64,
     /// The `safe_state` whose settle the route is charged: the one declared
     /// at the sink, or else (phase 83) the nearest one upstream on the same
     /// branch -- a node that commands the safe state through a downstream
     /// hop (the comfortable-stop operator's velocity limit, carried to the
     /// actuator by the planner) still owns the plant's share of it.
-    settle: Option<SettleAt>,
+    pub(crate) settle: Option<SettleAt>,
     /// The hops on the longest branch, for the message and for the
     /// criticality derivation.
-    hops: Vec<ReactionHop>,
+    pub(crate) hops: Vec<ReactionHop>,
     /// The guard edge's link, already included in `route_ms` (phase 85 I1).
-    link: Option<GuardLink>,
+    pub(crate) link: Option<GuardLink>,
 }
 
 /// The transport a reaction route is charged on its GUARD EDGE: the hop from
@@ -1861,14 +1891,14 @@ struct ReactionWalk {
 /// period plus its path latency and stops at the publish, so charging the
 /// link there as well would count it twice.
 #[derive(Clone)]
-struct GuardLink {
+pub(crate) struct GuardLink {
     /// The detecting subscriber, `node/endpoint`.
-    sub_ref: String,
-    ms: f64,
+    pub(crate) sub_ref: String,
+    pub(crate) ms: f64,
     /// `sub` when the subscriber states it, `topic` when it inherits it.
-    from: &'static str,
+    pub(crate) from: &'static str,
     /// The guard topic's FQN.
-    topic: String,
+    pub(crate) topic: String,
 }
 
 impl GuardLink {
@@ -1891,7 +1921,7 @@ impl ReactionWalk {
     }
 
     /// The route as charged, and how it divides when a link is part of it.
-    fn charged(&self, after_deadline: bool) -> (f64, String) {
+    pub(crate) fn charged(&self, after_deadline: bool) -> (f64, String) {
         match (&self.link, after_deadline) {
             (Some(l), false) => (
                 self.route_ms,
@@ -1922,31 +1952,31 @@ impl ReactionWalk {
 /// `safe_state` there. The number is derived by the caller, per hazard,
 /// because a braking profile needs the hazard's entry speed.
 #[derive(Clone)]
-struct SettleAt {
-    node: String,
-    path: String,
-    ss: ros_launch_manifest_types::SafeState,
+pub(crate) struct SettleAt {
+    pub(crate) node: String,
+    pub(crate) path: String,
+    pub(crate) ss: ros_launch_manifest_types::SafeState,
 }
 
 /// One `node/path` hop of a reaction route.
 #[derive(Clone)]
-struct ReactionHop {
-    node: String,
-    path: String,
+pub(crate) struct ReactionHop {
+    pub(crate) node: String,
+    pub(crate) path: String,
     /// One timer period, charged when the reaction reached this node as
     /// something a timer path READS rather than as that path's trigger (a
     /// request the server latches, a `state: true` subscriber): the quantity
     /// `ros-launch-manifest`'s `NodeView::sampling_cost_ms` defines. Already
     /// included in the walk's `route_ms`; carried here so the route names the
     /// clock it waited for.
-    sampling_ms: Option<f64>,
+    pub(crate) sampling_ms: Option<f64>,
     /// The timer's release jitter (phase 85 D1), already inside
     /// `sampling_ms`: a sampling hop waits up to one period plus this.
-    jitter_ms: Option<f64>,
+    pub(crate) jitter_ms: Option<f64>,
     /// What this hop is charged in the route: its `max_latency` plus the
     /// sampling period above. `window-expiry` reads the first hop's, because
     /// after a window that hop is the node noticing the deadline (phase 84).
-    ms: f64,
+    pub(crate) ms: f64,
 }
 
 impl std::fmt::Display for ReactionHop {
@@ -2002,6 +2032,36 @@ impl std::fmt::Display for ReactionHop {
 /// sampled: there the publisher is dead and the reaction has to be declared.
 fn walk_reaction(
     guards: &[String],
+    sinks: &HashSet<&str>,
+    topics: &BTreeMap<String, ResolvedTopic>,
+    services: &BTreeMap<String, ResolvedService>,
+    node_paths: &[ResolvedNodePath],
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) -> Option<ReactionWalk> {
+    walk_reaction_at(
+        WalkStart::Guards(guards),
+        sinks,
+        topics,
+        services,
+        node_paths,
+        graph,
+    )
+}
+
+/// Where a reaction walk starts (phase 93).
+pub(crate) enum WalkStart<'a> {
+    /// At the guard topics: only a subscriber with an `on_violation` moves.
+    Guards(&'a [String]),
+    /// At topics past the guard: the ordinary input-triggered paths carry
+    /// the reaction on (a scope path's entry topics).
+    Topics(&'a [String]),
+    /// At a node path, `(node FQN, path)`: a supervision's reaction.
+    Path(&'a str, &'a str),
+}
+
+/// [`walk_reaction`] from any [`WalkStart`] (phase 93), by the same rules.
+pub(crate) fn walk_reaction_at(
+    start: WalkStart<'_>,
     sinks: &HashSet<&str>,
     topics: &BTreeMap<String, ResolvedTopic>,
     services: &BTreeMap<String, ResolvedService>,
@@ -2305,9 +2365,22 @@ fn walk_reaction(
         best
     }
 
+    let (starts, depth) = match start {
+        WalkStart::Guards(g) => (g, 0),
+        WalkStart::Topics(t) => (t, 1),
+        WalkStart::Path(node, path) => {
+            let hop_paths: Vec<&ResolvedNodePath> = node_paths
+                .iter()
+                .filter(|p| p.node_fqn == node && p.path_name == path)
+                .collect();
+            return advance(
+                node, hop_paths, false, 1, sinks, topics, services, node_paths, graph,
+            );
+        }
+    };
     let mut best: Option<ReactionWalk> = None;
-    for g in guards {
-        if let Some(w) = from_topic(g, 0, sinks, topics, services, node_paths, graph)
+    for g in starts {
+        if let Some(w) = from_topic(g, depth, sinks, topics, services, node_paths, graph)
             && best.as_ref().is_none_or(|b| w.route_ms > b.route_ms)
         {
             best = Some(w);
@@ -2954,6 +3027,16 @@ fn check_fault_reaction(
         };
         let ftti_ms = h.decl.ftti.ms();
         let fdti_ms = fdti_worst.as_ref().map(|(v, _, _)| *v);
+        // Phase 93: where a supervision's node-path reaction may land.
+        let hazard_sinks: HashSet<String> = rungs
+            .iter()
+            .filter_map(|(_, p)| {
+                scope_paths
+                    .iter()
+                    .find(|sp| sp.scope_id == h.scope_id && &sp.path_name == p)
+            })
+            .flat_map(|sp| sp.output_topics.iter().cloned())
+            .collect();
         // Phase 10 B7: the stated keys inside DETECT.
         let fdti_keys: Vec<TermKey> = fdti_worst
             .as_ref()
@@ -3057,7 +3140,7 @@ fn check_fault_reaction(
             };
             // Phase 10 B7: the stated budgets ROUTE (and SETTLE) contain.
             let route_terms: Vec<TermKey> = match &walk {
-                Some(w) => walk_terms(index, w, after_deadline),
+                Some(w) => walk_keys(index, w, after_deadline),
                 None => rp
                     .path
                     .max_latency
@@ -3192,6 +3275,25 @@ fn check_fault_reaction(
                 terms: [fdti_keys.clone(), waited_terms.clone(), route_terms.clone()].concat(),
                 ..Default::default()
             });
+            super::supervision::overrun_rows(
+                index,
+                &super::supervision::RowCtx {
+                    h,
+                    rung: rung_name,
+                    ftti_ms: Some(ftti),
+                    fdti_ms: Some(fdti),
+                    waited_ms: waited,
+                    walk: walk.as_ref(),
+                    after_deadline,
+                    prior_terms: [fdti_keys.clone(), waited_terms.clone()].concat(),
+                    hazard_sinks: &hazard_sinks,
+                    topics: &topics,
+                    services: &services,
+                    graph,
+                },
+                &mut budgets,
+                &mut diags,
+            );
             if total > ftti {
                 diags.push(Diagnostic {
                     rule_id: "ladder-rung-budget".to_string(),
@@ -3388,7 +3490,7 @@ fn check_fault_reaction(
                 .flat_map(|w| w.terms.iter().cloned())
                 .collect(),
             match &walk {
-                Some(w) => walk_terms(index, w, floor_after_deadline),
+                Some(w) => walk_keys(index, w, floor_after_deadline),
                 None if declared_ms.is_some() => {
                     vec![(h.scope_id, format!("paths.{terminal}.max_latency"))]
                 }
@@ -3412,6 +3514,32 @@ fn check_fault_reaction(
             terms: floor_terms,
             ..Default::default()
         });
+        super::supervision::overrun_rows(
+            index,
+            &super::supervision::RowCtx {
+                h,
+                rung: &floor_name,
+                ftti_ms,
+                fdti_ms,
+                waited_ms: waited,
+                walk: walk.as_ref(),
+                after_deadline: floor_after_deadline,
+                prior_terms: [
+                    fdti_keys.clone(),
+                    windows
+                        .iter()
+                        .flat_map(|w| w.terms.iter().cloned())
+                        .collect(),
+                ]
+                .concat(),
+                hazard_sinks: &hazard_sinks,
+                topics: &topics,
+                services: &services,
+                graph,
+            },
+            &mut budgets,
+            &mut diags,
+        );
         let Some(ftti) = ftti_ms else {
             continue;
         };

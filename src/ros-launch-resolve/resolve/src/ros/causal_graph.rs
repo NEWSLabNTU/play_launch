@@ -614,6 +614,7 @@ fn fault_kind(kind: ros_launch_manifest_types::FaultKind) -> &'static str {
         F::Late => "late",
         F::Loss => "loss",
         F::Reported => "reported",
+        F::Overrun => "overrun",
     }
 }
 

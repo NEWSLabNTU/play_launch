@@ -473,6 +473,7 @@ pub(crate) fn check_predicates(index: &ManifestIndex, diags: &mut Vec<Diagnostic
                         FaultKind::Late => "late",
                         FaultKind::Loss => "loss",
                         FaultKind::Reported => "reported",
+                        FaultKind::Overrun => "overrun",
                     })
                     .collect();
                 format!("`on: [{}]`", names.join(", "))

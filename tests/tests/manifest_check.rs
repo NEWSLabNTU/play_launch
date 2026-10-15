@@ -2074,10 +2074,12 @@ fn explain_prints_each_budgets_source() {
         "hpc_loss  estop        floor    500.00      0.00  143.33    2033.33 derived   2676.67   \
          3000.00    323.33  measured",
         "9363.33  analysed+measured+requirement",
-        "hpc_loss/estop: TOTAL 2676.67 is measured, not a bound: it contains \
+        // Phase 93: the row's LEVEL, and the unsupervised terms named.
+        "hpc_loss/estop: TOTAL 2676.67 is unsupervised: it contains \
          nodes.handler.paths.call_mrm.max_latency",
-        "odd_exit/comfortable: TOTAL 20636.67 is measured, not a bound: it contains \
+        "odd_exit/comfortable: TOTAL 20636.67 is unsupervised: it contains \
          nodes.handler.paths.call_mrm.max_latency, nodes.planner.paths.follow.max_latency",
+        "warning[measured-unsupervised]",
         "-- Stated budgets (--explain, ms) --",
         "measured: tick 100 + 5 x 1.2 (n=600) = 106.00 -> 106, work 3.2 x 1.2 (n=12) = 3.84 -> 4",
         "measured: 250 x 1.2 (n=5) = 300.00 -> 300",
@@ -2107,7 +2109,9 @@ fn a_measured_budget_its_observations_do_not_give_is_budget_rule() {
          -> 106, work 5 x 1.2 (n=12) = 6.00 -> 6;",
         "error[budget-rule]: bringup.contract.yaml:156: `nodes.planner.paths.follow.max_latency: \
          300ms` is measured, but its observations give 288ms (240 x 1.2 (n=5) = 288.00 -> 288;",
-        "(2 errors, 2 warnings)",
+        // Phase 93: the two measured budgets nothing supervises warn.
+        "(2 errors, 4 warnings)",
+        "warning[measured-unsupervised]",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
@@ -2629,4 +2633,149 @@ fn migrate_rewrites_the_deprecated_spellings_in_place() {
     )
     .unwrap();
     assert!(migrated.ends_with(&twin), "{migrated}");
+}
+
+/// Run `check` on a takeover fixture with the `ros-launch-resolve` CLI built
+/// from this tree (phase 93), or `None` when it is not built. The phase 93
+/// verdicts are new, so they are not asked of an installed `play_launch`.
+fn check_resolve(dir: &str, extra: &[&str]) -> Option<(i32, String)> {
+    let bin = ros_launch_resolve_bin()?;
+    let root = fixtures::repo_root().join("tests/fixtures");
+    let launch = root.join(dir).join("launch/bringup.launch.xml");
+    let ament = root.join("contract_takeover/ament");
+    let out = resolve_cmd(&bin)
+        .arg("check")
+        .arg(&launch)
+        .args(extra)
+        .env("AMENT_PREFIX_PATH", ament)
+        .output()
+        .expect("ros-launch-resolve check runs");
+    Some((
+        out.status.code().unwrap_or(-1),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    ))
+}
+
+/// Phase 93: two supervised budgets. Each overrun case is a row with its
+/// arithmetic and fits; detection is tick + switch for a timer and tick +
+/// the executor's longest `work` for an executor; a reaction on the same
+/// executor covers slowness, not a hang; CHECKED BY names the lowered
+/// monitor; LEVEL replaces "measured, not a bound".
+#[test]
+fn supervised_budgets_print_their_overrun_case() {
+    let Some((code, out)) = check_resolve("contract_supervised", &["--explain"]) else {
+        eprintln!("Skipping: ros-launch-resolve not built");
+        return;
+    };
+    assert_eq!(code, 0, "{out}");
+    for needle in [
+        "info[supervised-fit]",
+        "hazard 'hpc_loss', rung 'estop': if `nodes.handler.paths.call_mrm.max_latency` overruns, \
+         before it 500.00ms + budget 110.00ms + detection 1.05ms (tick 1.00ms + switch 0.05ms \
+         (timer)) + reaction /handler/brake_now 38.33ms + settle 2033.33ms = 2682.72ms fits the \
+         fault-tolerant time interval 3000.00ms with 317.28ms of slack",
+        "detection 301.00ms (tick 1.00ms + the longest callback on /planner's executor 300.00ms \
+         (follow's `work`)",
+        "covers slowness, not a hang",
+        "hpc_loss  estop (nodes.handler.paths.call_mrm.max_latency)        overrun  500.00      \
+         0.00  149.38    2033.33 derived   2682.72   3000.00    317.28",
+        "SOURCES                        LEVEL",
+        "runtime monitor (route-deadline-runtime: reaction /handler/brake_now, timer)",
+        "runtime monitor (route-deadline-runtime: reaction /planner/stop_now, executor)",
+        "warning[measured-unsupervised]",
+        "`nodes.planner.paths.stop_now.max_latency: 5.00ms` is measured and nothing supervises it",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    assert!(!out.contains("measured, not a bound"), "{out}");
+    let row = |key: &str| {
+        out.lines()
+            .find(|l| l.starts_with(key))
+            .unwrap_or_else(|| panic!("no row {key}:\n{out}"))
+            .to_string()
+    };
+    assert!(row("nodes.handler.paths.call_mrm.max_latency").contains("supervised"));
+    assert!(row("nodes.gate.paths.report.max_latency").contains("bound"));
+    assert!(row("nodes.planner.paths.stop_now.max_latency").contains("unsupervised"));
+}
+
+/// Phase 93: an overrun case over the interval is refused.
+#[test]
+fn a_supervised_overrun_over_the_interval_is_refused() {
+    let Some((code, out)) = check_resolve("contract_supervised_overrun", &[]) else {
+        eprintln!("Skipping: ros-launch-resolve not built");
+        return;
+    };
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains(
+            "error[supervised-fit]: bringup.contract.yaml:101: hazard 'hpc_loss', rung 'estop': \
+             if `nodes.handler.paths.call_mrm.max_latency` overruns, before it 500.00ms + budget \
+             110.00ms + detection 1.05ms (tick 1.00ms + switch 0.05ms (timer)) + reaction scope \
+             path 'sys.comfortable' 410.00ms + settle 4666.67ms = 5687.72ms exceeds the \
+             fault-tolerant time interval 3000.00ms"
+        ),
+        "{out}"
+    );
+    assert_eq!(out.matches("error[").count(), 1, "{out}");
+}
+
+/// Phase 93: a supervised budget no runtime monitor reads is refused.
+#[test]
+fn a_supervised_budget_with_no_monitor_is_refused() {
+    let Some((code, out)) = check_resolve("contract_supervised_unlowered", &[]) else {
+        eprintln!("Skipping: ros-launch-resolve not built");
+        return;
+    };
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains(
+            "error[supervised-unlowered]: bringup.contract.yaml:74: \
+             `nodes.gate.paths.report.max_latency` is supervised, but no runtime monitor checks \
+             it: /gate/report is not input-triggered"
+        ),
+        "{out}"
+    );
+    assert_eq!(out.matches("error[").count(), 1, "{out}");
+}
+
+/// Phase 93: a lowered supervision reaches the model on its node path, in the
+/// shape a realizer's route monitor reads: the deadline, the reaction's path
+/// id (a key of the model) and the mechanism.
+#[test]
+fn a_lowered_supervision_reaches_the_model() {
+    let Some(bin) = ros_launch_resolve_bin() else {
+        eprintln!("Skipping: ros-launch-resolve not built");
+        return;
+    };
+    let root = fixtures::repo_root().join("tests/fixtures");
+    let out_path = tempfile::NamedTempFile::new().unwrap().into_temp_path();
+    let status = resolve_cmd(&bin)
+        .arg("resolve")
+        .arg(root.join("contract_supervised/launch/bringup.launch.xml"))
+        .arg("-o")
+        .arg(&out_path)
+        .env("AMENT_PREFIX_PATH", root.join("contract_takeover/ament"))
+        .status()
+        .expect("resolve runs");
+    assert!(status.success(), "resolve failed");
+    let model: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&out_path).unwrap()).unwrap();
+    let paths = &model["contracts"]["node_paths"];
+    let sv = &paths["/handler/call_mrm"]["supervise"];
+    assert_eq!(sv["route_deadline_ms"].as_f64(), Some(110.0), "{sv:?}");
+    assert_eq!(sv["reaction"].as_str(), Some("/handler/brake_now"));
+    assert_eq!(sv["mechanism"].as_str(), Some("timer"));
+    assert!(
+        paths["/handler/brake_now"].is_mapping(),
+        "the reaction is a model key"
+    );
+    let sv = &paths["/planner/follow"]["supervise"];
+    assert_eq!(sv["mechanism"].as_str(), Some("executor"));
+    // An unsupervised path carries none.
+    assert!(paths["/handler/driver_exit"]["supervise"].is_null());
 }

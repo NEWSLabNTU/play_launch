@@ -394,6 +394,7 @@ pub fn expect_verdict(
 pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
     use crate::ros::budget_book;
     use manifest_loader::RungRole;
+    use ros_launch_manifest_types::BudgetLevel;
     let rows = &index.budgets;
     // Phase 10 B7: a SOURCES column once any contract states a source.
     let with_sources = index
@@ -408,6 +409,7 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
     let mut table: Vec<Vec<String>> = vec![head.iter().map(|h| h.to_string()).collect()];
     if with_sources {
         table[0].push("SOURCES".to_string());
+        table[0].push("LEVEL".to_string());
     }
     let mut notes: Vec<String> = Vec::new();
     for r in rows {
@@ -416,6 +418,7 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
             RungRole::Window => "window",
             RungRole::Skipped => "skipped",
             RungRole::Floor => "floor",
+            RungRole::Overrun => "overrun",
         };
         let settle = match (r.role, r.settle_ms) {
             (RungRole::Window, _) => format!("window >={}", ms(r.window_ms)),
@@ -444,14 +447,22 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
             ms(r.ftti_ms),
             slack,
         ];
-        // Phase 10 B7: where the row's stated terms come from, and a total
-        // with a measured term in it is not a bound.
-        let measured: Vec<&str> = r
+        // Phase 10 B7: where the row's stated terms come from. Phase 93: the
+        // row's level is its weakest term's (unsupervised < supervised <
+        // bound), and the unsupervised terms are named.
+        let unsupervised: Vec<&str> = r
             .terms
             .iter()
-            .filter(|t| budget_book::is_measured(index, t))
+            .filter(|t| {
+                crate::ros::supervision::level_of(index, t) == Some(BudgetLevel::Unsupervised)
+            })
             .map(|t| t.1.as_str())
             .collect();
+        let level = r
+            .terms
+            .iter()
+            .filter_map(|t| crate::ros::supervision::level_of(index, t))
+            .min();
         if with_sources {
             let mut kinds: Vec<String> = r
                 .terms
@@ -468,19 +479,23 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
             } else {
                 kinds.join("+")
             });
+            cells.push(match (r.role, level) {
+                (RungRole::Skipped, _) | (_, None) => "-".to_string(),
+                (_, Some(l)) => l.to_string(),
+            });
         }
         table.push(cells);
-        if !measured.is_empty() && r.total_ms.is_some() {
+        if !unsupervised.is_empty() && r.total_ms.is_some() {
             // In the order charged, each once (a window's route and the
             // rung's own can charge the same path).
             let mut seen = std::collections::BTreeSet::new();
-            let keys: Vec<&str> = measured
+            let keys: Vec<&str> = unsupervised
                 .iter()
                 .copied()
                 .filter(|k| seen.insert(*k))
                 .collect();
             notes.push(format!(
-                "  {}/{}: TOTAL {} is measured, not a bound: it contains {}",
+                "  {}/{}: TOTAL {} is unsupervised: it contains {}",
                 r.hazard,
                 r.rung,
                 ms(r.total_ms),
@@ -539,9 +554,11 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
     );
     if with_sources {
         out.push_str(
-            "  SOURCES are the provenances of the stated budgets in the row (`source:`); a \
-             measured budget is an observed maximum plus a margin, and a TOTAL that contains one \
-             is measured, not a bound.\n",
+            "  SOURCES are the provenances of the stated budgets in the row (`source:`). LEVEL \
+             is the weakest of their levels: `bound` (analysed), `supervised` (`supervise:`: a \
+             miss is caught and handled, its OVERRUN row checks the fallback), `unsupervised` (a \
+             measured budget nothing supervises: an observed maximum plus a margin, not a \
+             bound).\n",
         );
     }
     for n in notes {
@@ -561,10 +578,11 @@ fn render_stated(index: &manifest_loader::ManifestIndex) -> String {
     }
     let files: std::collections::BTreeSet<&str> =
         index.stated.iter().map(|b| b.file.as_str()).collect();
-    let mut table: Vec<[String; 4]> = vec![[
+    let mut table: Vec<[String; 5]> = vec![[
         "BUDGET".to_string(),
         "MS".to_string(),
         "SOURCE".to_string(),
+        "LEVEL".to_string(),
         "CHECKED BY".to_string(),
     ]];
     for b in &index.stated {
@@ -577,6 +595,7 @@ fn render_stated(index: &manifest_loader::ManifestIndex) -> String {
             key,
             format!("{:.2}", b.ms),
             budget_book::source_label(b.source.as_ref()),
+            b.level.map_or("-".to_string(), |l| l.to_string()),
             if b.checked_by.is_empty() {
                 "nothing".to_string()
             } else {
@@ -584,7 +603,7 @@ fn render_stated(index: &manifest_loader::ManifestIndex) -> String {
             },
         ]);
     }
-    let widths: Vec<usize> = (0..4)
+    let widths: Vec<usize> = (0..5)
         .map(|c| table.iter().map(|row| row[c].len()).max().unwrap_or(0))
         .collect();
     let mut out = String::from("\n-- Stated budgets (--explain, ms) --\n");
@@ -607,7 +626,10 @@ fn render_stated(index: &manifest_loader::ManifestIndex) -> String {
     out.push_str(
         "  CHECKED BY: `fault-reaction sum` -- a hazard's detection, route or settle charges it \
          (the hazards named); a rule that compares it with something; a runtime monitor the \
-         model hands to the realizer; `nothing` -- no check reads the number.\n",
+         model hands to the realizer (for a supervised budget, only when it was lowered to a \
+         monitor with its reaction); `nothing` -- no check reads the number.\n  LEVEL: `bound` \
+         (analysed), `supervised` (`supervise:`), `unsupervised` (measured, nothing supervises \
+         it: `measured-unsupervised`), `-` (a requirement, a derived value, or no source).\n",
     );
     let nothing = index
         .stated

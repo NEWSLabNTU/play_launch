@@ -252,6 +252,7 @@ fn fault_kind(k: ros_launch_manifest_types::FaultKind) -> model::FaultKind {
         F::Late => model::FaultKind::Late,
         F::Loss => model::FaultKind::Loss,
         F::Reported => model::FaultKind::Reported,
+        F::Overrun => model::FaultKind::Overrun,
     }
 }
 
@@ -417,6 +418,8 @@ fn path_contract(
         max_jitter_ms: decl.max_jitter.ms(),
         miss: decl.miss.as_ref().map(super::sched_derive::convert_miss),
         timer_jitter_ms,
+        // Phase 93: set by the caller from the lowering, node paths only.
+        supervise: None,
     }
 }
 
@@ -1133,16 +1136,38 @@ pub fn build_system_model(
             .iter()
             .map(|e| format!("{node_fqn}/{e}"))
             .collect();
-        contracts.node_paths.insert(
-            format!("{node_fqn}/{}", p.path_name),
-            path_contract(
-                &p.path,
-                input,
-                output,
-                &|e| format!("{node_fqn}/{e}"),
-                Some(trigger),
-            ),
+        let mut contract = path_contract(
+            &p.path,
+            input,
+            output,
+            &|e| format!("{node_fqn}/{e}"),
+            Some(trigger),
         );
+        // Phase 93: a supervised route deadline, lowered with the path id
+        // its reaction hook receives (a key of this model).
+        contract.supervise = super::supervision::lowered_route(index, &p.node_fqn, &p.path_name)
+            .map(|(deadline, reaction, mechanism)| model::SuperviseContract {
+                route_deadline_ms: deadline,
+                reaction: match reaction {
+                    super::supervision::ReactionTarget::NodePath { node, path } => {
+                        format!("{}/{path}", resolve_node_ref(&structure.nodes, &node))
+                    }
+                    super::supervision::ReactionTarget::ScopePath { scope_id, name } => {
+                        scope_scoped_key(&scope_key(Some(scope_id)), &name)
+                    }
+                },
+                mechanism: match mechanism {
+                    ros_launch_manifest_types::SuperviseMechanism::Executor => {
+                        model::SuperviseMechanism::Executor
+                    }
+                    ros_launch_manifest_types::SuperviseMechanism::Timer => {
+                        model::SuperviseMechanism::Timer
+                    }
+                },
+            });
+        contracts
+            .node_paths
+            .insert(format!("{node_fqn}/{}", p.path_name), contract);
     }
     for p in &index.scope_paths {
         contracts.scope_paths.insert(

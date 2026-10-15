@@ -32,6 +32,9 @@ pub struct StatedBudget {
     pub key: String,
     pub ms: f64,
     pub source: Option<BudgetSource>,
+    /// What the budget's evidence amounts to (phase 93): bound, supervised,
+    /// unsupervised, or none (a requirement, a derived value, no source).
+    pub level: Option<ros_launch_manifest_types::BudgetLevel>,
     /// What reads the number, in words; empty when nothing does.
     pub checked_by: Vec<String>,
 }
@@ -177,7 +180,9 @@ pub(crate) fn stated_budgets(
         for (key, v) in enumerate(&m.manifest) {
             let term: TermKey = (m.scope_id, key.clone());
             let checked_by = checks_of(index, graph, m, &term);
+            let level = super::supervision::level_of(index, &term);
             out.push(StatedBudget {
+                level,
                 scope_id: m.scope_id,
                 file: file.clone(),
                 source: m.manifest.budget_sources().get(&key).copied().cloned(),
@@ -200,6 +205,21 @@ fn checks_of(
     let key = term.1.as_str();
     let parts: Vec<&str> = key.split('.').collect();
     let mut out: Vec<String> = Vec::new();
+    // Phase 93: a supervised budget is checked at run time only when it was
+    // lowered to a monitor with a reaction -- read from the lowering, not
+    // from the key.
+    let supervised = super::supervision::supervised(index)
+        .into_iter()
+        .find(|s| &s.term == term);
+    let supervised_by = supervised
+        .as_ref()
+        .and_then(|s| match (&s.lowered, &s.reaction) {
+            (Ok(()), Ok(r)) => Some(format!(
+                "runtime monitor (route-deadline-runtime: reaction {r}, {})",
+                s.sv.mechanism
+            )),
+            _ => None,
+        });
     // The fault-reaction arithmetic: the hazards whose rows contain it.
     let hazards: BTreeSet<&str> = index
         .budgets
@@ -266,7 +286,11 @@ fn checks_of(
             if scope_budgets {
                 out.push(CROSSED.to_string());
             }
-            out.push("runtime monitor (the realizer's path deadline)".to_string());
+            match (&supervised, supervised_by) {
+                (Some(_), Some(by)) => out.push(by),
+                (Some(_), None) => {}
+                (None, _) => out.push("runtime monitor (the realizer's path deadline)".to_string()),
+            }
         }
         ["nodes", n, "paths", p, "trigger", "timer", "jitter"] => {
             // The window's owner reads its deadline on this tick.
