@@ -1,7 +1,9 @@
 # Phase 92 - one PyPI package: `pip install play_launch`, the distribution picked at run time
 
-Status: **in progress** — P1 done (2026-10-15). Follows the 0.17.0 release, whose PyPI
-upload failed and was yanked.
+Status: **in progress** — P1 done (2026-10-15), P2 and P3 done (2026-10-16).
+Follows the 0.17.0 release, whose PyPI upload failed and was yanked. 0.18.0
+and 0.18.1 were tagged with the old workflow and their release runs
+cancelled, so the first release of this design is 0.18.2.
 
 ## Why
 
@@ -135,6 +137,45 @@ variables point at the selected payload only, as they pointed at the flat
   check` on a fixture, one short `play_launch launch` of a demo node) for
   every payload it carries.
 
+**Done (2026-10-16).** `scripts/assemble_wheels.py` merges the matrix
+rows' one-payload wheels by tag (rows of one tag build wheels of the same
+file name, so each is downloaded into its own directory), rewrites RECORD
+and lists every wheel's contents in the job log. It refuses a row with no
+payload or several, a distribution twice under one tag, a shared file that
+differs between rows, and, with `--expect`, a distribution missing from or
+unexpected in an architecture. `scripts/smoke_wheel.sh` is the smoke test:
+`--version` with an empty environment (the only `/opt/ros/<d>`) and
+sourced, `python3 -m play_launch.payload`'s choice, `check` on a
+talker/listener file, and composition's demo launch file run to `Startup
+complete` with 2/2 composables and a clean exit on SIGINT. The workflow's
+`smoke-test` job runs it in a plain Ubuntu container per distribution and
+CPU (QEMU for arm64) with only the distribution's `ros-core`, the demo
+packages and the wheel installed; `release` and `publish-pypi` need it.
+
+Result: six wheels, 20-46 MB (the cp312 and cp314 wheels carry two
+payloads), every one of the ten (distribution, CPU) smoke tests passing.
+Getting there found three defects the old pipeline shipped, none of which
+any earlier check could see, because nothing ran a wheel outside the
+container that built it:
+
+- **libz3 was not in the wheel.** `play_launch` links it through the
+  manifest checker's `smt` feature; Humble's `ros-core` happens to pull in
+  `libz3-4` and nothing later does, so every Jazzy-and-later wheel, 0.17.0's
+  included, failed to start (`libz3.so.4: cannot open shared object
+  file`). `bundle_wheel.sh` copies the libz3 the binary resolves into the
+  payload's `lib/`.
+- **Lyrical and Rolling crashed on the first LoadNode.** From Lyrical on
+  (ros2/rosidl#942) primitive and string C sequences carry two trailing
+  flags and are 32 bytes; `rosidl_runtime_rs` 0.6.0 laid every sequence out
+  as 24, so every field after one was misread
+  (`get_serialized_size_rcl_interfaces__msg__Parameter`, SIGSEGV). Upstream
+  fixed it in 0.7.0; the generated message crates ask for `"0.6"`, so our
+  fork's `play_launch` branch carries that fix on 0.6.0 instead. Its ABI
+  probe compares against the installed C headers and passes on Humble and
+  Rolling.
+- composition's demo launch file is `composition_demo.launch.py` on Humble
+  and `composition_demo_launch.py` later (a smoke-script fix only).
+
 ### P3. Retire the meta package and the per-distribution projects
 
 - Remove `packaging/meta`, the extras, the rename step, and the README's
@@ -144,19 +185,39 @@ variables point at the selected payload only, as they pointed at the flat
 - Gate: `pip install play_launch` in each distribution's container installs
   the right wheel and runs; `pip install "play_launch[humble]"` still works.
 
-### P4. Release 0.17.1
+**Done (2026-10-16).** `packaging/meta/` and the workflow's rename step are
+gone; `pyproject.toml` keeps `humble`, `jazzy`, `kilted`, `lyrical` and
+`rolling` as empty extras, to be removed at 0.20, and
+`pip install "<wheel>[jazzy]"` installs. README says `pip install
+play_launch`. `just publish-pypi` refuses a local `py3-none-any` wheel,
+since it carries one payload and claims every platform; releases come
+from CI on a `v*` tag.
+
+**One departure: no sdist.** The design published one as a source
+fallback. Built from source it would produce a tool with no payload at all
+unless the build environment held a sourced ROS, Rust and the C++
+packages, and pip would pick it silently wherever no wheel matched. With
+no sdist, an unsupported platform gets pip's own "no matching
+distribution", which is the true answer.
+
+### P4. Release 0.18.2
+
+(Planned as 0.17.1. 0.18.0 and 0.18.1 were tagged before this phase
+landed, with the per-distribution workflow, and their release runs were
+cancelled; PyPI's newest is still 0.16.0. A tag is never moved, so the
+release is the next unused version, 0.18.2.)
 
 - Version bump, CHANGELOG (the 0.17.0 split reverted in favour of run-time
-  selection; 0.17.0 yanked), tag, workflow, PyPI.
-- Gate: `pip install play_launch==0.17.1` from PyPI works in a fresh
+  selection; 0.17.0 yanked, 0.18.0 and 0.18.1 never published), tag, workflow, PyPI.
+- Gate: `pip install play_launch==0.18.2` from PyPI works in a fresh
   container for each distribution and CPU (QEMU for arm64 as the build
-  does); the GitHub release lists the six wheels and the sdist.
+  does); the GitHub release lists the six wheels.
 
 ### P5. Consumers
 
 - nano-ros pins (play_launch gitlink) and any consumer install lines that
   say `play_launch[<distro>]` or install from release assets go back to
-  `pip install play_launch==0.17.1`.
+  `pip install play_launch==0.18.2`.
 
 ## Not in this phase
 

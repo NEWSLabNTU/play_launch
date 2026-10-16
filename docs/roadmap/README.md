@@ -99,7 +99,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 89 | [Helping with DDS without touching it](./phase-89-dds-assist.md) | ✅ | 2026-10-14 |
 | 90 | [A tidy grammar](./phase-90-a-tidy-grammar.md) | 📝 planned | — |
 | 91 | [Domain extensions](./phase-91-domain-extensions.md) | 📝 planned | — |
-| 92 | [One PyPI package](./phase-92-one-pypi-package.md) | 🔄 P1 done | — |
+| 92 | [One PyPI package](./phase-92-one-pypi-package.md) | 🔄 P1–P3 done | — |
 | 93 | [Supervised budgets](./phase-93-supervised-budgets.md) | 🔄 | — |
 
 ---
@@ -327,11 +327,14 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     packaging, and the vehicle keys and the ASIL default moved out of the
     core. Design: rlm `docs/design/extension-system.md`.
     [phase-91-domain-extensions.md](./phase-91-domain-extensions.md).
-  - **Phase 92** - in progress, P1 done: one PyPI package (2026-10-15). `pip install
-    play_launch` again: one wheel per Python, glibc and CPU carries every ROS
-    distribution sharing that tag, and the tool picks the payload at run
-    time from `ROS_DISTRO`; the 0.17.0 per-distribution projects and the
-    meta package go away; release as 0.17.1.
+  - **Phase 92** - in progress, P1-P3 done: one PyPI package (2026-10-16).
+    `pip install play_launch` again: one wheel per Python, glibc and CPU
+    carries every ROS distribution sharing that tag, and the tool picks the
+    payload at run time from `ROS_DISTRO`; the 0.17.0 per-distribution
+    projects and the meta package are gone. CI smoke-tests every wheel in a
+    plain container per distribution and CPU, which found libz3 missing
+    from every Jazzy-and-later wheel and a sequence-layout crash on Lyrical
+    and Rolling (`rosidl_runtime_rs`). Release as 0.18.2.
     [phase-92-one-pypi-package.md](./phase-92-one-pypi-package.md).
   - **Phase 93** - in progress: supervised budgets (2026-10-15). A budget
     is a bound (analysed) or supervised: `supervise: { reaction, mechanism }`
