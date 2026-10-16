@@ -1,7 +1,7 @@
 # Phase 91 - domain extensions: rlx, profiles and the vehicle keys moved out
 
-Status: **draft** (2026-10-15). Stage 2 of 2; starts after phase 90 (a tidy
-grammar) lands. Design: rlm `docs/design/extension-system.md` (with
+Status: **in progress** (2026-10-17): E0 done (no-go: rlx owns its
+expression core). Stage 2 of 2; phase 90 (a tidy grammar) is complete. Design: rlm `docs/design/extension-system.md` (with
 `extension-language-exploration.md` and `extension-examples.md`). Work lands
 in rlm (format, language, profiles), play_launch (loader, evaluator, Z3,
 explain, packaging, migration) and the consumers (nano-ros reads the
@@ -19,6 +19,24 @@ exported model; contracts adopt `use:`).
   added, what could not be restricted, whether its parser accepts the 5.3
   character rules or needs a pre-pass. No-go means rlx's own expression
   core (E2 grows by about 2-3 kLOC).
+
+**Done (2026-10-17): no-go.** rlm `docs/design/extension-system.md`
+section 13 (rlm `d002e1f`), spike in rlm `docs/design/spikes/e0-numbat/`.
+Numbat 1.24.0 checks dimensions at load in every branch, and both ports
+compute the documented numbers (vehicle.braking 4422.67 ms at exact
+30 km/h; rail.ebd 64.35 s and 1529.75 m, its table passed as a list of
+structs since Numbat has no lambdas). It costs 74 crates, +2.7 MB stripped,
+a 6.5 s clean build on 48 cores. It fails on three counts:
+`Context::interpret` checks and runs in one call, so a file's statements
+execute before a loader can refuse them; a bodyless `fn` declaration binds
+to Rust FFI by name, undoing any prelude restriction (`fn random() ->
+Scalar` brought `random()` back); and the expression tree is private, so
+no trace, no Z3 translation and no refusal of self-recursion (accepted).
+Its tokenizer accepts confusables, bidi controls and non-NFC text, so 5.3
+needs a pre-pass regardless. rlx gets its own expression core; E2 grows by
+about 2-3 kLOC as planned. Found on the way: the design example's
+`30 km/h` beside 4421.33 ms is the arithmetic of the island's written
+8.33 m/s, so E8's identical-totals gate keeps values as written.
 
 ### E1. Core interface (rlm)
 

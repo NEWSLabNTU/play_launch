@@ -1,9 +1,8 @@
 # Phase 90 - a tidy grammar: fold, rename and remove contract keys
 
-Status: **in progress** (2026-10-15): G1 done (inventory, decisions
-below); G2 done (one bound type, internal); G3 done (both parts); G4, G5,
-G6 and G7 done; G8 started (the `migrate` verb and its rewrite table, with
-the G3, G4 and G7 rewrites). Stage 1 of 2. Stage 2 (an extension system
+Status: **complete** (2026-10-17): G1-G7 done (2026-10-15); G8 done
+(2026-10-17): the grammar shipped in play_launch 0.18.x on PyPI, nano-ros
+pins it and the island checks with it. Stage 1 of 2. Stage 2 (an extension system
 for domain vocabulary, and moving the domain keys into it) gets its own
 phase once its design is settled; nothing here depends on that design, and
 nothing here moves a key out of the core.
@@ -531,7 +530,23 @@ naming the replacement (`error[manifest-parse]`, exit 3):
   produces contracts that check with the same verdicts and `--explain`
   totals; nano-ros images build from the migrated contracts.
 
-#### G8 status: started (2026-10-15)
+#### G8 status: done (2026-10-17)
+
+**Closed.** The release waited for phase 92 and went out as play_launch
+0.18.2 on PyPI (0.18.0 and 0.18.1 carry the same grammar, rlm v0.1.61 and
+v0.1.62, but were never published). nano-ros pins play_launch at 0.18.1's
+76ae4f91, whose `src/ros-launch-resolve` is identical to 0.18.2's. The
+island (simple-autoware-safety-island) was migrated at 0.17.0 (`ed5f53e`);
+with 0.18.2 from PyPI in `ros:humble-ros-base-jammy`, `migrate --check`
+finds 0 rewrites in its 16 contracts and `check-contracts.sh` gives all 16
+verdicts as expected. Its CI now installs `play_launch==0.18.2` from PyPI
+(island `a04d649`, CI green), and its minimum moved from 0.16.0, which
+rejects the migrated `enters`/`holds`, to the CI pin. Still to come, in
+the release after: removing the deprecated `external_topics:`,
+`paths.<n>.input` and `topics.<t>.max_transport` spellings.
+
+History (2026-10-15):
+
 
 **Release order (2026-10-15): after phase 92.** The phase-90 release (rlm
 v0.1.60, the next play_launch minor) waits for phase 92 (one PyPI package,

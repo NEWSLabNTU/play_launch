@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 94 phases total (1–92, plus 14.5 and 30b); 72 complete, 14 in progress, 7 planned, 1 dropped — as of 2026-10-17.
+Started October 2025. 94 phases total (1–92, plus 14.5 and 30b); 73 complete, 15 in progress, 5 planned, 1 dropped — as of 2026-10-17.
 
 Phase docs through phase 28 are in `archive/`; from phase 29 on, a phase's doc
 stays in this directory whatever its status, and its status line (the first
@@ -97,8 +97,8 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 87 | [The Health page](./phase-87-health-page.md) | ✅ | 2026-10-14 |
 | 88 | [Data-flow chains without contracts](./phase-88-data-flow-chains.md) | ✅ C1–C4 | 2026-10-14 |
 | 89 | [Helping with DDS without touching it](./phase-89-dds-assist.md) | ✅ | 2026-10-14 |
-| 90 | [A tidy grammar](./phase-90-a-tidy-grammar.md) | 📝 planned | — |
-| 91 | [Domain extensions](./phase-91-domain-extensions.md) | 📝 planned | — |
+| 90 | [A tidy grammar](./phase-90-a-tidy-grammar.md) | ✅ Complete | — |
+| 91 | [Domain extensions](./phase-91-domain-extensions.md) | 🔄 E0 done | — |
 | 92 | [One PyPI package](./phase-92-one-pypi-package.md) | ✅ Complete | — |
 | 93 | [Supervised budgets](./phase-93-supervised-budgets.md) | 🔄 | — |
 
@@ -316,12 +316,13 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     (`dds_report.txt`). Its own participant was left alone: the busy
     listener did not follow the orphaned segments.
     [phase-89-dds-assist.md](./phase-89-dds-assist.md).
-  - **Phase 90** - planned: a tidy grammar (2026-10-15). Stage 1 of 2: fold,
+  - **Phase 90** - complete: a tidy grammar (2026-10-17, shipped in 0.18.x). Stage 1 of 2: fold,
     rename and remove contract keys (one bound type underneath the readable
     keys; one place per fact; one meaning per key; derived-only
     criticality; one settle shape), with fix-its and a migration command.
     [phase-90-a-tidy-grammar.md](./phase-90-a-tidy-grammar.md).
-  - **Phase 91** - planned: domain extensions (2026-10-15). Stage 2: rlx
+  - **Phase 91** - in progress, E0 done (no-go on Numbat; rlx owns its
+    expression core): domain extensions (2026-10-17). Stage 2: rlx
     extensions (a units-checked, total expression language with traced
     derivations and Z3-proved worst cases), YAML severity profiles, ament
     packaging, and the vehicle keys and the ASIL default moved out of the
