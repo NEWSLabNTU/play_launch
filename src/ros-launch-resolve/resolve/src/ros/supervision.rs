@@ -69,6 +69,29 @@ pub(crate) struct Supervised {
     /// `Ok` when the budget lowers to a runtime monitor with its reaction;
     /// otherwise why not.
     pub lowered: Result<(), String>,
+    /// A supervised settle (rlm v0.1.62, `safe_state.settle: { ...,
+    /// supervise }`): the whole settle, command to standstill, keyed
+    /// `...safe_state.settle`. Its deadline is the settle the hazard's row
+    /// derives, so `budget_ms` is 0 here.
+    pub settle: bool,
+    /// A settle's observation delay: how late standstill is seen.
+    pub observe: Option<Result<Observation, String>>,
+}
+
+/// How late a supervised settle's standstill is seen (`observes:`): the
+/// observed input's period + its transport, both read from the contract.
+#[derive(Debug, Clone)]
+pub(crate) struct Observation {
+    pub ms: f64,
+    /// The subscriber, `<node FQN>/<endpoint>`.
+    pub sub_ref: String,
+    /// Its node, by FQN, and its endpoint.
+    pub node: String,
+    pub endpoint: String,
+    /// How the number divides, for the arithmetic.
+    pub how: String,
+    /// The stated budget the transport is (a term of the overrun row).
+    pub transport_term: TermKey,
 }
 
 /// `(node name, path name, the key's rest)` of `nodes.<n>.paths.<p>.<rest>`,
@@ -106,56 +129,7 @@ pub(crate) fn supervised(index: &ManifestIndex) -> Vec<Supervised> {
                 .map(|(n, _)| n);
             let node = node_name.map(|n| resolve_node_fqn(index, m.scope_id, &m.ns, n));
             let path = at.map(|(_, p, _)| p.to_string());
-            let scope_path = |name: &str| {
-                index
-                    .scope_paths
-                    .iter()
-                    .any(|p| p.scope_id == m.scope_id && p.path_name == name)
-                    .then(|| ReactionTarget::ScopePath {
-                        scope_id: m.scope_id,
-                        name: name.to_string(),
-                    })
-            };
-            let reaction = match &sv.reaction {
-                SuperviseReaction::Reaction(name) => node
-                    .as_ref()
-                    .filter(|n| {
-                        index
-                            .node_paths
-                            .iter()
-                            .any(|p| &p.node_fqn == *n && &p.path_name == name)
-                    })
-                    .map(|n| ReactionTarget::NodePath {
-                        node: n.clone(),
-                        path: name.clone(),
-                    })
-                    .or_else(|| scope_path(name))
-                    .ok_or_else(|| match &node {
-                        Some(n) => format!(
-                            "its reaction '{name}' is neither a path of {n} nor a scope path"
-                        ),
-                        None => format!("its reaction '{name}' is not a scope path"),
-                    }),
-                SuperviseReaction::Enters(mode) => {
-                    match index
-                        .modes
-                        .iter()
-                        .find(|md| md.scope_id == m.scope_id && &md.name == mode)
-                    {
-                        None => Err(format!("it enters '{mode}', which is not a mode")),
-                        Some(md) => match &md.decl.reaction {
-                            Some(r) => scope_path(r).ok_or_else(|| {
-                                format!(
-                                    "it enters '{mode}', whose reaction '{r}' is not a scope path"
-                                )
-                            }),
-                            None => Err(format!(
-                                "it enters '{mode}', which names no `reaction:` scope path to run"
-                            )),
-                        },
-                    }
-                }
-            };
+            let reaction = resolve_reaction(index, m.scope_id, node.as_deref(), sv);
             let lowered = match (&node, at) {
                 (Some(n), Some((_, p, "max_latency"))) => {
                     let input = index.node_paths.iter().any(|np| {
@@ -175,9 +149,17 @@ pub(crate) fn supervised(index: &ManifestIndex) -> Vec<Supervised> {
                         (Ok(_), true) => Ok(()),
                     }
                 }
+                _ if key.ends_with(".safe_state.settle.response") => Err(
+                    "a settle's `response` is one term of the settle, and nothing checks it \
+                     alone: supervise the settle it ends, `settle: { ..., supervise: { enters \
+                     | reaction, mechanism, observes } }`, which lowers to a standstill \
+                     deadline over the whole settle"
+                        .to_string(),
+                ),
                 _ => Err(
-                    "only a node path's `max_latency` lowers to a runtime monitor (the route \
-                     deadline); nothing checks this budget while the system runs"
+                    "only a node path's `max_latency` (the route deadline) and a safe state's \
+                     settle (the standstill deadline) lower to a runtime monitor; nothing \
+                     checks this budget while the system runs"
                         .to_string(),
                 ),
             };
@@ -189,10 +171,225 @@ pub(crate) fn supervised(index: &ManifestIndex) -> Vec<Supervised> {
                 sv: sv.clone(),
                 reaction,
                 lowered,
+                settle: false,
+                observe: None,
+            });
+        }
+        // rlm v0.1.62: a supervised settle, the whole of it.
+        for (key, ss, sv) in m.manifest.supervised_settles() {
+            let (node, path) = match split_node_path(&m.manifest, &key) {
+                Some((n, p, _)) => (
+                    Some(resolve_node_fqn(index, m.scope_id, &m.ns, n)),
+                    Some(p.to_string()),
+                ),
+                None => (
+                    None,
+                    key.strip_prefix("paths.")
+                        .and_then(|r| r.strip_suffix(".safe_state.settle"))
+                        .map(str::to_string),
+                ),
+            };
+            let reaction = resolve_reaction(index, m.scope_id, node.as_deref(), sv);
+            let observe = observation(index, m, sv);
+            let lowered = match (&node, &reaction, &observe) {
+                (None, _, _) => Err(
+                    "only a node path's settle lowers to a standstill deadline (the realizer \
+                     arms it where the safe state is commanded); a scope path's is not checked \
+                     while the system runs"
+                        .to_string(),
+                ),
+                (_, Err(why), _) | (_, _, Err(why)) => Err(why.clone()),
+                (Some(_), Ok(_), Ok(_)) => Ok(()),
+            };
+            out.push(Supervised {
+                term: (m.scope_id, key),
+                node,
+                path,
+                budget_ms: ss.written_settle_ms().unwrap_or(0.0),
+                sv: sv.clone(),
+                reaction,
+                lowered,
+                settle: true,
+                observe: Some(observe),
             });
         }
     }
     out
+}
+
+/// How late a supervised settle's standstill is seen: `observes:` names a
+/// subscriber of a node of manifest `m`; its period is the slowest of its
+/// topic's `rate_hz` and its own `min_rate_hz`, its transport its own
+/// `max_transport`, else its topic's. Both are read from the contract,
+/// never written on the supervision.
+fn observation(
+    index: &ManifestIndex,
+    m: &super::manifest_loader::ResolvedManifest,
+    sv: &Supervision,
+) -> Result<Observation, String> {
+    let Some(o) = sv.observes.as_deref() else {
+        return Err(
+            "how late standstill is seen is unknown: name the input it is seen on, \
+             `observes: <node>/<subscriber>` (its period and `max_transport` are the \
+             observation delay)"
+                .to_string(),
+        );
+    };
+    let (n, ep) = o
+        .split_once('/')
+        .ok_or_else(|| format!("`observes: {o}` is not `<node>/<subscriber>`"))?;
+    let nd = m
+        .manifest
+        .nodes
+        .get(n)
+        .ok_or_else(|| format!("`observes: {o}`: '{n}' is not a node of this contract"))?;
+    let props = nd
+        .subscribers
+        .get(ep)
+        .ok_or_else(|| format!("`observes: {o}`: {n} declares no subscriber '{ep}'"))?;
+    let topic = m
+        .manifest
+        .topics
+        .iter()
+        .find(|(_, t)| t.subscribers.iter().any(|s| s == o));
+    let mut rates: Vec<(f64, String)> = Vec::new();
+    if let Some((name, t)) = topic
+        && let Some(hz) = t.rate_hz
+    {
+        rates.push((hz, format!("{name} rate_hz {hz}")));
+    }
+    if let Some(hz) = props.min_rate_hz.as_ref().and_then(Bound::hz) {
+        rates.push((hz, format!("{o} min_rate_hz {hz}")));
+    }
+    let (hz, rate_how) = rates
+        .into_iter()
+        .filter(|(hz, _)| *hz > 0.0)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .ok_or_else(|| {
+            format!(
+                "`observes: {o}`: its period is unknown: state its topic's `rate_hz` or its \
+                 `min_rate_hz`"
+            )
+        })?;
+    let period = 1000.0 / hz;
+    let (transport, term) = match (
+        props.max_transport.as_ref().and_then(Bound::ms),
+        topic.and_then(|(name, t)| {
+            t.max_transport
+                .as_ref()
+                .and_then(Bound::ms)
+                .map(|ms| (name, ms))
+        }),
+    ) {
+        (Some(ms), _) => (ms, format!("nodes.{n}.sub.{ep}.max_transport")),
+        (None, Some((name, ms))) => (ms, format!("topics.{name}.max_transport")),
+        (None, None) => {
+            return Err(format!(
+                "`observes: {o}`: its transport is unknown: state `max_transport` on the \
+                 subscriber (or its topic), with its source"
+            ));
+        }
+    };
+    let fqn = resolve_node_fqn(index, m.scope_id, &m.ns, n);
+    Ok(Observation {
+        ms: period + transport,
+        sub_ref: format!("{fqn}/{ep}"),
+        node: fqn.clone(),
+        endpoint: ep.to_string(),
+        how: format!(
+            "{fqn}/{ep}: period {period:.2}ms ({rate_how}) + max_transport {transport:.2}ms"
+        ),
+        transport_term: (m.scope_id, term),
+    })
+}
+
+/// The lowering of the supervised settle on path `(node, path)`, when it
+/// lowers: the reaction, the mechanism and the observation.
+pub(crate) fn lowered_settle(
+    index: &ManifestIndex,
+    node: &str,
+    path: &str,
+) -> Option<(ReactionTarget, SuperviseMechanism, Observation)> {
+    supervised(index).into_iter().find_map(|s| {
+        let here = s.settle && s.node.as_deref() == Some(node) && s.path.as_deref() == Some(path);
+        match (here, s.lowered, s.reaction, s.observe) {
+            (true, Ok(()), Ok(r), Some(Ok(o))) => Some((r, s.sv.mechanism, o)),
+            _ => None,
+        }
+    })
+}
+
+/// The supervised settle `term` belongs to, when it is a settle's key (the
+/// settle itself, its `duration` or its `response`) and that settle is
+/// supervised.
+pub(crate) fn settle_of_term<'a>(all: &'a [Supervised], term: &TermKey) -> Option<&'a Supervised> {
+    all.iter().find(|s| {
+        s.settle
+            && s.term.0 == term.0
+            && (term.1 == s.term.1
+                || term
+                    .1
+                    .strip_prefix(s.term.1.as_str())
+                    .is_some_and(|r| r == ".duration" || r == ".response"))
+    })
+}
+
+/// What supervision `sv`'s miss starts, resolved: a path of `node` (the
+/// budget's node, by FQN), a scope path of scope `scope_id`, or an
+/// `enters:` mode's reaction scope path.
+fn resolve_reaction(
+    index: &ManifestIndex,
+    scope_id: usize,
+    node: Option<&str>,
+    sv: &Supervision,
+) -> Result<ReactionTarget, String> {
+    let scope_path = |name: &str| {
+        index
+            .scope_paths
+            .iter()
+            .any(|p| p.scope_id == scope_id && p.path_name == name)
+            .then(|| ReactionTarget::ScopePath {
+                scope_id,
+                name: name.to_string(),
+            })
+    };
+    match &sv.reaction {
+        SuperviseReaction::Reaction(name) => node
+            .filter(|n| {
+                index
+                    .node_paths
+                    .iter()
+                    .any(|p| p.node_fqn == *n && &p.path_name == name)
+            })
+            .map(|n| ReactionTarget::NodePath {
+                node: n.to_string(),
+                path: name.clone(),
+            })
+            .or_else(|| scope_path(name))
+            .ok_or_else(|| match node {
+                Some(n) => {
+                    format!("its reaction '{name}' is neither a path of {n} nor a scope path")
+                }
+                None => format!("its reaction '{name}' is not a scope path"),
+            }),
+        SuperviseReaction::Enters(mode) => {
+            match index
+                .modes
+                .iter()
+                .find(|md| md.scope_id == scope_id && &md.name == mode)
+            {
+                None => Err(format!("it enters '{mode}', which is not a mode")),
+                Some(md) => match &md.decl.reaction {
+                    Some(r) => scope_path(r).ok_or_else(|| {
+                        format!("it enters '{mode}', whose reaction '{r}' is not a scope path")
+                    }),
+                    None => Err(format!(
+                        "it enters '{mode}', which names no `reaction:` scope path to run"
+                    )),
+                },
+            }
+        }
+    }
 }
 
 /// The lowering of node path `(node, path)`'s supervised `max_latency`, when
@@ -339,6 +536,11 @@ struct Charged<'a> {
     s: &'a Supervised,
     /// Time charged before the budget starts, from the fault.
     before_ms: f64,
+    /// The supervised deadline, from where the budget starts: the budget,
+    /// or a settle's (this hazard's settle + its observation).
+    deadline_ms: f64,
+    /// How the deadline divides, for the arithmetic.
+    deadline_how: String,
     /// The stated budgets up to and including this one.
     terms: Vec<TermKey>,
 }
@@ -388,24 +590,98 @@ pub(crate) fn overrun_rows(
             charged.push(Charged {
                 s,
                 before_ms: at_hop,
+                deadline_ms: s.budget_ms,
+                deadline_how: format!("budget {:.2}ms", s.budget_ms),
                 terms: upto(&s.term),
             });
         }
         elapsed += hop.ms;
     }
+    // rlm v0.1.62: a supervised settle. Its deadline runs from the safe
+    // state's command (the route's end) over the whole settle this hazard
+    // derives (profile + response, or the written duration + response),
+    // plus how late standstill is seen.
+    let mut settle_rung_total: Option<f64> = None;
     if let Some(at) = &walk.settle
         && let Some(s) = all.iter().find(|s| {
-            s.node.as_deref() == Some(at.node.as_str())
+            s.settle
+                && s.node.as_deref() == Some(at.node.as_str())
                 && s.path.as_deref() == Some(at.path.as_str())
-                && s.term.1.ends_with(".safe_state.settle.response")
         })
     {
         let route = walk.charged(ctx.after_deadline).0;
-        charged.push(Charged {
-            s,
-            before_ms: start + route,
-            terms: upto(&s.term),
-        });
+        let mut sink: Vec<Diagnostic> = Vec::new();
+        let settle = settle_for(
+            index,
+            &index.launch_params,
+            ctx.h,
+            ctx.rung,
+            &at.node,
+            &at.path,
+            &at.ss,
+            &mut sink,
+        );
+        let settle_how = match settle.response_ms {
+            Some(r) if settle.how == "derived" => format!(
+                "settle {:.2}ms (profile {:.2}ms + response {r:.2}ms)",
+                settle.ms.unwrap_or(0.0),
+                settle.ms.unwrap_or(0.0) - r
+            ),
+            Some(r) => format!(
+                "settle {:.2}ms (duration {:.2}ms + response {r:.2}ms)",
+                settle.ms.unwrap_or(0.0),
+                settle.ms.unwrap_or(0.0) - r
+            ),
+            None => format!("settle {:.2}ms", settle.ms.unwrap_or(0.0)),
+        };
+        let mut terms: Vec<TermKey> = charged_terms.iter().map(|(k, _)| k.clone()).collect();
+        let (obs_ms, obs_how) = match &s.observe {
+            Some(Ok(o)) => {
+                terms.push(o.transport_term.clone());
+                (o.ms, format!("observation {:.2}ms ({})", o.ms, o.how))
+            }
+            Some(Err(why)) => (0.0, format!("observation unknown, charged 0 ({why})")),
+            None => (0.0, String::new()),
+        };
+        match settle.ms {
+            Some(ms) => {
+                settle_rung_total = Some(start + route + ms);
+                charged.push(Charged {
+                    s,
+                    before_ms: start + route,
+                    deadline_ms: ms + obs_ms,
+                    deadline_how: format!("{settle_how} + {obs_how}"),
+                    terms,
+                });
+            }
+            None => {
+                let key = &s.term.1;
+                budgets.push(RungBudget {
+                    hazard: ctx.h.name.clone(),
+                    rung: format!("{} ({key})", ctx.rung),
+                    role: RungRole::Overrun,
+                    fdti_ms: Some(fdti),
+                    windows_ms: ctx.waited_ms,
+                    ftti_ms: ctx.ftti_ms,
+                    note: format!("overrun of {key}: the settle is unknown here"),
+                    terms: [ctx.prior_terms.clone(), terms].concat(),
+                    ..Default::default()
+                });
+                diags.push(Diagnostic {
+                    rule_id: "supervised-fit".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "{}: hazard '{}': `{key}` is supervised, but its overrun case cannot be \
+                         checked: the settle is unknown for rung '{}'",
+                        site(index, s.term.0, key),
+                        ctx.h.name,
+                        ctx.rung
+                    ),
+                    path: format!("{key}.supervise"),
+                    span: None,
+                });
+            }
+        }
     }
     for c in charged {
         let s = c.s;
@@ -530,7 +806,7 @@ pub(crate) fn overrun_rows(
             }
         };
         let settle_ms = settle.ms.unwrap_or(0.0);
-        let total = c.before_ms + s.budget_ms + det + route_ms + settle_ms;
+        let total = c.before_ms + c.deadline_ms + det + route_ms + settle_ms;
         let hang = s.sv.mechanism == SuperviseMechanism::Executor
             && first_node.is_some()
             && first_node == s.node;
@@ -549,9 +825,9 @@ pub(crate) fn overrun_rows(
             String::new()
         };
         let arith = format!(
-            "before it {:.2}ms + budget {:.2}ms + detection {det:.2}ms ({det_why}) + reaction \
-             {target} {route_ms:.2}ms + settle {settle_ms:.2}ms{settle_note} = {total:.2}ms",
-            c.before_ms, s.budget_ms
+            "before it {:.2}ms + {} + detection {det:.2}ms ({det_why}) + reaction {target} \
+             {route_ms:.2}ms + settle {settle_ms:.2}ms{settle_note} = {total:.2}ms",
+            c.before_ms, c.deadline_how
         );
         budgets.push(RungBudget {
             hazard: ctx.h.name.clone(),
@@ -559,7 +835,7 @@ pub(crate) fn overrun_rows(
             role: RungRole::Overrun,
             fdti_ms: Some(fdti),
             windows_ms: ctx.waited_ms,
-            route_ms: Some(c.before_ms - start + s.budget_ms + det + route_ms),
+            route_ms: Some(c.before_ms - start + c.deadline_ms + det + route_ms),
             settle_ms: settle.ms,
             settle_how: settle.how,
             settle_response_ms: settle.response_ms,
@@ -572,7 +848,21 @@ pub(crate) fn overrun_rows(
         let Some(ftti) = ctx.ftti_ms else {
             continue;
         };
-        let (severity, verdict) = if total > ftti {
+        // A supervised settle's overrun case contains the rung's own total:
+        // when that already exceeds the interval, `ladder-rung-budget` says
+        // so, and this row repeats it.
+        let rung_over = s.settle && settle_rung_total.is_some_and(|t| t > ftti);
+        let (severity, verdict) = if total > ftti && rung_over {
+            (
+                Severity::Info,
+                format!(
+                    "exceeds the fault-tolerant time interval {ftti:.2}ms; not a separate \
+                     error: it contains the rung's own total {:.2}ms, which already exceeds it \
+                     and is refused on the rung's own row",
+                    settle_rung_total.unwrap_or_default()
+                ),
+            )
+        } else if total > ftti {
             (
                 Severity::Error,
                 format!("exceeds the fault-tolerant time interval {ftti:.2}ms"),
@@ -603,6 +893,11 @@ pub(crate) fn overrun_rows(
 pub(crate) fn level_of(index: &ManifestIndex, term: &TermKey) -> Option<BudgetLevel> {
     let m = index.manifests.get(&term.0)?;
     if let Some((_, b)) = m.manifest.bounds().into_iter().find(|(k, _)| *k == term.1) {
+        // rlm v0.1.62: a term of a supervised settle (its duration or its
+        // response) is supervised with it (an analysed one stays a bound).
+        if let Some(st) = settle_of_term(&supervised(index), term) {
+            return BudgetLevel::of(b.source.as_ref(), Some(&st.sv));
+        }
         return b.level();
     }
     // A timer's rate (`...trigger.timer.rate_hz`) states a source and no

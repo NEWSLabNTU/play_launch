@@ -6,6 +6,30 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+A supervised settle (phase 93, rlm v0.1.62). Pins `ros-launch-manifest`
+`v0.1.62`.
+
+- **Added (`check`):** `safe_state.settle: { ..., supervise: { enters |
+  reaction, mechanism, observes } }` lowers to a standstill deadline over
+  the WHOLE settle (the derived profile or written duration, plus the
+  response), from the safe state's command. `observes: <node>/<subscriber>`
+  names the input standstill is seen on; the observation delay is derived
+  from the contract (its period + its `max_transport`). The overrun row
+  (`supervised-fit`) charges the time before the settle + the settle at the
+  entry speed + the observation + the detection + the reaction's route and
+  settle; when the rung itself already exceeds the FTTI, the rung's own
+  row is the error and the overrun row is `info`. The settle's terms read
+  LEVEL `supervised` (no `measured-unsupervised`), CHECKED BY `runtime
+  monitor (settle-deadline: ...)`; the model carries
+  `safe_state.supervise { response_ms, observe_ms, observes, reaction,
+  mechanism }`.
+- **Changed (`check`):** a supervised settle `response` alone stays
+  `supervised-unlowered`, now pointing at the settle's own `supervise:`;
+  0.18.0 also built an overrun row charging the response alone, which is
+  gone.
+
 ## 0.18.0 - 2026-10-16
 
 Supervised budgets (phase 93, rlm v0.1.61): a measured budget is either

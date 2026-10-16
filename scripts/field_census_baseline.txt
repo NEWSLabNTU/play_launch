@@ -80,3 +80,17 @@ timer_rate_source  # PathDecl (rlm v0.1.61, phase 93 S1). Read only through
                    # as `...trigger.timer.rate_hz`; `period-range`
                    # (period_range.rs) reads that list and refuses an
                    # allocated rate outside its range. Consumed one call away.
+
+settle_supervise   # SafeState (rlm v0.1.62, a supervised settle). Read only
+                   # through `Manifest::supervised_settles()` (rlm
+                   # types/src/bound.rs, an accessor the census does not
+                   # classify); supervision.rs reads that list for the
+                   # settle's overrun row, `supervised-unlowered` and the
+                   # standstill-deadline lowering. Consumed one call away.
+
+observe_ms         # SettleSuperviseContract (model, rlm v0.1.62). The
+                   # lowering of a supervised settle for a realizer: how late
+                   # standstill is seen. The checker computes it (and charges
+                   # it on the overrun row) from the contract; no realizer
+                   # arms a standstill deadline from the model yet (the
+                   # safety island's route 2 is configured by hand).

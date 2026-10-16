@@ -208,9 +208,19 @@ fn checks_of(
     // Phase 93: a supervised budget is checked at run time only when it was
     // lowered to a monitor with a reaction -- read from the lowering, not
     // from the key.
-    let supervised = super::supervision::supervised(index)
-        .into_iter()
-        .find(|s| &s.term == term);
+    let all = super::supervision::supervised(index);
+    let supervised = all.iter().find(|s| &s.term == term && !s.settle).cloned();
+    // rlm v0.1.62: a term of a supervised settle is checked by the settle's
+    // standstill deadline, when it was lowered.
+    let settle_by = super::supervision::settle_of_term(&all, term).and_then(|s| {
+        match (&s.lowered, &s.reaction, &s.observe) {
+            (Ok(()), Ok(r), Some(Ok(o))) => Some(format!(
+                "runtime monitor (settle-deadline: reaction {r}, {}, standstill seen on {})",
+                s.sv.mechanism, o.sub_ref
+            )),
+            _ => None,
+        }
+    });
     let supervised_by = supervised
         .as_ref()
         .and_then(|s| match (&s.lowered, &s.reaction) {
@@ -232,6 +242,9 @@ fn checks_of(
             "fault-reaction sum ({})",
             hazards.into_iter().collect::<Vec<_>>().join(", ")
         ));
+    }
+    if let Some(by) = settle_by {
+        out.push(by);
     }
     // A scope path's name may hold dots (`island.tor`).
     if key.starts_with("paths.") {

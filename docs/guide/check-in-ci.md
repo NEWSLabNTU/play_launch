@@ -173,8 +173,41 @@ The rules that read it:
   for `mechanism: timer`, and `supervision.tick` + the longest callback on
   the node's executor for `mechanism: executor`.
 - `supervised-unlowered` (error): a supervised budget no runtime monitor
-  checks (only an input-triggered node path's `max_latency` lowers to the
-  route deadline monitor).
+  checks. Two kinds lower: an input-triggered node path's `max_latency`
+  (the route deadline: due = the take + the budget), and a node path's
+  supervised settle (the standstill deadline, below). A settle's `response`
+  supervised on its own does not: it is one term of the settle.
+- A supervised settle (rlm v0.1.62): `safe_state.settle: { decel, jerk,
+  response, supervise: { enters | reaction, mechanism, observes } }`
+  supervises the WHOLE settle, from the safe state's command to standstill
+  (the derived profile, or the written duration, plus the response). The
+  platform arms due = command + settle + how late it sees standstill, and
+  a vehicle not at standstill by then starts the reaction. `observes:
+  <node>/<subscriber>` names the input standstill is seen on; the
+  observation delay is derived from the contract, never written on the
+  supervision: that input's period (the slowest of its topic's `rate_hz`
+  and its `min_rate_hz`) + its `max_transport` (the subscriber's, else the
+  topic's). No `observes`, no period or no transport: `supervised-unlowered`
+  says which. The overrun row for the rung charges the time before the
+  settle + the settle at the hazard's entry speed + the observation + the
+  detection + the reaction's route and settle:
+
+  ```
+  odd_exit  comfortable_stop (nodes.<op>.paths.operate.safe_state.settle)  overrun ...
+  before it 10454.00ms + settle 10939.67ms (profile 9996.67ms + response 943.00ms)
+  + observation 156.00ms (/mrm_handler/kinematic_state: period 100.00ms + max_transport 56.00ms)
+  + detection 2.00ms + reaction scope path 'island.emergency_stop' 188.33ms + settle 4421.33ms
+  = 26161.33ms
+  ```
+
+  The settle's terms (its response, a written duration) take the level
+  `supervised`, so `measured-unsupervised` does not fire for them; CHECKED
+  BY reads `runtime monitor (settle-deadline: reaction ..., <mechanism>,
+  standstill seen on <subscriber>)`. The overrun case contains the rung's
+  own total: when the rung itself does not fit, the rung's own row is the
+  error and the overrun row says so as `info`, not a second error. The
+  model carries the lowering on the safe state (`safe_state.supervise:
+  { response_ms, observe_ms, observes, reaction, mechanism }`).
 - `supervised-executor-long-callback`: a `mechanism: executor` supervision
   whose detection a callback can delay. The executor checks the deadline in
   its spin loop, between callbacks, so detection is the tick + the longest

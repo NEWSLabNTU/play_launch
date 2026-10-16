@@ -1,6 +1,7 @@
 # Phase 93 - supervised budgets: the keys, the overrun case, a period's range
 
-Status: **in progress** (2026-10-15): S1 (rlm) done on rlm main
+Status: **in progress** (2026-10-15; a supervised settle added
+2026-10-16 in 0.18.1, see Status): S1 (rlm) done on rlm main
 `33577ff`; S2 (play_launch) done on main `bfede19e`; S5 in progress
 (period-range agent). Nothing released: S1 needs rlm v0.1.61, S2 a
 play_launch release pinning it.
@@ -152,8 +153,9 @@ What changes:
   budget + the detection delay + the reaction's route + its settle, against
   the hazard's FTTI; rule `supervised-fit` (error when it does not fit, info
   with the arithmetic when it does). Overrun rows are built for a node
-  path's `max_latency` on the walked route and for the row's settle
-  `response`; other supervised keys get no overrun row (and no lowering,
+  path's `max_latency` on the walked route and (since 0.18.1: "A
+  supervised settle" under Status) for the row's supervised settle, the
+  whole of it; other supervised keys get no overrun row (and no lowering,
   below).
 - Detection delay, by mechanism:
   - `executor`: `supervision.tick` + the longest callback on that executor
@@ -277,8 +279,9 @@ Owner: period-range agent. Uses S1's `SourceKind::Allocated` and the
   `.github/check-contracts.sh` gives the same 16 verdicts with both.
   Not done here: an overrun row for a supervised budget charged inside a
   window's route (the rung below charges the same path later, which is the
-  larger case); a supervised `max_transport`, `max_age` or settle is
-  refused as unlowered until a runtime check exists for it.
+  larger case); a supervised `max_transport` or `max_age` is refused as
+  unlowered until a runtime check exists for it (a settle: since 0.18.1,
+  below).
 - `supervised-executor-long-callback`: done (2026-10-16), in
   `supervision.rs` (`executor_long_callback`, `policy_severity`); tests
   `an_executor_supervision_over_a_long_callback_follows_the_policy`,
@@ -304,13 +307,62 @@ Owner: period-range agent. Uses S1's `SourceKind::Allocated` and the
   container; the island's single spin thread is not visible to the
   checker, so MIN is per node there.
 
+- A supervised settle: done (2026-10-16), rlm v0.1.62 (`settle: { ...,
+  supervise: { enters | reaction, mechanism, observes } }`,
+  `SafeState.settle_supervise`, `Manifest::supervised_settles()`,
+  `Supervision.observes`, model `SafeStateContract.supervise`) and
+  play_launch 0.18.1. The island's S6 left the comfortable stop's
+  supervision in a contract comment: 0.18.0 raised `supervised-unlowered`
+  on a supervised `response`, and its overrun row charged the response
+  alone (before it 10454 + budget 943 + 2 + 188.33 + 4421.33 = 16008.67),
+  not the settle the response ends. Now:
+  - What is supervised is the whole settle, command to standstill: the
+    derived profile (or written duration) + the response. The deadline
+    runs from the safe state's command (the rung's route end) and adds how
+    late the platform sees standstill.
+  - The observation delay is derived, never written on the supervision:
+    `observes: <node>/<subscriber>` names the input; the delay is its
+    period (the slowest of the topic's `rate_hz` and the subscriber's
+    `min_rate_hz`) + its `max_transport` (the subscriber's, else the
+    topic's), each stated once with its own source. Missing any of them
+    is `supervised-unlowered`, naming what to state.
+  - The overrun row (`supervised-fit`): before the settle + the settle at
+    the hazard's entry speed + the observation + the detection (tick +
+    switch, or tick + longest callback) + the reaction's route and settle,
+    against the FTTI. It contains the rung's own total, so when the rung
+    already exceeds the FTTI the rung's row is the error and the overrun
+    row is `info` saying so (the island's two variants keep their single
+    `ladder-rung-budget` error).
+  - LEVEL: the settle's terms (response, written duration) are
+    `supervised` (an analysed one stays `bound`); `measured-unsupervised`
+    no longer fires for them. CHECKED BY: `runtime monitor
+    (settle-deadline: reaction <r>, <mechanism>, standstill seen on
+    <subscriber>)`. A supervised `response` alone stays
+    `supervised-unlowered`, pointing at the settle.
+  - Model: `safe_state.supervise: { response_ms, observe_ms, observes,
+    reaction, mechanism }` on the node path; the realizer arms due =
+    command + settle (written, or the profile at the entry speed +
+    `response_ms`) + `observe_ms`. No realizer reads it yet (the island's
+    route 2 is configured by hand); the field census baselines
+    `observe_ms` and `settle_supervise` with that reason.
+  - Island: `odd_exit comfortable_stop (...operate.safe_state.settle)
+    overrun`: before it 10454.00 + settle 10939.67 (profile 9996.67 +
+    response 943) + observation 156 (/mrm_handler/kinematic_state: period
+    100 + max_transport 56) + detection 2 + island.emergency_stop 188.33 +
+    settle 4421.33 = 26161.33 ms of 30,000. Every other row unchanged.
+  - Tests: `a_supervised_settle_charges_the_whole_settle`,
+    `a_supervised_settle_without_its_observation_is_refused`,
+    `a_supervised_settle_over_the_interval_is_refused_once`,
+    `a_lowered_settle_supervision_reaches_the_model` (manifest_check, on
+    `contract_supervised` edited); rlm `a_settle_is_supervised_whole`.
+
 ## Not in this phase
 
 - The runtime: nano-ros's deadline-armed route monitor and reaction hook
   (island S3), the board's timer rung and watchdog (island S4).
-- Lowering a supervised budget that is not a node path's `max_latency`
-  (a settle's response needs a check on the plant's feedback; a transport
-  needs a shared clock). They are refused, not dropped.
+- Lowering a supervised transport or staleness bound (a transport needs a
+  shared clock). They are refused, not dropped. A settle lowers since
+  0.18.1 (a standstill deadline, "A supervised settle" above).
 - Platform facts by name (play_launch phase 91's profiles):
   `supervision: { tick, switch }` is written per contract until then.
 - A release: S1 needs rlm v0.1.61, S2 and S5 a play_launch release pinning

@@ -2879,3 +2879,275 @@ fn a_lowered_supervision_reaches_the_model() {
     // An unsupervised path carries none.
     assert!(paths["/handler/driver_exit"]["supervise"].is_null());
 }
+
+/// `contract_supervised` with the comfortable settle supervised to
+/// standstill (rlm v0.1.62): a 943 ms measured response, `supervise: {
+/// enters: estop, mechanism: timer, observes: handler/kinematic_state }`,
+/// and the observed input (10 Hz, `max_transport` 56 ms). `extra` edits the
+/// result further.
+fn supervised_settle(c: String, extra: impl Fn(String) -> String) -> String {
+    let c = c
+        .replacen(
+            "          settle: { decel: min_acceleration, jerk: min_jerk }",
+            "          settle:\n            decel: min_acceleration\n            jerk: min_jerk\n            \
+             response: { duration: 943ms, source: { measured: { max: 785.43ms, n: 3, margin: 0.2 } } }\n            \
+             supervise: { enters: estop, mechanism: timer, observes: handler/kinematic_state }",
+            1,
+        )
+        .replacen(
+            "      control_mode: {}\n",
+            "      control_mode: {}\n      kinematic_state:\n        min_rate_hz: 10\n        \
+             max_transport: { duration: 56ms, source: { measured: { max: 46.42ms, n: 12, margin: 0.2 } } }\n",
+            1,
+        )
+        .replacen(
+            "  /tor_state:\n",
+            "  /kinematic_state:\n    type: demo_msgs/msg/Odometry\n    external: pub\n    \
+             sub: [handler/kinematic_state]\n    rate_hz: 10\n  /tor_state:\n",
+            1,
+        );
+    extra(c)
+}
+
+/// rlm v0.1.62: a supervised settle lowers to a standstill deadline. Its
+/// overrun row charges the rung up to the settle's end (the whole settle,
+/// profile + response), how late standstill is seen (the observed input's
+/// period + its transport, read from the contract), the detection and the
+/// escalation's route and settle; its terms are supervised, and CHECKED BY
+/// names the deadline.
+#[test]
+fn a_supervised_settle_charges_the_whole_settle() {
+    let Some((code, out)) = check_supervised_edited(|c| supervised_settle(c, |c| c)) else {
+        eprintln!("Skipping: ros-launch-resolve not built");
+        return;
+    };
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("supervised-unlowered"), "{out}");
+    let needle = "hazard 'odd_exit', rung 'comfortable': if \
+                  `nodes.comfort_op.paths.operate.safe_state.settle` overruns, before it \
+                  10640.00ms + settle 10939.67ms (profile 9996.67ms + response 943.00ms) + \
+                  observation 156.00ms (/handler/kinematic_state: period 100.00ms \
+                  (/kinematic_state rate_hz 10) + max_transport 56.00ms) + detection 1.05ms \
+                  (tick 1.00ms + switch 0.05ms (timer)) + reaction scope path 'sys.estop' \
+                  143.33ms + settle 4165.33ms = 26045.38ms fits the fault-tolerant time \
+                  interval 30000.00ms with 3954.62ms of slack";
+    assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    assert!(out.contains("info[supervised-fit]"), "{out}");
+    // The response is a term of the supervised settle: no
+    // `measured-unsupervised` for it.
+    assert!(
+        !out.contains(
+            "`nodes.comfort_op.paths.operate.safe_state.settle.response: 943.00ms` is measured"
+        ),
+        "{out}"
+    );
+    let Some((_, out)) = check_resolve_edited_explain(|c| supervised_settle(c, |c| c)) else {
+        return;
+    };
+    let row = |key: &str| {
+        out.lines()
+            .find(|l| l.starts_with(key))
+            .unwrap_or_else(|| panic!("no row {key}:\n{out}"))
+            .to_string()
+    };
+    let resp = row("nodes.comfort_op.paths.operate.safe_state.settle.response");
+    assert!(resp.contains(" supervised "), "{resp}");
+    assert!(
+        resp.contains(
+            "runtime monitor (settle-deadline: reaction scope path 'sys.estop', timer, \
+             standstill seen on /handler/kinematic_state)"
+        ),
+        "{resp}"
+    );
+    assert!(
+        out.lines().any(|l| l.starts_with(
+            "odd_exit  comfortable (nodes.comfort_op.paths.operate.safe_state.settle)"
+        ) && l.contains("overrun")),
+        "{out}"
+    );
+}
+
+/// `check --explain` on an edited copy of `contract_supervised`.
+fn check_resolve_edited_explain(edit: impl Fn(String) -> String) -> Option<(i32, String)> {
+    let bin = ros_launch_resolve_bin()?;
+    let root = fixtures::repo_root().join("tests/fixtures");
+    let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_dir = tmp.path().join("launch");
+    std::fs::create_dir_all(&launch_dir).unwrap();
+    let src = root.join("contract_supervised/launch");
+    std::fs::copy(
+        src.join("bringup.launch.xml"),
+        launch_dir.join("bringup.launch.xml"),
+    )
+    .unwrap();
+    let contract = std::fs::read_to_string(src.join("bringup.contract.yaml")).unwrap();
+    std::fs::write(launch_dir.join("bringup.contract.yaml"), edit(contract)).unwrap();
+    let out = resolve_cmd(&bin)
+        .arg("check")
+        .arg(launch_dir.join("bringup.launch.xml"))
+        .arg("--explain")
+        .env("AMENT_PREFIX_PATH", root.join("contract_takeover/ament"))
+        .output()
+        .expect("ros-launch-resolve check runs");
+    Some((
+        out.status.code().unwrap_or(-1),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    ))
+}
+
+/// rlm v0.1.62: a supervised settle with no observation, or an observed
+/// input with no transport, does not lower (`supervised-unlowered`); a
+/// supervised `response` alone never does, and says to supervise the settle.
+#[test]
+fn a_supervised_settle_without_its_observation_is_refused() {
+    for (edit, needle) in [
+        (
+            (|c: String| c.replacen(", observes: handler/kinematic_state", "", 1))
+                as fn(String) -> String,
+            "how late standstill is seen is unknown: name the input it is seen on",
+        ),
+        (
+            |c: String| {
+                c.replacen(
+                    "        max_transport: { duration: 56ms, source: { measured: { max: 46.42ms, \
+                     n: 12, margin: 0.2 } } }\n",
+                    "",
+                    1,
+                )
+            },
+            "`observes: handler/kinematic_state`: its transport is unknown",
+        ),
+        (
+            |c: String| {
+                c.replacen(
+                    "            supervise: { enters: estop, mechanism: timer, observes: \
+                     handler/kinematic_state }",
+                    "",
+                    1,
+                )
+                .replacen(
+                    "response: { duration: 943ms, source: { measured: { max: 785.43ms, n: 3, \
+                     margin: 0.2 } } }",
+                    "response: { duration: 943ms, source: { measured: { max: 785.43ms, n: 3, \
+                     margin: 0.2 } }, supervise: { enters: estop, mechanism: timer } }",
+                    1,
+                )
+            },
+            "a settle's `response` is one term of the settle",
+        ),
+    ] {
+        let Some((code, out)) = check_supervised_edited(|c| supervised_settle(c, edit)) else {
+            eprintln!("Skipping: ros-launch-resolve not built");
+            return;
+        };
+        assert_eq!(code, 1, "{out}");
+        assert!(out.contains("error[supervised-unlowered]"), "{out}");
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+}
+
+/// rlm v0.1.62: a supervised settle whose overrun case exceeds the interval
+/// while the rung itself fits is refused (`supervised-fit`); when the rung
+/// itself does not fit, `ladder-rung-budget` is the error and the overrun
+/// row does not repeat it.
+#[test]
+fn a_supervised_settle_over_the_interval_is_refused_once() {
+    // The rung: 10640 + 10939.67 = 21579.67; the overrun case adds 156 +
+    // 1.05 + the emergency route 143.33 and settle 4165.33 = 26045.38.
+    let Some((code, out)) = check_supervised_edited(|c| {
+        supervised_settle(c, |c| {
+            c.replacen(
+                "    ftti: { duration: 30s, source: requirement }",
+                "    ftti: { duration: 22s, source: requirement }",
+                1,
+            )
+        })
+    }) else {
+        eprintln!("Skipping: ros-launch-resolve not built");
+        return;
+    };
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("error[supervised-fit]")
+            && out.contains("`nodes.comfort_op.paths.operate.safe_state.settle` overruns"),
+        "{out}"
+    );
+    assert!(!out.contains("error[ladder-rung-budget]"), "{out}");
+    let Some((code, out)) = check_supervised_edited(|c| {
+        supervised_settle(c, |c| {
+            c.replacen(
+                "    ftti: { duration: 30s, source: requirement }",
+                "    ftti: { duration: 21s, source: requirement }",
+                1,
+            )
+        })
+    }) else {
+        return;
+    };
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("error[ladder-rung-budget]"), "{out}");
+    assert!(
+        !out.contains("error[supervised-fit]: bringup.contract.yaml:")
+            || !out.contains("safe_state.settle` overruns"),
+        "{out}"
+    );
+    assert!(
+        out.contains("and is refused on the rung's own row"),
+        "{out}"
+    );
+}
+
+/// rlm v0.1.62: a lowered settle supervision reaches the model on the safe
+/// state, in the shape a realizer arms a standstill deadline from.
+#[test]
+fn a_lowered_settle_supervision_reaches_the_model() {
+    let Some(bin) = ros_launch_resolve_bin() else {
+        eprintln!("Skipping: ros-launch-resolve not built");
+        return;
+    };
+    let root = fixtures::repo_root().join("tests/fixtures");
+    let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_dir = tmp.path().join("launch");
+    std::fs::create_dir_all(&launch_dir).unwrap();
+    let src = root.join("contract_supervised/launch");
+    std::fs::copy(
+        src.join("bringup.launch.xml"),
+        launch_dir.join("bringup.launch.xml"),
+    )
+    .unwrap();
+    let contract = std::fs::read_to_string(src.join("bringup.contract.yaml")).unwrap();
+    std::fs::write(
+        launch_dir.join("bringup.contract.yaml"),
+        supervised_settle(contract, |c| c),
+    )
+    .unwrap();
+    let out_path = tmp.path().join("model.yaml");
+    let status = resolve_cmd(&bin)
+        .arg("resolve")
+        .arg(launch_dir.join("bringup.launch.xml"))
+        .arg("-o")
+        .arg(&out_path)
+        .env("AMENT_PREFIX_PATH", root.join("contract_takeover/ament"))
+        .status()
+        .expect("resolve runs");
+    assert!(status.success(), "resolve failed");
+    let model: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&out_path).unwrap()).unwrap();
+    let paths = &model["contracts"]["node_paths"];
+    let sv = &paths["/comfort_op/operate"]["safe_state"]["supervise"];
+    assert_eq!(sv["response_ms"].as_f64(), Some(943.0), "{sv:?}");
+    assert_eq!(sv["observe_ms"].as_f64(), Some(156.0), "{sv:?}");
+    assert_eq!(sv["observes"].as_str(), Some("/handler/kinematic_state"));
+    assert_eq!(
+        sv["reaction"].as_str(),
+        Some("bringup.launch.xml/sys.estop"),
+        "{sv:?}"
+    );
+    assert_eq!(sv["mechanism"].as_str(), Some("timer"));
+    // The emergency stop's settle is not supervised.
+    assert!(paths["/estop_op/on_timer"]["safe_state"]["supervise"].is_null());
+}

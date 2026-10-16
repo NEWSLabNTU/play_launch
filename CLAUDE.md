@@ -542,7 +542,7 @@ add `src/ros-launch-resolve` to `members`. `just check-layer2-isolation`
 boundary breaks: no ROS crates in the graph, no ROS shared libraries linked,
 and both launch frontends resolve with no ROS installed.
 
-**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.1.61`), not a
+**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.1.62`), not a
 submodule — phase-55 W2. Layer 2 now has no submodules at all. **Three**
 manifests name the tag and must move together:
 `src/play_launch/Cargo.toml`, `src/ros-launch-resolve/Cargo.toml` and

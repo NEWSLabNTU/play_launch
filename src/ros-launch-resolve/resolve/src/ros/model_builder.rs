@@ -356,6 +356,33 @@ fn qos_contract(q: &QosDecl) -> model::Qos {
     }
 }
 
+/// A supervision's reaction, by its key in the model (phase 93): a node
+/// path's in `contracts.node_paths`, a scope path's in
+/// `contracts.scope_paths`.
+fn reaction_key(
+    nodes: &IndexMap<String, model::NodeInstance>,
+    reaction: super::supervision::ReactionTarget,
+    scope_key: &dyn Fn(Option<usize>) -> String,
+) -> String {
+    match reaction {
+        super::supervision::ReactionTarget::NodePath { node, path } => {
+            format!("{}/{path}", resolve_node_ref(nodes, &node))
+        }
+        super::supervision::ReactionTarget::ScopePath { scope_id, name } => {
+            scope_scoped_key(&scope_key(Some(scope_id)), &name)
+        }
+    }
+}
+
+fn model_mechanism(m: ros_launch_manifest_types::SuperviseMechanism) -> model::SuperviseMechanism {
+    match m {
+        ros_launch_manifest_types::SuperviseMechanism::Executor => {
+            model::SuperviseMechanism::Executor
+        }
+        ros_launch_manifest_types::SuperviseMechanism::Timer => model::SuperviseMechanism::Timer,
+    }
+}
+
 fn path_contract(
     decl: &ros_launch_manifest_types::PathDecl,
     input: Vec<String>,
@@ -384,6 +411,9 @@ fn path_contract(
                     decel: p.decel.clone(),
                     jerk: p.jerk.clone(),
                 }),
+            // rlm v0.1.62: set by the caller from the lowering, node paths
+            // only.
+            supervise: None,
         }),
         input,
         output,
@@ -1148,23 +1178,27 @@ pub fn build_system_model(
         contract.supervise = super::supervision::lowered_route(index, &p.node_fqn, &p.path_name)
             .map(|(deadline, reaction, mechanism)| model::SuperviseContract {
                 route_deadline_ms: deadline,
-                reaction: match reaction {
-                    super::supervision::ReactionTarget::NodePath { node, path } => {
-                        format!("{}/{path}", resolve_node_ref(&structure.nodes, &node))
-                    }
-                    super::supervision::ReactionTarget::ScopePath { scope_id, name } => {
-                        scope_scoped_key(&scope_key(Some(scope_id)), &name)
-                    }
-                },
-                mechanism: match mechanism {
-                    ros_launch_manifest_types::SuperviseMechanism::Executor => {
-                        model::SuperviseMechanism::Executor
-                    }
-                    ros_launch_manifest_types::SuperviseMechanism::Timer => {
-                        model::SuperviseMechanism::Timer
-                    }
-                },
+                reaction: reaction_key(&structure.nodes, reaction, &scope_key),
+                mechanism: model_mechanism(mechanism),
             });
+        // rlm v0.1.62: a supervised settle, lowered to the standstill
+        // deadline the realizer arms where the safe state is commanded.
+        if let Some(ss) = contract.safe_state.as_mut()
+            && let Some((reaction, mechanism, obs)) =
+                super::supervision::lowered_settle(index, &p.node_fqn, &p.path_name)
+        {
+            ss.supervise = Some(model::SettleSuperviseContract {
+                response_ms: p.path.safe_state.as_ref().map_or(0.0, |d| d.response_ms()),
+                observe_ms: obs.ms,
+                observes: format!(
+                    "{}/{}",
+                    resolve_node_ref(&structure.nodes, &obs.node),
+                    obs.endpoint
+                ),
+                reaction: reaction_key(&structure.nodes, reaction, &scope_key),
+                mechanism: model_mechanism(mechanism),
+            });
+        }
         contracts
             .node_paths
             .insert(format!("{node_fqn}/{}", p.path_name), contract);
