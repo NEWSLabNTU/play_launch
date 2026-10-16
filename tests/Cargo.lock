@@ -319,6 +319,7 @@ dependencies = [
  "ros-launch-manifest-derive",
  "ros-launch-manifest-model",
  "ros-launch-manifest-sched",
+ "ros-launch-manifest-types",
  "serde",
  "serde_json",
  "serde_yaml_ng",

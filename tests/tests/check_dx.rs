@@ -319,8 +319,10 @@ fn an_unwired_endpoint_is_a_warning() {
 /// T4 (D5): a contract whose `rlm:` header names a grammar newer than the
 /// checker's is refused BEFORE its body is read (so not for the key a newer
 /// grammar might know), naming both releases and this checker, with the
-/// refusal exit code. The release the refusal names is the rlm tag
-/// `--version` names: the binary and its grammar cannot disagree.
+/// refusal exit code. The refusal names the grammar the binary was built
+/// with (`GRAMMAR_VERSION`); `--version` names the rlm tag. They differ
+/// after a release that changes only the model (rlm v0.1.63 kept grammar
+/// 0.1.62), so each is compared with its own source.
 #[test]
 fn a_contract_needing_a_newer_grammar_names_both_releases() {
     let out = check("contract_grammar_newer", &[]);
@@ -341,8 +343,13 @@ fn a_contract_needing_a_newer_grammar_names_both_releases() {
         .and_then(|t| t.strip_suffix(')'))
         .unwrap_or_else(|| panic!("no rlm tag: {version}"));
     assert!(
+        tag.starts_with('v'),
+        "--version names an rlm tag: {version}"
+    );
+    let grammar = ros_launch_manifest_types::GRAMMAR_VERSION;
+    assert!(
         s.contains(&format!(
-            "this contract needs rlm >= v99.0.0; this checker reads rlm {tag}"
+            "this contract needs rlm >= v99.0.0; this checker reads rlm v{grammar}"
         )),
         "{s}"
     );
