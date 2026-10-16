@@ -711,9 +711,12 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   launcher; each such node leaves its participant's files. **So the nodes
   are stopped one at a time** (`process::stop_process_group_staggered`):
   SIGTERM per process, 5 ms apart and at most 1 s for the whole group,
-  deepest first (an `isolated` container stops all its composables together
-  the moment it is told to, which would undo the stagger), rescanning the
-  group until nothing new appears. Bare nodes: 5 of 15 runs crashed one at
+  deepest first, rescanning the group until nothing new appears. The
+  `isolated` container applies the same rule to its own children
+  (`terminate_children`, 2026-10-16), which covers a container stopped by
+  itself — a web UI stop, a respawn, stock `ros2 launch`: with 40
+  composables, all-at-once left orphaned port files in 8 of 15 runs,
+  staggered in none. Bare nodes: 5 of 15 runs crashed one at
   once, 0 of 30 staggered; 40 nodes under play_launch: 3 of 15 → 0 of 15;
   Autoware `isolated`: exit 7.0–9.2 s with 0–38 SIGKILLs → 4.0 s with none,
   `observable` 4.4–7.0 s → 3.4–3.9 s. Only the first signal staggers; a
