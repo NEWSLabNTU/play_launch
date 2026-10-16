@@ -9,7 +9,7 @@
 # Checks, in order: the payload selected for the sourced distribution and
 # with nothing sourced (the only /opt/ros/<d>); `check` on a plain launch
 # file; and a real launch of a Python launch file with a container and two
-# composables, stopped with SIGINT, which must exit 0 after startup
+# composables (composition's demo), stopped with SIGINT, which must exit 0 after startup
 # completed. That last one exercises the payload's pyexec, its container,
 # the play_launch_msgs typesupport the container loads, and the
 # interception library's absence or presence alike.
@@ -47,20 +47,28 @@ cat > talker_listener.launch.xml <<'EOF'
 EOF
 play_launch check talker_listener.launch.xml
 
-say "launch composition_demo.launch.py"
-play_launch launch composition composition_demo.launch.py --disable-web-ui \
+# Humble installs composition_demo.launch.py; Jazzy and later renamed it
+# composition_demo_launch.py.
+demo=$(cd "/opt/ros/$DISTRO/share/composition/launch" && ls composition_demo*.py | head -1)
+say "launch $demo"
+play_launch launch composition "$demo" --disable-web-ui \
   > launch.out 2>&1 &
 pid=$!
 ok=
+early=
 for _ in $(seq "$STARTUP_WAIT"); do
   if grep -q 'Startup complete' launch.out; then ok=1; break; fi
-  if ! kill -0 "$pid" 2>/dev/null; then break; fi
+  if ! kill -0 "$pid" 2>/dev/null; then early=1; break; fi
   sleep 1
 done
 kill -INT "$pid" 2>/dev/null || true
 rc=0
 wait "$pid" || rc=$?
 cat launch.out
+if [[ -n "$early" ]]; then
+  echo "FAIL: play_launch exited ($rc) before startup completed" >&2
+  exit 1
+fi
 if [[ -z "$ok" ]]; then
   echo "FAIL: no 'Startup complete' within ${STARTUP_WAIT}s" >&2
   exit 1
