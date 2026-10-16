@@ -8,6 +8,11 @@ allowance heavily.
 
 ## Unreleased
 
+- **Added:** a subscriber's `ingress: { rate_hz, burst }` reaches the
+  SystemModel (`contracts.sub_endpoints.<e>.ingress`; ros-launch-manifest
+  v0.1.64). It is what the subscriber is made to absorb, a token bucket, and
+  a subscriber that states only `ingress` now gets a contract entry. For
+  nano-ros phase-462 W6b, which derives the device's read-task budget from it.
 - **Added:** a mode override's target reaches the SystemModel resolved to
   the model's own keys (`contracts.modes.<m>.overrides[].resolved`: the
   table, the key in it, the field; ros-launch-manifest v0.1.63). `target`

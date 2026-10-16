@@ -343,6 +343,7 @@ fn sub_contract(
         && !required
         && p.buffer.is_none()
         && p.max_transport.is_none()
+        && p.ingress.is_none()
     {
         return None;
     }
@@ -371,6 +372,12 @@ fn sub_contract(
         // it here is what lets `TopicView::transport_ms` apply the same
         // precedence the resolver applies.
         max_transport_ms: p.max_transport.ms(),
+        // rlm v0.1.64 (nano-ros RFC-0074): what the subscriber is made to
+        // absorb. The grammar requires both numbers, so this copies them.
+        ingress: p.ingress.map(|i| model::IngressContract {
+            rate_hz: i.rate_hz,
+            burst: i.burst,
+        }),
     })
 }
 
@@ -1620,6 +1627,34 @@ mod tests {
     use crate::ros::manifest_loader::{ContractChannel, ResolvedManifest, ResolvedNodePath};
     use ros_launch_manifest_sched::Criticality;
     use ros_launch_manifest_types::{Manifest, duration::Duration};
+
+    /// rlm v0.1.64 (nano-ros RFC-0074) -- a subscriber's `ingress` reaches the
+    /// model, and on its own is enough to give the endpoint a contract entry:
+    /// before the empty-check named it, a subscriber stating only `ingress`
+    /// would have been dropped from the model whole.
+    #[test]
+    fn a_subscribers_ingress_reaches_the_model() {
+        let props = EndpointProps {
+            ingress: Some(ros_launch_manifest_types::IngressDecl {
+                rate_hz: 200.0,
+                burst: 4,
+            }),
+            ..Default::default()
+        };
+        let c =
+            sub_contract("/control/handler", &props, None).expect("an ingress alone is a contract");
+        assert_eq!(
+            c.ingress,
+            Some(model::IngressContract {
+                rate_hz: 200.0,
+                burst: 4
+            })
+        );
+        assert_eq!(
+            sub_contract("/control/handler", &EndpointProps::default(), None),
+            None
+        );
+    }
 
     /// nano-ros phase 446 W2 -- a contract's `params:` reaches the model per
     /// node FQN, next to the node's other contract facts, and a node whose
