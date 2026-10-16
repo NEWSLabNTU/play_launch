@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 94 phases total (1–92, plus 14.5 and 30b); 71 complete, 15 in progress, 7 planned, 1 dropped — as of 2026-10-15.
+Started October 2025. 94 phases total (1–92, plus 14.5 and 30b); 72 complete, 14 in progress, 7 planned, 1 dropped — as of 2026-10-17.
 
 Phase docs through phase 28 are in `archive/`; from phase 29 on, a phase's doc
 stays in this directory whatever its status, and its status line (the first
@@ -99,7 +99,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 89 | [Helping with DDS without touching it](./phase-89-dds-assist.md) | ✅ | 2026-10-14 |
 | 90 | [A tidy grammar](./phase-90-a-tidy-grammar.md) | 📝 planned | — |
 | 91 | [Domain extensions](./phase-91-domain-extensions.md) | 📝 planned | — |
-| 92 | [One PyPI package](./phase-92-one-pypi-package.md) | 🔄 P1–P4 done | — |
+| 92 | [One PyPI package](./phase-92-one-pypi-package.md) | ✅ Complete | — |
 | 93 | [Supervised budgets](./phase-93-supervised-budgets.md) | 🔄 | — |
 
 ---
@@ -327,14 +327,14 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     packaging, and the vehicle keys and the ASIL default moved out of the
     core. Design: rlm `docs/design/extension-system.md`.
     [phase-91-domain-extensions.md](./phase-91-domain-extensions.md).
-  - **Phase 92** - in progress, P1-P4 done (0.18.2 on PyPI): one PyPI package (2026-10-16).
+  - **Phase 92** - complete (0.18.2 on PyPI): one PyPI package (2026-10-17).
     `pip install play_launch` again: one wheel per Python, glibc and CPU
     carries every ROS distribution sharing that tag, and the tool picks the
     payload at run time from `ROS_DISTRO`; the 0.17.0 per-distribution
     projects and the meta package are gone. CI smoke-tests every wheel in a
     plain container per distribution and CPU, which found libz3 missing
     from every Jazzy-and-later wheel and a sequence-layout crash on Lyrical
-    and Rolling (`rosidl_runtime_rs`). Released as 0.18.2; P5 (consumers) open.
+    and Rolling (`rosidl_runtime_rs`). Released as 0.18.2; no consumer needed a change.
     [phase-92-one-pypi-package.md](./phase-92-one-pypi-package.md).
   - **Phase 93** - in progress: supervised budgets (2026-10-15). A budget
     is a bound (analysed) or supervised: `supervise: { reaction, mechanism }`

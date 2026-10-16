@@ -1,6 +1,6 @@
 # Phase 92 - one PyPI package: `pip install play_launch`, the distribution picked at run time
 
-Status: **in progress** — P1 done (2026-10-15), P2-P4 done (2026-10-16); P5 open.
+Status: **complete** — P1 done (2026-10-15), P2-P4 done (2026-10-16), P5 done (2026-10-17).
 Follows the 0.17.0 release, whose PyPI upload failed and was yanked. 0.18.0
 and 0.18.1 were tagged with the old workflow and their release runs
 cancelled, so the first release of this design is 0.18.2.
@@ -229,6 +229,22 @@ PyPI again.
 - nano-ros pins (play_launch gitlink) and any consumer install lines that
   say `play_launch[<distro>]` or install from release assets go back to
   `pip install play_launch==0.18.2`.
+
+**Done (2026-10-17), with nothing to change.** No consumer ever adopted
+0.17.0's `play_launch[<distro>]` lines or its release assets: they never
+reached PyPI. Every install line in the sibling repositories (golf cart,
+AutoSDV, carla-scenario-bridge, csb-seps, crdt-tensor, LCTK) is a plain
+`pip install play_launch`, some with a floor (`>=0.10.0`, `>=0.15.1`),
+and resolves to 0.18.2 on its next upgrade. nano-ros installs no wheel:
+it builds layer 2 from its `packages/cli/third-party/play_launch` gitlink
+(at 0.18.1's 76ae4f91) and takes `play_launch_parser` from its SDK index.
+`src/ros-launch-resolve` is identical between that pin and `v0.18.2`, so
+the gitlink stays.
+
+One behaviour to know: on a Python no 0.18.2 wheel serves (3.11, 3.13, a
+glibc below 2.35), pip does not fail; it falls back to the newest release
+that matches, 0.16.0, whose `py3-none-manylinux_2_35` wheels carry a
+Humble build. That was already so before this phase.
 
 ## Not in this phase
 
