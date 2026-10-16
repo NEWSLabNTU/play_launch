@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "play_launch"
-version = "0.18.1"
+version = "0.18.2"
 description = "ROS 2 launch inspection tool - resolve, run, and analyze launch executions with resource monitoring"
 readme = "README.md"
 license = "BSD-3-Clause"
@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Rust",
     "Topic :: Software Development :: Testing",
     "Topic :: System :: Monitoring",

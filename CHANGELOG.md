@@ -6,6 +6,43 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## 0.18.2 - 2026-10-16
+
+One PyPI package again (phase 92): `pip install play_launch` on every
+supported distribution and CPU, the distribution picked when the tool runs.
+0.17.0's per-distribution packages never reached PyPI, and 0.18.0 and 0.18.1
+were tagged but not published, so this is the first release since 0.16.0
+that PyPI will carry.
+
+- **Changed (packaging):** one project, six wheels, one per (Python, glibc,
+  CPU): cp310/manylinux_2_35 for Humble, cp312/manylinux_2_39 for Jazzy and
+  Kilted, cp314/manylinux_2_43 for Lyrical and Rolling, each for x86_64 and
+  aarch64. A wheel carries one payload per distribution its Python serves,
+  under `play_launch/dist/<distro>/`, and picks one from
+  `PLAY_LAUNCH_ROS_DISTRO`, then `ROS_DISTRO`, then the only `/opt/ros/<d>`
+  it carries. `python3 -m play_launch.payload` says which and why. The
+  `play_launch_<distro>` packages and the meta package are gone; the
+  `play_launch[<distro>]` extras still install, as no-ops, until 0.20.
+- **Fixed (packaging):** every Jazzy-and-later wheel, 0.17.0's included,
+  failed to start with `libz3.so.4: cannot open shared object file`. The
+  wheel now carries libz3.
+- **Fixed (Lyrical, Rolling):** play_launch segfaulted on its first LoadNode
+  call. From Lyrical on, primitive and string C sequences are 32 bytes
+  (ros2/rosidl#942) and `rosidl_runtime_rs` 0.6.0 laid them out as 24; the
+  pinned fork now carries upstream's fix (rosidl_runtime_rs 0.7.0's
+  layout). Any message with an array field was misread before.
+- **Added (release):** CI installs each wheel in a plain container per
+  distribution and CPU and runs a smoke test (`scripts/smoke_wheel.sh`)
+  before anything is published. All three defects above were found by it.
+- **Fixed (`isolated`):** a container stopped by itself (a web UI stop, a
+  respawn, stock `ros2 launch`) signalled all its composables at once, and
+  Fast DDS 2.6's teardown race then left orphaned shared-memory port files
+  in 8 of 15 runs with 40 composables. It now staggers them 5 ms apart
+  within 1 s, as play_launch does for a process group; none in 15.
+- **Removed:** the sdist. Built from source it would give a tool with no
+  payload; without one, an unsupported platform gets pip's own "no
+  matching distribution".
+
 ## 0.18.1 - 2026-10-16
 
 A supervised settle (phase 93, rlm v0.1.62): a fallback state's settle can
