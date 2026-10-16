@@ -23,6 +23,11 @@ allowance heavily.
   ones as `out.N`, `err.N`, `pid.N`, `status.N`, numbered in start order;
   `node/<name>/err` is still the live process's. The web UI's log view
   follows the new file after a respawn.
+- **Fixed (tests):** the integration suite's web-UI tests panicked with
+  "connection refused" when play_launch had not bound its port by the first
+  poll, and the health parameters test asserted Fast DDS's participant limit
+  while running on whatever `RMW_IMPLEMENTATION` the caller's shell set
+  (#0076).
 
 ## 0.18.2 - 2026-10-16
 

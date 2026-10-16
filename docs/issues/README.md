@@ -27,6 +27,13 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0076** -- `test_health_compares_running_parameters_with_the_launch`
+inherited the caller's `RMW_IMPLEMENTATION` (Cyclone has no participant
+limit, so `limit` read `null`, not Fast DDS's 120), and the interception
+suite's `http` helper panicked on a web UI not yet listening instead of
+letting its polling loop retry -- the suite's "connection refused" flake.
+Test-only; see `archived/0076-*`.
+
 **#0075** -- a respawn (or a web UI restart) truncated the member's `out`
 and `err`, so the dead process's log -- the one saying why it died -- was
 lost. The previous process's `out`/`err`/`pid`/`status` are now kept as

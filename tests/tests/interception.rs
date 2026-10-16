@@ -724,10 +724,16 @@ interception:
 }
 
 /// One HTTP/1.1 request to the web UI; returns (status, body).
+///
+/// A web UI that is not listening yet answers status 0, like any other
+/// non-200, so the polling loops that call this retry instead of panicking:
+/// play_launch binds the port only after it has parsed and resolved the
+/// launch, about a second, which is longer than some loops' first sleep.
 fn http(port: u16, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
     use std::io::{Read, Write};
-    let mut stream =
-        std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect to the web UI");
+    let Ok(mut stream) = std::net::TcpStream::connect(("127.0.0.1", port)) else {
+        return (0, String::new());
+    };
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
@@ -1797,6 +1803,10 @@ fn test_health_compares_running_parameters_with_the_launch() {
         launch.to_str().unwrap(),
     ]);
     cmd.env("PLAY_LAUNCH_PARAM_PROBE_DELAY_S", "4");
+    // The discovery limit asserted below is Fast DDS's; a caller's
+    // RMW_IMPLEMENTATION (Cyclone has no limit by default) must not leak in
+    // (#0076).
+    cmd.env_remove("RMW_IMPLEMENTATION");
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::null());
     let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
