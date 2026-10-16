@@ -167,6 +167,28 @@ echo "  libplay_launch_parser_pyexec.so -> lib/libplay_launch_parser_pyexec.so"
 copied=$((copied + 1))
 
 # ---------------------------------------------------------------------------
+# Copy libz3. `play_launch` links it through the manifest checker's `smt`
+# feature (the satisfiability rule), and it is neither a ROS package nor
+# part of the base system: a Humble ros-core happens to pull in libz3-4,
+# Jazzy and later do not, so every non-Humble wheel failed to start with
+# `libz3.so.4: cannot open shared object file` (phase 92's smoke test).
+# Copy the file the binary actually resolves; cli.py puts lib/ on
+# LD_LIBRARY_PATH. libz3 itself needs only libstdc++/libgcc/libm/libc.
+# ---------------------------------------------------------------------------
+Z3_SO=$(ldd "$DEST_ROOT/bin/play_launch" | awk '$1 ~ /^libz3\.so/ { print $1 " " $3 }')
+if [[ -n "$Z3_SO" ]]; then
+  read -r z3_name z3_path <<<"$Z3_SO"
+  if [[ ! -f "$z3_path" ]]; then
+    echo "Error: play_launch links $z3_name but it does not resolve here ($z3_path)" >&2
+    exit 1
+  fi
+  cp -L "$z3_path" "$DEST_ROOT/lib/$z3_name"
+  chmod +x "$DEST_ROOT/lib/$z3_name"
+  echo "  $z3_path -> lib/$z3_name"
+  copied=$((copied + 1))
+fi
+
+# ---------------------------------------------------------------------------
 # Create markers
 # ---------------------------------------------------------------------------
 for marker in "${MARKERS[@]}"; do
