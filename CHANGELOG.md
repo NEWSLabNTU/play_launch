@@ -6,10 +6,11 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.18.1 - 2026-10-16
 
-A supervised settle (phase 93, rlm v0.1.62). Pins `ros-launch-manifest`
-`v0.1.62`.
+A supervised settle (phase 93, rlm v0.1.62): a fallback state's settle can
+be `supervise:`d whole, and its overrun case is checked. Pins
+`ros-launch-manifest` `v0.1.62`.
 
 - **Added (`check`):** `safe_state.settle: { ..., supervise: { enters |
   reaction, mechanism, observes } }` lowers to a standstill deadline over

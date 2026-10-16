@@ -349,7 +349,7 @@ Owner: period-range agent. Uses S1's `SourceKind::Allocated` and the
     overrun`: before it 10454.00 + settle 10939.67 (profile 9996.67 +
     response 943) + observation 156 (/mrm_handler/kinematic_state: period
     100 + max_transport 56) + detection 2 + island.emergency_stop 188.33 +
-    settle 4421.33 = 26161.33 ms of 30,000. Every other row unchanged.
+    settle 4484.33 = 26224.33 ms of 30,000 (the island emergency response at 319 ms). Every other row unchanged.
   - Tests: `a_supervised_settle_charges_the_whole_settle`,
     `a_supervised_settle_without_its_observation_is_refused`,
     `a_supervised_settle_over_the_interval_is_refused_once`,

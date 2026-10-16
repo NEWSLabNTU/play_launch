@@ -196,8 +196,8 @@ The rules that read it:
   odd_exit  comfortable_stop (nodes.<op>.paths.operate.safe_state.settle)  overrun ...
   before it 10454.00ms + settle 10939.67ms (profile 9996.67ms + response 943.00ms)
   + observation 156.00ms (/mrm_handler/kinematic_state: period 100.00ms + max_transport 56.00ms)
-  + detection 2.00ms + reaction scope path 'island.emergency_stop' 188.33ms + settle 4421.33ms
-  = 26161.33ms
+  + detection 2.00ms + reaction scope path 'island.emergency_stop' 188.33ms + settle 4484.33ms
+  = 26224.33ms
   ```
 
   The settle's terms (its response, a written duration) take the level
