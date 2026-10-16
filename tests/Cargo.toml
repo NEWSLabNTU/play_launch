@@ -110,6 +110,10 @@ name = "on_exit_shutdown"
 path = "tests/on_exit_shutdown.rs"
 
 [[test]]
+name = "respawn_logs"
+path = "tests/respawn_logs.rs"
+
+[[test]]
 name = "python_dump_inert"
 path = "tests/python_dump_inert.rs"
 

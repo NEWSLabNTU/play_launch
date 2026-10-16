@@ -500,7 +500,18 @@ play_log/<timestamp>/
 │   └── node_identity.tsv           # model key → PID → REAL ROS node name (#0017)
 ├── system_stats.csv, diagnostics.csv
 └── node/<node_name>/{metadata.json, metrics.csv, out, err, pid, status, cmdline}
+                    # + out.N, err.N, pid.N, status.N: the earlier processes of a
+                    #   respawned member, N = 1, 2, ... in start order (#0075)
 ```
+
+**A respawn keeps the dead process's files** (#0075,
+`execution::context::rotate_previous_incarnation`). Every spawn goes through
+`NodeContext::to_exec_context`, which opens `out`/`err` with `File::create`;
+before it does, the previous process's `out`/`err`/`pid`/`status` are renamed
+to the next free `.N`. The plain names are always the LIVE process's, and a
+first spawn renames nothing. A reader that holds a descriptor across a
+respawn follows the renamed file: tail by path and compare inodes
+(`web/sse.rs::reopen_if_replaced`, `health/logs.rs::FileState::ino`).
 
 Composable nodes don't have separate directories — metadata in parent container's `metadata.json`.
 
@@ -684,6 +695,13 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-16**: **A respawn no longer destroys the dead process's log**
+  (#0075). `to_exec_context` truncated `out`/`err`/`pid`/`status` on every
+  spawn, respawns included, so the log explaining a crash was gone by the
+  time anyone looked (carla-scenario-bridge 034: a bridge that `_exit(75)`s
+  after a hung CARLA call). The previous process's files are renamed to
+  `out.N`/`err.N`/`pid.N`/`status.N`; the web UI log stream and the Health
+  log watcher follow the path by inode.
 - **2026-10-15**: **play_launch leaves the ROS graph before its nodes stop**
   (`util/teardown.rs`). Destroying one of play_launch's ROS entities
   announces it to every peer, and under Fast DDS announcing to a peer that

@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Metadata for a regular ROS node
 #[derive(Debug, Serialize)]
@@ -147,6 +147,22 @@ impl NodeContext {
 
         fs::create_dir_all(output_dir)?;
 
+        // A respawn (or a restart from the web UI) comes back through here
+        // with the previous process's files still in place. `File::create`
+        // below truncates, so without this the log that explains WHY the
+        // process died was destroyed by the act of restarting it.
+        match rotate_previous_incarnation(output_dir) {
+            Ok(Some(n)) => debug!(
+                "{}: previous process's logs kept as out.{n}/err.{n}",
+                output_dir.display()
+            ),
+            Ok(None) => {}
+            Err(e) => warn!(
+                "{}: could not keep the previous process's logs ({e}); they are overwritten",
+                output_dir.display()
+            ),
+        }
+
         {
             let mut cmdline_file = File::create(cmdline_path)?;
             cmdline_file.write_all(&cmdline.to_shell(false))?;
@@ -175,6 +191,51 @@ impl NodeContext {
             command,
         })
     }
+}
+
+/// The files in a member's log directory that describe ONE process: its
+/// output, its PID and its exit status. `cmdline`, `metadata.json`,
+/// `metrics.csv` and `params_files/` describe the member and are shared by
+/// every process it runs.
+pub const INCARNATION_FILES: [&str; 4] = ["out", "err", "pid", "status"];
+
+/// Keep the previous process's [`INCARNATION_FILES`] before a new one starts.
+///
+/// The live process always writes the plain names (`out`, `err`, ...), so
+/// `play_log/latest/node/<name>/err` keeps naming the current process for
+/// every reader — the web UI, the Health page, `tail -F`. A process that ran
+/// before it is renamed to numbered siblings, numbered in the order the
+/// processes started: `err.1` is the first process, `err.2` the second, and
+/// the plain `err` the newest. Nothing is renumbered later, so a path handed
+/// out once stays correct.
+///
+/// Returns the number given to the previous process, or `None` when there
+/// was none (the first spawn: no `out` or `err` yet). A file the previous
+/// process did not leave (`status` after a spawn failure, say) is simply
+/// absent from its set.
+///
+/// Rename, never copy: a grandchild that inherited the old descriptors and
+/// outlived its parent keeps writing into the renamed file, where its lines
+/// belong.
+pub fn rotate_previous_incarnation(output_dir: &Path) -> std::io::Result<Option<u32>> {
+    if !output_dir.join("out").exists() && !output_dir.join("err").exists() {
+        return Ok(None);
+    }
+    let taken = |n: u32| {
+        INCARNATION_FILES
+            .iter()
+            .any(|f| output_dir.join(format!("{f}.{n}")).exists())
+    };
+    let n = (1..=u32::MAX)
+        .find(|&n| !taken(n))
+        .ok_or_else(|| std::io::Error::other("no free incarnation number"))?;
+    for f in INCARNATION_FILES {
+        let src = output_dir.join(f);
+        if src.exists() {
+            fs::rename(&src, output_dir.join(format!("{f}.{n}")))?;
+        }
+    }
+    Ok(Some(n))
 }
 
 /// The context contains all essential data to execute a node
@@ -625,4 +686,104 @@ pub fn prepare_composable_node_contexts_from_model(
     }
 
     Ok(ComposableNodeContextSet { load_node_contexts })
+}
+
+#[cfg(test)]
+mod incarnation_tests {
+    use super::*;
+
+    fn read(dir: &Path, f: &str) -> String {
+        fs::read_to_string(dir.join(f)).unwrap()
+    }
+
+    /// The first spawn finds nothing to keep and renames nothing — a member
+    /// that never restarts has exactly the layout it always had.
+    #[test]
+    fn the_first_spawn_keeps_nothing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        fs::write(dir.join("cmdline"), "x").unwrap();
+        assert_eq!(rotate_previous_incarnation(dir).unwrap(), None);
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["cmdline"]);
+    }
+
+    /// Each restart moves the dead process's files to the next free number,
+    /// in start order, and leaves the plain names free for the new one.
+    #[test]
+    fn each_restart_keeps_the_previous_process_under_the_next_number() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        for life in 1..=3 {
+            if life > 1 {
+                assert_eq!(rotate_previous_incarnation(dir).unwrap(), Some(life - 1));
+            }
+            for f in INCARNATION_FILES {
+                fs::write(dir.join(f), format!("{f} of life {life}")).unwrap();
+            }
+            fs::write(dir.join("cmdline"), "the same command").unwrap();
+        }
+        for life in 1..=2 {
+            for f in INCARNATION_FILES {
+                assert_eq!(
+                    read(dir, &format!("{f}.{life}")),
+                    format!("{f} of life {life}")
+                );
+            }
+        }
+        for f in INCARNATION_FILES {
+            assert_eq!(read(dir, f), format!("{f} of life 3"));
+        }
+        assert!(
+            !dir.join("cmdline.1").exists(),
+            "cmdline is per member, not per process"
+        );
+    }
+
+    /// A process that died before it could write some of its files (a spawn
+    /// failure leaves `err` and no `pid`) keeps what it has, and the numbering
+    /// does not skip.
+    #[test]
+    fn a_partial_set_is_kept_as_it_is() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        fs::write(dir.join("err"), "spawn failed").unwrap();
+        assert_eq!(rotate_previous_incarnation(dir).unwrap(), Some(1));
+        assert_eq!(read(dir, "err.1"), "spawn failed");
+        assert!(!dir.join("pid.1").exists());
+        fs::write(dir.join("out"), "").unwrap();
+        assert_eq!(rotate_previous_incarnation(dir).unwrap(), Some(2));
+        assert!(dir.join("out.2").exists());
+    }
+
+    /// The whole path a respawn takes: `to_exec_context` twice on one
+    /// context. The second must not truncate what the first process wrote.
+    #[test]
+    fn to_exec_context_twice_keeps_the_first_processs_log() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().join("node/talker");
+        let record: NodeRecord = serde_json::from_value(serde_json::json!({
+            "executable": "true",
+            "cmd": ["true"],
+            "params_files": [],
+        }))
+        .unwrap();
+        let ctx = NodeContext {
+            cmdline: NodeCommandLine::from_node_record(&record, &dir, &Default::default()).unwrap(),
+            record,
+            output_dir: dir.clone(),
+            model_fqn: None,
+            cgroup: None,
+        };
+        ctx.to_exec_context(None).unwrap();
+        fs::write(dir.join("err"), "why the first process died\n").unwrap();
+        ctx.to_exec_context(None).unwrap();
+        assert_eq!(read(&dir, "err.1"), "why the first process died\n");
+        assert_eq!(read(&dir, "err"), "", "the live process gets a fresh err");
+        assert!(dir.join("out.1").exists() && dir.join("out").exists());
+    }
 }

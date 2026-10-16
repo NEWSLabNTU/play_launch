@@ -27,6 +27,12 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0075** -- a respawn (or a web UI restart) truncated the member's `out`
+and `err`, so the dead process's log -- the one saying why it died -- was
+lost. The previous process's `out`/`err`/`pid`/`status` are now kept as
+`out.N`/`err.N`/... in start order; the plain names stay the live
+process's. See `archived/0075-*`.
+
 **#0074** -- the Python dumper merged every node's section of a substituted
 parameter file (`ParameterFile(allow_substs=True)`, nav2_bringup) into each
 node, and dropped files holding lists (`!!python/tuple`); Nav2's costmaps and

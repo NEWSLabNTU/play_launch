@@ -214,6 +214,11 @@ impl MemberLog {
 struct FileState {
     member: String,
     offset: u64,
+    /// The inode `offset` is into. A respawn renames the dead process's file
+    /// to `err.N` and starts a new `err` (`execution::context::
+    /// rotate_previous_incarnation`); a new file that grew past the old offset
+    /// within one tick is not shorter, so only the inode tells them apart.
+    ino: Option<u64>,
     /// The bytes after the last newline, carried to the next read.
     partial: Vec<u8>,
 }
@@ -263,6 +268,7 @@ impl LogWatcher {
                 self.files.entry(path).or_insert_with(|| FileState {
                     member: id.to_string(),
                     offset: 0,
+                    ino: None,
                     partial: Vec::new(),
                 });
             }
@@ -426,11 +432,13 @@ fn read_new(
         return;
     };
     let len = meta.len();
-    if len < state.offset {
+    let ino = Some(std::os::unix::fs::MetadataExt::ino(&meta));
+    if len < state.offset || (state.ino.is_some() && state.ino != ino) {
         // Truncated or replaced: start over.
         state.offset = 0;
         state.partial.clear();
     }
+    state.ino = ino;
     let new = len - state.offset;
     if new == 0 {
         return;
@@ -536,6 +544,33 @@ mod tests {
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert_eq!(errors[0].count, 3);
         assert!(v.signatures.iter().any(|s| s.example == "partial line"));
+    }
+
+    /// A respawn renames the dead process's `err` to `err.1` and the new
+    /// process writes a fresh `err`. Within one tick it can write MORE than
+    /// the old offset, so the file is not shorter and only its inode says it
+    /// is a different file: reading from the old offset would skip its start.
+    #[test]
+    fn a_file_replaced_by_a_respawn_is_read_from_its_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut w = LogWatcher::default();
+        write(&dir.path().join("err"), "[ERROR] [1.0] [n]: first life\n");
+        w.tick([("node:/n", "n", dir.path())], 1000);
+        std::fs::rename(dir.path().join("err"), dir.path().join("err.1")).unwrap();
+        write(
+            &dir.path().join("err"),
+            "[ERROR] [1.0] [n]: second life begins here\n[INFO] [1.0] [n]: more\n",
+        );
+        w.tick([("node:/n", "n", dir.path())], 3000);
+        let v = &w.views(10)[0];
+        assert_eq!(v.total_lines, 3, "{:?}", v.signatures);
+        assert!(
+            v.signatures
+                .iter()
+                .any(|s| s.example.contains("second life begins here")),
+            "{:?}",
+            v.signatures
+        );
     }
 
     #[test]

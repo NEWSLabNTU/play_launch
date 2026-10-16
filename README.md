@@ -230,8 +230,10 @@ play_log/<timestamp>/
 ├── node/<node_name>/
 │   ├── metadata.json
 │   ├── metrics.csv       # Resource metrics (when enabled)
-│   ├── out/err           # Process logs
+│   ├── out/err           # Process logs (the live process)
 │   ├── pid/status/cmdline
+│   ├── out.N/err.N       # Earlier processes of a respawned member, N = 1, 2, ...
+│   ├── pid.N/status.N    #   in start order (the plain names are the newest)
 │   └── params_files/     # ROS parameter files
 ├── load_node/<name>/
 │   └── out/err           # Per-composable-node logs (isolated mode)

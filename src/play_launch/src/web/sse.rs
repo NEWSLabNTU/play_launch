@@ -197,6 +197,23 @@ async fn tail_lines_to_channel(
                 // EOF. Before sleeping, check whether the file shrank — the
                 // only signal available that someone truncated it, since a
                 // truncating rewrite keeps the same inode.
+                //
+                // REPLACEMENT. A respawn no longer truncates `out`/`err`: it
+                // renames the dead process's file to `err.N` and the new
+                // process writes a fresh `err` (`execution::context::
+                // rotate_previous_incarnation`). Our descriptor still follows
+                // the renamed inode, so the stream would show the dead
+                // process forever. If the path now names a different inode,
+                // reopen it and stream the new file from its start.
+                if let Some(fresh) = reopen_if_replaced(reader, path) {
+                    debug!(
+                        "{what} file {} was replaced; following the new one",
+                        path.display()
+                    );
+                    *reader = BufReader::new(fresh);
+                    pos = 0;
+                    continue;
+                }
                 if let Ok(meta) = std::fs::metadata(path)
                     && meta.len() < pos
                 {
@@ -230,6 +247,23 @@ async fn tail_lines_to_channel(
             }
         }
     }
+}
+
+/// The file `path` names now, when that is no longer the file `reader` has
+/// open (same device and inode). `None` when it is the same file, or when the
+/// path does not exist right now (a rename and the new file's creation are two
+/// steps; the next poll sees the new file).
+fn reopen_if_replaced(
+    reader: &BufReader<std::fs::File>,
+    path: &std::path::Path,
+) -> Option<std::fs::File> {
+    use std::os::unix::fs::MetadataExt;
+    let open = reader.get_ref().metadata().ok()?;
+    let named = std::fs::metadata(path).ok()?;
+    if (open.dev(), open.ino()) == (named.dev(), named.ino()) {
+        return None;
+    }
+    std::fs::File::open(path).ok()
 }
 
 /// Truncate a line to `MAX_LINE_LEN`, appending a size marker if truncated.
@@ -687,6 +721,36 @@ mod tests {
         assert!(
             after.iter().any(|l| l.contains("new-1")),
             "post-truncation content must reach the client, got: {after:?}"
+        );
+    }
+
+    /// A tail must follow the path, not the inode, when a respawn replaces
+    /// the file: the dead process's `err` is renamed to `err.1` and the new
+    /// process writes a new `err`. Without `reopen_if_replaced` the stream
+    /// keeps reading the renamed file and never shows the new process.
+    #[tokio::test]
+    async fn a_file_replaced_by_a_respawn_is_followed() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("err");
+        std::fs::write(&path, "first-1\n").unwrap();
+
+        let (tx, mut rx) = mpsc::channel::<Result<Event, Infallible>>(100);
+        let file = std::fs::File::open(&path).unwrap();
+        let mut reader = BufReader::new(file);
+        let p = path.clone();
+        tokio::spawn(async move {
+            let _ = tail_lines_to_channel(&mut reader, &p, &tx, "test").await;
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        std::fs::rename(&path, tmp.path().join("err.1")).unwrap();
+        // LONGER than the old file, so the shrink check cannot be what saves it.
+        std::fs::write(&path, "second-life-line-1\nsecond-life-line-2\n").unwrap();
+
+        let after = collect_for(&mut rx, Duration::from_millis(3000)).await;
+        assert!(
+            after.iter().any(|l| l.contains("second-life-line-1")),
+            "the new file's content must reach the client from its start, got: {after:?}"
         );
     }
 

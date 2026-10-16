@@ -6,6 +6,16 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Fixed:** a respawned process (`respawn="true"`, or a restart from the
+  web UI) truncated its member's `out` and `err`, so the log of the process
+  that died -- usually the one saying why -- was lost (#0075). The earlier
+  process's `out`, `err`, `pid` and `status` are now kept beside the live
+  ones as `out.N`, `err.N`, `pid.N`, `status.N`, numbered in start order;
+  `node/<name>/err` is still the live process's. The web UI's log view
+  follows the new file after a respawn.
+
 ## 0.18.2 - 2026-10-16
 
 One PyPI package again (phase 92): `pip install play_launch` on every
