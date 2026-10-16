@@ -1,6 +1,6 @@
 # Phase 92 - one PyPI package: `pip install play_launch`, the distribution picked at run time
 
-Status: **in progress** — P1 done (2026-10-15), P2 and P3 done (2026-10-16).
+Status: **in progress** — P1 done (2026-10-15), P2-P4 done (2026-10-16); P5 open.
 Follows the 0.17.0 release, whose PyPI upload failed and was yanked. 0.18.0
 and 0.18.1 were tagged with the old workflow and their release runs
 cancelled, so the first release of this design is 0.18.2.
@@ -212,6 +212,17 @@ release is the next unused version, 0.18.2.)
 - Gate: `pip install play_launch==0.18.2` from PyPI works in a fresh
   container for each distribution and CPU (QEMU for arm64 as the build
   does); the GitHub release lists the six wheels.
+
+**Done (2026-10-16).** Tagged `v0.18.2` at 23e6e9bf. The release run
+(38856862764) rebuilt all ten rows, smoke-tested every wheel on both CPUs,
+and published; PyPI and the GitHub release each list the six wheels
+(20-46 MB). `pip install play_launch==0.18.2` from PyPI into a fresh
+`ros:<d>-ros-core` container, then `scripts/smoke_wheel.sh`, passed for
+humble, jazzy, kilted, lyrical and rolling on x86_64, each `--version`
+naming its own distribution (`play_launch 0.18.2 (ROS lyrical, v0.18.2,
+rlm v0.1.62)`). The aarch64 wheels on PyPI are the files the release run
+smoke-tested under QEMU before publishing; they were not installed from
+PyPI again.
 
 ### P5. Consumers
 
