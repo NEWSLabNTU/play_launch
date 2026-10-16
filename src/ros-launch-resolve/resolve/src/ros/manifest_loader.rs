@@ -3978,32 +3978,47 @@ fn check_modes(
 /// value over what an author wrote, so the author's own file is where the
 /// target must exist.
 fn override_target_exists(index: &ManifestIndex, scope_id: usize, target: &str) -> bool {
-    let Some(m) = index.manifests.get(&scope_id) else {
-        return false;
-    };
+    override_site(index, scope_id, target).is_some()
+}
+
+/// Where a mode override's target lands in its scope's DECLARATION, and the
+/// field it pins -- `None` when it names no requirement the author wrote.
+///
+/// The ONE reading of a target: [`override_target_exists`] asks it, and the
+/// model builder turns its answer into the model's own keys
+/// (`ModeOverrideContract.resolved`, rlm v0.1.63), so the rule that refuses a
+/// target and the key a consumer applies it at cannot disagree.
+pub(crate) fn override_site<'t>(
+    index: &ManifestIndex,
+    scope_id: usize,
+    target: &'t str,
+) -> Option<(OverrideSite<'t>, &'t str)> {
+    let m = index.manifests.get(&scope_id)?;
     // A NAME may contain dots — scope paths in this corpus are called
     // `safety.stop`, `system.emergency_stop` — so the target cannot be split
     // into fixed positions. Read the section off the front and the field off
     // the back; whatever is between is the name, dots and all. Splitting
     // positionally reported the good case as missing, which is the shape of
     // this mistake: a rule that fires on a correct contract.
-    let Some((section, rest)) = target.split_once('.') else {
-        return false;
-    };
-    let Some((middle, field)) = rest.rsplit_once('.') else {
-        return false;
-    };
+    let (section, rest) = target.split_once('.')?;
+    let (middle, field) = rest.rsplit_once('.')?;
     match section {
         "paths" => m
             .manifest
             .paths
             .get(middle)
-            .is_some_and(|p| path_field_declared(p, field)),
-        "topics" => m.manifest.topics.get(middle).is_some_and(|t| match field {
-            "rate_hz" => t.rate_hz.is_some(),
-            "max_transport" => t.max_transport.is_some(),
-            _ => false,
-        }),
+            .is_some_and(|p| path_field_declared(p, field))
+            .then_some((OverrideSite::ScopePath { name: middle }, field)),
+        "topics" => m
+            .manifest
+            .topics
+            .get(middle)
+            .is_some_and(|t| match field {
+                "rate_hz" => t.rate_hz.is_some(),
+                "max_transport" => t.max_transport.is_some(),
+                _ => false,
+            })
+            .then_some((OverrideSite::Topic { name: middle }, field)),
         "nodes" => {
             // `<node>.<pub|sub|paths>.<name>`: the infix is the only fixed
             // token, and a node name may hold dots as readily as a path.
@@ -4017,7 +4032,7 @@ fn override_target_exists(index: &ManifestIndex, scope_id: usize, target: &str) 
                 let Some(n) = m.manifest.nodes.get(node) else {
                     continue;
                 };
-                return match infix {
+                let declared = match infix {
                     "paths" => n
                         .paths
                         .get(name)
@@ -4031,11 +4046,36 @@ fn override_target_exists(index: &ManifestIndex, scope_id: usize, target: &str) 
                         .get(name)
                         .is_some_and(|e| endpoint_field_declared(e, field)),
                 };
+                if !declared {
+                    return None;
+                }
+                let site = match infix {
+                    "paths" => OverrideSite::NodePath { node, name },
+                    "pub" => OverrideSite::Pub { node, name },
+                    _ => OverrideSite::Sub { node, name },
+                };
+                return Some((site, field));
             }
-            false
+            None
         }
-        _ => false,
+        _ => None,
     }
+}
+
+/// The requirement a mode override names, in its scope's own names (see
+/// [`override_site`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OverrideSite<'t> {
+    /// `paths.<name>`: one of the scope's own paths.
+    ScopePath { name: &'t str },
+    /// `topics.<name>`.
+    Topic { name: &'t str },
+    /// `nodes.<node>.paths.<name>`.
+    NodePath { node: &'t str, name: &'t str },
+    /// `nodes.<node>.pub.<name>`.
+    Pub { node: &'t str, name: &'t str },
+    /// `nodes.<node>.sub.<name>`.
+    Sub { node: &'t str, name: &'t str },
 }
 
 fn path_field_declared(p: &ros_launch_manifest_types::PathDecl, field: &str) -> bool {

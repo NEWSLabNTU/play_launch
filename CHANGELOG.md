@@ -8,6 +8,14 @@ allowance heavily.
 
 ## Unreleased
 
+- **Added:** a mode override's target reaches the SystemModel resolved to
+  the model's own keys (`contracts.modes.<m>.overrides[].resolved`: the
+  table, the key in it, the field; ros-launch-manifest v0.1.63). `target`
+  stays as written, in the declaring scope's vocabulary, which a consumer of
+  the model cannot resolve; the resolver already resolved it to apply the
+  mode in its own checks, and now carries that answer out. One reading of a
+  target (`override_site`) serves both this and `override-target-missing`.
+  For nano-ros phase-462 W4, which lowers a mode onto an image's tables.
 - **Fixed:** a respawned process (`respawn="true"`, or a restart from the
   web UI) truncated its member's `out` and `err`, so the log of the process
   that died -- usually the one saying why -- was lost (#0075). The earlier

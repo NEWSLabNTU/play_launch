@@ -1562,6 +1562,111 @@ fn modes_resolve_and_a_correct_ladder_is_quiet() {
     );
 }
 
+/// The model a fixture resolves to, from the standalone `ros-launch-resolve
+/// resolve` (no ROS needed), or `None` when that CLI has not been built.
+fn resolve_fixture_model(dir: &str) -> Option<ros_launch_manifest_model::SystemModel> {
+    let bin = ros_launch_resolve_bin()?;
+    let launch = fixtures::repo_root()
+        .join("tests/fixtures")
+        .join(dir)
+        .join("launch/bringup.launch.xml");
+    let out_dir = tempfile::TempDir::new().expect("temp dir");
+    let model_path = out_dir.path().join("system_model.yaml");
+    let out = resolve_cmd(&bin)
+        .arg("resolve")
+        .arg(&launch)
+        .arg("-o")
+        .arg(&model_path)
+        .output()
+        .expect("ros-launch-resolve resolve runs");
+    assert!(
+        out.status.success(),
+        "resolve failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let yaml = std::fs::read_to_string(&model_path).expect("model written");
+    Some(ros_launch_manifest_model::SystemModel::from_yaml_str(&yaml).expect("model parses"))
+}
+
+/// rlm v0.1.63: a mode override's target reaches the model RESOLVED to the
+/// model's own keys -- one per kind a target can name -- and each key names an
+/// entry that exists in its table. A consumer that lowers a mode onto the
+/// model (nano-ros phase-462 W4) reads these; it has no scope namespaces to
+/// resolve `target` itself. (A target naming no declared requirement gets no
+/// key: `override_site` answers both this and `override-target-missing`, so
+/// that case is the rule's, tested on `contract_modes_bad` below.)
+#[test]
+fn a_mode_overrides_target_is_resolved_to_the_models_keys() {
+    use ros_launch_manifest_model::OverrideTable as T;
+    let Some(model) = resolve_fixture_model("contract_mode_override_keys") else {
+        return;
+    };
+    let c = &model.contracts;
+    let (_, degraded) = c
+        .modes
+        .iter()
+        .find(|(k, _)| k.ends_with("/degraded"))
+        .expect("the degraded mode");
+    let got: Vec<(String, T, String, String)> = degraded
+        .overrides
+        .iter()
+        .map(|o| {
+            let r = o
+                .resolved
+                .as_ref()
+                .unwrap_or_else(|| panic!("`{}` unresolved", o.target));
+            (o.target.clone(), r.table, r.key.clone(), r.field.clone())
+        })
+        .collect();
+    let want = [
+        (
+            "paths.safety.stop.max_latency",
+            T::ScopePaths,
+            "bringup.launch.xml/safety.stop",
+            "max_latency",
+        ),
+        (
+            "nodes.obstacle_detector.sub.scan.min_rate_hz",
+            T::SubEndpoints,
+            "/safety/obstacle_detector/scan",
+            "min_rate_hz",
+        ),
+        (
+            "nodes.obstacle_detector.paths.detect.max_latency",
+            T::NodePaths,
+            "/safety/obstacle_detector/detect",
+            "max_latency",
+        ),
+        (
+            "nodes.brake_controller.sub.obstacles.max_age",
+            T::SubEndpoints,
+            "/safety/brake_controller/obstacles",
+            "max_age",
+        ),
+        (
+            "topics./safety/scan.rate_hz",
+            T::Topics,
+            "/safety/scan",
+            "rate_hz",
+        ),
+    ];
+    for (target, table, key, field) in want {
+        assert!(
+            got.iter()
+                .any(|g| g.0 == target && g.1 == table && g.2 == key && g.3 == field),
+            "`{target}` -> {table:?} `{key}` `{field}` missing; got {got:?}"
+        );
+        let exists = match table {
+            T::ScopePaths => c.scope_paths.contains_key(key),
+            T::NodePaths => c.node_paths.contains_key(key),
+            T::PubEndpoints => c.pub_endpoints.contains_key(key),
+            T::SubEndpoints => c.sub_endpoints.contains_key(key),
+            T::Topics => c.topics.contains_key(key),
+        };
+        assert!(exists, "the resolved key `{key}` names no {table:?} entry");
+    }
+}
+
 /// And the four mode rules on a contract built to break each one.
 #[test]
 fn mode_rules_fire_on_a_broken_ladder() {

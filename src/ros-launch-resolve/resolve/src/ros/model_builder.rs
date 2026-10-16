@@ -34,6 +34,44 @@ pub struct SchedInputs<'a> {
     pub declared_tiers: Option<BTreeMap<String, TierDef>>,
 }
 
+/// rlm v0.1.63 -- a mode override's target in the model's own keys, keyed
+/// exactly as this builder keys each table: an endpoint and a node path by
+/// `<node FQN>/<name>` (the node resolved the way `pub_endpoints` resolves
+/// it), a scope path by `scope_key`, a topic by its qualified name. `None`
+/// for a target naming no declared requirement, which
+/// `override-target-missing` reports.
+fn resolved_override(
+    index: &ManifestIndex,
+    nodes: &IndexMap<String, model::NodeInstance>,
+    scope_id: usize,
+    target: &str,
+    scope_key: &dyn Fn(&str) -> String,
+) -> Option<model::ResolvedOverride> {
+    use super::manifest_loader::{OverrideSite, override_site, qualify_name};
+    let (site, field) = override_site(index, scope_id, target)?;
+    let ns = index.manifests.get(&scope_id).map_or("", |m| m.ns.as_str());
+    let node_key =
+        |node: &str, name: &str| format!("{}/{name}", resolve_node_ref(nodes, &fqn(ns, node)));
+    let (table, key) = match site {
+        OverrideSite::ScopePath { name } => (model::OverrideTable::ScopePaths, scope_key(name)),
+        OverrideSite::Topic { name } => (model::OverrideTable::Topics, qualify_name(ns, name)),
+        OverrideSite::NodePath { node, name } => {
+            (model::OverrideTable::NodePaths, node_key(node, name))
+        }
+        OverrideSite::Pub { node, name } => {
+            (model::OverrideTable::PubEndpoints, node_key(node, name))
+        }
+        OverrideSite::Sub { node, name } => {
+            (model::OverrideTable::SubEndpoints, node_key(node, name))
+        }
+    };
+    Some(model::ResolvedOverride {
+        table,
+        key,
+        field: field.to_string(),
+    })
+}
+
 /// Join a namespace and a name into an FQN (`/ns/name`, root-safe).
 fn fqn(ns: &str, name: &str) -> String {
     let ns = ns.trim_end_matches('/');
@@ -1329,6 +1367,13 @@ pub fn build_system_model(
                     .map(|o| model::ModeOverrideContract {
                         target: o.target.clone(),
                         value: o.value.clone(),
+                        resolved: resolved_override(
+                            index,
+                            &structure.nodes,
+                            m.scope_id,
+                            &o.target,
+                            &key,
+                        ),
                     })
                     .collect(),
                 // rlm v0.1.46. The window's parameter is keyed by the node's
