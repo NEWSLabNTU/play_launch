@@ -578,6 +578,7 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
         out.push('\n');
     }
     out.push_str(&render_stated(index));
+    out.push_str(&render_reaction_totals(index));
     out
 }
 
@@ -727,6 +728,55 @@ fn render_stated(index: &manifest_loader::ManifestIndex) -> String {
         out.push_str(&format!(
             "  {nothing} stated budget(s) checked by nothing.\n"
         ));
+    }
+    out.push_str(&render_derived(index));
+    out
+}
+
+/// `check --explain`'s derived values (phase 91 E1): each stated budget
+/// whose `source:` carries a derivation record, with what derived it, the
+/// inputs it read and its steps, as the record states them. The record is
+/// printed, never re-run: evaluating the extension is E4's.
+fn render_derived(index: &manifest_loader::ManifestIndex) -> String {
+    use crate::ros::budget_book;
+    let mut out = String::new();
+    for b in &index.stated {
+        let Some(d) = b.source.as_ref().and_then(|s| s.derived.as_deref()) else {
+            continue;
+        };
+        if out.is_empty() {
+            out.push_str("\n-- Derived values (--explain) --\n");
+        }
+        out.push_str(&format!(
+            "{} = {:.2} ms   {}\n",
+            b.key,
+            b.ms,
+            budget_book::derived_label(d)
+        ));
+        for (name, value) in &d.inputs {
+            out.push_str(&format!("    {name} = {value}\n"));
+        }
+        for step in &d.trace {
+            out.push_str(&format!("    {step}\n"));
+        }
+    }
+    out
+}
+
+/// `check --explain`'s reaction totals (phase 91 E1): per hazard, the
+/// floor's DETECT + WINDOWS + ROUTE + SETTLE, the value an extension check
+/// reads as `reaction_total`. Read-only: a contract never writes it.
+pub fn render_reaction_totals(index: &manifest_loader::ManifestIndex) -> String {
+    use manifest_loader::RungRole;
+    let mut out = String::new();
+    for r in index.budgets.iter().filter(|r| r.role == RungRole::Floor) {
+        let Some(total) = r.total_ms else { continue };
+        if out.is_empty() {
+            out.push_str(
+                "\n-- Reaction totals (--explain, ms; `reaction_total` for extension checks) --\n",
+            );
+        }
+        out.push_str(&format!("{}  {total:.2}  (floor '{}')\n", r.hazard, r.rung));
     }
     out
 }

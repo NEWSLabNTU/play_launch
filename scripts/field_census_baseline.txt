@@ -87,3 +87,14 @@ observe_ms         # SettleSuperviseContract (model, rlm v0.1.62). The
                    # it on the overrun row) from the contract; no realizer
                    # arms a standstill deadline from the model yet (the
                    # safety island's route 2 is configured by hand).
+
+ingress            # EndpointProps / SubContract (rlm v0.1.64, nano-ros
+                   # phase-462 W6b, RFC-0074): what a subscriber is made to
+                   # absorb, a token bucket. The resolver lowers it into the
+                   # model as written; the consumer that enforces it on the
+                   # device's read path is nano-ros's, and its main does not
+                   # read it yet (2026-10-17). Drop this line when it does.
+
+burst              # IngressDecl / IngressContract (rlm v0.1.64). The
+                   # bucket's depth, beside `ingress.rate_hz`; same consumer,
+                   # same state as `ingress` above.

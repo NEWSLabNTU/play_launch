@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!-- Phase 91 E1: a hazard with deadline_by and no ftti. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="lidar_driver"      namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="obstacle_detector" namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="brake_controller"  namespace="/safety"/>
+</launch>

@@ -1217,6 +1217,27 @@ pub(crate) fn settle_for(
     };
     let at = format!("nodes.{node_name}.paths.{path_name}.safe_state.settle");
     let where_ = site(index, scope_id, &at);
+    // Phase 91 E1: a written duration DERIVED by an extension beside the
+    // braking profile is two derivations of one value. `settle-conflict`
+    // compares a measurement with a derivation; two derivations have no
+    // order to compare in, so one must go.
+    if let Some(d) = ss
+        .settle
+        .as_ref()
+        .and_then(|b| b.source.as_ref())
+        .and_then(|s| s.derived.as_deref())
+    {
+        diags.push(diag(
+            "derive-conflict",
+            Severity::Error,
+            format!(
+                "{where_}: the settle is derived twice: by the braking profile (`decel`, \
+                 `jerk`) and as a written duration {} -- keep one. The profile is charged",
+                super::budget_book::derived_label(d)
+            ),
+            at.clone(),
+        ));
+    }
     let read = |name: &str| -> Result<(f64, String), String> {
         let declared = decl.params.as_ref().is_some_and(|p| p.contains_key(name));
         if !declared {

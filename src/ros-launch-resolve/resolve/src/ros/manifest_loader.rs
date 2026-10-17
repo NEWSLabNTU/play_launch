@@ -2784,6 +2784,41 @@ fn check_fault_reaction(
     // --- per hazard
     for h in &hazards {
         let at = format!("hazards.{}", h.name);
+        // Phase 91 E1: a hazard's requirement is a time (`ftti`), a check
+        // (`deadline_by`), or both. A check is an extension's, and this
+        // checker does not evaluate extension checks yet (E4), so it says
+        // so on every run rather than reporting the hazard as met.
+        match (&h.decl.ftti, &h.decl.deadline_by) {
+            (None, None) => diags.push(Diagnostic {
+                rule_id: "hazard-no-requirement".to_string(),
+                severity: Severity::Error,
+                message: format!(
+                    "hazard '{}' states no requirement: write `ftti:` (the time from the fault \
+                     to the hazardous event) or `deadline_by: <extension>/<check>` (a check \
+                     that is the requirement), or both",
+                    h.name
+                ),
+                path: at.clone(),
+                span: None,
+            }),
+            (ftti, Some(check)) => diags.push(Diagnostic {
+                rule_id: "deadline-unchecked".to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "hazard '{}': `deadline_by: {check}` is an extension check, and this checker \
+                     does not evaluate extension checks yet; {}",
+                    h.name,
+                    if ftti.is_some() {
+                        "only its `ftti` is checked"
+                    } else {
+                        "its reaction is reported, not judged"
+                    }
+                ),
+                path: format!("{at}.deadline_by"),
+                span: None,
+            }),
+            (Some(_), None) => {}
+        }
         // Phase 82: the FDTI covers EVERY fault class the hazard claims --
         // max over its classes of (min over that class's detectors).
         let (kinds, kinds_explicit) = hazard_fault_kinds(&h.decl.on);
@@ -2996,6 +3031,25 @@ fn check_fault_reaction(
             if fdti_worst.as_ref().is_none_or(|(w, _, _)| v > *w) {
                 fdti_worst = Some((v, why, keys));
             }
+        }
+
+        // Phase 91 E1: a stated detection (physics: the fault building up
+        // before anything can see it) comes BEFORE what the detectors take
+        // to notice, so it is added to the derived interval, never in
+        // place of it. Stating it never buys slack.
+        if let Some(stated) = h.decl.detection.ms() {
+            let key = (h.scope_id, format!("{at}.detection"));
+            fdti_worst = Some(match fdti_worst.take() {
+                Some((v, why, mut keys)) => {
+                    keys.insert(0, key);
+                    (
+                        stated + v,
+                        format!("stated detection {stated:.2}ms + {why}"),
+                        keys,
+                    )
+                }
+                None => (stated, format!("stated detection {stated:.2}ms"), vec![key]),
+            });
         }
 
         // FRTI: the reaction's derived route + the sink's settle.

@@ -1,7 +1,7 @@
 # Phase 91 - domain extensions: rlx, profiles and the vehicle keys moved out
 
 Status: **in progress** (2026-10-17): E0 done (no-go: rlx owns its
-expression core). Stage 2 of 2; phase 90 (a tidy grammar) is complete. Design: rlm `docs/design/extension-system.md` (with
+expression core); E1 and E2 done (rlm v0.1.65). Stage 2 of 2; phase 90 (a tidy grammar) is complete. Design: rlm `docs/design/extension-system.md` (with
 `extension-language-exploration.md` and `extension-examples.md`). Work lands
 in rlm (format, language, profiles), play_launch (loader, evaluator, Z3,
 explain, packaging, migration) and the consumers (nano-ros reads the
@@ -46,6 +46,26 @@ about 2-3 kLOC as planned. Found on the way: the design example's
 - Gate: fixtures with a hand-written derivation record check as if derived;
   `--explain` prints `derived by`.
 
+**Done (2026-10-17).** rlm v0.1.65 (`bc57ebe`, GRAMMAR_VERSION 0.1.65): `source: { derived: { by,
+version, sha256, inputs, trace } }` (`types::Derivation`, boxed so a
+timer's trigger stays small), `hazards.<h>.detection` (a bound) and
+`deadline_by` (`types::CheckRef`), `reaction_total` refused as read-only.
+play_launch: the stated detection is added BEFORE the derived FDTI in
+every rung row (DETECT), so stating it never buys slack; `deadline-unchecked`
+(warning) on every `deadline_by` until E4 evaluates checks, and the row
+carries no verdict without an `ftti`; `hazard-no-requirement` (error) for
+a hazard with neither; `derive-conflict` (error) for a settle derived by a
+braking profile and as a derived duration; the SOURCE cell and a "Derived
+values" block in `--explain` (`derived by <ext> <ver> (sha256 <12>)`, the
+inputs and the trace); "Reaction totals" in `--explain`, each hazard's
+floor total, which E4 hands to extension checks as `reaction_total`.
+Fixtures `contract_derived_record` (40 stated + 100 derived detection, a
+derived settle: 497 of 500 ms), `contract_deadline_by`,
+`contract_derive_conflict`, `contract_hazard_no_requirement`; tests
+`e1_*` in `tests/manifest_check.rs`. One choice the design left open:
+`detection` is additive (physics, then what the detectors take), the
+conservative reading, rather than replacing the derived detection.
+
 ### E2. rlx front end (rlm)
 
 - The extension format (`extension`, `requires`, `key`, `input`, `derive`,
@@ -56,6 +76,28 @@ about 2-3 kLOC as planned. Found on the way: the design example's
   `rlx fmt --ascii | --unicode`.
 - Gate: a corpus of refused files, one per rule, each with its diagnostic;
   round-trip `fmt` is the identity on the canonical form.
+
+**Done (2026-10-17).** rlm v0.1.65, crate `rlx/` (`ros-launch-manifest-rlx`,
+lib `rlx`, binary `rlx check | fmt --ascii | --unicode`), about 3.4 kLOC
+with tests, one dependency (`unicode-normalization`). Pipeline: the
+file-wide character rules, the tokenizer (identifier and symbol rules),
+a hand-written parser (first error only), then the tree refusals
+(recursion; `rlx-shadow`, a binding named like a unit, since `2 h` with a
+binding `h` would silently mean hours). Thirteen diagnostic codes; the
+refused corpus has 29 files with exact expected lines and fails if a code
+has no example. The six `.rlx` examples parse verbatim (a test fails if
+they drift from the doc), each with a committed Unicode variant;
+`fmt --ascii` is the identity on the canonical form and inverts
+`fmt --unicode`. The formatter swaps operator spellings in place, so
+comments and aligned columns survive. Grammar decisions the examples
+left open (units against variables, implicit multiplication, `^` above
+unary minus, `and` as binding separator or conjunction, clause order)
+are in the crate docs; what the design leaves open for E3 (canonical
+form against Greek identifiers, the one-script rule refusing `Δt`, how
+an expression names a key, `param ... unit`) is in rlm
+`extension-system.md` section 12. Reviewed against inputs outside the
+corpus (recursion, a Cyrillic look-alike, a unit-named key, a bidi
+override in a comment, round trips).
 
 ### E3. Units and load-time checks (rlm)
 

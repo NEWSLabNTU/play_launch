@@ -33,7 +33,21 @@ allowance heavily.
   poll, and the health parameters test asserted Fast DDS's participant limit
   while running on whatever `RMW_IMPLEMENTATION` the caller's shell set
   (#0076).
-
+- **Added (`check`, phase 91 E1):** the core interface domain extensions
+  will fill (ros-launch-manifest v0.1.65). A bound may carry a derivation record, `source: { derived: { by,
+  version, sha256, inputs, trace } }`; it is charged like any bound, the
+  SOURCE cell reads `derived by <extension> <version> (sha256 ...)`, and
+  `--explain` prints each record's inputs and steps. `hazards.<h>.detection`
+  (fault to detection when that is physics) is charged before the
+  detection the checker derives, never in place of it. `deadline_by:
+  <extension>/<check>` makes a check the hazard's requirement; extension
+  checks are not evaluated yet, so it is `deadline-unchecked` (a warning,
+  never a pass). A hazard with neither `ftti` nor `deadline_by` is
+  `hazard-no-requirement`; none of the 79 hazards in the fixtures, examples
+  and the island lacks an `ftti`. A settle derived twice (a braking profile
+  and a derived duration) is `derive-conflict`. `--explain` prints each
+  hazard's `reaction_total` (its floor's total), the value extension checks
+  will read.
 ## 0.18.2 - 2026-10-16
 
 One PyPI package again (phase 92): `pip install play_launch` on every

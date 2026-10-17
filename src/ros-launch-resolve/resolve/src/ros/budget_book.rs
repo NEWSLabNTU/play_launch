@@ -145,8 +145,23 @@ pub fn source_label(src: Option<&BudgetSource>) -> String {
         Some(BudgetSource {
             kind,
             measured: Some(m),
+            ..
         }) => format!("{kind}: {}", rule_arithmetic(m)),
+        // Phase 91 E1: a derived value names what derived it, the way an
+        // extension's output will; the record is printed, never re-run.
+        Some(BudgetSource {
+            derived: Some(d), ..
+        }) => derived_label(d),
         Some(s) => s.kind.to_string(),
+    }
+}
+
+/// `derived by <extension> <version>`, with the first 12 digits of the
+/// extension's sha256 when the record carries it.
+pub fn derived_label(d: &ros_launch_manifest_types::Derivation) -> String {
+    match &d.sha256 {
+        Some(h) => format!("derived by {} {} (sha256 {})", d.by, d.version, &h[..12]),
+        None => format!("derived by {} {}", d.by, d.version),
     }
 }
 

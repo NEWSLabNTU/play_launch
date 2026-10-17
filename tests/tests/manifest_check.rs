@@ -2633,6 +2633,79 @@ fn g6_a_written_settle_adds_its_response() {
     }
 }
 
+/// Phase 91 E1: hand-written derivation records check as if derived. The
+/// hazard's stated `detection` (40ms) is charged before the detectors'
+/// 100ms, the derived settle as any written one: 40 + 100 + 7 + 350 = 497ms.
+/// `--explain` names what derived each value, its inputs and steps, and the
+/// hazard's `reaction_total`.
+#[test]
+fn e1_a_derivation_record_checks_as_if_derived() {
+    let launch = fixtures::repo_root()
+        .join("tests/fixtures/contract_derived_record/launch/bringup.launch.xml");
+    let (code, out) = check_launch(&launch, &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    for needle in [
+        "drive_blind  safety.stop  floor  140.00     0.00   7.00  350.00 literal  497.00  500.00   3.00",
+        "derived by sensor.warmup 0.2.0",
+        "derived by vehicle.braking 1.0.0 (sha256 4f3c9a1d2e8b)",
+        "hazards.drive_blind.detection = 40.00 ms   derived by sensor.warmup 0.2.0",
+        "    frame_period = 20ms",
+        "    v0 / a = 1.5 / 7.5 = 200 ms",
+        "drive_blind  497.00  (floor 'safety.stop')",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+}
+
+/// Phase 91 E1: a requirement that is an extension check (`deadline_by`)
+/// with no `ftti` is reported as unchecked, never as met, and the reaction
+/// row carries no verdict.
+#[test]
+fn e1_a_deadline_by_is_reported_unchecked() {
+    let launch =
+        fixtures::repo_root().join("tests/fixtures/contract_deadline_by/launch/bringup.launch.xml");
+    let (code, out) = check_launch(&launch, &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains(
+            "warning[deadline-unchecked]: hazard 'drive_blind': `deadline_by: \
+             machine.iso13855/safety_distance` is an extension check, and this checker does not \
+             evaluate extension checks yet; its reaction is reported, not judged"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("457.00     -      -"),
+        "no verdict without an ftti:\n{out}"
+    );
+}
+
+/// Phase 91 E1: a settle derived twice (a braking profile and a duration an
+/// extension derived) is an error; a hazard with no requirement is too.
+#[test]
+fn e1_two_derivations_and_no_requirement_are_errors() {
+    for (dir, needle) in [
+        (
+            "contract_derive_conflict",
+            "error[derive-conflict]: bringup.contract.yaml:71: the settle is derived twice: by \
+             the braking profile (`decel`, `jerk`) and as a written duration derived by \
+             vehicle.braking 1.0.0 -- keep one",
+        ),
+        (
+            "contract_hazard_no_requirement",
+            "error[hazard-no-requirement]: hazard 'drive_blind' states no requirement",
+        ),
+    ] {
+        let launch = fixtures::repo_root()
+            .join("tests/fixtures")
+            .join(dir)
+            .join("launch/bringup.launch.xml");
+        let (code, out) = check_launch(&launch, &[]);
+        assert_eq!(code, 1, "{dir}:\n{out}");
+        assert!(out.contains(needle), "{dir}: expected `{needle}`:\n{out}");
+    }
+}
+
 /// Phase 90 G7: the two removed keys refuse the contract (exit 3) with a
 /// message naming the replacement.
 #[test]
