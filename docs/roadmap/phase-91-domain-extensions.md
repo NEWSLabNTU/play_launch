@@ -1,7 +1,8 @@
 # Phase 91 - domain extensions: rlx, profiles and the vehicle keys moved out
 
 Status: **in progress** (2026-10-17): E0 done (no-go: rlx owns its
-expression core); E1 and E2 done (rlm v0.1.65). Stage 2 of 2; phase 90 (a tidy grammar) is complete. Design: rlm `docs/design/extension-system.md` (with
+expression core); E1 and E2 done (rlm v0.1.65); E3 done (rlm main
+`4a2ad1f`, unreleased until E4 uses it). Stage 2 of 2; phase 90 (a tidy grammar) is complete. Design: rlm `docs/design/extension-system.md` (with
 `extension-language-exploration.md` and `extension-examples.md`). Work lands
 in rlm (format, language, profiles), play_launch (loader, evaluator, Z3,
 explain, packaging, migration) and the consumers (nano-ros reads the
@@ -106,6 +107,27 @@ override in a comment, round trips).
   dimensions named, `km/h` converted).
 - Gate: the exploration's unit-bug example (`sqrt(2 v0 / a)`) refused at
   load; every reference extension loads clean.
+
+**Done (2026-10-17).** rlm main `4a2ad1f` (in the `rlx` crate; tagged with
+E4's first use). Dimensions are integer exponents over the seven SI base
+dimensions; a built-in table names the common ones and `dimension X = ...`
+adds more (any order; a cycle, an unknown name or a redefined built-in is
+refused). Each unit has a dimension and an f64 factor to SI; affine
+temperature units are refused. Every expression in every branch is checked
+at load, used or not: the exploration's `sqrt(2 v0 / a)` is refused with
+"the argument is Time; the result should be a Time, so the argument should
+be Time^2". Name resolution: binding, `sum over` variable, `fn` parameter,
+then a key or input by its last segment (or full path); two keys sharing a
+last segment are `rlx-ambiguous-key`, so a bare name is never ambiguous.
+`reaction_total : Time` is built in. The value API checks a contract value
+against its key type: `30 km/h` converts to 8.33 m/s, a bare `15` for a
+Velocity "needs a unit", `15 s` names both dimensions, a table's keys must
+increase. All six examples load clean, verbatim (none is dimensionally
+wrong); the refused corpus has 51 files, 22 new; every value the example
+contracts write parses to the SI value their arithmetic uses. Reviewed
+against inputs outside the corpus (an error in an uncalled `fn`, `min` over
+mixed dimensions, a domain bound in the wrong dimension). A derive may
+target only `settle.duration`, `hazard.detection` or `hazard.ftti`.
 
 ### E4. Evaluator and trace (play_launch)
 
