@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.18.3 - 2026-10-17
 
 - **Added:** a subscriber's `ingress: { rate_hz, burst }` reaches the
   SystemModel (`contracts.sub_endpoints.<e>.ingress`; ros-launch-manifest
