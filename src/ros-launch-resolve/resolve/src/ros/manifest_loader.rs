@@ -464,6 +464,8 @@ pub struct ManifestIndex {
     /// The fault-reaction arithmetic per (hazard, rung), for `--explain`
     /// (phase 83).
     pub budgets: Vec<RungBudget>,
+    /// The extensions each scope's contract uses (phase 91 E4), by scope.
+    pub extensions: BTreeMap<usize, Vec<super::extensions::LoadedExt>>,
     /// Every stated budget with its source and what checks it, for
     /// `--explain` and `declared-not-charged` (phase 10 B7, B8).
     pub stated: Vec<super::budget_book::StatedBudget>,
@@ -947,6 +949,10 @@ pub fn load_manifests(
 /// - Rate hierarchy on merged topics (Phase 35.5): publisher
 ///   `min_rate_hz` from one scope vs subscriber `min_rate_hz` in another.
 fn run_cross_scope_checks(index: &mut ManifestIndex) {
+    // Phase 91 E4: load the extensions each contract uses, check the keys
+    // written for them, and derive the hazard-level bounds FIRST, so every
+    // rule below reads a derived `ftti` or `detection` as a written one.
+    super::extensions::prepare(index);
     use super::manifest_graph::build_global_graph;
     use ros_launch_manifest_types::ExternalSide;
 
@@ -1121,6 +1127,9 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // detectors and FRTI from the reaction's route, and checks their sum
     // against the hazard's FTTI.
     check_fault_reaction(index, &graph);
+    // Phase 91 E4: extension checks and reports read `reaction_total`, the
+    // floor's total the walk just computed.
+    super::extensions::run_checks(index);
 
     // Phase 75 W3's second half: the requirement checks again, once per
     // mode that pins different values. LAST, and outside `check_fault_reaction`
@@ -2804,22 +2813,19 @@ fn check_fault_reaction(
                 path: at.clone(),
                 span: None,
             }),
-            (ftti, Some(check)) => diags.push(Diagnostic {
-                rule_id: "deadline-unchecked".to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "hazard '{}': `deadline_by: {check}` is an extension check, and this checker \
-                     does not evaluate extension checks yet; {}",
-                    h.name,
-                    if ftti.is_some() {
-                        "only its `ftti` is checked"
-                    } else {
-                        "its reaction is reported, not judged"
-                    }
-                ),
-                path: format!("{at}.deadline_by"),
-                span: None,
-            }),
+            // Phase 91 E4: the check is evaluated after the walk
+            // (`extensions::run_checks`); here only that it can be.
+            (_, Some(_)) => {
+                if let Err(why) = super::extensions::resolves_deadline(index, h) {
+                    diags.push(Diagnostic {
+                        rule_id: "deadline-unresolved".to_string(),
+                        severity: Severity::Error,
+                        message: format!("hazard '{}': {why}", h.name),
+                        path: format!("{at}.deadline_by"),
+                        span: None,
+                    });
+                }
+            }
             (Some(_), None) => {}
         }
         // Phase 82: the FDTI covers EVERY fault class the hazard claims --

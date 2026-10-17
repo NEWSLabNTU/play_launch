@@ -1,0 +1,93 @@
+# Phase 91 E4: what the extension layer refuses. `iec61511` is not an
+# extension found anywhere (`extension-not-found`), and `installed_distanse`
+# is a key no used extension declares (`extension-key-unknown`): without the
+# check it would be dropped, and the safety distance would then fail to
+# evaluate for want of `installed_distance`.
+version: 1
+use: { machine.iso13855: "^0.3", iec61511: "^1" }
+
+hazards:
+  drive_blind:
+    severity: ASIL_D
+    description: vehicle continues with no obstacle data
+    guards: [/safety/scan]
+    on: omission
+    deadline_by: machine.iso13855/safety_distance
+    reaction: safety.stop
+    detection_capability: 30 mm
+    device_response: 15ms
+    installed_distanse: 650 mm
+
+nodes:
+  lidar_driver:
+    pub:
+      scan: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 50 } }
+        output: [scan]
+        max_latency: 2ms
+
+  obstacle_detector:
+    sub:
+      scan:
+        min_rate_hz: 50
+        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
+        on_violation:
+          on: [omission]
+          reaction: declare_lost
+          within: 10ms
+    pub:
+      obstacles: {}
+    paths:
+      detect:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 12ms
+      declare_lost:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 2ms
+
+  brake_controller:
+    sub:
+      obstacles:
+        max_age: 60ms
+        on_violation:
+          on: [late, omission]
+          reaction: emergency_stop
+          within: 20ms
+    pub:
+      brake_cmd: {}
+    paths:
+      brake:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 8ms
+      emergency_stop:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 5ms
+        safe_state:
+          emits: brake_cmd
+          settle: { duration: 180ms, source: measured }
+
+paths:
+  safety.stop:
+    trigger: { input: [/safety/scan] }
+    output: [/safety/brake_cmd]
+    max_latency: 100ms
+
+topics:
+  /safety/scan:
+    type: std_msgs/msg/String
+    pub: [lidar_driver/scan]
+    sub: [obstacle_detector/scan]
+  /safety/obstacles:
+    type: std_msgs/msg/String
+    pub: [obstacle_detector/obstacles]
+    sub: [brake_controller/obstacles]
+  /safety/brake_cmd:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [brake_controller/brake_cmd]

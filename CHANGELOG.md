@@ -8,6 +8,28 @@ allowance heavily.
 
 ## Unreleased
 
+- **Added (`check`, phase 91 E4):** domain extensions run
+  (ros-launch-manifest v0.1.66). A contract names the extensions it uses,
+  `use: { <name>: "<requirement>" }`, found in the `rlm/` directory beside
+  it or `share/<pkg>/rlm/` under `AMENT_PREFIX_PATH` (the highest version
+  the requirement accepts). Every key it writes for them is checked: a key
+  no used extension declares is `extension-key-unknown`, a value the key's
+  dimension refuses is `extension-value`, a `use:` that finds nothing is
+  `extension-not-found`. Before the fault walk, a derived `hazard.detection`
+  or `hazard.ftti` is written into the hazard with its derivation record
+  (`detection-derived`, `ftti-derived`; a written one beside it is
+  `derive-conflict`); a derived `settle.duration` is evaluated per hazard
+  (`settle-derived`); after the walk, checks and reports run with the
+  hazard's `reaction_total` (`extension-check`: an error when the check is
+  the hazard's `deadline_by`, a warning otherwise; `extension-report`, no
+  verdict). Each prints its trace. A `param` key in `hazard` reads the
+  parameter from the node publishing the hazard's guard, in `settle` from
+  the safe state's node. `deadline_by` naming an extension the contract does
+  not use is `deadline-unresolved` (an error; it was the warning
+  `deadline-unchecked` while nothing evaluated checks). Four of the design's
+  examples run as fixtures (machinery, medical, UAV, process); the vehicle
+  and rail examples wait for E8, since the core still owns `entry_speed` and
+  `decel`/`jerk`.
 - **Changed:** ros-launch-manifest v0.1.68 -> v0.1.69. A client's call mode
   (nano-ros RFC-0108 D8.3): `call: blocking | async` on a `cli:` endpoint
   reaches the SystemModel's `contracts.cli_endpoints`, and an
@@ -20,7 +42,7 @@ allowance heavily.
   `budget_ms` and `budget_period_ms`. A server that states only these (no
   `max_response`) now gets a `srv_endpoints` entry.
 - **Changed:** ros-launch-manifest v0.1.65 -> v0.1.67. v0.1.66 adds `use:`
-  and extension keys on a hazard and a settle (carried, not yet checked);
+  and extension keys on a hazard and a settle (checked since phase 91 E4, the entry above);
   v0.1.67 adds `[tiers.<name>] above = "transport"`, which reaches the
   SystemModel's `execution.tiers` as written, for nano-ros issue 1967.
 

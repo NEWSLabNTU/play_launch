@@ -1,0 +1,21 @@
+-- share/rlm_ext_medical/rlm/occlusion.rlx
+extension medical.occlusion 0.1.0
+requires rlm >= 0.2.0
+
+dimension Compliance = Volume / Pressure
+dimension Flow       = Volume / Time
+
+key hazard.min_rate          : Flow              "lowest programmable rate covered"
+key hazard.compliance        : Compliance        "syringe + line compliance"
+key hazard.baseline_pressure : Pressure = 0 mmHg
+key hazard.alarm_threshold   : param Pressure unit mmHg
+key hazard.signal_delay      : Time = 0 s        "alarm signal generation delay"
+
+derive hazard.detection : Time =
+    (alarm_threshold - baseline_pressure) * compliance / min_rate + signal_delay
+  worst_case:
+    decreasing in min_rate
+    increasing in compliance, alarm_threshold
+  domain: min_rate in (0 mL/h, 1200 mL/h], alarm_threshold > baseline_pressure
+
+report bolus_on_release : Volume = compliance * (alarm_threshold - baseline_pressure)

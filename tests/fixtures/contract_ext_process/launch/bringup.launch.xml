@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<!-- Phase 91 E4: extension example 6 (process). -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="lidar_driver"      namespace="/safety">
+    <param name="pt101_trip" value="9.0"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="listener" name="obstacle_detector" namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="brake_controller"  namespace="/safety"/>
+</launch>

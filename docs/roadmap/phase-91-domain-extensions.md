@@ -1,8 +1,7 @@
 # Phase 91 - domain extensions: rlx, profiles and the vehicle keys moved out
 
 Status: **in progress** (2026-10-17): E0 done (no-go: rlx owns its
-expression core); E1 and E2 done (rlm v0.1.65); E3 done (rlm main
-`4a2ad1f`, unreleased until E4 uses it). Stage 2 of 2; phase 90 (a tidy grammar) is complete. Design: rlm `docs/design/extension-system.md` (with
+expression core); E1 and E2 done (rlm v0.1.65); E3 and E4 done (rlm v0.1.66). Stage 2 of 2; phase 90 (a tidy grammar) is complete. Design: rlm `docs/design/extension-system.md` (with
 `extension-language-exploration.md` and `extension-examples.md`). Work lands
 in rlm (format, language, profiles), play_launch (loader, evaluator, Z3,
 explain, packaging, migration) and the consumers (nano-ros reads the
@@ -108,8 +107,7 @@ override in a comment, round trips).
 - Gate: the exploration's unit-bug example (`sqrt(2 v0 / a)`) refused at
   load; every reference extension loads clean.
 
-**Done (2026-10-17).** rlm main `4a2ad1f` (in the `rlx` crate; tagged with
-E4's first use). Dimensions are integer exponents over the seven SI base
+**Done (2026-10-17).** rlm v0.1.66 (`4a2ad1f`, in the `rlx` crate). Dimensions are integer exponents over the seven SI base
 dimensions; a built-in table names the common ones and `dimension X = ...`
 adds more (any order; a cycle, an unknown name or a redefined built-in is
 refused). Each unit has a dimension and an f64 factor to SI; affine
@@ -135,6 +133,43 @@ target only `settle.duration`, `hazard.detection` or `hazard.ftti`.
   core rules; record the trace; `--explain` prints it (and `--pretty`).
 - Gate: the seven domain examples print the derivations in
   `extension-examples.md`; core verdicts on every existing fixture unchanged.
+
+**Done (2026-10-17)**, with two examples left to E8 and one to E6 (below).
+rlm v0.1.66: `use: { <name>: "<req>" }` (`VersionReq`, cargo's `^ ~ = >=`)
+and the keys extensions declare, kept as written in `HazardDecl.ext` and
+`SafeState.settle_ext` when the contract has `use:` (an unknown key is
+still an error without it; an inline include's `use:` scopes its own
+keys); the evaluator `rlx::eval` (built by a subagent): `eval_derive`,
+`eval_check`, `eval_report` with the domain checked first, eight
+evaluation errors with spans and no panics, a deterministic trace,
+`Env::reads`, `param_value`, and `identity` (sha256 of the canonical ASCII
+form). play_launch `ros/extensions.rs`, in the order the design fixes:
+`prepare` before the fault walk (find extensions in the contract's `rlm/`
+and `share/<pkg>/rlm/` on `AMENT_PREFIX_PATH`, highest matching version;
+refuse unknown keys, bad values, missing extensions; derive
+`hazard.detection` and `hazard.ftti` into the hazard as bounds with a
+derivation record, so every core rule, the model and `--explain` read them
+as written ones), `derived_settle` in the settle lookup (per hazard, since
+a settle may read the hazard's keys), and `run_checks` after the walk
+(checks and reports with `reaction_total`, the floor's total). Hazard
+`param` keys read the guard publisher's parameter, settle `param` keys the
+safe state's node's.
+
+Gate: four of the design's examples run as fixtures on contract_fault's
+chain, each printing its derivation: `contract_ext_machinery` (safety
+distance PASS as the hazard's `deadline_by`, 611.2 mm <= 650 mm),
+`contract_ext_medical` (detection 50.48 min derived, the ftti fails, the
+bolus report), `contract_ext_uav` (settle 50952.38 ms derived, energy check
+PASS), `contract_ext_process` (ftti 4 s derived and judged against);
+`contract_ext_unknown` pins the refusals. Core verdicts on every existing
+fixture are unchanged (the ranked-plan snapshot only gains the new
+fixtures; `test-all` green). Left: the vehicle and rail examples need E8,
+because the core still parses `entry_speed` (a plain m/s number) and
+`decel`/`jerk`; the aerospace example is a profile (E6); `--pretty` is not
+implemented (traces print in canonical ASCII). The evaluator found two
+defects in the examples, fixed in rlm: process.pst's `trip_setpoint` lacked
+`unit bar` (9 read as 9 Pa, ftti 22 s), and the UAV contract stated none
+of the settle's parameters.
 
 ### E5. Worst-case proofs (play_launch)
 

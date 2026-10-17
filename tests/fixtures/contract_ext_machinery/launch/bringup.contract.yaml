@@ -1,0 +1,94 @@
+# Phase 91 E4: extension-examples.md section 2 on contract_fault's chain.
+# The requirement is machine.iso13855's safety distance (`deadline_by`, no
+# ftti), fed by core's reaction_total: detection 100 + route 7 + settle 180
+# = 287ms. T = 15 + 287 = 302ms, C = 8 (30 - 14) = 128mm,
+# 2000 mm/s * T + C = 732mm > 500mm, so required = 1600 mm/s * T + C =
+# 611.2mm <= installed 650mm: PASS.
+version: 1
+use: { machine.iso13855: "^0.3" }
+
+hazards:
+  drive_blind:
+    severity: ASIL_D
+    description: vehicle continues with no obstacle data
+    guards: [/safety/scan]
+    on: omission
+    deadline_by: machine.iso13855/safety_distance
+    reaction: safety.stop
+    detection_capability: 30 mm
+    device_response: 15ms
+    installed_distance: 650 mm
+
+nodes:
+  lidar_driver:
+    pub:
+      scan: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 50 } }
+        output: [scan]
+        max_latency: 2ms
+
+  obstacle_detector:
+    sub:
+      scan:
+        min_rate_hz: 50
+        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
+        on_violation:
+          on: [omission]
+          reaction: declare_lost
+          within: 10ms
+    pub:
+      obstacles: {}
+    paths:
+      detect:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 12ms
+      declare_lost:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 2ms
+
+  brake_controller:
+    sub:
+      obstacles:
+        max_age: 60ms
+        on_violation:
+          on: [late, omission]
+          reaction: emergency_stop
+          within: 20ms
+    pub:
+      brake_cmd: {}
+    paths:
+      brake:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 8ms
+      emergency_stop:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 5ms
+        safe_state:
+          emits: brake_cmd
+          settle: { duration: 180ms, source: measured }
+
+paths:
+  safety.stop:
+    trigger: { input: [/safety/scan] }
+    output: [/safety/brake_cmd]
+    max_latency: 100ms
+
+topics:
+  /safety/scan:
+    type: std_msgs/msg/String
+    pub: [lidar_driver/scan]
+    sub: [obstacle_detector/scan]
+  /safety/obstacles:
+    type: std_msgs/msg/String
+    pub: [obstacle_detector/obstacles]
+    sub: [brake_controller/obstacles]
+  /safety/brake_cmd:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [brake_controller/brake_cmd]

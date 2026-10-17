@@ -1208,6 +1208,17 @@ pub(crate) fn settle_for(
         how: if literal.is_some() { "literal" } else { "none" },
         response_ms: literal.and(written_response),
     };
+    // Phase 91 E4: a settle a used extension derives.
+    if !ss.settle_ext.is_empty()
+        && let Some((scope_id, node_name, _)) = contract_node(index, node_fqn)
+    {
+        let at = format!("nodes.{node_name}.paths.{path_name}.safe_state.settle");
+        if let Some(s) =
+            super::extensions::derived_settle(index, h, scope_id, node_fqn, &at, ss, diags)
+        {
+            return s;
+        }
+    }
     let Some(profile) = &ss.settle_profile else {
         return literal_settle;
     };

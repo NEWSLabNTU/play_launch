@@ -32,6 +32,7 @@ ros-launch-manifest-model = { workspace = true }
 ros-launch-manifest-sched = { workspace = true }
 ros-launch-manifest-derive = { workspace = true }
 ros-launch-manifest-check = { workspace = true }
+ros-launch-manifest-rlx = { workspace = true }
 play_launch_parser = { workspace = true }
 # The Python half of the parser (nano-ros issue 0897 W2b). Depending
 # on it HERE is the choice to link libpython: `.launch.py` files and

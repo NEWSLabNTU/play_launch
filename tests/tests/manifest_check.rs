@@ -2657,26 +2657,22 @@ fn e1_a_derivation_record_checks_as_if_derived() {
     }
 }
 
-/// Phase 91 E1: a requirement that is an extension check (`deadline_by`)
-/// with no `ftti` is reported as unchecked, never as met, and the reaction
-/// row carries no verdict.
+/// Phase 91 E1, E4: a requirement that is an extension check
+/// (`deadline_by`) of an extension the contract does not `use:` cannot run,
+/// and is an error rather than a pass.
 #[test]
-fn e1_a_deadline_by_is_reported_unchecked() {
+fn e1_a_deadline_by_without_its_extension_is_an_error() {
     let launch =
         fixtures::repo_root().join("tests/fixtures/contract_deadline_by/launch/bringup.launch.xml");
-    let (code, out) = check_launch(&launch, &["--explain"]);
-    assert_eq!(code, 0, "{out}");
+    let (code, out) = check_launch(&launch, &[]);
+    assert_eq!(code, 1, "{out}");
     assert!(
         out.contains(
-            "warning[deadline-unchecked]: hazard 'drive_blind': `deadline_by: \
-             machine.iso13855/safety_distance` is an extension check, and this checker does not \
-             evaluate extension checks yet; its reaction is reported, not judged"
+            "error[deadline-unresolved]: hazard 'drive_blind': `deadline_by: \
+             machine.iso13855/safety_distance` names `machine.iso13855`, which this contract \
+             does not `use:`"
         ),
         "{out}"
-    );
-    assert!(
-        out.contains("457.00     -      -"),
-        "no verdict without an ftti:\n{out}"
     );
 }
 
@@ -2703,6 +2699,99 @@ fn e1_two_derivations_and_no_requirement_are_errors() {
         let (code, out) = check_launch(&launch, &[]);
         assert_eq!(code, 1, "{dir}:\n{out}");
         assert!(out.contains(needle), "{dir}: expected `{needle}`:\n{out}");
+    }
+}
+
+fn ext_fixture(dir: &str, args: &[&str]) -> (i32, String) {
+    let launch = fixtures::repo_root()
+        .join("tests/fixtures")
+        .join(dir)
+        .join("launch/bringup.launch.xml");
+    check_launch(&launch, args)
+}
+
+/// Phase 91 E4, extension-examples.md section 2: a requirement that is a
+/// distance, fed by core's reaction_total (100 + 7 + 180 = 287ms).
+#[test]
+fn e4_machinery_checks_its_safety_distance() {
+    let (code, out) = ext_fixture("contract_ext_machinery", &[]);
+    assert_eq!(code, 0, "{out}");
+    for needle in [
+        "info[extension-check]: hazard 'drive_blind': machine.iso13855/safety_distance PASS \
+         (machine.iso13855 0.3.0, the hazard's deadline_by)",
+        "if s_2000 <= 500 mm: 732 mm <= 500 mm, false: take `else`",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    assert!(!out.contains("deadline-unchecked"), "{out}");
+}
+
+/// Phase 91 E4, section 3: a derived detection, charged before the
+/// detectors', that cannot fit the ftti; the report has no verdict.
+#[test]
+fn e4_medical_derives_a_detection_that_does_not_fit() {
+    let (code, out) = ext_fixture("contract_ext_medical", &["--explain"]);
+    assert_eq!(code, 1, "{out}");
+    for needle in [
+        "info[detection-derived]: hazard 'drive_blind': detection = 50.48 min derived by \
+         medical.occlusion 0.1.0",
+        "error[fault-reaction-budget]",
+        "stated detection 3029000.00ms + /safety/obstacle_detector/scan detects within 100.00ms",
+        "info[extension-report]: hazard 'drive_blind': medical.occlusion/bolus_on_release = \
+         0.84 mL (report, no verdict)",
+        "hazard.alarm_threshold = occlusion_limit_mmhg = 300",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+}
+
+/// Phase 91 E4, section 4: a derived settle and a check fed by the
+/// reaction it is part of.
+#[test]
+fn e4_uav_derives_its_settle_and_checks_its_energy() {
+    let (code, out) = ext_fixture("contract_ext_uav", &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    for needle in [
+        "info[settle-derived]: hazard 'drive_blind': settle = 50952.38ms derived by uav.descent \
+         0.2.0",
+        "drive_blind  safety.stop  floor  100.00     0.00   7.00  50952.38 derived  51059.38  \
+         120000.00  68940.62",
+        "info[extension-check]: hazard 'drive_blind': uav.descent/energy_reserve PASS",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    assert!(!out.contains("reaction-unbudgeted"), "{out}");
+}
+
+/// Phase 91 E4, section 6: the hazard's ftti is derived, and is the
+/// requirement the reaction is judged against.
+#[test]
+fn e4_process_derives_the_ftti_it_is_judged_against() {
+    let (code, out) = ext_fixture("contract_ext_process", &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    for needle in [
+        "info[ftti-derived]: hazard 'drive_blind': ftti = 4 s derived by process.pst 0.1.0",
+        "= 2107.00ms fits the fault-tolerant time interval 4000.00ms with 1893.00ms of slack",
+        "hazard.ftti = (hazard_pressure - trip_setpoint) / max_rise_rate = 4 s",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    assert!(!out.contains("hazard-no-requirement"), "{out}");
+}
+
+/// Phase 91 E4: a `use:` that finds nothing and a key no used extension
+/// declares are errors, never a silent drop.
+#[test]
+fn e4_an_unknown_extension_or_key_is_an_error() {
+    let (code, out) = ext_fixture("contract_ext_unknown", &[]);
+    assert_eq!(code, 1, "{out}");
+    for needle in [
+        "error[extension-not-found]: `use: { iec61511: \"^1\" }`: no such extension was found",
+        "error[extension-key-unknown]: `installed_distanse` is not a key of `hazard` in any \
+         extension this contract uses (machine.iso13855 0.3.0)",
+        "error[rlx-missing-input]: no value for `hazard.installed_distance`",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
 }
 

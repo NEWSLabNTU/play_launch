@@ -1,7 +1,7 @@
 # Phase 91 E1: a hazard whose requirement is an extension's check
-# (`deadline_by`), with no `ftti`. Extension checks are not evaluated yet,
-# so `deadline-unchecked` says so (a warning, never a pass), and the
-# reaction is reported, not judged.
+# (`deadline_by`), with no `ftti`. The contract does not `use:` the
+# extension, so the check cannot run: `deadline-unresolved` (phase 91 E4;
+# a warning, `deadline-unchecked`, before extensions were evaluated).
 version: 1
 
 hazards:

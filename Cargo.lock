@@ -2148,6 +2148,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ros-launch-manifest-rlx"
+version = "0.1.22"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.69#1fcf438e6103a119cea138b7e8ac71c0f3541e42"
+dependencies = [
+ "sha2",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "ros-launch-manifest-sched"
 version = "0.1.22"
 source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.69#1fcf438e6103a119cea138b7e8ac71c0f3541e42"
@@ -2186,6 +2195,7 @@ dependencies = [
  "ros-launch-manifest-check",
  "ros-launch-manifest-derive",
  "ros-launch-manifest-model",
+ "ros-launch-manifest-rlx",
  "ros-launch-manifest-sched",
  "ros-launch-manifest-types",
  "serde",
@@ -2619,6 +2629,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyvec"
+version = "1.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
+
+[[package]]
 name = "tokio"
 version = "1.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2858,6 +2874,15 @@ name = "unicode-ident"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "537dd038a89878be9b64dd4bd1b260315c1bb94f4d784956b81e27a088d9a09e"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75cd3fb03d5288b3ba9a1ee103ac7e9cbb59f0b03d64f8ddfcc04dd42758a85d"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-width"
