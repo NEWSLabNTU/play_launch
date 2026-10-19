@@ -6,6 +6,13 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Changed:** ros-launch-manifest v0.1.65 -> v0.1.67. v0.1.66 adds `use:`
+  and extension keys on a hazard and a settle (carried, not yet checked);
+  v0.1.67 adds `[tiers.<name>] above = "transport"`, which reaches the
+  SystemModel's `execution.tiers` as written, for nano-ros issue 1967.
+
 ## 0.18.3 - 2026-10-17
 
 - **Added:** a subscriber's `ingress: { rate_hz, burst }` reaches the

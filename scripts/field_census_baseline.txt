@@ -88,13 +88,16 @@ observe_ms         # SettleSuperviseContract (model, rlm v0.1.62). The
                    # arms a standstill deadline from the model yet (the
                    # safety island's route 2 is configured by hand).
 
-ingress            # EndpointProps / SubContract (rlm v0.1.64, nano-ros
-                   # phase-462 W6b, RFC-0074): what a subscriber is made to
-                   # absorb, a token bucket. The resolver lowers it into the
-                   # model as written; the consumer that enforces it on the
-                   # device's read path is nano-ros's, and its main does not
-                   # read it yet (2026-10-17). Drop this line when it does.
+req                # UseDecl (rlm v0.1.66, phase 91 E4): the version
+                   # requirement of one `use:` entry. play_launch checks no
+                   # extension yet (phase 91 E4 is rlm-side so far), so the
+                   # requirement is carried and not read. Drop this line when
+                   # the checker matches loaded extensions against it.
 
-burst              # IngressDecl / IngressContract (rlm v0.1.64). The
-                   # bucket's depth, beside `ingress.rate_hz`; same consumer,
-                   # same state as `ingress` above.
+major              # VersionReq (rlm v0.1.66). The requirement's major
+                   # component, beside `req` above; same consumer, same state.
+
+settle_ext         # SafeState (rlm v0.1.66): a settle's extension keys,
+                   # kept as written for the extension that derives the
+                   # settle. No extension is evaluated by the checker yet
+                   # (phase 91 E4). Drop this line when one is.

@@ -119,7 +119,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -382,8 +382,8 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "ros-launch-manifest-check"
-version = "0.1.18"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.65#db1c08b475cf5f7a81fcd27fb145a53fe7a7b8a5"
+version = "0.1.20"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.67#9f352f44e93ed870f2f9c31b92300ccac04b838a"
 dependencies = [
  "codespan-reporting",
  "petgraph",
@@ -394,8 +394,8 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-derive"
-version = "0.1.18"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.65#db1c08b475cf5f7a81fcd27fb145a53fe7a7b8a5"
+version = "0.1.20"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.67#9f352f44e93ed870f2f9c31b92300ccac04b838a"
 dependencies = [
  "ros-launch-manifest-model",
  "ros-launch-manifest-sched",
@@ -403,8 +403,8 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-model"
-version = "0.1.18"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.65#db1c08b475cf5f7a81fcd27fb145a53fe7a7b8a5"
+version = "0.1.20"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.67#9f352f44e93ed870f2f9c31b92300ccac04b838a"
 dependencies = [
  "indexmap",
  "ros-launch-manifest-sched",
@@ -416,8 +416,8 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-sched"
-version = "0.1.18"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.65#db1c08b475cf5f7a81fcd27fb145a53fe7a7b8a5"
+version = "0.1.20"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.67#9f352f44e93ed870f2f9c31b92300ccac04b838a"
 dependencies = [
  "ros-launch-manifest-types",
  "serde",
@@ -428,8 +428,8 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-types"
-version = "0.1.18"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.65#db1c08b475cf5f7a81fcd27fb145a53fe7a7b8a5"
+version = "0.1.20"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.67#9f352f44e93ed870f2f9c31b92300ccac04b838a"
 dependencies = [
  "serde",
  "serde_json",
@@ -466,7 +466,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -578,7 +578,7 @@ dependencies = [
  "getrandom",
  "once_cell",
  "rustix 1.1.3",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -702,7 +702,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -869,3 +869,55 @@ name = "zmij"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ff05f8caa9038894637571ae6b9e29466c1f4f829d26c9b28f869a29cbe3445"
+
+[[patch.unused]]
+name = "action_msgs"
+version = "0.0.0"
+
+[[patch.unused]]
+name = "builtin_interfaces"
+version = "0.0.0"
+
+[[patch.unused]]
+name = "composition_interfaces"
+version = "0.0.0"
+
+[[patch.unused]]
+name = "diagnostic_msgs"
+version = "0.0.0"
+
+[[patch.unused]]
+name = "example_interfaces"
+version = "0.0.0"
+
+[[patch.unused]]
+name = "geometry_msgs"
+version = "0.0.0"
+
+[[patch.unused]]
+name = "lifecycle_msgs"
+version = "0.0.0"
+
+[[patch.unused]]
+name = "play_launch_msgs"
+version = "0.0.0"
+
+[[patch.unused]]
+name = "rcl_interfaces"
+version = "0.0.0"
+
+[[patch.unused]]
+name = "rosgraph_msgs"
+version = "0.0.0"
+
+[[patch.unused]]
+name = "std_msgs"
+version = "0.0.0"
+
+[[patch.unused]]
+name = "test_msgs"
+version = "0.0.0"
+
+[[patch.unused]]
+name = "unique_identifier_msgs"
+version = "0.0.0"
