@@ -8,6 +8,12 @@ allowance heavily.
 
 ## Unreleased
 
+- **Changed:** ros-launch-manifest v0.1.67 -> v0.1.68. An input's release
+  bound (nano-ros RFC-0108 D1): `min_interarrival`, and `budget` +
+  `budget_period`, on a `sub:` endpoint or a `srv:` server, reach the
+  SystemModel's `SubContract` / `SrvContract` as `min_interarrival_ms`,
+  `budget_ms` and `budget_period_ms`. A server that states only these (no
+  `max_response`) now gets a `srv_endpoints` entry.
 - **Changed:** ros-launch-manifest v0.1.65 -> v0.1.67. v0.1.66 adds `use:`
   and extension keys on a hazard and a settle (carried, not yet checked);
   v0.1.67 adds `[tiers.<name>] above = "transport"`, which reaches the

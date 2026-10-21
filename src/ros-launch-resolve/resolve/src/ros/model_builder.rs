@@ -344,6 +344,9 @@ fn sub_contract(
         && p.buffer.is_none()
         && p.max_transport.is_none()
         && p.ingress.is_none()
+        && p.min_interarrival.is_none()
+        && p.budget.is_none()
+        && p.budget_period.is_none()
     {
         return None;
     }
@@ -378,7 +381,26 @@ fn sub_contract(
             rate_hz: i.rate_hz,
             burst: i.burst,
         }),
+        // rlm v0.1.68 (nano-ros RFC-0108 D1): what bounds this input's
+        // arrivals. The grammar refuses a budget without its period, so the
+        // two arrive together or not at all.
+        min_interarrival_ms: p.min_interarrival.map(|d| d.as_millis_f64()),
+        budget_ms: p.budget.map(|d| d.as_millis_f64()),
+        budget_period_ms: p.budget_period.map(|d| d.as_millis_f64()),
     })
+}
+
+/// A service server's contract: its response deadline and, since rlm
+/// v0.1.68, what bounds its requests (`min_interarrival`, `budget` +
+/// `budget_period`). `None` when it states none of them.
+fn srv_contract(p: &ros_launch_manifest_types::SrvEndpointProps) -> Option<model::SrvContract> {
+    let c = model::SrvContract {
+        max_response_ms: p.max_response.ms(),
+        min_interarrival_ms: p.min_interarrival.map(|d| d.as_millis_f64()),
+        budget_ms: p.budget.map(|d| d.as_millis_f64()),
+        budget_period_ms: p.budget_period.map(|d| d.as_millis_f64()),
+    };
+    (c != model::SrvContract::default()).then_some(c)
 }
 
 fn drop_contract(d: &DropSpec) -> model::DropContract {
@@ -1166,13 +1188,10 @@ pub fn build_system_model(
                 }
             }
             for (ep, props) in &decl.srv {
-                if let Some(ms) = props.max_response.ms() {
-                    contracts.srv_endpoints.insert(
-                        format!("{node_fqn}/{ep}"),
-                        model::SrvContract {
-                            max_response_ms: Some(ms),
-                        },
-                    );
+                if let Some(c) = srv_contract(props) {
+                    contracts
+                        .srv_endpoints
+                        .insert(format!("{node_fqn}/{ep}"), c);
                 }
             }
         }
@@ -1654,6 +1673,37 @@ mod tests {
             sub_contract("/control/handler", &EndpointProps::default(), None),
             None
         );
+    }
+
+    /// rlm v0.1.68 (nano-ros RFC-0108 D1) -- an input's release bound
+    /// reaches the model on a subscriber and on a service server, each alone
+    /// enough to make a contract, in milliseconds.
+    #[test]
+    fn an_inputs_release_bound_reaches_the_model() {
+        use ros_launch_manifest_types::{SrvEndpointProps, duration::Duration};
+        let ms = |v: i64| Some(Duration::from_nanos(v * 1_000_000));
+        let props = EndpointProps {
+            min_interarrival: ms(50),
+            ..Default::default()
+        };
+        let c = sub_contract("/n", &props, None).expect("a min_interarrival alone is a contract");
+        assert_eq!(c.min_interarrival_ms, Some(50.0));
+        assert_eq!((c.budget_ms, c.budget_period_ms), (None, None));
+        let props = EndpointProps {
+            budget: ms(2),
+            budget_period: ms(100),
+            ..Default::default()
+        };
+        let c = sub_contract("/n", &props, None).expect("a budget alone is a contract");
+        assert_eq!((c.budget_ms, c.budget_period_ms), (Some(2.0), Some(100.0)));
+        let srv = SrvEndpointProps {
+            min_interarrival: ms(100),
+            ..Default::default()
+        };
+        let c = srv_contract(&srv).expect("a server's min_interarrival is a contract");
+        assert_eq!(c.min_interarrival_ms, Some(100.0));
+        assert_eq!(c.max_response_ms, None);
+        assert_eq!(srv_contract(&SrvEndpointProps::default()), None);
     }
 
     /// nano-ros phase 446 W2 -- a contract's `params:` reaches the model per
