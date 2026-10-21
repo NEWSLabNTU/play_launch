@@ -403,6 +403,14 @@ fn srv_contract(p: &ros_launch_manifest_types::SrvEndpointProps) -> Option<model
     (c != model::SrvContract::default()).then_some(c)
 }
 
+/// rlm v0.1.69: a client's call mode, grammar to model.
+fn call_mode(c: ros_launch_manifest_types::CallMode) -> model::CallMode {
+    match c {
+        ros_launch_manifest_types::CallMode::Blocking => model::CallMode::Blocking,
+        ros_launch_manifest_types::CallMode::Async => model::CallMode::Async,
+    }
+}
+
 fn drop_contract(d: &DropSpec) -> model::DropContract {
     model::DropContract {
         max_drop_rate: d.max_count.count_per().map(|c| c.drop_rate()),
@@ -1128,6 +1136,17 @@ pub fn build_system_model(
             },
         );
     }
+    for a in index.actions.values() {
+        // rlm v0.1.69: an action's `call:` per client endpoint.
+        for (client, call) in &a.client_calls {
+            contracts.action_cli_endpoints.insert(
+                resolve_endpoint_ref(&structure.nodes, client),
+                model::CliContract {
+                    call: Some(call_mode(*call)),
+                },
+            );
+        }
+    }
     for (fqn_a, a) in &index.actions {
         structure.actions.insert(
             fqn_a.clone(),
@@ -1185,6 +1204,17 @@ pub fn build_system_model(
                 let ep_ref = format!("{node_fqn}/{ep}");
                 if let Some(c) = sub_contract(&node_fqn, props, topic_qos_of.get(&ep_ref)) {
                     contracts.sub_endpoints.insert(ep_ref, c);
+                }
+            }
+            for (ep, props) in &decl.cli {
+                // rlm v0.1.69 (nano-ros RFC-0108 D8.3): how the client waits.
+                if let Some(call) = props.call {
+                    contracts.cli_endpoints.insert(
+                        format!("{node_fqn}/{ep}"),
+                        model::CliContract {
+                            call: Some(call_mode(call)),
+                        },
+                    );
                 }
             }
             for (ep, props) in &decl.srv {
@@ -1704,6 +1734,77 @@ mod tests {
         assert_eq!(c.min_interarrival_ms, Some(100.0));
         assert_eq!(c.max_response_ms, None);
         assert_eq!(srv_contract(&SrvEndpointProps::default()), None);
+    }
+
+    /// rlm v0.1.69 (nano-ros RFC-0108 D8.3) -- a client's `call:` reaches
+    /// the model: a service client's in `cli_endpoints`, an action's for
+    /// each client it lists in `action_cli_endpoints`. A client that states
+    /// none gets no entry ("not stated" is not `async`).
+    #[test]
+    fn a_clients_call_mode_reaches_the_model() {
+        let dump: LaunchDump = serde_json::from_value(serde_json::json!({
+            "node": [
+                {"executable": "a", "package": "p", "name": "asker",
+                 "namespace": "/s", "params_files": [], "cmd": [], "scope": 0}
+            ],
+            "container": [], "load_node": [], "lifecycle_node": [],
+            "file_data": {}, "variables": {},
+            "scopes": [{"id": 0, "ns": "/s", "parent": null}]
+        }))
+        .expect("hand-built dump");
+        let manifest = ros_launch_manifest_types::parse_manifest_str(
+            "nodes:\n  asker:\n    cli:\n      ask: { call: blocking }\n      \
+             poll: { call: async }\n      plain: {}\n",
+        )
+        .expect("contract parses");
+        let mut index = ManifestIndex::default();
+        index.manifests.insert(
+            0,
+            crate::ros::manifest_loader::ResolvedManifest {
+                scope_id: 0,
+                pkg: None,
+                file: "x.launch.xml".to_string(),
+                ns: "/s".to_string(),
+                channel: crate::ros::manifest_loader::ContractChannel::Provider,
+                contract_path: PathBuf::from("x.contract.yaml"),
+                manifest,
+                source: String::new(),
+                diagnostics: vec![],
+            },
+        );
+        index.actions.insert(
+            "/s/go".to_string(),
+            crate::ros::manifest_loader::ResolvedService {
+                fqn: "/s/go".to_string(),
+                srv_type: "x/action/Go".to_string(),
+                servers: vec![],
+                clients: vec!["/s/asker/go".to_string()],
+                scope_ids: vec![0],
+                client_calls: BTreeMap::from([(
+                    "/s/asker/go".to_string(),
+                    ros_launch_manifest_types::CallMode::Async,
+                )]),
+            },
+        );
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let c = &model.contracts;
+        assert_eq!(
+            c.cli_endpoints.keys().collect::<Vec<_>>(),
+            ["/s/asker/ask", "/s/asker/poll"]
+        );
+        assert_eq!(
+            c.cli_endpoints["/s/asker/ask"].call,
+            Some(model::CallMode::Blocking)
+        );
+        assert_eq!(
+            c.cli_endpoints["/s/asker/poll"].call,
+            Some(model::CallMode::Async)
+        );
+        assert_eq!(
+            c.action_cli_endpoints["/s/asker/go"].call,
+            Some(model::CallMode::Async)
+        );
     }
 
     /// nano-ros phase 446 W2 -- a contract's `params:` reaches the model per

@@ -8,6 +8,11 @@ allowance heavily.
 
 ## Unreleased
 
+- **Changed:** ros-launch-manifest v0.1.68 -> v0.1.69. A client's call mode
+  (nano-ros RFC-0108 D8.3): `call: blocking | async` on a `cli:` endpoint
+  reaches the SystemModel's `contracts.cli_endpoints`, and an
+  `actions.<a>.call` reaches `contracts.action_cli_endpoints` for every
+  client the action lists. A client that states none gets no entry.
 - **Changed:** ros-launch-manifest v0.1.67 -> v0.1.68. An input's release
   bound (nano-ros RFC-0108 D1): `min_interarrival`, and `budget` +
   `budget_period`, on a `sub:` endpoint or a `srv:` server, reach the

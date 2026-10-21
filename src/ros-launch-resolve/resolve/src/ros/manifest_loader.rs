@@ -212,6 +212,9 @@ pub struct ResolvedService {
     pub clients: Vec<String>,
     /// All scope IDs that declared this service.
     pub scope_ids: Vec<usize>,
+    /// Actions only (rlm v0.1.69): the declaring scope's `call:`, per client
+    /// endpoint FQN it lists. A client whose scope stated none has no entry.
+    pub client_calls: BTreeMap<String, ros_launch_manifest_types::CallMode>,
 }
 
 /// Resolved node path entry.
@@ -6009,6 +6012,7 @@ fn resolve_services(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifes
                     servers,
                     clients,
                     scope_ids: vec![scope.id],
+                    client_calls: BTreeMap::new(),
                 },
             );
         }
@@ -6040,6 +6044,12 @@ fn resolve_actions(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifest
         for ep_ref in &action_decl.client {
             clients.push(resolve_endpoint_ref(index, scope.id, &ns, ep_ref));
         }
+        // rlm v0.1.69: `actions.<a>.call` covers every client this scope
+        // lists for the action.
+        let client_calls: BTreeMap<String, ros_launch_manifest_types::CallMode> = action_decl
+            .call
+            .map(|c| clients.iter().map(|e| (e.clone(), c)).collect())
+            .unwrap_or_default();
 
         if let Some(existing) = index.actions.get_mut(&fqn) {
             if existing.srv_type != action_decl.action_type {
@@ -6069,6 +6079,7 @@ fn resolve_actions(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifest
                     existing.clients.push(c);
                 }
             }
+            existing.client_calls.extend(client_calls);
             if !existing.scope_ids.contains(&scope.id) {
                 existing.scope_ids.push(scope.id);
             }
@@ -6081,6 +6092,7 @@ fn resolve_actions(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifest
                     servers,
                     clients,
                     scope_ids: vec![scope.id],
+                    client_calls,
                 },
             );
         }
