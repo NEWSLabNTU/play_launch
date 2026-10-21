@@ -113,14 +113,3 @@ min_interarrival   # EndpointProps / SrvEndpointProps (rlm v0.1.68, nano-ros
 budget_period      # EndpointProps / SrvEndpointProps (rlm v0.1.68): the
                    # server period of an input's `budget`; same state as
                    # `min_interarrival` (nano-ros reads `budget_period_ms`).
-
-cli_endpoints      # Contracts (rlm v0.1.69, nano-ros RFC-0108 D8.3,
-                   # phase-509 P8): a service client's `call: blocking |
-                   # async`. The resolver lowers it into the model; the
-                   # consumer is nano-ros's blocking-call check, which its
-                   # main does not read yet (2026-10-21). Drop this line when
-                   # it does.
-
-action_cli_endpoints # Contracts (rlm v0.1.69): an action's `call:` per
-                   # client endpoint; same consumer, same state as
-                   # `cli_endpoints`.
