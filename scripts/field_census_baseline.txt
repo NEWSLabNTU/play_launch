@@ -105,16 +105,11 @@ settle_ext         # SafeState (rlm v0.1.66): a settle's extension keys,
 min_interarrival   # EndpointProps / SrvEndpointProps (rlm v0.1.68, nano-ros
                    # RFC-0108 D1, phase-509 P4): the least time between two
                    # arrivals at an input. The resolver lowers it into the
-                   # model as written; the consumer is nano-ros's per-callback
-                   # task record, which its main does not read yet
-                   # (2026-10-21). Drop this line when it does.
-
-min_interarrival_ms # SubContract / SrvContract (rlm v0.1.68). The model's
-                   # copy of `min_interarrival`; same consumer, same state.
+                   # model as written (`min_interarrival_ms`), and nano-ros's
+                   # per-callback task record reads that copy (phase-509 P4,
+                   # e38762bd22). The grammar key itself is read by no rule
+                   # here. Drop this line when one is.
 
 budget_period      # EndpointProps / SrvEndpointProps (rlm v0.1.68): the
-                   # server period of an input's `budget`; same consumer,
-                   # same state as `min_interarrival`.
-
-budget_period_ms   # SubContract / SrvContract (rlm v0.1.68). The model's
-                   # copy of `budget_period`; same consumer, same state.
+                   # server period of an input's `budget`; same state as
+                   # `min_interarrival` (nano-ros reads `budget_period_ms`).
