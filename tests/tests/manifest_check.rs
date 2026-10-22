@@ -2740,6 +2740,8 @@ fn e4_medical_derives_a_detection_that_does_not_fit() {
         "info[extension-report]: hazard 'drive_blind': medical.occlusion/bolus_on_release = \
          0.84 mL (report, no verdict)",
         "hazard.alarm_threshold = occlusion_limit_mmhg = 300",
+        // Phase 91 E5: the derivation's direction, proved.
+        "worst case: proved decreasing in min_rate; increasing in compliance, alarm_threshold",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
@@ -2757,10 +2759,16 @@ fn e4_uav_derives_its_settle_and_checks_its_energy() {
         "drive_blind  safety.stop  floor  100.00     0.00   7.00  50952.38 derived  51059.38  \
          120000.00  68940.62",
         "info[extension-check]: hazard 'drive_blind': uav.descent/energy_reserve PASS",
+        // Phase 91 E5: with the domain contract_ext_uav_refuted is told to
+        // add, every claim is proved.
+        "worst case: proved increasing in max_altitude, slow_altitude; decreasing in \
+         descent_speed, land_speed",
+        "worst case: proved increasing in reaction_total",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
     assert!(!out.contains("reaction-unbudgeted"), "{out}");
+    assert!(!out.contains("worst-case-"), "{out}");
 }
 
 /// Phase 91 E4, section 6: the hazard's ftti is derived, and is the
@@ -2773,10 +2781,53 @@ fn e4_process_derives_the_ftti_it_is_judged_against() {
         "info[ftti-derived]: hazard 'drive_blind': ftti = 4 s derived by process.pst 0.1.0",
         "= 2107.00ms fits the fault-tolerant time interval 4000.00ms with 1893.00ms of slack",
         "hazard.ftti = (hazard_pressure - trip_setpoint) / max_rise_rate = 4 s",
+        "worst case: proved decreasing in max_rise_rate; increasing in hazard_pressure",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
     assert!(!out.contains("hazard-no-requirement"), "{out}");
+}
+
+/// Phase 91 E5, extension-examples.md section 4: the UAV claims as first
+/// written are refuted, each with a counterexample the evaluator computed
+/// and the domain that would make it hold. The suggestion admits the
+/// contract's values: `max_altitude <= slow_altitude` would also prove the
+/// slow_altitude claim, and is not offered, since the contract has 120 m
+/// and 10 m.
+#[test]
+fn e5_uav_claims_as_written_are_refuted_with_the_domain_that_holds() {
+    let (code, out) = ext_fixture("contract_ext_uav_refuted", &[]);
+    assert_eq!(code, 1, "{out}");
+    for needle in [
+        "error[worst-case-refuted]: uav.descent 0.2.0: settle.duration is not increasing in \
+         slow_altitude",
+        "counterexample (Z3): max_altitude = 120 m, descent_speed = 3 m/s, land_speed = 5 m/s",
+        "slow_altitude 1 m -> 39.87 s;  2 m -> 39.73 s",
+        "help: it holds on `domain: land_speed <= descent_speed, land_speed > 0 m/s`",
+        "error[worst-case-refuted]: uav.descent 0.2.0: check energy_reserve is not increasing \
+         in reaction_total",
+        "help: it holds on `domain: hover_power > 0 W`",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    assert_eq!(out.matches("error[worst-case-refuted]").count(), 5, "{out}");
+    assert!(!out.contains("max_altitude <= slow_altitude"), "{out}");
+}
+
+/// Phase 91 E5: a claim the prover cannot decide is a warning, and an error
+/// under `--strict`; it is never reported as proved.
+#[test]
+fn e5_an_undecided_worst_case_is_a_warning_and_strict_makes_it_an_error() {
+    let (code, out) = ext_fixture("contract_ext_unproved", &[]);
+    assert_eq!(code, 0, "{out}");
+    let needle = "warning[worst-case-unknown]: process.pst 0.1.0: hazard.ftti: worst case \
+                  decreasing in max_rise_rate not proved: a power whose exponent is not a \
+                  constant integer is beyond the encoding";
+    assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    assert!(!out.contains("worst case: proved"), "{out}");
+    let (code, out) = ext_fixture("contract_ext_unproved", &["--strict"]);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(out.matches("error[worst-case-unknown]").count(), 2, "{out}");
 }
 
 /// Phase 91 E4: a `use:` that finds nothing and a key no used extension

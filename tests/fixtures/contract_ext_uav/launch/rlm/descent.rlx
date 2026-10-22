@@ -19,7 +19,10 @@ derive settle.duration : Time =
   worst_case:
     increasing in max_altitude, slow_altitude
     decreasing in descent_speed, land_speed
+  domain: descent_speed > 0 m/s, land_speed > 0 m/s, land_speed <= descent_speed,
+          max_altitude > 0 m, slow_altitude > 0 m
 
 check energy_reserve:
     hover_power * reaction_total <= battery_capacity * (trigger_soc - reserve_soc)
   worst_case: increasing in reaction_total
+  domain: hover_power > 0 W

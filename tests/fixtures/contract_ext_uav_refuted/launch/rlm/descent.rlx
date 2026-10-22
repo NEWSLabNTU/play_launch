@@ -1,0 +1,25 @@
+-- share/rlm_ext_uav/rlm/descent.rlx
+extension uav.descent 0.2.0
+requires rlm >= 0.2.0
+
+key hazard.max_altitude     : Length
+key hazard.hover_power      : Power
+key hazard.battery_capacity : Energy
+key hazard.trigger_soc      : param Fraction
+key hazard.reserve_soc      : param Fraction
+key settle.descent_speed    : param Velocity
+key settle.slow_altitude    : param Length
+key settle.land_speed       : param Velocity
+input reaction_total : Time
+
+derive settle.duration : Time =
+    if max_altitude > slow_altitude
+    then (max_altitude - slow_altitude) / descent_speed + slow_altitude / land_speed
+    else max_altitude / land_speed
+  worst_case:
+    increasing in max_altitude, slow_altitude
+    decreasing in descent_speed, land_speed
+
+check energy_reserve:
+    hover_power * reaction_total <= battery_capacity * (trigger_soc - reserve_soc)
+  worst_case: increasing in reaction_total

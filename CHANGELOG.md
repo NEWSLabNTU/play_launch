@@ -8,6 +8,21 @@ allowance heavily.
 
 ## Unreleased
 
+- **Added (`check`, phase 91 E5):** worst-case proofs (ros-launch-manifest
+  v0.1.70, `rlx::prove`, over Z3). A `derive` or `check` stating
+  `worst_case: increasing in x` is proved at the contract's point: proved
+  claims print `worst case: proved ...` under the derivation's trace (and
+  in `--explain`'s derived values); a refuted one is `worst-case-refuted`,
+  an error with a counterexample the evaluator computed and, where one
+  exists, the domain that would make it hold (`help: it holds on domain:
+  land_speed <= descent_speed, land_speed > 0 m/s`); an undecided one is
+  `worst-case-unknown`, a warning that the new `check --strict` makes an
+  error. The prover assumes no sign an extension does not state, so the
+  bundled examples now state theirs. A build without the `smt` feature
+  (nano-ros's `nros-launch-resolve`) links no Z3 and reports every claim as
+  `worst-case-unknown`.
+- **Changed:** ros-launch-manifest v0.1.69 -> v0.1.70 (the prover above;
+  a `domain:` interval on a table key bounds every entry's value).
 - **Added (`check`, phase 91 E4):** domain extensions run
   (ros-launch-manifest v0.1.66). A contract names the extensions it uses,
   `use: { <name>: "<requirement>" }`, found in the `rlm/` directory beside

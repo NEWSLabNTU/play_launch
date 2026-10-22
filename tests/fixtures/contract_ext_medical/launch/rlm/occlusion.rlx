@@ -16,6 +16,7 @@ derive hazard.detection : Time =
   worst_case:
     decreasing in min_rate
     increasing in compliance, alarm_threshold
-  domain: min_rate in (0 mL/h, 1200 mL/h], alarm_threshold > baseline_pressure
+  domain: min_rate in (0 mL/h, 1200 mL/h], alarm_threshold > baseline_pressure,
+          compliance > 0 mL/mmHg
 
 report bolus_on_release : Volume = compliance * (alarm_threshold - baseline_pressure)

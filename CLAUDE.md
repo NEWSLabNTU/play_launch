@@ -695,6 +695,21 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-22**: **A worst case is proved, not asserted** (phase 91 E5,
+  rlm v0.1.70). An extension's `worst_case: increasing in x` is what lets
+  the checker evaluate a derived bound at the contract's declared value and
+  call it the worst; `rlx::prove` (Z3, feature `smt`) now proves each claim
+  at the contract's point (`ros/extensions.rs::worst_case`): proved is a
+  `worst case: proved ...` trace line, refuted is `worst-case-refuted` with
+  a counterexample the EVALUATOR reproduced and the domain that would make
+  it hold, undecided is `worst-case-unknown` (`check --strict` makes it an
+  error). The prover assumes no sign an extension does not state, and four
+  of the six reference extensions needed one. Two things a later change
+  must keep: Z3's solver `timeout` is not honoured by nlsat, so every
+  query runs under a watchdog that interrupts the context (`bounded`); and
+  a "proved" requires the domain to admit two defined points, or an
+  encoding that made everything undefined would prove anything.
+
 - **2026-10-16**: **A respawn no longer destroys the dead process's log**
   (#0075). `to_exec_context` truncated `out`/`err`/`pid`/`status` on every
   spawn, respawns included, so the log explaining a crash was gone by the

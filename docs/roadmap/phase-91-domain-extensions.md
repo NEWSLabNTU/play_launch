@@ -1,7 +1,8 @@
 # Phase 91 - domain extensions: rlx, profiles and the vehicle keys moved out
 
-Status: **in progress** (2026-10-17): E0 done (no-go: rlx owns its
-expression core); E1 and E2 done (rlm v0.1.65); E3 and E4 done (rlm v0.1.66). Stage 2 of 2; phase 90 (a tidy grammar) is complete. Design: rlm `docs/design/extension-system.md` (with
+Status: **in progress** (2026-10-22): E0 done (no-go: rlx owns its
+expression core); E1 and E2 done (rlm v0.1.65); E3 and E4 done (rlm v0.1.66);
+E5 done (rlm v0.1.70). Stage 2 of 2; phase 90 (a tidy grammar) is complete. Design: rlm `docs/design/extension-system.md` (with
 `extension-language-exploration.md` and `extension-examples.md`). Work lands
 in rlm (format, language, profiles), play_launch (loader, evaluator, Z3,
 explain, packaging, migration) and the consumers (nano-ros reads the
@@ -179,6 +180,54 @@ of the settle's parameters.
 - Gate: vehicle, medical, rail proved; the UAV claim refuted with the
   counterexample, then proved with the suggested domain; a deliberately
   wrong direction refuted.
+
+**Done (2026-10-22).** rlm v0.1.70 (`b28353e`); semantics and encoding in
+rlm `extension-system.md` section 6.1. Two placement choices against the
+unit's heading: the encoder lives in rlx (`rlx::prove`, feature `smt`,
+default on, z3 0.12 as the checker's), beside the evaluator whose name
+resolution and definedness it must match, and not in play_launch; and the
+gate's "Z3 over the declared domain" is read strictly: the prover assumes
+only what the declarations state (`magnitude` is not negative, table keys
+increase), so a claim needing a sign the extension does not write is
+refuted and the checker names the sign. play_launch (`ros/extensions.rs`,
+`worst_case`) proves each item at the contract's point where it is
+evaluated: tables at the keys the contract writes, the point filtering the
+suggested domain, memoized per (extension sha256, item, point).
+`worst-case-refuted` (error), `worst-case-unknown` (warning; `check
+--strict`, new on both CLIs, makes it an error), and a `worst case: proved
+...` line in the trace and the derivation record. Without `smt` every
+stated claim is `worst-case-unknown` and no Z3 is linked (checked with a
+`default-features = false` build).
+
+Gate, as run:
+
+- Vehicle, medical, rail proved: rlx `tests/prove.rs` (braking 4 claims;
+  rail's 3 at its written keys, its settle also at 1 to 3 symbolic
+  entries); play_launch's `contract_ext_medical` prints `worst case: proved
+  decreasing in min_rate; increasing in compliance, alarm_threshold`. The
+  vehicle and rail fixtures in play_launch still wait for E8.
+- UAV refuted, then proved with the suggestion:
+  `e5_uav_claims_as_written_are_refuted_with_the_domain_that_holds`
+  (`contract_ext_uav_refuted`, five refutations, slow_altitude's help
+  `land_speed <= descent_speed, land_speed > 0 m/s`; `max_altitude <=
+  slow_altitude` also proves it and is withheld, since the contract's 120 m
+  and 10 m are outside it), and `contract_ext_uav` with those domains
+  added proves all five; rlx's own test adds every suggestion to the file
+  and proves the result.
+- A wrong direction refuted: braking with `decreasing in entry_speed`
+  (rlx `a_wrong_direction_is_refuted_...`). Further controls: a domain
+  made empty reads `vacuous`, never proved; a fractional power reads
+  unknown (`contract_ext_unproved`, a warning, two errors under
+  `--strict`); a dropped `compliance > 0` is refuted with exactly that
+  suggestion.
+
+Found on the way: four of the six reference extensions did not prove as
+written (a negative compliance, rise rate, deceleration or delay turns
+each direction over), and Z3's solver `timeout` is not honoured by nlsat
+(a braking claim ran past two minutes under five seconds), hence the
+watchdog. Rail's distance check at three symbolic entries is not decided
+in two minutes; at its written keys it is decided in milliseconds, which
+is why a consumer passes them.
 
 ### E6. Profiles (rlm, play_launch)
 

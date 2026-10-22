@@ -18,7 +18,9 @@ description = "Resolve a ROS 2 launch tree into a checked SystemModel"
 # `default-features = false` and gets the checker's own Info diagnostic in
 # every model's meta.diagnostics instead of a silent gap.
 default = ["smt"]
-smt = ["ros-launch-manifest-check/smt"]
+# Phase 91 E5: the same feature carries rlx's worst-case prover, also z3; a
+# no-smt build reports every stated worst case as `worst-case-unknown`.
+smt = ["ros-launch-manifest-check/smt", "ros-launch-manifest-rlx/smt"]
 
 [dependencies]
 # Phase 85 I5: `check` renders codespan diagnostics into a buffer (colour

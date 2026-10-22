@@ -16,6 +16,15 @@
 //! 3. [`run_checks`], after the fault walk: checks and reports, which may
 //!    read `reaction_total` (the hazard's floor total).
 //!
+//! At each of the three, a `derive` or `check` that states `worst_case:` is
+//! proved by Z3 at the contract's point ([`worst_case`], phase 91 E5): the
+//! proved claims become a `worst case: proved ...` line in the derivation's
+//! trace and the check's message; a refuted one is `worst-case-refuted`
+//! (an error, with the counterexample and the domain that would make it
+//! hold), an undecided one `worst-case-unknown` (a warning, an error under
+//! `check --strict`). The prover is rlx's (`rlx::prove`); this module only
+//! hands it the contract's point and reports.
+//!
 //! Finding extensions: the `rlm/` directory beside the contract, then
 //! `share/<pkg>/rlm/` under each `AMENT_PREFIX_PATH` prefix; for each `use:`
 //! entry the highest version its requirement accepts. A lock file and the
@@ -522,13 +531,207 @@ fn derivation(
     ext: &LoadedExt,
     written: Vec<(String, String)>,
     trace: &rlx::eval::Trace,
+    worst_case: Option<&str>,
 ) -> Derivation {
+    let mut trace = trace_lines(trace);
+    trace.extend(worst_case.map(str::to_string));
     Derivation {
         by: ext.name.clone(),
         version: ext.version.clone(),
         sha256: Some(ext.sha256.clone()),
         inputs: written,
-        trace: trace_lines(trace),
+        trace,
+    }
+}
+
+const WORST_CASE_REFUTED: &str = "worst-case-refuted";
+const WORST_CASE_UNKNOWN: &str = "worst-case-unknown";
+
+/// What the worst-case proofs say about one item at one contract point.
+struct WorstCase {
+    /// `worst case: proved increasing in a, b; decreasing in c`, over the
+    /// claims that were proved; `None` when none was.
+    line: Option<String>,
+    /// `(rule, severity, message)` for each claim that was not.
+    findings: Vec<(&'static str, Severity, String)>,
+}
+
+impl WorstCase {
+    fn suffix(&self) -> String {
+        self.line
+            .as_ref()
+            .map_or(String::new(), |l| format!("\n{l}"))
+    }
+
+    fn report(&self, at: &str, diags: &mut Vec<Diagnostic>) {
+        for (rule, severity, message) in &self.findings {
+            diags.push(diag(rule, *severity, at.to_string(), message.clone()));
+        }
+    }
+}
+
+/// The `worst_case` claims of `item`, in order: `(direction, key)`.
+fn stated_claims(checked: &rlx::Checked, item: &ItemRef) -> Vec<(rlx::ast::Direction, String)> {
+    checked
+        .file()
+        .items
+        .iter()
+        .find_map(|i| match (i, item) {
+            (rlx::ast::Item::Derive(d), ItemRef::Derive(t)) if &d.target.dotted() == t => {
+                Some(&d.body)
+            }
+            (rlx::ast::Item::Check(c), ItemRef::Check(n)) if &c.name.name == n => Some(&c.body),
+            _ => None,
+        })
+        .map(|b| {
+            b.worst_case
+                .iter()
+                .flat_map(|g| g.vars.iter().map(|v| (g.direction, v.dotted())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `increasing in a, b; decreasing in c`: claims grouped as written.
+fn statement(claims: &[(rlx::ast::Direction, String)]) -> String {
+    let mut groups: Vec<(rlx::ast::Direction, Vec<&str>)> = Vec::new();
+    for (d, v) in claims {
+        match groups.last_mut() {
+            Some((g, vars)) if g == d => vars.push(v),
+            _ => groups.push((*d, vec![v])),
+        }
+    }
+    groups
+        .iter()
+        .map(|(d, vars)| {
+            let word = match d {
+                rlx::ast::Direction::Increasing => "increasing",
+                rlx::ast::Direction::Decreasing => "decreasing",
+            };
+            format!("{word} in {}", vars.join(", "))
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Prove `item`'s worst-case claims at the contract's point `inputs`: its
+/// tables' keys as written, and its values the point a suggested domain
+/// must admit. The result is a pure function of the extension's text and
+/// the point, so it is memoized for the process: the settle lookup asks once
+/// per (hazard, rung).
+#[cfg(feature = "smt")]
+fn worst_case(
+    ext: &LoadedExt,
+    checked: &rlx::Checked,
+    item: &ItemRef,
+    inputs: &Inputs,
+) -> WorstCase {
+    use rlx::prove::{Options, Verdict};
+    use std::{
+        collections::HashMap,
+        sync::{Mutex, OnceLock},
+    };
+    static MEMO: OnceLock<Mutex<HashMap<String, Vec<rlx::prove::Claim>>>> = OnceLock::new();
+    if stated_claims(checked, item).is_empty() {
+        return WorstCase {
+            line: None,
+            findings: Vec::new(),
+        };
+    }
+    let opts = Options {
+        table_keys: inputs
+            .iter()
+            .filter_map(|(k, v)| match v {
+                Value::Table(rows) => Some((k.clone(), rows.iter().map(|r| r.0).collect())),
+                Value::Quantity { .. } => None,
+            })
+            .collect(),
+        point: inputs.clone(),
+        ..Options::default()
+    };
+    let key = format!("{}|{item:?}|{inputs:?}", ext.sha256);
+    let memo = MEMO.get_or_init(|| Mutex::new(HashMap::new()));
+    let cached = memo.lock().expect("not poisoned").get(&key).cloned();
+    let claims = cached.unwrap_or_else(|| {
+        let claims = rlx::prove::prove(checked, item, &opts);
+        memo.lock()
+            .expect("not poisoned")
+            .insert(key, claims.clone());
+        claims
+    });
+    let proved: Vec<(rlx::ast::Direction, String)> = claims
+        .iter()
+        .filter(|c| c.verdict == Verdict::Proved)
+        .map(|c| (c.direction, c.var.clone()))
+        .collect();
+    let tables = claims
+        .iter()
+        .find(|c| c.verdict == Verdict::Proved && !c.tables.is_empty())
+        .map_or(String::new(), |c| format!(" (for {})", c.tables.join(", ")));
+    WorstCase {
+        line: (!proved.is_empty())
+            .then(|| format!("worst case: proved {}{tables}", statement(&proved))),
+        findings: claims
+            .iter()
+            .filter_map(|c| match c.verdict {
+                Verdict::Proved => None,
+                Verdict::Refuted(_) => Some((
+                    WORST_CASE_REFUTED,
+                    Severity::Error,
+                    format!("{}: {}", ext.label(), c.report()),
+                )),
+                Verdict::Unknown(_) => Some((
+                    WORST_CASE_UNKNOWN,
+                    Severity::Warning,
+                    format!("{}: {}", ext.label(), c.report()),
+                )),
+            })
+            .collect(),
+    }
+}
+
+/// Without `smt` nothing is proved, and the build says so rather than
+/// leaving the claim to read as checked.
+#[cfg(not(feature = "smt"))]
+fn worst_case(
+    ext: &LoadedExt,
+    checked: &rlx::Checked,
+    item: &ItemRef,
+    _inputs: &Inputs,
+) -> WorstCase {
+    let claims = stated_claims(checked, item);
+    WorstCase {
+        line: None,
+        findings: if claims.is_empty() {
+            Vec::new()
+        } else {
+            let subject = match item {
+                ItemRef::Derive(t) => t.clone(),
+                ItemRef::Check(n) => format!("check {n}"),
+                ItemRef::Report(n) => format!("report {n}"),
+            };
+            vec![(
+                WORST_CASE_UNKNOWN,
+                Severity::Warning,
+                format!(
+                    "{}: {subject}: worst case {} not proved: this build has no `smt` \
+                     feature, so there is no Z3 to prove it",
+                    ext.label(),
+                    statement(&claims)
+                ),
+            )]
+        },
+    }
+}
+
+/// `check --strict`: an undecided worst case is an error.
+pub fn strict(index: &mut ManifestIndex) {
+    for d in index
+        .merge_diagnostics
+        .iter_mut()
+        .filter(|d| d.rule_id == WORST_CASE_UNKNOWN)
+    {
+        d.severity = Severity::Error;
     }
 }
 
@@ -568,7 +771,7 @@ fn derive_hazard_bounds(index: &mut ManifestIndex, diags: &mut Vec<Diagnostic>) 
                 let result =
                     gather(index, &checked, &needs, h, None, None).and_then(|(inputs, written)| {
                         rlx::eval::eval_derive(&checked, target, &inputs)
-                            .map(|ev| (ev, written))
+                            .map(|ev| (ev, written, inputs))
                             .map_err(|d| {
                                 d.render(&ext.path.display().to_string(), ext.source.as_bytes())
                                     .trim_end()
@@ -576,7 +779,9 @@ fn derive_hazard_bounds(index: &mut ManifestIndex, diags: &mut Vec<Diagnostic>) 
                             })
                     });
                 match result {
-                    Ok((ev, written)) => {
+                    Ok((ev, written, inputs)) => {
+                        let wc = worst_case(ext, &checked, &item, &inputs);
+                        wc.report(&at, diags);
                         let mut b = ros_launch_manifest_types::spelled(
                             ros_launch_manifest_types::field_table::Context::Hazard,
                             key,
@@ -587,18 +792,24 @@ fn derive_hazard_bounds(index: &mut ManifestIndex, diags: &mut Vec<Diagnostic>) 
                         b.source = Some(BudgetSource {
                             kind: SourceKind::Derived,
                             measured: None,
-                            derived: Some(Box::new(derivation(ext, written, &ev.trace))),
+                            derived: Some(Box::new(derivation(
+                                ext,
+                                written,
+                                &ev.trace,
+                                wc.line.as_deref(),
+                            ))),
                         });
                         diags.push(diag(
                             &format!("{key}-derived"),
                             Severity::Info,
                             at,
                             format!(
-                                "hazard '{}': {key} = {} derived by {}\n{}",
+                                "hazard '{}': {key} = {} derived by {}\n{}{}",
                                 h.name,
                                 ev.display,
                                 ext.label(),
-                                ev.trace.render().trim_end()
+                                ev.trace.render().trim_end(),
+                                wc.suffix()
                             ),
                         ));
                         updates.push((h.scope_id, h.name.clone(), key, b));
@@ -668,15 +879,20 @@ pub(crate) fn derived_settle(
         let reads_response = needs.iter().any(|n| n.path == "settle.response");
         let result = gather(index, &checked, &needs, h, Some((node_fqn, ss)), None).and_then(
             |(inputs, _)| {
-                rlx::eval::eval_derive(&checked, "settle.duration", &inputs).map_err(|d| {
-                    d.render(&ext.path.display().to_string(), ext.source.as_bytes())
-                        .trim_end()
-                        .to_string()
-                })
+                rlx::eval::eval_derive(&checked, "settle.duration", &inputs)
+                    .map(|ev| (ev, inputs))
+                    .map_err(|d| {
+                        d.render(&ext.path.display().to_string(), ext.source.as_bytes())
+                            .trim_end()
+                            .to_string()
+                    })
             },
         );
         return match result {
-            Ok(ev) => {
+            Ok((ev, inputs)) => {
+                let item = ItemRef::Derive("settle.duration".to_string());
+                let wc = worst_case(ext, &checked, &item, &inputs);
+                wc.report(at, diags);
                 let derived_ms = ev.si * 1000.0;
                 let response_ms = ss.settle_response.as_ref().and_then(|b| b.ms());
                 // The response is the settle's (phase 90 G6): added unless
@@ -691,7 +907,7 @@ pub(crate) fn derived_settle(
                     Severity::Info,
                     at.to_string(),
                     format!(
-                        "hazard '{}': settle = {ms:.2}ms derived by {} (sha256 {}){}\n{}",
+                        "hazard '{}': settle = {ms:.2}ms derived by {} (sha256 {}){}\n{}{}",
                         h.name,
                         ext.label(),
                         &ext.sha256[..12],
@@ -699,7 +915,8 @@ pub(crate) fn derived_settle(
                             (false, Some(r)) => format!(" + response {r:.2}ms (written)"),
                             _ => String::new(),
                         },
-                        ev.trace.render().trim_end()
+                        ev.trace.render().trim_end(),
+                        wc.suffix()
                     ),
                 ));
                 Some(super::value_rules::Settle {
@@ -815,9 +1032,13 @@ pub fn run_checks(index: &mut ManifestIndex) {
                 };
                 if is_check {
                     match gathered.and_then(|(i, _)| {
-                        rlx::eval::eval_check(&checked, &name, &i).map_err(render)
+                        rlx::eval::eval_check(&checked, &name, &i)
+                            .map(|out| (out, i))
+                            .map_err(render)
                     }) {
-                        Ok(out) => {
+                        Ok((out, inputs)) => {
+                            let wc = worst_case(ext, &checked, &item, &inputs);
+                            wc.report(&at, &mut diags);
                             let verdict = if out.pass { "PASS" } else { "FAIL" };
                             let severity = match (out.pass, named) {
                                 (true, _) => Severity::Info,
@@ -829,7 +1050,7 @@ pub fn run_checks(index: &mut ManifestIndex) {
                                 severity,
                                 at,
                                 format!(
-                                    "hazard '{}': {}/{name} {verdict} ({}{})\n{}",
+                                    "hazard '{}': {}/{name} {verdict} ({}{})\n{}{}",
                                     h.name,
                                     ext.name,
                                     ext.label(),
@@ -838,7 +1059,8 @@ pub fn run_checks(index: &mut ManifestIndex) {
                                     } else {
                                         ""
                                     },
-                                    out.trace.render().trim_end()
+                                    out.trace.render().trim_end(),
+                                    wc.suffix()
                                 ),
                             ));
                         }
@@ -887,4 +1109,11 @@ pub fn run_checks(index: &mut ManifestIndex) {
         }
     }
     index.merge_diagnostics.extend(diags);
+    // The settle lookup runs per (hazard, rung), so one claim can be
+    // reported from several sites with one message; keep the first.
+    let mut seen = std::collections::BTreeSet::new();
+    index.merge_diagnostics.retain(|d| {
+        !(d.rule_id == WORST_CASE_REFUTED || d.rule_id == WORST_CASE_UNKNOWN)
+            || seen.insert((d.rule_id.clone(), d.path.clone(), d.message.clone()))
+    });
 }

@@ -70,6 +70,9 @@ pub struct CheckInputs {
     /// warning. Off by default — see [`report_dropped_actions`] for why
     /// strict is the default.
     pub allow_unsupported_actions: bool,
+    /// Phase 91 E5: an undecided worst-case claim (`worst-case-unknown`)
+    /// is an error rather than a warning.
+    pub strict: bool,
     /// Emit a derived artifact instead of running the checks. Today:
     /// `diagnostics-params` — `diagnostic_updater` parameters restated from
     /// the declared endpoint bounds (phase 71 W5).
@@ -166,6 +169,9 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // all whenever the launch file ships sidecar contracts.
     let sources = inputs.contract_sources()?;
     let mut index = manifest_loader::load_manifests(&dump, &sources)?;
+    if inputs.strict {
+        crate::ros::extensions::strict(&mut index);
+    }
 
     // Phase 71 W5: a consequence, printed rather than written. Every ROS user
     // who runs `diagnostic_updater` configures `FrequencyStatus` and

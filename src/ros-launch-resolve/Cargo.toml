@@ -27,20 +27,22 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/NEWSLabNTU/ros-launch-resolve"
 
 [workspace.dependencies]
-ros-launch-manifest-types = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.69" }
-ros-launch-manifest-model = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.69" }
-ros-launch-manifest-sched = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.69" }
-ros-launch-manifest-derive = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.69" }
+ros-launch-manifest-types = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.70" }
+ros-launch-manifest-model = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.70" }
+ros-launch-manifest-sched = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.70" }
+ros-launch-manifest-derive = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.70" }
 # default-features off so the LEAF decides `smt` (rlm v0.1.8): the checker's
 # z3-backed satisfiability rule is default-on upstream, and forwarding the
 # choice is what lets a distribution build (nano-ros's `nros-launch-resolve`)
 # drop the z3 -> bindgen chain and its host prereqs (libclang, libz3-dev)
 # without a fork. A no-smt checker says so itself: it registers a stub rule
 # that emits one Info diagnostic instead of silently checking less.
-ros-launch-manifest-check = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.69", default-features = false }
+ros-launch-manifest-check = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.70", default-features = false }
 # Phase 91 E4: the extension language (rlx) -- load, type-check and evaluate
-# the extensions a contract `use:`s.
-ros-launch-manifest-rlx = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.69" }
+# the extensions a contract `use:`s. default-features off for the same
+# reason as the checker: its `smt` (phase 91 E5, the worst-case prover) is
+# z3, and the leaf decides (`ros-launch-resolve`'s own `smt` forwards it).
+ros-launch-manifest-rlx = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.70", default-features = false }
 play_launch_parser = { path = "parser/crates/play_launch_parser", default-features = false }
 eyre = "0.6"
 serde = { version = "1", features = ["derive"] }
@@ -49,5 +51,3 @@ serde_yaml_ng = "0.10"
 toml = "0.8"
 tracing = "0.1"
 sha2 = "0.10"
-
-

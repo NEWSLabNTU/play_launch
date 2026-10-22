@@ -98,7 +98,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 88 | [Data-flow chains without contracts](./phase-88-data-flow-chains.md) | ✅ C1–C4 | 2026-10-14 |
 | 89 | [Helping with DDS without touching it](./phase-89-dds-assist.md) | ✅ | 2026-10-14 |
 | 90 | [A tidy grammar](./phase-90-a-tidy-grammar.md) | ✅ Complete | — |
-| 91 | [Domain extensions](./phase-91-domain-extensions.md) | 🔄 E0–E4 done | — |
+| 91 | [Domain extensions](./phase-91-domain-extensions.md) | 🔄 E0–E5 done | — |
 | 92 | [One PyPI package](./phase-92-one-pypi-package.md) | ✅ Complete | — |
 | 93 | [Supervised budgets](./phase-93-supervised-budgets.md) | 🔄 | — |
 

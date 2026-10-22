@@ -682,6 +682,12 @@ pub struct CheckArgs {
     #[arg(long)]
     pub allow_unsupported_actions: bool,
 
+    /// Phase 91 E5: a worst-case claim Z3 could not decide (a timeout, a
+    /// construct beyond the encoding, a build without `smt`) is an error
+    /// instead of a warning. A refuted claim is an error either way.
+    #[arg(long)]
+    pub strict: bool,
+
     /// Output format: terminal (default, with source excerpts) or json
     #[arg(long, default_value = "terminal")]
     pub format: String,

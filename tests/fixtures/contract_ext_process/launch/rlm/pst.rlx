@@ -11,6 +11,6 @@ key settle.valve_stroke    : Time              "final element: closed from comma
 
 derive hazard.ftti : Time = (hazard_pressure - trip_setpoint) / max_rise_rate
   worst_case: decreasing in max_rise_rate; increasing in hazard_pressure
-  domain: hazard_pressure > trip_setpoint
+  domain: hazard_pressure > trip_setpoint, max_rise_rate > 0 bar/s
 
 derive settle.duration : Time = valve_stroke
