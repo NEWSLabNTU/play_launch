@@ -86,7 +86,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 76 | [Topic graph from remaps](./phase-76-graph-from-remaps.md) | ✅ | 2026-09-08 |
 | 77 | [Inferred graph, measured](./phase-77-graph-verified.md) | ✅ | 2026-09-09 |
 | 78 | [One derivation, two consumers](./phase-78-one-derivation-two-consumers.md) | ✅ | 2026-09-22 |
-| 79 | [Runtime enforcement is a gate](./phase-79-runtime-enforcement-is-a-gate.md) | 📋 planned | — |
+| 79 | [Runtime enforcement is a gate](./phase-79-runtime-enforcement-is-a-gate.md) | ✅ | 2026-09-22 |
 | 80 | [The plan and what was applied](./phase-80-the-plan-and-what-was-applied.md) | 📋 planned | — |
 | 81 | [The docs describe the code](./phase-81-the-docs-describe-the-code.md) | ✅ | 2026-09-23 |
 | 82 | [What a detector may see](./phase-82-what-a-detector-may-see.md) | ✅ | 2026-09-25 |
@@ -355,8 +355,8 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     so it cannot fire on a user path at all. The refusal moves to where the
     container mode is known, before anything is spawned. Issue #0035.
     [phase-80-the-plan-and-what-was-applied.md](./phase-80-the-plan-and-what-was-applied.md).
-  - **Phase 79** - planned: runtime enforcement is a gate, or it says it is
-    not (2026-09-21). Three breaks compose into a CI mode that passes with no
+  - **Phase 79** - ✅ (2026-09-22; roadmap updated 2026-10-22): runtime enforcement is a gate, or it says it is
+    not. Three breaks compose into a CI mode that passes with no
     measurement behind it: interception is the rule engine's only event source
     and cannot be turned on from the CLI, so the default `--enforce-rules
     warn` enforces nothing and says so nowhere (#0031); `emit` flips

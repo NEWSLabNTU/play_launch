@@ -1,6 +1,9 @@
 # Phase 79 - runtime enforcement is a gate, or it says it is not
 
-Status: **planned** (2026-09-21). Follows phase 36, which built the rule engine
+Status: **complete** (2026-09-22; recorded 2026-10-22). W1 `a1e9d666`,
+W2 `e8cb2409`, W3 `8adc7b29`, W4 `aadd64f7`; issues #0031-#0033 archived.
+The roadmap row stayed at "planned" for a month after the code landed. See
+"Done" at the end. Follows phase 36, which built the rule engine
 and the `--enforce-rules` modes, and phase 73, which gave it the hazard
 vocabulary and a clock. Those phases built the rules; this one makes the verb
 that runs them capable of failing. Issues of record: #0031, #0032, #0033, and
@@ -228,3 +231,35 @@ seconds, SIGKILL. The reason reaches the exit code the way
   mode, so `record-only` evaluates every rule and emits every `warn!` line --
   it simply writes no file. The old wording was accidentally true before W1,
   when the mode had no event source at all and therefore evaluated nothing.
+
+## Done
+
+All four waves landed on 2026-09-22; this section was added on 2026-10-22,
+when the roadmap was found still saying "planned".
+
+- **W1** (`a1e9d666`, then `30a24412` and `fa366b23`). `--interception
+  on|off` decides first, then the config, then implied on. Since
+  `fa366b23` the implied case also needs something to enforce: a contract
+  in the model or an explicit `--enforce-rules`. A contract-free launch
+  under the default mode therefore runs without interception, as under
+  `ros2 launch`. A missing interception library is refused under strict.
+- **W2** (`e8cb2409`). `strict_violated` flips at the `--strict-on`
+  threshold, default `error`. `/rosout`, `/rosout_agg` and
+  `/parameter_events` are seeded as implicitly external
+  (`RCL_INTERNAL_TOPICS`).
+- **W3** (`8adc7b29`). The strict watcher calls
+  `signal_handler::initiate_shutdown`, the same teardown the signal path
+  uses, and the run exits non-zero naming the rule and FQN.
+- **W4** (`aadd64f7`). `docs/guide/runtime-enforcement.md`.
+
+Gates, re-run 2026-10-22 on `21d939b5` (Humble):
+
+- `cargo test -p play_launch --lib runtime_enforcement::tests`: 15/15,
+  including the strict pair and `strict_on_warning_makes_a_warning_fatal`.
+- `cargo nextest run --test runtime_enforcement` in `tests/`: 13/13 with no
+  `--config` file, including
+  `strict_mode_ends_the_run_non_zero_and_stops_the_nodes`,
+  `strict_mode_keeps_running_on_warning_severity_violations`,
+  `strict_refuses_to_start_without_an_event_source` and
+  `default_invocation_intercepts_once_a_contract_resolves`.
+- `grep -rl enforce-rules docs/guide` returns `runtime-enforcement.md`.
