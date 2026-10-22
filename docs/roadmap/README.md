@@ -93,7 +93,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 83 | [A takeover the contract can state](./phase-83-a-takeover-the-contract-can-state.md) | ✅ | 2026-09-28 |
 | 84 | [A window is a least time](./phase-84-a-window-is-a-least-time.md) | ✅ | 2026-09-29 |
 | 85 | [What the island left open](./phase-85-what-the-island-left-open.md) | 🔄 | — |
-| 86 | [Lifecycle autostart from the launch file](./phase-86-lifecycle-autostart-from-the-launch-file.md) | 🔄 W0–W5 landed | — |
+| 86 | [Lifecycle autostart from the launch file](./phase-86-lifecycle-autostart-from-the-launch-file.md) | ✅ (Jazzy acceptance run) | 2026-10-22 |
 | 87 | [The Health page](./phase-87-health-page.md) | ✅ | 2026-10-14 |
 | 88 | [Data-flow chains without contracts](./phase-88-data-flow-chains.md) | ✅ C1–C4 | 2026-10-14 |
 | 89 | [Helping with DDS without touching it](./phase-89-dds-assist.md) | ✅ | 2026-10-14 |
@@ -396,8 +396,8 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     application`. Issue #0046 ruled. W4 (a sampling hop in the reaction walk)
     is separate.
     [phase-82-what-a-detector-may-see.md](./phase-82-what-a-detector-may-see.md).
-  - **Phase 86** - in progress (W1-W4 done 2026-10-12; W0/W5 wait on rlm
-    and nano-ros): a lifecycle node's autostart comes from the
+  - **Phase 86** - ✅ (W0-W5 2026-10-12; Jazzy acceptance passed
+    2026-10-22): a lifecycle node's autostart comes from the
     launch file (2026-10-10). `<lifecycle_node>` is dispatched (XML/YAML,
     Jazzy `autostart`), the Python `LifecycleNode` captures `autostart`, `up`
     drives `Active` nodes to active, and the rlm bump stops projecting

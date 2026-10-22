@@ -1,7 +1,7 @@
 # Phase 86 - a lifecycle node's autostart comes from the launch file
 
-Status: **in progress** (2026-10-10, corrected 2026-10-12). W0-W5 landed
-2026-10-12 (see "Done"); the Jazzy-side acceptance is not run. This is play_launch's part of a
+Status: **complete** (2026-10-22). W0-W5 landed 2026-10-12 (see "Done");
+the Jazzy-side acceptance ran 2026-10-22 and passed (see "Jazzy acceptance"). This is play_launch's part of a
 cross-repository change. The design of record is rlm's
 `docs/model-boundary.md`; the work items, ordering and retirement live in
 nano-ros phase 486 (`docs/roadmap/phase-486-launch-model-boundary.md`), where
@@ -165,6 +165,33 @@ Two things decided in the code that the design did not spell out:
 - Nothing here reads `execution.deploy` (`target`, `Mcu`, `extra`); measured
   2026-10-12 by `git grep`, so the fields rlm stops writing cost this repository
   nothing.
+
+## Jazzy acceptance (2026-10-22)
+
+Run on `21d939b5` with play_launch built from source in a
+`ros:jazzy-ros-core` container (Ubuntu 24.04, Python 3.12, launch_ros from
+Jazzy), set up like `release-wheel.yml`'s build step plus
+`ros-jazzy-lifecycle` and `ros-jazzy-ros2lifecycle`. Nothing was changed
+to make it pass. The Humble-only skips named under "Done" all ran:
+
+- `just compare-dumps-autostart` in `tests/fixtures/lifecycle` (the
+  `parity/lifecycle_autostart` gate): the Rust and Python parsers on
+  `lifecycle_autostart.launch.xml` and `.launch.py`, four models.
+  `expect.py` passes on all four (`/lc_on` active, `/lc_off` and
+  `/lc_unsaid` lifecycle only), and `compare_models.py` passes for Rust
+  against Python in XML and in Python, and for XML against Python.
+- `just compare-dumps` (the Humble-valid gate) passes there too.
+- The attribute differential (`tests/attr_differential.rs`) against the
+  Jazzy oracle (`ROS 2 oracle: jazzy`): 3/3, so `<lifecycle_node>`'s
+  candidate matrix, `autostart` included, agrees with Jazzy's
+  `launch_ros`. `lifecycle_autostart_tests`: 4/4.
+- `play_launch up` on the Rust-resolved model of each file, no
+  `ros2 lifecycle set`: `ros2 lifecycle get` gives `/lc_on` `active [3]`,
+  `/lc_off` and `/lc_unsaid` `unconfigured [1]`, for both the XML and the
+  Python file. `up` exited 0 on SIGINT both times.
+
+The `system.toml` and `git grep` items of the acceptance are
+distro-independent and were measured on Humble (W0, W5).
 
 ## Migration
 
