@@ -17,15 +17,18 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0073** -- the Rust parser cannot load a launch file that defines its own
-`launch.Substitution` (`nav2_common`'s `RewrittenYaml`, so every
-`nav2_bringup` launch file): the mock `launch` has no `Substitution` base and
-nothing calls a Python `perform()`. Workaround: `--parser python`.
+None.
 
 `just check-issue-index` fails if this section and the per-file `status:`
 frontmatter disagree.
 
 ## Resolved
+
+**#0073** -- the Rust parser could not load a launch file that defines its
+own `launch.Substitution` (`nav2_common`'s `RewrittenYaml`, so every
+`nav2_bringup` launch file). The mock `launch` now has the base classes and
+the two `launch.utilities` helpers such a class calls, and a failing
+`perform` is an error instead of a repr. See `archived/0073-*`.
 
 **#0076** -- `test_health_compares_running_parameters_with_the_launch`
 inherited the caller's `RMW_IMPLEMENTATION` (Cyclone has no participant

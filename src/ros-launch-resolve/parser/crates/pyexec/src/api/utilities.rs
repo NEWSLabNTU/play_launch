@@ -69,3 +69,46 @@ pub fn register_utilities_module(py: Python) -> PyResult<()> {
 
     Ok(())
 }
+
+/// `launch.utilities.normalize_to_list_of_substitutions`: a string becomes a
+/// `TextSubstitution`, a substitution a one-element list, an iterable its
+/// elements normalized the same way.
+#[pyfunction]
+pub fn normalize_to_list_of_substitutions(
+    py: Python,
+    subs: &Bound<'_, PyAny>,
+) -> PyResult<Vec<Py<PyAny>>> {
+    let text_sub = py
+        .import("launch.substitutions")?
+        .getattr("TextSubstitution")?;
+    let norm = |x: &Bound<'_, PyAny>| -> PyResult<Py<PyAny>> {
+        if x.is_instance_of::<pyo3::types::PyString>() {
+            let kwargs = pyo3::types::PyDict::new(py);
+            kwargs.set_item("text", x)?;
+            Ok(text_sub.call((), Some(&kwargs))?.unbind())
+        } else {
+            Ok(x.clone().unbind())
+        }
+    };
+    if subs.is_instance_of::<pyo3::types::PyString>() || subs.hasattr("perform")? {
+        return Ok(vec![norm(subs)?]);
+    }
+    subs.try_iter()?.map(|x| norm(&x?)).collect()
+}
+
+/// `launch.utilities.perform_substitutions(context, subs)`: each element
+/// performed in the walk's context and concatenated. Goes through
+/// `pyobject_to_string`, so a mock `LaunchConfiguration` reads the
+/// configuration the walk holds, exactly as everywhere else.
+#[pyfunction]
+pub fn perform_substitutions(
+    py: Python,
+    _context: &Bound<'_, PyAny>,
+    subs: &Bound<'_, PyAny>,
+) -> PyResult<String> {
+    let mut out = String::new();
+    for sub in subs.try_iter()? {
+        out.push_str(&crate::api::utils::pyobject_to_string(py, &sub?.unbind())?);
+    }
+    Ok(out)
+}

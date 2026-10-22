@@ -1,0 +1,4 @@
+planner:
+  ros__parameters:
+    use_sim_time: false
+    frequency: 10.0

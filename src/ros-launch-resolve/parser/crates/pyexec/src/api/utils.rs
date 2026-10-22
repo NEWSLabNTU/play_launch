@@ -376,7 +376,16 @@ pub fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
     // which is when `launch` performs it.
     if obj_ref.hasattr("perform")? {
         let context = create_launch_context(py)?;
-        if let Ok(result) = obj_ref.call_method1("perform", (context,))
+        let performed = obj_ref.call_method1("perform", (context,));
+        // A launch file's OWN substitution (a `launch.Substitution` subclass,
+        // #0073) has no `$(...)` spelling to fall back on: falling through
+        // would put its repr where a path or value belongs. Its error is the
+        // error `launch` would report.
+        if is_user_substitution(py, obj_ref) {
+            let s = performed?.str()?.to_string();
+            return Ok(resolve_tokens(&s));
+        }
+        if let Ok(result) = performed
             && let Ok(s) = result.extract::<String>()
         {
             return Ok(resolve_tokens(&s));
@@ -393,6 +402,15 @@ pub fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
 
     // Fallback to Python repr
     Ok(obj_ref.str()?.to_string())
+}
+
+/// Whether `obj` derives from the mock's Python `launch.Substitution` base —
+/// a substitution the launch file (or a package it imports) defined itself.
+fn is_user_substitution(py: Python, obj: &Bound<'_, PyAny>) -> bool {
+    py.import("launch")
+        .and_then(|m| m.getattr("Substitution"))
+        .and_then(|base| obj.is_instance(&base))
+        .unwrap_or(false)
 }
 
 /// Try `perform(context)` on a Py<PyAny>, then fall back to string conversion.

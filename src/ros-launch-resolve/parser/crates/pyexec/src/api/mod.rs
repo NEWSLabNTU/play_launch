@@ -72,6 +72,45 @@ pub fn register_modules(py: Python) -> PyResult<()> {
     // Also add SomeSubstitutionsType as None (it's a type alias used for type hints)
     launch_mod.add("SomeSubstitutionsType", py.None())?;
 
+    // Base classes a launch file may SUBCLASS (#0073): `nav2_common.launch`'s
+    // `RewrittenYaml`, `ReplaceString` and `HasNodeParams` derive from
+    // `launch.Substitution` and annotate with `launch.LaunchContext` and
+    // `launch.Condition`, which Python evaluates when the class body runs.
+    // Pure Python so `super().__init__()` works (a #[pyclass] `#[new]` is
+    // `__new__`). A subclass is performed by `pyobject_to_string`, which
+    // hands it the walk's context, as `launch` does.
+    let base_locals = pyo3::types::PyDict::new(py);
+    py.run(
+        c"
+class Substitution:
+    def __init__(self, *args, **kwargs):
+        pass
+    def describe(self):
+        return repr(self)
+    def perform(self, context):
+        raise NotImplementedError(type(self).__name__ + '.perform')
+
+class Condition:
+    def __init__(self, *, predicate=None):
+        self._predicate = predicate
+    def evaluate(self, context):
+        if self._predicate is None:
+            raise NotImplementedError(type(self).__name__ + '.evaluate')
+        return bool(self._predicate(context))
+
+class Action:
+    def __init__(self, *, condition=None, **kwargs):
+        self.condition = condition
+    def describe(self):
+        return repr(self)
+",
+        None,
+        Some(&base_locals),
+    )?;
+    for name in ["Substitution", "Condition", "Action"] {
+        launch_mod.add(name, base_locals.get_item(name)?.unwrap())?;
+    }
+
     // Create launch.actions submodule
     let launch_actions = PyModule::new(py, "launch.actions")?;
     launch_actions.add_class::<actions::DeclareLaunchArgument>()?;
@@ -165,6 +204,8 @@ class LaunchContext:
     )?;
     let launch_context_class = locals.get_item("LaunchContext")?.unwrap();
     launch_context_mod.add("LaunchContext", &launch_context_class)?;
+    // `launch.LaunchContext` too: an annotation a subclass's `perform` uses.
+    launch_mod.add("LaunchContext", &launch_context_class)?;
 
     // Create launch.substitutions submodule
     let launch_subs = PyModule::new(py, "launch.substitutions")?;
@@ -231,8 +272,17 @@ class LaunchContext:
     launch_frontend_type_utils.add("is_iterable", py.None())?;
     add_submodule_both_names(&launch_frontend, &launch_frontend_type_utils)?;
 
-    // Create launch.utilities submodule (empty placeholder for imports)
+    // Create launch.utilities submodule: the two helpers a user-defined
+    // substitution calls from its constructor and its `perform` (#0073).
     let launch_utilities = PyModule::new(py, "launch.utilities")?;
+    launch_utilities.add_function(wrap_pyfunction!(
+        utilities::normalize_to_list_of_substitutions,
+        &launch_utilities
+    )?)?;
+    launch_utilities.add_function(wrap_pyfunction!(
+        utilities::perform_substitutions,
+        &launch_utilities
+    )?)?;
     // Create launch.utilities.type_utils submodule with common type aliases
     let launch_utilities_type_utils = PyModule::new(py, "launch.utilities.type_utils")?;
     // Add all type aliases as None - these are just for type hints at runtime

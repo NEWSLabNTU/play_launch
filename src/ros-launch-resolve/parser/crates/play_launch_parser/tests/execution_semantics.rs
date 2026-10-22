@@ -242,3 +242,45 @@ fn global_parameters_and_remaps_are_positional_lists() {
         assert_eq!(&remaps(&json, name), remapped, "{name}: remaps");
     }
 }
+
+/// A launch file's OWN `launch.Substitution` subclass is performed when the
+/// action that holds it executes, in the walk's context, as `launch` does
+/// (#0073). The fixture defines nav2_common-shaped `RewrittenYaml` and
+/// `HasNodeParams`: the first becomes a parameter file holding the rewritten
+/// value of a launch configuration, the second decides two conditions.
+///
+/// Before the fix the file failed to load with
+/// `AttributeError: module 'launch' has no attribute 'Substitution'`.
+#[test]
+fn a_substitution_the_launch_file_defines_is_performed() {
+    let _guard = python_test_guard();
+    let json = resolve("user_substitution");
+    assert_eq!(
+        fqns(&json),
+        ["/has_params", "/planner", "/unless_lacks"],
+        "HasNodeParams decides IfCondition and UnlessCondition"
+    );
+    let files = node(&json, "planner")["params_files"]
+        .as_array()
+        .unwrap_or_else(|| panic!("planner has no params_files: {}", node(&json, "planner")));
+    assert_eq!(files.len(), 1, "one rewritten file: {files:?}");
+    let text = files[0].as_str().unwrap();
+    // A file's CONTENT or its path, depending on how the record carries it.
+    let content = if text.contains("ros__parameters") {
+        text.to_string()
+    } else {
+        std::fs::read_to_string(text).unwrap_or_else(|e| panic!("{text}: {e}"))
+    };
+    let doc: serde_yaml_ng::Value = serde_yaml_ng::from_str(&content).unwrap();
+    let params = &doc["planner"]["ros__parameters"];
+    assert_eq!(
+        params["use_sim_time"],
+        serde_yaml_ng::Value::Bool(true),
+        "rewritten: {content}"
+    );
+    assert_eq!(
+        params["frequency"],
+        serde_yaml_ng::Value::from(10.0),
+        "kept: {content}"
+    );
+}
