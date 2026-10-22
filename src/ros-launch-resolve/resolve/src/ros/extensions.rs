@@ -26,15 +26,19 @@
 //! in `hazard` it is a parameter of the node that publishes the hazard's
 //! guard, the one place a hazard is bound to a node.
 
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
+use rlx::{
+    eval::{Inputs, Value},
+    typeck::{ItemRef, KeyKind, KeyTy, Need},
+};
 use ros_launch_manifest_check::{Diagnostic, Severity};
 use ros_launch_manifest_types::{
     Bound, BudgetSource, Derivation, ExtKey, ExtValue, SafeState, SourceKind,
 };
-use rlx::eval::{Inputs, Value};
-use rlx::typeck::{ItemRef, KeyKind, KeyTy, Need};
 
 use super::manifest_loader::{ManifestIndex, ResolvedHazard, RungRole};
 
@@ -173,7 +177,12 @@ fn exts_of(index: &ManifestIndex, scope_id: usize) -> &[LoadedExt] {
 /// The extensions among `exts` that declare `path` (`hazard.max_altitude`).
 fn declaring<'a>(exts: &'a [LoadedExt], path: &str) -> Vec<&'a LoadedExt> {
     exts.iter()
-        .filter(|e| e.checked().env.key(path).is_some_and(|k| k.kind == KeyKind::Key))
+        .filter(|e| {
+            e.checked()
+                .env
+                .key(path)
+                .is_some_and(|k| k.kind == KeyKind::Key)
+        })
         .collect()
 }
 
@@ -240,58 +249,67 @@ pub fn prepare(index: &mut ManifestIndex) {
 /// Every extension key the contracts write must be declared by exactly one
 /// used extension, and its value must be one that declaration accepts.
 fn validate_keys(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
-    let check = |exts: &[LoadedExt],
-                 ctx: &str,
-                 k: &ExtKey,
-                 at: String,
-                 diags: &mut Vec<Diagnostic>| {
-        let path = format!("{ctx}.{}", k.key);
-        let decl = declaring(exts, &path);
-        match decl.as_slice() {
-            [] => diags.push(diag(
-                "extension-key-unknown",
-                Severity::Error,
-                at,
-                format!(
-                    "`{}` is not a key of `{ctx}` in any extension this contract uses ({}) -- \
+    let check =
+        |exts: &[LoadedExt], ctx: &str, k: &ExtKey, at: String, diags: &mut Vec<Diagnostic>| {
+            let path = format!("{ctx}.{}", k.key);
+            let decl = declaring(exts, &path);
+            match decl.as_slice() {
+                [] => diags.push(diag(
+                    "extension-key-unknown",
+                    Severity::Error,
+                    at,
+                    format!(
+                        "`{}` is not a key of `{ctx}` in any extension this contract uses ({}) -- \
                      an unknown key would otherwise be dropped in silence",
-                    k.key,
-                    if exts.is_empty() {
-                        "none loaded".to_string()
-                    } else {
-                        exts.iter().map(LoadedExt::label).collect::<Vec<_>>().join(", ")
+                        k.key,
+                        if exts.is_empty() {
+                            "none loaded".to_string()
+                        } else {
+                            exts.iter()
+                                .map(LoadedExt::label)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    ),
+                )),
+                [one] => {
+                    let checked = one.checked();
+                    let ty = checked.env.key(&path).expect("declared").ty.clone();
+                    if let Err(e) = parse_static(&checked.env, &ty, &k.value) {
+                        diags.push(diag(
+                            "extension-value",
+                            Severity::Error,
+                            at,
+                            format!("`{}` ({}): {e}", k.key, one.label()),
+                        ));
                     }
-                ),
-            )),
-            [one] => {
-                let checked = one.checked();
-                let ty = checked.env.key(&path).expect("declared").ty.clone();
-                if let Err(e) = parse_static(&checked.env, &ty, &k.value) {
-                    diags.push(diag(
-                        "extension-value",
-                        Severity::Error,
-                        at,
-                        format!("`{}` ({}): {e}", k.key, one.label()),
-                    ));
                 }
-            }
-            many => diags.push(diag(
-                "extension-key-ambiguous",
-                Severity::Error,
-                at,
-                format!(
-                    "`{}` is declared by {} -- the qualified spelling that tells them apart \
+                many => diags.push(diag(
+                    "extension-key-ambiguous",
+                    Severity::Error,
+                    at,
+                    format!(
+                        "`{}` is declared by {} -- the qualified spelling that tells them apart \
                      is not implemented yet",
-                    k.key,
-                    many.iter().map(|e| e.label()).collect::<Vec<_>>().join(" and ")
-                ),
-            )),
-        }
-    };
+                        k.key,
+                        many.iter()
+                            .map(|e| e.label())
+                            .collect::<Vec<_>>()
+                            .join(" and ")
+                    ),
+                )),
+            }
+        };
     for h in &index.hazards {
         let exts = exts_of(index, h.scope_id);
         for k in &h.decl.ext {
-            check(exts, "hazard", k, format!("hazards.{}.{}", h.name, k.key), diags);
+            check(
+                exts,
+                "hazard",
+                k,
+                format!("hazards.{}.{}", h.name, k.key),
+                diags,
+            );
         }
     }
     let mut scopes: Vec<_> = index.manifests.values().collect();
@@ -320,9 +338,13 @@ fn validate_keys(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
 fn parse_static(env: &rlx::typeck::Env, ty: &KeyTy, v: &ExtValue) -> Result<(), String> {
     match (ty, v) {
         (KeyTy::Table { .. }, ExtValue::Map(pairs)) => {
-            let refs: Vec<(&str, &str)> =
-                pairs.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
-            env.parse_table(&refs, ty).map(|_| ()).map_err(|d| d.message)
+            let refs: Vec<(&str, &str)> = pairs
+                .iter()
+                .map(|(a, b)| (a.as_str(), b.as_str()))
+                .collect();
+            env.parse_table(&refs, ty)
+                .map(|_| ())
+                .map_err(|d| d.message)
         }
         (_, ExtValue::Map(_)) => Err("a map was written, but this key is not a table".into()),
         (_, ExtValue::Scalar(text)) => env.parse_value(text, ty).map(|_| ()).map_err(|d| d.message),
@@ -378,7 +400,10 @@ fn param_number(index: &ManifestIndex, host: &ParamHost, name: &str) -> Result<f
         many => Err(format!(
             "parameter `{name}` is set on several guard publishers ({}); a hazard's \
              parameter must name one",
-            many.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")
+            many.iter()
+                .map(|(n, _)| n.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         )),
     }
 }
@@ -398,10 +423,15 @@ fn gather(
     let mut inputs = Inputs::new();
     let mut written: Vec<(String, String)> = Vec::new();
     for need in needs {
-        let (ctx, key) = need.path.split_once('.').unwrap_or(("", need.path.as_str()));
+        let (ctx, key) = need
+            .path
+            .split_once('.')
+            .unwrap_or(("", need.path.as_str()));
         let core = |text: String| -> Result<Value, String> {
-            let ContractValue::Quantity(q) =
-                checked.env.parse_value(&text, &need.ty).map_err(|d| d.message)?
+            let ContractValue::Quantity(q) = checked
+                .env
+                .parse_value(&text, &need.ty)
+                .map_err(|d| d.message)?
             else {
                 unreachable!("a core input is a quantity")
             };
@@ -417,7 +447,9 @@ fn gather(
             continue;
         }
         if need.path == "settle.response" && need.kind != KeyKind::Key {
-            if let Some(ms) = settle.and_then(|(_, ss)| ss.settle_response.as_ref()).and_then(|b| b.ms())
+            if let Some(ms) = settle
+                .and_then(|(_, ss)| ss.settle_response.as_ref())
+                .and_then(|b| b.ms())
             {
                 let text = format!("{ms}ms");
                 inputs.insert(need.path.clone(), core(text.clone())?);
@@ -435,9 +467,14 @@ fn gather(
         };
         let value = match (&need.ty, &k.value) {
             (KeyTy::Table { .. }, ExtValue::Map(pairs)) => {
-                let refs: Vec<(&str, &str)> =
-                    pairs.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
-                let rows = checked.env.parse_table(&refs, &need.ty).map_err(|d| d.message)?;
+                let refs: Vec<(&str, &str)> = pairs
+                    .iter()
+                    .map(|(a, b)| (a.as_str(), b.as_str()))
+                    .collect();
+                let rows = checked
+                    .env
+                    .parse_table(&refs, &need.ty)
+                    .map_err(|d| d.message)?;
                 written.push((need.path.clone(), format!("{} entries", rows.len())));
                 Value::table(&rows)
             }
@@ -447,8 +484,10 @@ fn gather(
                 rlx::eval::param_value(raw, &need.ty).expect("a param key")
             }
             (_, ExtValue::Scalar(text)) => {
-                let ContractValue::Quantity(q) =
-                    checked.env.parse_value(text, &need.ty).map_err(|d| d.message)?
+                let ContractValue::Quantity(q) = checked
+                    .env
+                    .parse_value(text, &need.ty)
+                    .map_err(|d| d.message)?
                 else {
                     return Err(format!("`{key}` names a parameter where a value belongs"));
                 };
@@ -479,7 +518,11 @@ fn trace_lines(t: &rlx::eval::Trace) -> Vec<String> {
         .collect()
 }
 
-fn derivation(ext: &LoadedExt, written: Vec<(String, String)>, trace: &rlx::eval::Trace) -> Derivation {
+fn derivation(
+    ext: &LoadedExt,
+    written: Vec<(String, String)>,
+    trace: &rlx::eval::Trace,
+) -> Derivation {
     Derivation {
         by: ext.name.clone(),
         version: ext.version.clone(),
@@ -522,8 +565,8 @@ fn derive_hazard_bounds(index: &mut ManifestIndex, diags: &mut Vec<Diagnostic>) 
                     ));
                     continue;
                 }
-                let result = gather(index, &checked, &needs, h, None, None).and_then(
-                    |(inputs, written)| {
+                let result =
+                    gather(index, &checked, &needs, h, None, None).and_then(|(inputs, written)| {
                         rlx::eval::eval_derive(&checked, target, &inputs)
                             .map(|ev| (ev, written))
                             .map_err(|d| {
@@ -531,8 +574,7 @@ fn derive_hazard_bounds(index: &mut ManifestIndex, diags: &mut Vec<Diagnostic>) 
                                     .trim_end()
                                     .to_string()
                             })
-                    },
-                );
+                    });
                 match result {
                     Ok((ev, written)) => {
                         let mut b = ros_launch_manifest_types::spelled(
@@ -565,14 +607,22 @@ fn derive_hazard_bounds(index: &mut ManifestIndex, diags: &mut Vec<Diagnostic>) 
                         "extension-eval",
                         Severity::Error,
                         at,
-                        format!("hazard '{}': {} cannot derive `{key}`: {e}", h.name, ext.label()),
+                        format!(
+                            "hazard '{}': {} cannot derive `{key}`: {e}",
+                            h.name,
+                            ext.label()
+                        ),
                     )),
                 }
             }
         }
     }
     for (scope, name, key, b) in updates {
-        for h in index.hazards.iter_mut().filter(|h| h.scope_id == scope && h.name == name) {
+        for h in index
+            .hazards
+            .iter_mut()
+            .filter(|h| h.scope_id == scope && h.name == name)
+        {
             match key {
                 "detection" => h.decl.detection = Some(b.clone()),
                 _ => h.decl.ftti = Some(b.clone()),
@@ -606,7 +656,10 @@ pub(crate) fn derived_settle(
     }
     for ext in exts_of(index, scope_id) {
         let checked = ext.checked();
-        let Some(needs) = checked.env.reads(&ItemRef::Derive("settle.duration".to_string())) else {
+        let Some(needs) = checked
+            .env
+            .reads(&ItemRef::Derive("settle.duration".to_string()))
+        else {
             continue;
         };
         if !writes_any(&needs, h, Some(ss)) {
@@ -660,7 +713,11 @@ pub(crate) fn derived_settle(
                     "extension-eval",
                     Severity::Error,
                     at.to_string(),
-                    format!("hazard '{}': {} cannot derive the settle: {e}", h.name, ext.label()),
+                    format!(
+                        "hazard '{}': {} cannot derive the settle: {e}",
+                        h.name,
+                        ext.label()
+                    ),
                 ));
                 Some(super::value_rules::Settle {
                     ms: None,
@@ -679,7 +736,10 @@ pub(crate) fn resolves_deadline(index: &ManifestIndex, h: &ResolvedHazard) -> Re
     let Some(c) = &h.decl.deadline_by else {
         return Ok(());
     };
-    let Some(ext) = exts_of(index, h.scope_id).iter().find(|e| e.name == c.extension) else {
+    let Some(ext) = exts_of(index, h.scope_id)
+        .iter()
+        .find(|e| e.name == c.extension)
+    else {
         return Err(format!(
             "`deadline_by: {c}` names `{}`, which this contract does not `use:`",
             c.extension
@@ -688,7 +748,11 @@ pub(crate) fn resolves_deadline(index: &ManifestIndex, h: &ResolvedHazard) -> Re
     if ext.items().contains(&ItemRef::Check(c.check.clone())) {
         Ok(())
     } else {
-        Err(format!("`deadline_by: {c}`: {} declares no check `{}`", ext.label(), c.check))
+        Err(format!(
+            "`deadline_by: {c}`: {} declares no check `{}`",
+            ext.label(),
+            c.check
+        ))
     }
 }
 
@@ -729,7 +793,11 @@ pub fn run_checks(index: &mut ManifestIndex) {
                 if rt.is_none() && needs.iter().any(|n| n.path == "reaction_total") {
                     diags.push(diag(
                         "extension-eval",
-                        if named { Severity::Error } else { Severity::Warning },
+                        if named {
+                            Severity::Error
+                        } else {
+                            Severity::Warning
+                        },
                         at,
                         format!(
                             "hazard '{}': {}/{name} reads reaction_total, and the hazard's \
@@ -746,9 +814,9 @@ pub fn run_checks(index: &mut ManifestIndex) {
                         .to_string()
                 };
                 if is_check {
-                    match gathered
-                        .and_then(|(i, _)| rlx::eval::eval_check(&checked, &name, &i).map_err(render))
-                    {
+                    match gathered.and_then(|(i, _)| {
+                        rlx::eval::eval_check(&checked, &name, &i).map_err(render)
+                    }) {
                         Ok(out) => {
                             let verdict = if out.pass { "PASS" } else { "FAIL" };
                             let severity = match (out.pass, named) {
@@ -765,22 +833,33 @@ pub fn run_checks(index: &mut ManifestIndex) {
                                     h.name,
                                     ext.name,
                                     ext.label(),
-                                    if named { ", the hazard's deadline_by" } else { "" },
+                                    if named {
+                                        ", the hazard's deadline_by"
+                                    } else {
+                                        ""
+                                    },
                                     out.trace.render().trim_end()
                                 ),
                             ));
                         }
                         Err(e) => diags.push(diag(
                             "extension-eval",
-                            if named { Severity::Error } else { Severity::Warning },
+                            if named {
+                                Severity::Error
+                            } else {
+                                Severity::Warning
+                            },
                             at,
-                            format!("hazard '{}': {}/{name} cannot be evaluated: {e}", h.name, ext.name),
+                            format!(
+                                "hazard '{}': {}/{name} cannot be evaluated: {e}",
+                                h.name, ext.name
+                            ),
                         )),
                     }
                 } else {
-                    match gathered
-                        .and_then(|(i, _)| rlx::eval::eval_report(&checked, &name, &i).map_err(render))
-                    {
+                    match gathered.and_then(|(i, _)| {
+                        rlx::eval::eval_report(&checked, &name, &i).map_err(render)
+                    }) {
                         Ok(ev) => diags.push(diag(
                             "extension-report",
                             Severity::Info,
@@ -797,7 +876,10 @@ pub fn run_checks(index: &mut ManifestIndex) {
                             "extension-eval",
                             Severity::Warning,
                             at,
-                            format!("hazard '{}': report {}/{name} cannot be evaluated: {e}", h.name, ext.name),
+                            format!(
+                                "hazard '{}': report {}/{name} cannot be evaluated: {e}",
+                                h.name, ext.name
+                            ),
                         )),
                     }
                 }

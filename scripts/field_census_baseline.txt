@@ -88,19 +88,13 @@ observe_ms         # SettleSuperviseContract (model, rlm v0.1.62). The
                    # arms a standstill deadline from the model yet (the
                    # safety island's route 2 is configured by hand).
 
-req                # UseDecl (rlm v0.1.66, phase 91 E4): the version
-                   # requirement of one `use:` entry. play_launch checks no
-                   # extension yet (phase 91 E4 is rlm-side so far), so the
-                   # requirement is carried and not read. Drop this line when
-                   # the checker matches loaded extensions against it.
-
-major              # VersionReq (rlm v0.1.66). The requirement's major
-                   # component, beside `req` above; same consumer, same state.
-
-settle_ext         # SafeState (rlm v0.1.66): a settle's extension keys,
-                   # kept as written for the extension that derives the
-                   # settle. No extension is evaluated by the checker yet
-                   # (phase 91 E4). Drop this line when one is.
+major              # VersionReq (rlm v0.1.66, phase 91 E4): a component of
+                   # a `use:` requirement. It is consumed, but only inside
+                   # `VersionReq::matches` in rlm's types.rs, which the census
+                   # files as a struct definition; `extensions.rs` calls
+                   # `matches` on the whole `req`. Not a debt: a census that
+                   # classifies by file cannot see a read inside a method of
+                   # the type that holds the field.
 
 min_interarrival   # EndpointProps / SrvEndpointProps (rlm v0.1.68, nano-ros
                    # RFC-0108 D1, phase-509 P4): the least time between two

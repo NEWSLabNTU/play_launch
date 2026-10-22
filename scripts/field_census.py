@@ -135,6 +135,9 @@ CONSUMING_PATTERNS = [
     # (`period-range`).
     (r"resolve/src/ros/supervision\.rs$", "supervised budgets (phase 93)"),
     (r"resolve/src/ros/period_range\.rs$", "timer period range (phase 93)"),
+    # phase 91 E4: `use:` is resolved against the installed extensions; a
+    # requirement no installed version matches is refused.
+    (r"resolve/src/ros/extensions\.rs$", "extension resolution (phase 91)"),
     (r"sched/src/", "scheduling"),
     (r"^rlm/derive/src/", "shared mapper derivation (rlm derive)"),
     (r"check/src/graph\.rs$", "dataflow graph"),
