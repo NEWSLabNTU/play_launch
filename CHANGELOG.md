@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.19.0 - 2026-10-23
 
 - **Changed (`check`, phase 91 E8):** the vehicle keys are an extension.
   `hazards.<h>.entry_speed` and `settle: { decel, jerk }` are keys of

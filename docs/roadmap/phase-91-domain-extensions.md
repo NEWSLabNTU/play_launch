@@ -1,10 +1,10 @@
 # Phase 91 - domain extensions: rlx, profiles and the vehicle keys moved out
 
-Status: **in progress** (2026-10-22): E0 done (no-go: rlx owns its
+Status: **complete** (2026-10-23): E0 done (no-go: rlx owns its
 expression core); E1 and E2 done (rlm v0.1.65); E3 and E4 done (rlm v0.1.66);
-E5 done (rlm v0.1.70); E6 and E7 done (rlm v0.1.71); E8-E10 done and
-E11's documentation done (rlm v0.2.0); the play_launch release, the
-nano-ros pin PR and the consumers' migration remain. Stage 2 of 2; phase 90 (a tidy grammar) is complete. Design: rlm `docs/design/extension-system.md` (with
+E5 done (rlm v0.1.70); E6 and E7 done (rlm v0.1.71); E8-E11 done (rlm
+v0.2.0, play_launch 0.19.0); the consumers' PRs are open (nano-ros #2502,
+the safety island #11). Stage 2 of 2; phase 90 (a tidy grammar) is complete. Design: rlm `docs/design/extension-system.md` (with
 `extension-language-exploration.md` and `extension-examples.md`). Work lands
 in rlm (format, language, profiles), play_launch (loader, evaluator, Z3,
 explain, packaging, migration) and the consumers (nano-ros reads the
@@ -423,17 +423,23 @@ half (the image from each) is the pin PR's test.
   guide; rlm minor release, play_launch release, nano-ros pin PR, consumers
   migrated.
 
-**Partly done (2026-10-23).** rlm v0.2.0 is the minor release
+**Done (2026-10-23).** rlm v0.2.0 is the minor release
 (`GRAMMAR_VERSION` 0.2.0, workspace 0.2.0; every reference extension's
 `requires rlm >= 0.2.0` now holds and is enforced). The format reference is
 the core grammar and points at `docs/extension-reference.md` (generated from
 `types/extensions/`, a drift test) and `docs/extension-guide.md` (the
 author's guide; a test loads and proves its examples). play_launch's
 `check-in-ci.md` gained the lock, the deprecations and `migrate --check`.
-Open: the play_launch release (publishes to PyPI), the nano-ros pin PR (rlm
-v0.2.0 and the play_launch submodule together, with the E10 image test),
-and the safety island's contracts (migrated on a branch, verdicts and
-totals unchanged; they need a play_launch on v0.2.0 before they can merge).
+play_launch 0.19.0 is the release. NEWSLabNTU/nano-ros#2502 moves rlm and
+the play_launch submodule together and adds the E10 image test: the
+derived and the hand-written models give the same monitor, age and hazard
+rows, FTTI budgets, executor sizing and priority plan. It found that
+nano-ros reads a hazard's settle only from the reaction path itself, while
+a resolved model keeps it on the node path at the sink, so a hazard row's
+settle is 0 for both (recorded there, not fixed). nano-ros's 28 contracts
+need no rewrite. NEWSLabNTU/simple-autoware-safety-island#11 migrates the
+island's six contracts (same verdicts and totals); it merges once the
+island runs a play_launch on rlm v0.2.0.
 
 ## Order
 
