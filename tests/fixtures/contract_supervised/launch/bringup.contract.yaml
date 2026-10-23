@@ -14,6 +14,8 @@
 # both budgets lower to route monitors with their reactions; stop_now is
 # measured and nothing supervises it (`measured-unsupervised`, warning).
 version: 1
+use:
+  vehicle.braking: "^1"
 
 supervision: { tick: 1ms, switch: 0.05ms }
 
@@ -34,14 +36,14 @@ hazards:
     guards: [/availability]
     on: reported
     when: { field: autonomous, equals: false }
-    entry_speed: 8.33
+    entry_speed: 8.33 m/s
     ftti: { duration: 30s, source: requirement }
     enters: engaged
   hpc_loss:
     severity: ASIL_D
     guards: [/availability]
     on: omission
-    entry_speed: 3.0
+    entry_speed: 3.0 m/s
     ftti: { duration: 3s, source: requirement }
     enters: engaged
 

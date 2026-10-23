@@ -1738,7 +1738,7 @@ fn takeover_ladder_fits_and_explains_itself() {
     for needle in [
         // The emergency profile at the island's assumed 3.0 m/s: the island
         // contract's own hand arithmetic, now the checker's.
-        // Phase 91 E8: the bundled vehicle.braking's, loaded implicitly.
+        // Phase 91 E8: the bundled vehicle.braking's, named in `use:`.
         "hazard 'hpc_loss', rung 'estop': settle = 2033.33ms derived by vehicle.braking 1.0.0",
         "if v0 > v_r: 3 m/s > 2.0833 m/s, true: take `then`",
         // F1: charged, the comfortable rung would have failed a 3 s interval.
@@ -2212,14 +2212,13 @@ fn a_measured_budget_its_observations_do_not_give_is_budget_rule() {
     let (code, out) = check_takeover("contract_budget_rule", &[]);
     assert_eq!(code, 1, "{out}");
     for needle in [
-        "error[budget-rule]: bringup.contract.yaml:123: `nodes.handler.paths.call_mrm.max_latency: \
+        "error[budget-rule]: bringup.contract.yaml:125: `nodes.handler.paths.call_mrm.max_latency: \
          110ms` is measured, but its observations give 112ms (tick 100 + 5 x 1.2 (n=600) = 106.00 \
          -> 106, work 5 x 1.2 (n=12) = 6.00 -> 6;",
-        "error[budget-rule]: bringup.contract.yaml:156: `nodes.planner.paths.follow.max_latency: \
+        "error[budget-rule]: bringup.contract.yaml:158: `nodes.planner.paths.follow.max_latency: \
          300ms` is measured, but its observations give 288ms (240 x 1.2 (n=5) = 288.00 -> 288;",
-        // Phase 93: the two measured budgets nothing supervises warn; phase
-        // 91 E8: and the implicit vehicle.braking.
-        "(2 errors, 5 warnings)",
+        // Phase 93: the two measured budgets nothing supervises warn.
+        "(2 errors, 4 warnings)",
         "warning[measured-unsupervised]",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
@@ -2345,7 +2344,7 @@ fn enters_naming_no_mode_is_an_error() {
     let out = check_fixture("contract_enters_unknown");
     assert!(
         out.contains(
-            "error[enters-unknown-mode]: bringup.contract.yaml:38: hazard 'drive_blind' enters \
+            "error[enters-unknown-mode]: bringup.contract.yaml:40: hazard 'drive_blind' enters \
              'safety.stop', which is not a mode in its scope. A hazard that reacts by one scope \
              path writes `reaction: safety.stop`"
         ),
@@ -2522,7 +2521,7 @@ fn g3b_a_topic_transport_warns_and_migrates_to_the_same_verdict() {
         out.contains(
             "topic-max-transport-subscribers: `max_transport: 3ms` -> (nothing) \
              (topics./safety/obstacles.max_transport)"
-        ) && out.contains("1 rewritten (3 edit(s))"),
+        ) && out.contains("1 rewritten (2 edit(s))"),
         "{out}"
     );
     let migrated = std::fs::read_to_string(&contract).unwrap();
@@ -2692,7 +2691,7 @@ fn e1_two_derivations_and_no_requirement_are_errors() {
     for (dir, needle) in [
         (
             "contract_derive_conflict",
-            "error[derive-conflict]: bringup.contract.yaml:71: the settle is derived twice: by \
+            "error[derive-conflict]: bringup.contract.yaml:74: the settle is derived twice: by \
              vehicle.braking 1.0.0 and as a written duration derived by vehicle.braking 1.0.0 \
              -- keep one",
         ),
@@ -3119,8 +3118,7 @@ fn migrate_rewrites_the_deprecated_spellings_in_place() {
         "exit-on-holds: `on` -> `holds` (modes.takeover.exit.on)",
         "-    reaction: engaged",
         "+    enters: engaged",
-        // Phase 91 E8: plus `use-implicit` and two `entry-speed-unit`.
-        "1 contract(s) scanned, 1 to rewrite (6 edit(s))",
+        "1 contract(s) scanned, 1 to rewrite (3 edit(s))",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
@@ -3128,25 +3126,13 @@ fn migrate_rewrites_the_deprecated_spellings_in_place() {
     assert_eq!(code, 0);
     let (code, out) = run(&["--check"]);
     assert_eq!(code, 0, "{out}");
-    // The migrated text is the current twin's, below the header comment,
-    // once the twin is migrated too (phase 91 E8: it still loads
-    // `vehicle.braking` implicitly).
+    // The migrated text is the current twin's, below the header comment.
     let migrated = std::fs::read_to_string(&c).unwrap();
-    let twin = dir.path().join("twin.contract.yaml");
-    std::fs::copy(
+    let twin = std::fs::read_to_string(
         fixtures::repo_root()
             .join("tests/fixtures/contract_takeover_jitter/launch/bringup.contract.yaml"),
-        &twin,
     )
     .unwrap();
-    let out = play_launch_cmd()
-        .arg("migrate")
-        .arg("--write")
-        .arg(&twin)
-        .output()
-        .expect("play_launch migrate runs");
-    assert!(out.status.success());
-    let twin = std::fs::read_to_string(&twin).unwrap();
     assert!(migrated.ends_with(&twin), "{migrated}");
 }
 
@@ -3204,7 +3190,7 @@ fn supervised_budgets_print_their_overrun_case() {
         "warning[measured-unsupervised]",
         "`nodes.planner.paths.stop_now.max_latency: 5.00ms` is measured and nothing supervises it",
         // The executor supervision rests on callbacks with no analysed bound.
-        "warning[supervised-executor-long-callback]: bringup.contract.yaml:154: \
+        "warning[supervised-executor-long-callback]: bringup.contract.yaml:156: \
          `nodes.planner.paths.follow.max_latency` is supervised with `mechanism: executor`",
         "its own callback, /planner/follow, has no analysed bound (supervised only) and \
          can itself overrun: the late output is published before the overdue check runs",
@@ -3274,7 +3260,7 @@ fn an_executor_supervision_over_a_long_callback_follows_the_policy() {
     assert_eq!(code, 1, "{out}");
     assert!(
         out.contains(
-            "error[supervised-executor-long-callback]: bringup.contract.yaml:155: \
+            "error[supervised-executor-long-callback]: bringup.contract.yaml:157: \
              `nodes.planner.paths.follow.max_latency` is supervised with `mechanism: executor`"
         ),
         "{out}"
@@ -3328,7 +3314,7 @@ fn a_supervised_overrun_over_the_interval_is_refused() {
     assert_eq!(code, 1, "{out}");
     assert!(
         out.contains(
-            "error[supervised-fit]: bringup.contract.yaml:101: hazard 'hpc_loss', rung 'estop': \
+            "error[supervised-fit]: bringup.contract.yaml:103: hazard 'hpc_loss', rung 'estop': \
              if `nodes.handler.paths.call_mrm.max_latency` overruns, before it 500.00ms + budget \
              110.00ms + detection 1.05ms (tick 1.00ms + switch 0.05ms (timer)) + reaction scope \
              path 'sys.comfortable' 410.00ms + settle 4666.67ms = 5687.72ms exceeds the \
@@ -3349,7 +3335,7 @@ fn a_supervised_budget_with_no_monitor_is_refused() {
     assert_eq!(code, 1, "{out}");
     assert!(
         out.contains(
-            "error[supervised-unlowered]: bringup.contract.yaml:74: \
+            "error[supervised-unlowered]: bringup.contract.yaml:76: \
              `nodes.gate.paths.report.max_latency` is supervised, but no runtime monitor checks \
              it: /gate/report is not input-triggered"
         ),

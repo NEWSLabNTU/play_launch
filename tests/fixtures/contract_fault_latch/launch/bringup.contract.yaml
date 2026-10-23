@@ -23,6 +23,8 @@
 # `pub:` list only, so `stop_request` -- a `cli:` endpoint, wired by
 # `services:` -- is reported as unwired.
 version: 1
+use:
+  iso26262: "^1"
 
 hazards:
   drive_blind:

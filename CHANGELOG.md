@@ -6,6 +6,17 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Changed (`check`, phase 91 E8), breaking:** a contract that writes
+  `vehicle.braking`'s keys (`entry_speed`, `settle: { decel, jerk }`)
+  without `use: { vehicle.braking: "^1" }`, or hazard severities with no
+  profile and no `severity_levels:`, is refused:
+  `error[deprecated-implicit-extension]` (0.19 warned). The extension is
+  still loaded, so the rest of the check runs and reports as before.
+  `play_launch migrate <dir> --write` adds the `use:` lines and gives a
+  plain-number `entry_speed` its unit. The test fixtures are migrated.
+
 ## 0.19.0 - 2026-10-23
 
 - **Changed (`check`, phase 91 E8):** the vehicle keys are an extension.

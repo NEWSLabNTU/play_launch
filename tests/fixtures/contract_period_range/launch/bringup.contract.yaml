@@ -13,6 +13,8 @@
 #   FTTI allows 354; its own promise, `min_rate_hz: 15` on brake_cmd, binds
 #   first at 66.67. Work 10 (its own measured max_latency).
 version: 1
+use:
+  iso26262: "^1"
 
 hazards:
   hpc_lost:

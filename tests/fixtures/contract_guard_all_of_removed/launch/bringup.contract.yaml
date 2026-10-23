@@ -3,6 +3,8 @@
 # guarded by name. The contract is refused (exit 3) with a message naming
 # that form, and `play_launch migrate` writes it (`guard-all-of-function`).
 version: 1
+use:
+  iso26262: "^1"
 
 nodes:
   localizer:

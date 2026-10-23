@@ -38,11 +38,11 @@
 //! checker (rlm `types::extension::BUNDLED`) and is a candidate for a `use:`
 //! entry after any file of the same name and version. Its keys
 //! (`entry_speed`, `settle: { decel, jerk }`) were core grammar until rlm
-//! v0.1.71, so for one minor release a contract that writes them without
-//! `use:` loads it implicitly, with `deprecated-implicit-extension` (a
-//! plain-number `entry_speed` read as m/s, as the core key was); a hazard
-//! severity on the implicit ISO 26262 scale gets the same warning. `migrate`
-//! adds the `use:` lines.
+//! v0.1.71. play_launch 0.19 loaded it implicitly for a contract that wrote
+//! them without `use:`, with a warning; since 0.20 that is an error,
+//! `deprecated-implicit-extension`, and so is a hazard severity on the
+//! implicit ISO 26262 scale. The extension is still loaded, so the rest of
+//! the check runs and reports; `migrate` adds the `use:` lines.
 //!
 //! A `param` key names a node parameter. In `settle` it is a parameter of
 //! the node whose path states the safe state (as a braking profile's are);
@@ -688,13 +688,14 @@ pub fn prepare(index: &mut ManifestIndex) {
     index.merge_diagnostics.extend(diags);
 }
 
-/// Phase 91 E8, for one minor release: a scope that writes the legacy
-/// vehicle keys (`entry_speed`, `settle: { decel, jerk }`) with no used
-/// extension declaring them loads the bundled `vehicle.braking`, and a
-/// plain-number `entry_speed` is read as m/s, the core key's unit; a scope
+/// Phase 91 E8: a scope that writes the legacy vehicle keys (`entry_speed`,
+/// `settle: { decel, jerk }`) with no used extension declaring them, or
 /// whose hazards state a severity with no profile and no
-/// `severity_levels:` reads them on the implicit ISO 26262 scale. Each is
-/// `deprecated-implicit-extension`, naming the `use:` line `migrate` adds.
+/// `severity_levels:`, is refused with `deprecated-implicit-extension` (an
+/// error since play_launch 0.20; 0.19 warned), naming the `use:` line
+/// `migrate` adds. The bundled `vehicle.braking` is still loaded, a
+/// plain-number `entry_speed` read as m/s, and the severities still read on
+/// the ISO 26262 scale, so the rest of the check runs and reports.
 fn implicit_loads(
     index: &mut ManifestIndex,
     scope: usize,
@@ -754,12 +755,13 @@ fn implicit_loads(
     if implicit_scale {
         diags.push(diag(
             RULE,
-            Severity::Warning,
+            Severity::Error,
             "use".to_string(),
             format!(
-                "{file}: hazard severities ({}) are read on the implicit ISO 26262 scale, which \
-                 is now the bundled profile `iso26262`; the next minor release requires it to be \
-                 named -- add `use: {{ iso26262: \"^1\" }}` (`play_launch migrate` does)",
+                "{file}: hazard severities ({}) need a scale, and the contract names none: the \
+                 implicit ISO 26262 scale is the bundled profile `iso26262` and must be named \
+                 -- add `use: {{ iso26262: \"^1\" }}` (`play_launch migrate --write` does), or \
+                 declare `severity_levels:`",
                 severities.join(", ")
             ),
         ));
@@ -775,13 +777,12 @@ fn implicit_loads(
     ext.implicit = true;
     diags.push(diag(
         RULE,
-        Severity::Warning,
+        Severity::Error,
         "use".to_string(),
         format!(
-            "{file}: {} {} the key{} of the bundled extension {}, loaded implicitly because the \
-             contract does not `use:` it; the next minor release requires the `use:` line -- add \
-             `use: {{ {ext_name}: \"^1\" }}` (`play_launch migrate` does, and gives a plain-number \
-             `entry_speed` its unit, m/s)",
+            "{file}: {} {} the key{} of the bundled extension {}, which the contract does not \
+             `use:` -- add `use: {{ {ext_name}: \"^1\" }}` (`play_launch migrate --write` does, \
+             and gives a plain-number `entry_speed` its unit, m/s)",
             written.join(", "),
             if written.len() == 1 { "is" } else { "are" },
             if written.len() == 1 { "" } else { "s" },

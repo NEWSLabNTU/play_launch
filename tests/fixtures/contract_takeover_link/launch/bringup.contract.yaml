@@ -16,6 +16,8 @@
 # control_mode's 143 ms is on no hazard's guard edge (the driver's answer is
 # an exit, not a guard), so it stays `declared-not-charged`.
 version: 1
+use:
+  vehicle.braking: "^1"
 
 severity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 
@@ -33,7 +35,7 @@ hazards:
     severity: ASIL_D
     guards: [/availability]
     on: omission
-    entry_speed: 8.33
+    entry_speed: 8.33 m/s
     ftti: 10s
     enters: engaged
   odd_exit:
@@ -41,7 +43,7 @@ hazards:
     guards: [/availability]
     on: reported
     when: { field: autonomous, equals: false }
-    entry_speed: 8.33
+    entry_speed: 8.33 m/s
     ftti: 30s
     enters: engaged
 

@@ -1,6 +1,8 @@
 # Phase 90 G4 -- a hazard enters a mode or reacts by one scope path, never
 # both: the contract is refused (error[manifest-parse], exit 3).
 version: 1
+use:
+  iso26262: "^1"
 
 # Phase 75 — a function is a named guard group; a mode is the functions it
 # requires plus the ladder to fall to. The hazard enters a MODE (`enters:`),

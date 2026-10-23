@@ -3,6 +3,8 @@
 # is detection 500 + call_mrm 110 + tick 1 + switch 0.05 + the comfortable
 # route + its settle, seconds over 3 s: `supervised-fit` refuses it.
 version: 1
+use:
+  vehicle.braking: "^1"
 
 supervision: { tick: 1ms, switch: 0.05ms }
 
@@ -23,14 +25,14 @@ hazards:
     guards: [/availability]
     on: reported
     when: { field: autonomous, equals: false }
-    entry_speed: 8.33
+    entry_speed: 8.33 m/s
     ftti: { duration: 30s, source: requirement }
     enters: engaged
   hpc_loss:
     severity: ASIL_D
     guards: [/availability]
     on: omission
-    entry_speed: 3.0
+    entry_speed: 3.0 m/s
     ftti: { duration: 3s, source: requirement }
     enters: engaged
 

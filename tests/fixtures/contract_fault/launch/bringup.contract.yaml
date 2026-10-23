@@ -10,6 +10,8 @@
 # The reaction's sink (/safety/brake_cmd) is deliberately NOT guarded, so
 # `reaction-unguarded` warns: who watches the watcher.
 version: 1
+use:
+  iso26262: "^1"
 
 hazards:
   drive_blind:

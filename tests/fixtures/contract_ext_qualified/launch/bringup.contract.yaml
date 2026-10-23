@@ -9,7 +9,7 @@
 # rlm_ext_unregistered ships machine.stopping 0.2.0 and is not registered,
 # so it is never searched: 0.1.0 resolves.
 version: 1
-use: { machine.iso13855: "^0.3", machine.stopping: ">=0.1.0" }
+use: { machine.iso13855: "^0.3", machine.stopping: ">=0.1.0", iso26262: "^1" }
 
 hazards:
   drive_blind:

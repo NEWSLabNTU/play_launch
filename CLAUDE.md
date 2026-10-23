@@ -700,17 +700,20 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   `settle: { decel, jerk }` are keys of `vehicle.braking`, bundled with the
   checker (rlm `types::extension::BUNDLED`); the braking arithmetic in
   `value_rules.rs` is gone and `extensions::derived_settle` carries the
-  settle rules for any extension. Without `use:` the extension loads
-  implicitly (`implicit_loads`: `deprecated-implicit-extension`, a plain
-  number read as m/s), and so does the ISO 26262 scale for bare
-  severities; `migrate` adds the lines. The model carries every derived
+  settle rules for any extension. Without `use:` the extension still
+  loads implicitly (`implicit_loads`, a plain number read as m/s), and so
+  does the ISO 26262 scale for bare severities, but since 0.20 that is
+  `error[deprecated-implicit-extension]` (0.19 warned); `migrate` adds the
+  lines, and every fixture is migrated. The model carries every derived
   bound as a number with a `DerivedSource` (`settle_ms` is the largest
   over the hazards whose reaction ends at the safe state, via
   `RungBudget.settle_at`), and the runtime observer reads it from there.
   Three things a later change must keep: the E8 gate
-  (`sched_derive::every_fixture_checks_the_same_once_migrated`) compares
-  verdicts and totals with and without the rewrites, so a rule that reads
-  a vehicle key by name instead of through the extension breaks it; a
+  (`sched_derive::every_fixture_checks_the_same_without_its_use_lines`)
+  deletes each fixture's `use:` block when it names only `vehicle.braking`
+  and `iso26262` and requires the same verdicts and totals plus the
+  refusal, so a rule that reads a vehicle key by name instead of through
+  the extension breaks it, and it fails if a fixture is left unmigrated; a
   `migrate` rewrite is one file's view, so it cannot know what another
   used extension declares (`rail.ebd` has an `entry_speed`) and reports
   that case instead of guessing; and an extension check gets the floor's

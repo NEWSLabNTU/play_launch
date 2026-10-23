@@ -20,6 +20,8 @@
 #                                   holds.
 version: 1
 rlm: v0.1.49
+use:
+  vehicle.braking: "^1"
 
 severity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 
@@ -37,7 +39,7 @@ hazards:
     severity: ASIL_D
     guards: [/availability]
     on: omission
-    entry_speed: 8.33
+    entry_speed: 8.33 m/s
     ftti: 10s
     reaction: engaged
   odd_exit:
@@ -45,7 +47,7 @@ hazards:
     guards: [/availability]
     on: reported
     when: { field: autonomous, equals: false }
-    entry_speed: 8.33
+    entry_speed: 8.33 m/s
     ftti: 30s
     reaction: engaged
 

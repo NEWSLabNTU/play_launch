@@ -6,6 +6,8 @@
 # `--explain` prints `derived by` with each record's inputs and trace, and
 # the hazard's reaction_total.
 version: 1
+use:
+  iso26262: "^1"
 
 hazards:
   drive_blind:

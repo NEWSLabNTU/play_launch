@@ -17,6 +17,8 @@
 #                            3168.67 ms. (hpc_loss at 3.0 m/s is the island
 #                            contract's assumption, which fits.)
 version: 1
+use:
+  vehicle.braking: "^1"
 
 severity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 
@@ -35,7 +37,7 @@ hazards:
     guards: [/availability]
     on: reported
     when: { field: autonomous, equals: false }
-    entry_speed: 8.33
+    entry_speed: 8.33 m/s
     ftti: 20s
     enters: engaged
   odd_exit_unbounded:
@@ -49,14 +51,14 @@ hazards:
     severity: ASIL_D
     guards: [/availability]
     on: omission
-    entry_speed: 3.0
+    entry_speed: 3.0 m/s
     ftti: 3s
     enters: engaged
   hpc_observed:
     severity: ASIL_D
     guards: [/availability]
     on: omission
-    entry_speed: 4.23
+    entry_speed: 4.23 m/s
     ftti: 3s
     enters: fallback_only
 

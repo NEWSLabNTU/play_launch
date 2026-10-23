@@ -13,6 +13,8 @@
 # That arithmetic is implied by Autoware's parameter files and performed by
 # nothing until now.
 version: 1
+use:
+  iso26262: "^1"
 
 # Phase 75 — Autoware's diagnostic graph, as functions and modes. Its three
 # layers ARE this shape: diag units are topics, `and`/`or` function units are

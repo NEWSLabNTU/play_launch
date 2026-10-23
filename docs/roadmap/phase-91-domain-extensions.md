@@ -441,6 +441,18 @@ need no rewrite. NEWSLabNTU/simple-autoware-safety-island#11 migrates the
 island's six contracts (same verdicts and totals); it merges once the
 island runs a play_launch on rlm v0.2.0.
 
+**Follow-ups (2026-10-23).** nano-ros#2502's second commit fixes the
+settle gap it found (`contract_monitors::reaction_safe_state`: a scope-path
+reaction takes the safe state at its sink); merged. The island's #11 merged
+on play_launch 0.19.0. The implicit load is an error after 0.19
+(`error[deprecated-implicit-extension]`, the extension still loaded so the
+check runs on); every fixture is migrated, and the E8 gate runs inverted
+(`every_fixture_checks_the_same_without_its_use_lines`: each fixture with
+its `use:` block deleted gives the same verdicts and totals plus the
+refusal; a negative control that skips the implicit load fails it), as
+does E6's (`every_fixture_derives_the_same_criticality_under_iso26262`:
+each fixture without its `iso26262` line derives the same criticality).
+
 ## Order
 
 E0 first (it decides E2's size). E1 and E2 in parallel; E3 after E2; E4

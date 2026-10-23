@@ -1,6 +1,8 @@
 # Phase 91 E1: a hazard with neither `ftti` nor `deadline_by` states no
 # requirement, which is `hazard-no-requirement`.
 version: 1
+use:
+  iso26262: "^1"
 
 hazards:
   drive_blind:

@@ -3,6 +3,8 @@
 # extension, so the check cannot run: `deadline-unresolved` (phase 91 E4;
 # a warning, `deadline-unchecked`, before extensions were evaluated).
 version: 1
+use:
+  iso26262: "^1"
 
 hazards:
   drive_blind:

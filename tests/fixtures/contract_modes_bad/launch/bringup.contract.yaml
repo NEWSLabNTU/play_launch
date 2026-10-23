@@ -10,6 +10,8 @@
 # The reaction's sink (/safety/brake_cmd) is deliberately NOT guarded, so
 # `reaction-unguarded` warns: who watches the watcher.
 version: 1
+use:
+  iso26262: "^1"
 
 # DELIBERATELY inconsistent (phase 75). Three faults, each its own rule:
 #   * `stopped` — the last rung — still requires `perception`, which this

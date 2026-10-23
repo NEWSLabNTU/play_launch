@@ -5,6 +5,8 @@
 # 100ms detection 457ms, inside the 500ms FTTI. `--explain` prints the
 # settle as 350.00 literal and its two parts.
 version: 1
+use:
+  iso26262: "^1"
 
 hazards:
   drive_blind:

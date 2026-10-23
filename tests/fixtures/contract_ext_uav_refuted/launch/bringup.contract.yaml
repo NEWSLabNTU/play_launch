@@ -11,7 +11,7 @@
 # brake_controller's (the safe state's node); the hazard's fractions are
 # the lidar_driver's (the guard's publisher).
 version: 1
-use: { uav.descent: "^0.2" }
+use: { uav.descent: "^0.2", iso26262: "^1" }
 
 hazards:
   drive_blind:

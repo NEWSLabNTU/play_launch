@@ -19,6 +19,8 @@
 # `services:` -- is reported as unwired. The reaction route is derived
 # regardless; the rule is the next thing to teach about services.
 version: 1
+use:
+  iso26262: "^1"
 
 hazards:
   drive_blind:

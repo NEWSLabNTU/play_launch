@@ -4,6 +4,8 @@
 # 15 promise). `period-range` refuses the second, not the first.
 # Otherwise contract_period_range, which states the arithmetic.
 version: 1
+use:
+  iso26262: "^1"
 
 hazards:
   hpc_lost:

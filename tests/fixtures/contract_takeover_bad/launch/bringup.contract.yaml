@@ -13,6 +13,8 @@
 #   mode-exit-unwired       hold's exit reads /control_mode, which no node
 #                           publishing its output takes on a trigger
 version: 1
+use:
+  vehicle.braking: "^1"
 
 severity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 
@@ -43,7 +45,7 @@ hazards:
     guards: [/availability]
     on: reported
     when: { field: autonomous, equals: false }
-    entry_speed: 8.33
+    entry_speed: 8.33 m/s
     ftti: 30s
     enters: engaged
   hpc_loss:
@@ -51,7 +53,7 @@ hazards:
     guards: [/availability]
     on: omission
     when: { field: stop, equals: true }
-    entry_speed: 3.0
+    entry_speed: 3.0 m/s
     ftti: 3s
     enters: engaged
 

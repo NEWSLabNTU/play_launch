@@ -998,11 +998,37 @@ mod tests {
         (nodes, refusals)
     }
 
+    /// A contract's text with its root `use:` block deleted, when the block
+    /// names nothing but `vehicle.braking` and `iso26262` -- what `migrate`
+    /// adds and what loads implicitly without it (phase 91 E8).
+    fn strip_named_use(text: &str) -> Option<String> {
+        const NAMED: [&str; 2] = ["vehicle.braking", "iso26262"];
+        let lines: Vec<&str> = text.lines().collect();
+        let at = lines.iter().position(|l| *l == "use:")?;
+        let end = lines[at + 1..]
+            .iter()
+            .position(|l| !l.starts_with("  "))
+            .map_or(lines.len(), |n| at + 1 + n);
+        let entries = &lines[at + 1..end];
+        let only_named = entries.iter().all(|l| {
+            NAMED
+                .iter()
+                .any(|n| l.trim_start().starts_with(&format!("{n}:")))
+        });
+        if entries.is_empty() || !only_named {
+            return None;
+        }
+        let mut out: Vec<&str> = lines[..at].to_vec();
+        out.extend_from_slice(&lines[end..]);
+        Some(out.join("\n") + "\n")
+    }
+
     /// Phase 91 E6's gate: under the `iso26262` profile every contract
-    /// fixture derives the criticality it derives with no profile. Each
-    /// fixture is copied, `use: { iso26262: "^1" }` is added to every
-    /// contract file that declares hazards on the default scale, and the
-    /// derivation is compared node by node.
+    /// fixture derives the criticality it derives on the implicit scale.
+    /// The fixtures name the profile since the implicit scale became an
+    /// error (phase 91 E8), so each is copied with the `use:` block deleted
+    /// from every contract that names `iso26262` and nothing but the
+    /// bundled names, and the derivation is compared node by node.
     #[test]
     fn every_fixture_derives_the_same_criticality_under_iso26262() {
         let fixtures = repo_root().join("tests/fixtures");
@@ -1029,37 +1055,37 @@ mod tests {
                         continue;
                     }
                     let text = std::fs::read_to_string(&p).unwrap();
-                    let at_root = |k: &str| text.lines().any(|l| l.starts_with(k));
-                    if !at_root("hazards:") || at_root("use:") || at_root("severity_levels:") {
+                    if !text.lines().any(|l| l.starts_with("hazards:"))
+                        || !text
+                            .lines()
+                            .any(|l| l.trim_start().starts_with("iso26262:"))
+                    {
                         continue;
                     }
-                    std::fs::write(&p, format!("use: {{ iso26262: \"^1\" }}\n{text}")).unwrap();
-                    edited += 1;
+                    if let Some(out) = strip_named_use(&text) {
+                        std::fs::write(&p, out).unwrap();
+                        edited += 1;
+                    }
                 }
             }
             if edited == 0 {
                 continue;
             }
             let name = fixture_name(&launch);
-            let before = criticality_of(&index_of(&dump_of(&launch), &name));
-            let under = tmp.path().join(rel);
-            let after_index = index_of(&dump_of(&under), &name);
+            let named_index = index_of(&dump_of(&launch), &name);
             // A contract the parser refuses loads nothing either way.
-            let loaded = after_index
-                .manifests
-                .values()
-                .filter(|m| !m.manifest.uses.is_empty())
-                .count();
-            assert_eq!(
-                after_index
+            if !named_index.load_diagnostics.is_empty() {
+                continue;
+            }
+            let before = criticality_of(&index_of(&dump_of(&tmp.path().join(rel)), &name));
+            assert!(
+                named_index
                     .profiles
                     .values()
-                    .filter(|p| p.profile.name == "iso26262")
-                    .count(),
-                loaded,
+                    .any(|p| p.profile.name == "iso26262"),
                 "{name}: the profile was not used"
             );
-            let after = criticality_of(&after_index);
+            let after = criticality_of(&named_index);
             assert_eq!(
                 before, after,
                 "{name}: iso26262 changed the derived criticality"
@@ -1075,23 +1101,28 @@ mod tests {
         );
     }
 
-    /// Phase 91 E8's gate: every contract fixture, migrated by the E8
-    /// rewrites alone (`use-implicit`, `entry-speed-unit`), checks with the
-    /// verdicts and fault-reaction totals it has unmigrated -- where the
-    /// vehicle keys and the ISO 26262 scale load implicitly -- less the
-    /// `deprecated-implicit-extension` warnings, and raises none of them.
+    /// Phase 91 E8's gate, inverted when the implicit load became an error
+    /// (play_launch 0.20): the fixtures are migrated, so none has a
+    /// `use-implicit` or `entry-speed-unit` rewrite left; and every fixture
+    /// with a `use:` block naming only `vehicle.braking` and/or `iso26262`
+    /// checks, with that block deleted, to the verdicts and fault-reaction
+    /// totals it has as committed, plus `deprecated-implicit-extension`
+    /// errors and nothing else. That is what keeps a rule from reading a
+    /// vehicle key by name instead of through the extension: the implicit
+    /// load and the named one must compute the same.
     #[test]
-    fn every_fixture_checks_the_same_once_migrated() {
+    fn every_fixture_checks_the_same_without_its_use_lines() {
+        use ros_launch_manifest_check::Severity;
         use ros_launch_manifest_types::migrate::migrate_str;
         const E8: [&str; 2] = ["use-implicit", "entry-speed-unit"];
-        const DEPRECATED: &str = "deprecated-implicit-extension";
+        const IMPLICIT: &str = "deprecated-implicit-extension";
         let fixtures = repo_root().join("tests/fixtures");
         let tmp = tempfile::tempdir().unwrap();
         let verdicts = |index: &ManifestIndex| -> Vec<String> {
             let mut v: Vec<String> = index
                 .merge_diagnostics
                 .iter()
-                .filter(|d| d.rule_id != DEPRECATED)
+                .filter(|d| d.rule_id != IMPLICIT)
                 .map(|d| format!("{} {:?} {}", d.rule_id, d.severity, d.path))
                 .collect();
             v.sort();
@@ -1113,59 +1144,77 @@ mod tests {
             v.sort();
             v
         };
-        let (mut compared, mut migrated, mut warned) = (0usize, 0usize, 0usize);
+        let (mut compared, mut stripped, mut refused) = (0usize, 0usize, 0usize);
         for launch in contract_fixture_launches() {
             let rel = launch.strip_prefix(&fixtures).unwrap();
             let fixture = rel.components().next().unwrap().as_os_str().to_owned();
             let copy = tmp.path().join(&fixture);
+            let mut changed = false;
             if !copy.exists() {
                 copy_tree(&fixtures.join(&fixture), &copy);
-                let mut stack = vec![copy.clone()];
-                while let Some(dir) = stack.pop() {
-                    for e in std::fs::read_dir(&dir).unwrap().flatten() {
-                        let p = e.path();
-                        if e.file_type().unwrap().is_dir() {
-                            stack.push(p);
-                            continue;
+            }
+            let mut stack = vec![copy.clone()];
+            while let Some(dir) = stack.pop() {
+                for e in std::fs::read_dir(&dir).unwrap().flatten() {
+                    let p = e.path();
+                    if e.file_type().unwrap().is_dir() {
+                        stack.push(p);
+                        continue;
+                    }
+                    if !p.to_string_lossy().ends_with(".contract.yaml") {
+                        continue;
+                    }
+                    let text = std::fs::read_to_string(&p).unwrap();
+                    if let Ok(m) = migrate_str(&text) {
+                        let left: Vec<_> = m
+                            .edits
+                            .iter()
+                            .filter(|e| E8.contains(&e.rewrite))
+                            .map(|e| e.rewrite)
+                            .collect();
+                        assert!(
+                            left.is_empty(),
+                            "{}: not migrated ({left:?}): run `play_launch migrate --write`",
+                            p.display()
+                        );
+                    }
+                    if text.lines().any(|l| l == "use:") {
+                        if let Some(out) = strip_named_use(&text) {
+                            std::fs::write(&p, out).unwrap();
+                            changed = true;
                         }
-                        if !p.to_string_lossy().ends_with(".contract.yaml") {
-                            continue;
-                        }
-                        let text = std::fs::read_to_string(&p).unwrap();
-                        let Ok(m) = migrate_str(&text) else { continue };
-                        let mut edits: Vec<_> =
-                            m.edits.iter().filter(|e| E8.contains(&e.rewrite)).collect();
-                        if edits.is_empty() {
-                            continue;
-                        }
-                        edits.sort_by_key(|e| std::cmp::Reverse(e.range.start));
-                        let mut out = text.clone();
-                        for e in edits {
-                            out.replace_range(e.range.clone(), &e.replacement);
-                        }
-                        std::fs::write(&p, out).unwrap();
-                        migrated += 1;
                     }
                 }
             }
+            if !changed {
+                continue;
+            }
+            stripped += 1;
             let name = fixture_name(&launch);
             let before = index_of(&dump_of(&launch), &name);
             let after = index_of(&dump_of(&tmp.path().join(rel)), &name);
-            warned += before
-                .merge_diagnostics
-                .iter()
-                .filter(|d| d.rule_id == DEPRECATED)
-                .count();
-            let left: Vec<_> = after
-                .merge_diagnostics
-                .iter()
-                .filter(|d| d.rule_id == DEPRECATED)
-                .map(|d| d.message.clone())
-                .collect();
+            // A fixture whose contract is refused at parse checks nothing.
+            if !before.load_diagnostics.is_empty() {
+                continue;
+            }
             assert!(
-                left.is_empty(),
-                "{name}: still implicit once migrated: {left:?}"
+                before
+                    .merge_diagnostics
+                    .iter()
+                    .all(|d| d.rule_id != IMPLICIT),
+                "{name}: implicit as committed"
             );
+            let errors: Vec<_> = after
+                .merge_diagnostics
+                .iter()
+                .filter(|d| d.rule_id == IMPLICIT)
+                .collect();
+            assert!(!errors.is_empty(), "{name}: no use: line, and no error");
+            assert!(
+                errors.iter().all(|d| d.severity == Severity::Error),
+                "{name}: {IMPLICIT} is an error"
+            );
+            refused += errors.len();
             assert_eq!(
                 verdicts(&before),
                 verdicts(&after),
@@ -1175,10 +1224,10 @@ mod tests {
             compared += 1;
         }
         eprintln!(
-            "{compared} fixture launch(es) compared, {migrated} contract(s) migrated, \
-             {warned} deprecation warning(s) before"
+            "{compared} fixture launch(es) compared without their use: lines \
+             ({stripped} stripped), {refused} refusal(s)"
         );
-        assert!(compared >= 20 && migrated >= 10 && warned >= 10);
+        assert!(compared >= 20 && refused >= 20);
     }
 
     /// The permanent form of W2's parity gate (Gates 1 of the phase): the

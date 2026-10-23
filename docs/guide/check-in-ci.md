@@ -241,11 +241,11 @@ things belong in CI:
   error (`lock-mismatch`, `lock-missing`) rather than the warning it is
   without the flag (`lock-drift`). `--explain` lists every resolution with
   its full sha256.
-- **Deprecations.** A contract that writes the braking keys without
-  `use: { vehicle.braking: "^1" }`, or hazard severities with no profile and
-  no `severity_levels:`, checks as before plus
-  `warning[deprecated-implicit-extension]`; the next minor release refuses
-  it. `play_launch migrate <dir> --write` adds the `use:` lines (and gives a
+- **Implicit extensions are refused.** A contract that writes the braking
+  keys without `use: { vehicle.braking: "^1" }`, or hazard severities with
+  no profile and no `severity_levels:`, fails with
+  `error[deprecated-implicit-extension]` (play_launch 0.19 warned; 0.20
+  refuses). `play_launch migrate <dir> --write` adds the `use:` lines (and gives a
   plain-number `entry_speed` its unit, `m/s`); `play_launch migrate <dir>
   --check` exits 1 while anything is left to rewrite.
 - **Worst cases.** A derived value's direction is proved by Z3;

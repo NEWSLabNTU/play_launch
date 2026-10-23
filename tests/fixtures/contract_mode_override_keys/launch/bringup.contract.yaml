@@ -16,6 +16,8 @@
 # The reaction's sink (/safety/brake_cmd) is deliberately NOT guarded, so
 # `reaction-unguarded` warns: who watches the watcher.
 version: 1
+use:
+  iso26262: "^1"
 
 # Phase 75 — a function is a named guard group; a mode is the functions it
 # requires plus the ladder to fall to. The hazard enters a MODE (`enters:`),

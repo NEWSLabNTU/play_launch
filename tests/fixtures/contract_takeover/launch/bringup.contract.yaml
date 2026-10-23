@@ -22,6 +22,8 @@
 # The settles are DERIVED: `settle-derived` prints 2033.33 ms for the
 # emergency profile at 3.0 m/s -- the island contract's own arithmetic.
 version: 1
+use:
+  vehicle.braking: "^1"
 
 severity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 
@@ -40,14 +42,14 @@ hazards:
     guards: [/availability]
     on: reported
     when: { field: autonomous, equals: false }
-    entry_speed: 8.33
+    entry_speed: 8.33 m/s
     ftti: 30s
     enters: engaged
   hpc_loss:
     severity: ASIL_D
     guards: [/availability]
     on: omission
-    entry_speed: 3.0
+    entry_speed: 3.0 m/s
     ftti: 3s
     enters: engaged
 

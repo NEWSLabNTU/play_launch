@@ -6,6 +6,8 @@
 # warning says it charges nothing, and migrate leaves it (a hand edit:
 # delete it). Otherwise contract_fault.
 version: 1
+use:
+  iso26262: "^1"
 
 hazards:
   drive_blind:

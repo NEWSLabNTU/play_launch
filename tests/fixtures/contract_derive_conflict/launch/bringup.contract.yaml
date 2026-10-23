@@ -2,6 +2,9 @@
 # jerk) and as a duration an extension derived. `derive-conflict` refuses
 # it: two derivations have no order to compare in.
 version: 1
+use:
+  vehicle.braking: "^1"
+  iso26262: "^1"
 
 hazards:
   drive_blind:
@@ -11,7 +14,7 @@ hazards:
     on: omission
     ftti: 6s
     reaction: safety.stop
-    entry_speed: 8.33
+    entry_speed: 8.33 m/s
 
 nodes:
   lidar_driver:

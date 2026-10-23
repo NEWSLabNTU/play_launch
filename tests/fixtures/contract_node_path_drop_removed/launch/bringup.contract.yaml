@@ -3,6 +3,8 @@
 # publishes (/safety/obstacles), and the contract then loads. Otherwise
 # contract_fault.
 version: 1
+use:
+  iso26262: "^1"
 
 hazards:
   drive_blind:

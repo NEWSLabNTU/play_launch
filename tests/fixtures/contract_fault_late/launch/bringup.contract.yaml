@@ -8,6 +8,8 @@
 #     detects its loss                                 -> hazard-unguarded
 #
 version: 1
+use:
+  iso26262: "^1"
 
 hazards:
   stale_obstacles:

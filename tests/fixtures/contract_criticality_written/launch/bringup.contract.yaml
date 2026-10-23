@@ -7,6 +7,8 @@
 #   obstacle_detector  detects, writes `low`  -> error[criticality-mismatch]
 #   trip_logger        reached by no hazard, writes `low` -> no diagnostic
 version: 1
+use:
+  iso26262: "^1"
 
 hazards:
   drive_blind:

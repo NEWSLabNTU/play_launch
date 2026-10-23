@@ -22,6 +22,8 @@
 #                     evaluates the age on its own clock. It notices silence:
 #                     detection 30ms.
 version: 1
+use:
+  iso26262: "^1"
 
 hazards:
   scan_classes:
