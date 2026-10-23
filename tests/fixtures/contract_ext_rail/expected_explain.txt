@@ -1,0 +1,32 @@
+# Phase 91 E9: what `check --explain` prints for contract_ext_rail, line by line.
+# The test finds each line below in the output (a line may be part of a
+# longer one); `#` lines are comments. Regenerate with tmp/e8/golden.py
+# only after reading the change.
+# exit 0
+info[fault-reaction-budget]: bringup.contract.yaml:16: hazard 'drive_blind': detection 100.00ms (/safety/obstacle_detector/scan detects within 100.00ms) + reaction 64353.56ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 64346.56ms) = 64453.56ms fits the fault-tolerant time interval 90000.00ms with 25546.44ms of slack
+info[settle-derived]: bringup.contract.yaml:73: hazard 'drive_blind', rung 'safety.stop': settle = 64346.56ms derived by rail.ebd 0.1.0 (sha256 f0f3c943b619)
+entry_speed = 44.44 m/s   (160 km/h)
+traction_cut_off = 1 s   (1.0s)
+brake_build_up = 2.5 s   (2.5s)
+a_ebd = a table of 2 entries
+sum over b in a_ebd.bands(0 m/s, entry_speed): (b.hi - b.lo) / b.value = 60.85 s
+b = [0 m/s, 27.78 m/s] 0.75 m/s^2: 37.04 s
+b = [27.78 m/s, 44.44 m/s] 0.7 m/s^2: 23.81 s
+settle.duration = traction_cut_off + brake_build_up + sum over b in a_ebd.bands(0 m/s, entry_speed): (b.hi - b.lo) / b.value = 64.35 s
+worst case: proved increasing in entry_speed; decreasing in a_ebd (for a_ebd's 2 keys as written)
+info[extension-check]: hazard 'drive_blind': rail.ebd/stop_before_eoa PASS (rail.ebd 0.1.0)
+entry_speed = 44.44 m/s   (160 km/h)
+distance_to_eoa = 1600 m   (1600 m)
+traction_cut_off = 1 s   (1.0s)
+brake_build_up = 2.5 s   (2.5s)
+a_ebd = a table of 2 entries
+stopping_distance = entry_speed * (traction_cut_off + brake_build_up) + sum over b in a_ebd.bands(0 m/s, entry_speed): (b.hi^2 - b.lo^2) / (2 b.value) = 1529.75 m
+sum over b in a_ebd.bands(0 m/s, entry_speed): (b.hi^2 - b.lo^2) / (2 b.value) = 1374.19 m
+b = [0 m/s, 27.78 m/s] 0.75 m/s^2: 514.4 m
+b = [27.78 m/s, 44.44 m/s] 0.7 m/s^2: 859.79 m
+stop_before_eoa: stopping_distance <= distance_to_eoa: 1529.75 m <= 1600 m (margin 70.25 m) PASS
+worst case: proved increasing in entry_speed (for a_ebd's 2 keys as written)
+drive_blind  safety.stop  floor  100.00     0.00   7.00  64346.56 derived  64453.56  90000.00  25546.44
+drive_blind  64453.56  (floor 'safety.stop')
+rail.ebd 0.1.0  extension  sha256 f0f3c943b6199efb7006c6d545a0dba95416819faca18d752d91540e2ddf6588
+en50129 1.0.0  profile  sha256 cd8cc00b0c0d1bdfbfe26747925145303b4a2fbf03249da0d9e84abfd4a1df7f

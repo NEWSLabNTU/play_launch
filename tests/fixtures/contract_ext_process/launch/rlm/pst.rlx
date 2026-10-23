@@ -1,4 +1,9 @@
--- share/rlm_ext_process/rlm/pst.rlx
+-- Reference extension (process industry): process safety time against a safety instrumented function (IEC 61511 style).
+-- Phase 91 E9, rlm extension-examples.md. ILLUSTRATIVE: the formulas follow
+-- the published examples, but no clause of the standard named here has been
+-- checked against the standard's text, and every constant a contract gives
+-- it in the examples is an example value. Verify both before calling this a
+-- reference implementation of the standard.
 extension process.pst 0.1.0
 requires rlm >= 0.2.0
 

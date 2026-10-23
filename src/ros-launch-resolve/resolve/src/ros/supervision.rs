@@ -612,14 +612,7 @@ pub(crate) fn overrun_rows(
         let route = walk.charged(ctx.after_deadline).0;
         let mut sink: Vec<Diagnostic> = Vec::new();
         let settle = settle_for(
-            index,
-            &index.launch_params,
-            ctx.h,
-            ctx.rung,
-            &at.node,
-            &at.path,
-            &at.ss,
-            &mut sink,
+            index, ctx.h, ctx.rung, &at.node, &at.path, &at.ss, &mut sink,
         );
         let settle_how = match settle.response_ms {
             Some(r) if settle.how == "derived" => format!(
@@ -773,14 +766,7 @@ pub(crate) fn overrun_rows(
                     Some(at) => {
                         let mut sink: Vec<Diagnostic> = Vec::new();
                         settle_for(
-                            index,
-                            &index.launch_params,
-                            ctx.h,
-                            ctx.rung,
-                            &at.node,
-                            &at.path,
-                            &at.ss,
-                            &mut sink,
+                            index, ctx.h, ctx.rung, &at.node, &at.path, &at.ss, &mut sink,
                         )
                     }
                     None => Settle::default(),

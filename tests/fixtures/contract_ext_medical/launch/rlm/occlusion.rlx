@@ -1,4 +1,9 @@
--- share/rlm_ext_medical/rlm/occlusion.rlx
+-- Reference extension (medical devices): an infusion pump's downstream occlusion detection (IEC 60601-2-24 style).
+-- Phase 91 E9, rlm extension-examples.md. ILLUSTRATIVE: the formulas follow
+-- the published examples, but no clause of the standard named here has been
+-- checked against the standard's text, and every constant a contract gives
+-- it in the examples is an example value. Verify both before calling this a
+-- reference implementation of the standard.
 extension medical.occlusion 0.1.0
 requires rlm >= 0.2.0
 

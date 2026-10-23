@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!-- Phase 91 E9/E10: extension example 1 (vehicle), the bundled vehicle.braking. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="lidar_driver"      namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="obstacle_detector" namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="brake_controller"  namespace="/safety">
+    <param name="target_acceleration" value="-2.5"/>
+    <param name="target_jerk" value="-1.5"/>
+  </node>
+</launch>

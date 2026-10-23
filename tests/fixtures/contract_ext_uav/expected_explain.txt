@@ -1,0 +1,26 @@
+# Phase 91 E9: what `check --explain` prints for contract_ext_uav, line by line.
+# The test finds each line below in the output (a line may be part of a
+# longer one); `#` lines are comments. Regenerate with tmp/e8/golden.py
+# only after reading the change.
+# exit 0
+info[fault-reaction-budget]: bringup.contract.yaml:17: hazard 'drive_blind': detection 100.00ms (/safety/obstacle_detector/scan detects within 100.00ms) + reaction 50959.38ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 50952.38ms) = 51059.38ms fits the fault-tolerant time interval 120000.00ms with 68940.62ms of slack
+info[settle-derived]: bringup.contract.yaml:77: hazard 'drive_blind', rung 'safety.stop': settle = 50952.38ms derived by uav.descent 0.2.0 (sha256 574db07d94e7)
+max_altitude = 120 m   (120 m)
+descent_speed = 3 m/s
+slow_altitude = 10 m
+land_speed = 0.7 m/s
+if max_altitude > slow_altitude: 120 m > 10 m, true: take `then`
+settle.duration = if max_altitude > slow_altitude then (max_altitude - slow_altitude) / descent_speed + slow_altitude / land_speed else max_altitude / land_speed = 50.95 s
+worst case: proved increasing in max_altitude, slow_altitude; decreasing in descent_speed, land_speed
+info[extension-check]: hazard 'drive_blind': uav.descent/energy_reserve PASS (uav.descent 0.2.0)
+hover_power = 600 W   (600 W)
+battery_capacity = 222 Wh   (222 Wh)
+trigger_soc = 0.3
+reserve_soc = 0.22
+reaction_total = 51.06 s   (51059.38ms)
+energy_reserve: hover_power * reaction_total <= battery_capacity * (trigger_soc - reserve_soc): 8.5099 Wh <= 17.76 Wh (margin 9.2501 Wh) PASS
+worst case: proved increasing in reaction_total
+drive_blind  safety.stop  floor  100.00     0.00   7.00  50952.38 derived  51059.38  120000.00  68940.62
+drive_blind  51059.38  (floor 'safety.stop')
+uav.descent 0.2.0  extension  sha256 574db07d94e7907d8234ac98da0bf68a62a2f1527c7294f9d395539d736e92a6
+iso26262 1.0.0  profile  sha256 9d0c941effbe16fe4b8b32b596a467b7243b79145dce81de8767af31b4ec13cb

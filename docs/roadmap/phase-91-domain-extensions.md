@@ -2,7 +2,9 @@
 
 Status: **in progress** (2026-10-22): E0 done (no-go: rlx owns its
 expression core); E1 and E2 done (rlm v0.1.65); E3 and E4 done (rlm v0.1.66);
-E5 done (rlm v0.1.70); E6 and E7 done (rlm v0.1.71). Stage 2 of 2; phase 90 (a tidy grammar) is complete. Design: rlm `docs/design/extension-system.md` (with
+E5 done (rlm v0.1.70); E6 and E7 done (rlm v0.1.71); E8-E10 done and
+E11's documentation done (rlm v0.2.0); the play_launch release, the
+nano-ros pin PR and the consumers' migration remain. Stage 2 of 2; phase 90 (a tidy grammar) is complete. Design: rlm `docs/design/extension-system.md` (with
 `extension-language-exploration.md` and `extension-examples.md`). Work lands
 in rlm (format, language, profiles), play_launch (loader, evaluator, Z3,
 explain, packaging, migration) and the consumers (nano-ros reads the
@@ -321,6 +323,48 @@ fixture names `process.sis`.
 - Gate: every existing contract checks with identical verdicts and totals,
   with only the deprecation warnings; migrated contracts check clean.
 
+**Done (2026-10-23).** rlm v0.2.0 (`031b3f1`). `vehicle.braking 1.0.0` is
+bundled (`types::extension::BUNDLED`, `types/extensions/vehicle.braking.rlx`,
+the examples document's section 1) and resolves for a `use:` entry after
+any file of the same name and version. The core lost `HazardDecl.
+entry_speed`, `SafeState.settle_profile` and `SettleProfile`; the parser
+collects `entry_speed`, `decel` and `jerk` as extension keys with or
+without `use:`. play_launch (`ros/extensions.rs`): `implicit_loads` loads
+the bundled extension for a scope that writes those keys with no used
+extension declaring them (a plain-number `entry_speed` read as m/s, the
+core key's unit), and warns `deprecated-implicit-extension`; the same rule
+names hazard severities read on the implicit ISO 26262 scale. The braking
+arithmetic in `value_rules.rs` is gone: `derived_settle` carries the four
+settle rules for any extension (`settle-param-unresolved`,
+`settle-entry-missing`, `settle-conflict`, `derive-conflict`). `migrate`
+gains `use-implicit` and `entry-speed-unit` (rlm's rewrite table, so the
+verb needed no change). An extension's `requires rlm` is now enforced.
+
+Gate, as run:
+
+- `sched_derive`'s `every_fixture_checks_the_same_once_migrated`: every
+  contract fixture checked as written and after the E8 rewrites alone, 69
+  launches, 46 contracts migrated, 43 deprecation warnings before and none
+  after; the verdicts (rule, severity, path) and every fault-reaction
+  total equal. Negative controls: leaving `use-implicit` out fails it
+  (still implicit), and a rewrite to `km/h` instead of `m/s` fails it
+  (totals moved).
+- Against the pre-change binary, outside the test: `check --format json`
+  and `--explain` over all 70 fixture launches; identical verdicts and
+  exit codes, the only additions the 42 deprecation warnings, the only
+  explain changes the settle trace's wording.
+- It found one bug of its own: `use-implicit` added `vehicle.braking` to a
+  contract whose `rail.ebd` declares `entry_speed` itself. A file cannot
+  say what another extension declares, so the rewrite now reports that
+  case for a hand edit instead.
+
+Two behaviours changed on purpose: a settle parameter needs a numeric
+launch value but no longer a `params:` declaration (the rule E4's
+extensions already had; the one fixture that tested the declaration has no
+launch value either, so its verdict stands), and the runtime fault observer
+reads the settle from the model (E10) instead of recomputing the profile,
+which left out the response.
+
 ### E9. Reference extensions (rlm or a sibling package)
 
 - `machine.iso13855`, `medical.occlusion`, `uav.descent`, `rail.ebd`,
@@ -329,6 +373,29 @@ fixture names `process.sis`.
   standard clauses verified before any is called a reference.
 - Gate: all load, prove their worst cases, and match the examples doc.
 
+**Done (2026-10-23).** rlm: `types/extensions/reference/` holds the five
+(`extension::REFERENCE`), each headed ILLUSTRATIVE: the formulas follow the
+examples, no clause of the standard each models was checked against its
+text, and no constant is a standard's. They are not bundled. rlx's
+`tests/reference.rs`: each loads, each worst case is proved at the
+example's point (the rail table at its two written keys), and each is its
+block of extension-examples.md line for line (the UAV file with the
+domains that section prints); the bundled `vehicle.braking` is held to
+section 1 the same way. play_launch: the four E4 fixtures ship the files
+byte for byte (a test compares them with `REFERENCE`), `contract_ext_rail`
+and `contract_ext_vehicle` are new (sections 5 and 1), and each of the six
+records its `--explain` in `expected_explain.txt`, which
+`e9_each_reference_fixture_explains_as_recorded` checks line by line. The
+numbers match the document where the contract does: vehicle 4422.67 ms at
+30 km/h, rail 64.35 s and 1529.75 m <= 1600 m, UAV 50.95 s, medical 50.48
+min, process 4 s. (Machinery runs on contract_fault's chain, 287 ms of
+reaction rather than the document's 192, so its numbers differ.)
+
+Found on the way: an extension check never received the safe state's
+keys, so rail's `stop_before_eoa` could not be evaluated. `run_checks`
+now passes the safe state the hazard's floor ends at (`RungBudget.
+settle_at`).
+
 ### E10. Export to nano-ros (play_launch, nano-ros PR)
 
 - Derived bounds appear in the exported model as plain bounds with their
@@ -336,11 +403,37 @@ fixture names `process.sis`.
 - Gate: an image built from a contract using `vehicle.braking` has the same
   monitors and sizing as one with the values written by hand.
 
+**Done (2026-10-23), play_launch half.** rlm v0.2.0's model: `DerivedSource
+{ by, version, sha256, hazard, inputs }`; `SafeStateContract.settle_ms`
+carries a derived settle, response included, the largest over the hazards
+whose reaction ends there (`settle_derived` names that hazard);
+`HazardContract` gains `ftti_derived`, `detection_ms`,
+`detection_derived`; `settle_profile` and `entry_speed_mps` are gone (an
+older model still reads). play_launch fills them from the fault walk
+(`RungBudget.settle_at`, `settle_derivation`). Gate:
+`e10_a_derived_settle_reaches_the_model_as_a_written_one_would` resolves
+`contract_ext_vehicle` as is and with the settle written by hand (the
+derived duration, the same response, no extension keys) and finds the two
+models' contracts equal once the source record is set aside. The nano-ros
+half (the image from each) is the pin PR's test.
+
 ### E11. Docs and releases
 
 - Format reference split into core and extensions; an extension author's
   guide; rlm minor release, play_launch release, nano-ros pin PR, consumers
   migrated.
+
+**Partly done (2026-10-23).** rlm v0.2.0 is the minor release
+(`GRAMMAR_VERSION` 0.2.0, workspace 0.2.0; every reference extension's
+`requires rlm >= 0.2.0` now holds and is enforced). The format reference is
+the core grammar and points at `docs/extension-reference.md` (generated from
+`types/extensions/`, a drift test) and `docs/extension-guide.md` (the
+author's guide; a test loads and proves its examples). play_launch's
+`check-in-ci.md` gained the lock, the deprecations and `migrate --check`.
+Open: the play_launch release (publishes to PyPI), the nano-ros pin PR (rlm
+v0.2.0 and the play_launch submodule together, with the E10 image test),
+and the safety island's contracts (migrated on a branch, verdicts and
+totals unchanged; they need a play_launch on v0.2.0 before they can merge).
 
 ## Order
 

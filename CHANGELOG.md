@@ -8,6 +8,40 @@ allowance heavily.
 
 ## Unreleased
 
+- **Changed (`check`, phase 91 E8):** the vehicle keys are an extension.
+  `hazards.<h>.entry_speed` and `settle: { decel, jerk }` are keys of
+  `vehicle.braking`, which ships with the checker; the braking arithmetic
+  is its rlx, not play_launch's. A contract that writes them without
+  `use: { vehicle.braking: "^1" }` still checks, with the same verdicts and
+  totals, plus `deprecated-implicit-extension` (a plain-number
+  `entry_speed` is read as m/s); hazard severities on the implicit ISO
+  26262 scale get the same warning. The next minor release requires the
+  `use:` lines; `play_launch migrate --write` adds them and gives the
+  entry speed its unit. The settle rules (`settle-param-unresolved`,
+  `settle-entry-missing`, `settle-conflict`, `derive-conflict`) apply to any
+  extension's settle; a settle parameter needs a numeric launch value on
+  the node (it no longer also has to be declared under `params:`). An
+  extension's `requires rlm` is enforced (`extension-invalid`).
+- **Fixed (`check`):** an extension `check` now receives the keys of the
+  safe state its hazard's reaction ends at (rail's stopping distance reads
+  the brake build-up and the deceleration table); before, such a check
+  could not be evaluated.
+- **Added (`check`, phase 91 E9):** the reference extensions
+  (`machine.iso13855`, `medical.occlusion`, `uav.descent`, `rail.ebd`,
+  `process.pst`, from ros-launch-manifest, marked illustrative) each have a
+  fixture whose `--explain` output is recorded and tested
+  (`tests/fixtures/contract_ext_*/expected_explain.txt`); rail and the
+  bundled vehicle example are new.
+- **Changed (model, phase 91 E10):** a bound an extension derives is a
+  plain number in the SystemModel with its source: a safe state's
+  `settle_ms` carries a derived settle (the largest over the hazards whose
+  reaction ends there, response included) with `settle_derived`; a hazard
+  carries `ftti_derived`, `detection_ms` and `detection_derived`. The model
+  no longer carries `settle_profile` or `entry_speed_mps`, and the runtime
+  fault observer reads the settle from the model instead of recomputing it
+  from the profile (which also left out the response).
+- **Changed:** ros-launch-manifest v0.1.71 -> v0.2.0 (the extension
+  system's release; `Cargo.lock` moves the rlm crates to 0.2.0).
 - **Added (`check`, phase 91 E6):** severity profiles (ros-launch-manifest
   v0.1.71). `use: { iec61508: "^1" }` names a profile: the hazards'
   severities come from its scale and each node a hazard reaches takes the

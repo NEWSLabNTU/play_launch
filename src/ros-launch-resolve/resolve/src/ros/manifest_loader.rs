@@ -345,6 +345,11 @@ pub struct RungBudget {
     pub settle_how: &'static str,
     /// The written response delay inside `settle_ms` (phase 10 B2).
     pub settle_response_ms: Option<f64>,
+    /// The node path whose `safe_state` the settle is, `(node FQN, path)`,
+    /// and the extension that derived it (phase 91 E10): the model carries
+    /// a derived settle as a number on that path.
+    pub settle_at: Option<(String, String)>,
+    pub settle_derivation: Option<Box<ros_launch_manifest_types::Derivation>>,
     /// The stated budgets the row's numbers contain (phase 10 B7): each a
     /// contract key, so `--explain` can say where each comes from.
     pub terms: Vec<TermKey>,
@@ -431,7 +436,7 @@ pub(crate) fn walk_terms(
         // the response is the settle's, charged beside a written duration
         // as beside a profile.
         let base = format!("paths.{}.safe_state.settle", at.path);
-        if at.ss.settle_profile.is_none()
+        if at.ss.settle_ext.is_empty()
             && let Some(ms) = at.ss.settle.ms()
         {
             let key = if at.ss.settle_map {
@@ -3156,20 +3161,12 @@ fn check_fault_reaction(
         };
         let settle_of = |w: &ReactionWalk, rung: &str, diags: &mut Vec<Diagnostic>| match &w.settle
         {
-            Some(at_) => super::value_rules::settle_for(
-                index,
-                &index.launch_params,
-                h,
-                rung,
-                &at_.node,
-                &at_.path,
-                &at_.ss,
-                diags,
-            ),
+            Some(at_) => {
+                super::value_rules::settle_for(index, h, rung, &at_.node, &at_.path, &at_.ss, diags)
+            }
             None => super::value_rules::Settle {
-                ms: None,
                 how: "none",
-                response_ms: None,
+                ..Default::default()
             },
         };
         for (rung_name, rung_path) in rungs.iter().take(rungs.len().saturating_sub(1)) {
@@ -3353,6 +3350,11 @@ fn check_fault_reaction(
                 settle_ms: settle.ms,
                 settle_how: settle.how,
                 settle_response_ms: settle.response_ms,
+                settle_at: walk
+                    .as_ref()
+                    .and_then(|w| w.settle.as_ref())
+                    .map(|s| (s.node.clone(), s.path.clone())),
+                settle_derivation: settle.derivation.clone(),
                 total_ms: Some(total),
                 ftti_ms: Some(ftti),
                 route_note,
@@ -3592,6 +3594,11 @@ fn check_fault_reaction(
             settle_ms,
             settle_how: settle.how,
             settle_response_ms: settle.response_ms,
+            settle_at: walk
+                .as_ref()
+                .and_then(|w| w.settle.as_ref())
+                .map(|s| (s.node.clone(), s.path.clone())),
+            settle_derivation: settle.derivation.clone(),
             total_ms: fdti_ms.map(|f| f + waited + frti),
             ftti_ms,
             route_note: floor_split,

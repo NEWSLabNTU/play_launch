@@ -553,7 +553,7 @@ add `src/ros-launch-resolve` to `members`. `just check-layer2-isolation`
 boundary breaks: no ROS crates in the graph, no ROS shared libraries linked,
 and both launch frontends resolve with no ROS installed.
 
-**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.1.71`), not a
+**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.2.0`), not a
 submodule — phase-55 W2. Layer 2 now has no submodules at all. **Three**
 manifests name the tag and must move together:
 `src/play_launch/Cargo.toml`, `src/ros-launch-resolve/Cargo.toml` and
@@ -694,6 +694,27 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-10-23**: **The vehicle keys are an extension, and derived bounds
+  reach the model** (phase 91 E8-E10, rlm v0.2.0). `entry_speed` and
+  `settle: { decel, jerk }` are keys of `vehicle.braking`, bundled with the
+  checker (rlm `types::extension::BUNDLED`); the braking arithmetic in
+  `value_rules.rs` is gone and `extensions::derived_settle` carries the
+  settle rules for any extension. Without `use:` the extension loads
+  implicitly (`implicit_loads`: `deprecated-implicit-extension`, a plain
+  number read as m/s), and so does the ISO 26262 scale for bare
+  severities; `migrate` adds the lines. The model carries every derived
+  bound as a number with a `DerivedSource` (`settle_ms` is the largest
+  over the hazards whose reaction ends at the safe state, via
+  `RungBudget.settle_at`), and the runtime observer reads it from there.
+  Three things a later change must keep: the E8 gate
+  (`sched_derive::every_fixture_checks_the_same_once_migrated`) compares
+  verdicts and totals with and without the rewrites, so a rule that reads
+  a vehicle key by name instead of through the extension breaks it; a
+  `migrate` rewrite is one file's view, so it cannot know what another
+  used extension declares (`rail.ebd` has an `entry_speed`) and reports
+  that case instead of guessing; and an extension check gets the floor's
+  safe state, which only the floor row records (`settle_at`).
 
 - **2026-10-23**: **Severity profiles, ament packaging and `rlm.lock`**
   (phase 91 E6/E7, rlm v0.1.71). A contract's `use:` names an rlx

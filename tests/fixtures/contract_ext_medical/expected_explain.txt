@@ -1,0 +1,23 @@
+# Phase 91 E9: what `check --explain` prints for contract_ext_medical, line by line.
+# The test finds each line below in the output (a line may be part of a
+# longer one); `#` lines are comments. Regenerate with tmp/e8/golden.py
+# only after reading the change.
+# exit 1
+info[detection-derived]: hazard 'drive_blind': detection = 50.48 min derived by medical.occlusion 0.1.0
+min_rate = 2.7778e-10 m^3/s   (1 mL/h)
+compliance = 2.2502e-11 m^4*s^2/kg   (0.003 mL/mmHg)
+baseline_pressure = 2.6664 kPa   (20 mmHg)
+alarm_threshold = 40 kPa
+signal_delay = 5 s   (5s)
+hazard.detection = (alarm_threshold - baseline_pressure) * compliance / min_rate + signal_delay = 50.48 min
+worst case: proved decreasing in min_rate; increasing in compliance, alarm_threshold
+error[fault-reaction-budget]: bringup.contract.yaml:16: hazard 'drive_blind': detection 3029100.00ms (stated detection 3029000.00ms + /safety/obstacle_detector/scan detects within 100.00ms) + reaction 357.00ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 350.00ms) = 3029457.00ms exceeds the fault-tolerant time interval 1800000.00ms. Tighten the slowest detector, shorten the reaction route, or the hazard is not covered in time
+info[extension-report]: hazard 'drive_blind': medical.occlusion/bolus_on_release = 0.84 mL (report, no verdict)
+compliance = 2.2502e-11 m^4*s^2/kg   (0.003 mL/mmHg)
+baseline_pressure = 2.6664 kPa   (20 mmHg)
+alarm_threshold = 40 kPa
+bolus_on_release = compliance * (alarm_threshold - baseline_pressure) = 0.84 mL
+drive_blind  safety.stop  floor  3029100.00     0.00   7.00  350.00 literal  3029457.00  1800000.00  -1229457.00  derived+measured+unstated  unsupervised
+drive_blind  3029457.00  (floor 'safety.stop')
+medical.occlusion 0.1.0  extension  sha256 4e822b48647c6773f043b0e90323d808e00c8a6ce127871d6927f0f1521aef0f
+iso26262 1.0.0  profile  sha256 9d0c941effbe16fe4b8b32b596a467b7243b79145dce81de8767af31b4ec13cb

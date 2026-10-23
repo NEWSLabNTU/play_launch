@@ -377,8 +377,8 @@ impl ContractView {
             let settle_ms = m
                 .contracts
                 .node_paths
-                .iter()
-                .filter_map(|(path_key, p)| {
+                .values()
+                .filter_map(|p| {
                     let ss = p.safe_state.as_ref()?;
                     let on_sink = sinks.iter().any(|t| {
                         m.structure
@@ -389,27 +389,12 @@ impl ContractView {
                     if !on_sink {
                         return None;
                     }
-                    // Phase 83: a braking profile derives the settle from the
-                    // node's resolved parameters and this hazard's entry
-                    // speed -- the checker's arithmetic, `SettleProfile`'s.
-                    let derived = (|| {
-                        let prof = ss.settle_profile.as_ref()?;
-                        let v0 = h.entry_speed_mps?;
-                        let node = path_key.rsplit_once('/')?.0;
-                        let params = m.structure.nodes.get(node)?.resolved_params(node);
-                        let num = |name: &str| match params.get(name)? {
-                            model::ParamValue::Float(f) => Some(*f),
-                            model::ParamValue::Int(i) => Some(*i as f64),
-                            _ => None,
-                        };
-                        ros_launch_manifest_types::SettleProfile::settle_s(
-                            v0,
-                            num(&prof.decel)?,
-                            num(&prof.jerk)?,
-                        )
-                        .map(|t| t * 1000.0)
-                    })();
-                    derived.or(ss.settle_ms)
+                    // Phase 91 E10: a derived settle (a braking profile's
+                    // among them) is a plain number on the model, response
+                    // included, the largest over the hazards that end
+                    // here. It used to be recomputed here per hazard, from
+                    // the profile's parameters, without the response.
+                    ss.settle_ms
                 })
                 .fold(None, |a: Option<f64>, v| Some(a.map_or(v, |x| x.max(v))));
             let (mut silence_ms, mut via_diagnostics) = (None::<f64>, false);

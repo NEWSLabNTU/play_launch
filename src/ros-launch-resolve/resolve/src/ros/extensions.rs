@@ -34,6 +34,16 @@
 //! profile gives its scope the severity scale and criticality map
 //! ([`severity_scale`]).
 //!
+//! Bundled extensions (phase 91 E8): `vehicle.braking` ships with the
+//! checker (rlm `types::extension::BUNDLED`) and is a candidate for a `use:`
+//! entry after any file of the same name and version. Its keys
+//! (`entry_speed`, `settle: { decel, jerk }`) were core grammar until rlm
+//! v0.1.71, so for one minor release a contract that writes them without
+//! `use:` loads it implicitly, with `deprecated-implicit-extension` (a
+//! plain-number `entry_speed` read as m/s, as the core key was); a hazard
+//! severity on the implicit ISO 26262 scale gets the same warning. `migrate`
+//! adds the `use:` lines.
+//!
 //! A `param` key names a node parameter. In `settle` it is a parameter of
 //! the node whose path states the safe state (as a braking profile's are);
 //! in `hazard` it is a parameter of the node that publishes the hazard's
@@ -62,8 +72,14 @@ pub struct LoadedExt {
     pub name: String,
     pub version: String,
     pub sha256: String,
+    /// The file; for a bundled extension, its file name.
     pub path: PathBuf,
     source: String,
+    /// Bundled with the checker (rlm `types::extension::BUNDLED`).
+    pub bundled: bool,
+    /// Loaded without a `use:` entry, for the legacy vehicle keys (phase 91
+    /// E8); never locked.
+    pub implicit: bool,
 }
 
 impl LoadedExt {
@@ -74,6 +90,52 @@ impl LoadedExt {
 
     fn label(&self) -> String {
         format!("{} {}", self.name, self.version)
+    }
+
+    /// Where it came from, for `--explain`.
+    fn origin(&self) -> String {
+        match (self.bundled, self.implicit) {
+            (true, true) => "bundled with the checker; loaded implicitly (deprecated)".to_string(),
+            (true, false) => "bundled with the checker".to_string(),
+            _ => self.path.display().to_string(),
+        }
+    }
+
+    /// The `requires rlm ...` constraint this checker's grammar does not
+    /// meet, rendered (`rlm >= 0.3.0`), or `None`.
+    fn unmet_requirement(&self) -> Option<String> {
+        use rlx::ast::CmpOp;
+        let ours = ros_launch_manifest_types::parse::parse_grammar_version(
+            ros_launch_manifest_types::GRAMMAR_VERSION,
+        )
+        .expect("GRAMMAR_VERSION parses");
+        let checked = self.checked();
+        checked.file().items.iter().find_map(|i| {
+            let rlx::ast::Item::Requires(r) = i else {
+                return None;
+            };
+            if r.name.dotted() != "rlm" {
+                return None;
+            }
+            let failed = r.constraints.iter().find(|(op, v)| {
+                let want = (v.major, v.minor, v.patch);
+                !match op {
+                    CmpOp::Lt => ours < want,
+                    CmpOp::Le => ours <= want,
+                    CmpOp::Gt => ours > want,
+                    CmpOp::Ge => ours >= want,
+                    CmpOp::Eq => ours == want,
+                    CmpOp::Ne => ours != want,
+                }
+            })?;
+            Some(format!(
+                "rlm {} {}.{}.{}",
+                failed.0.ascii(),
+                failed.1.major,
+                failed.1.minor,
+                failed.1.patch
+            ))
+        })
     }
 
     fn items(&self) -> Vec<ItemRef> {
@@ -244,6 +306,28 @@ fn bundled_profiles() -> Vec<LoadedProfile> {
         .collect()
 }
 
+/// The extensions bundled with the checker (rlm
+/// `types::extension::BUNDLED`).
+fn bundled_extensions() -> Vec<LoadedExt> {
+    ros_launch_manifest_types::extension::BUNDLED
+        .iter()
+        .map(|(file, src)| {
+            let checked = rlx::check_source(src.as_bytes())
+                .unwrap_or_else(|d| panic!("bundled {file} does not load: {d:?}"));
+            let id = rlx::eval::identity(&checked);
+            LoadedExt {
+                name: id.name,
+                version: id.version,
+                sha256: id.sha256,
+                path: PathBuf::from(file),
+                source: src.to_string(),
+                bundled: true,
+                implicit: false,
+            }
+        })
+        .collect()
+}
+
 fn discover(dirs: &[PathBuf], diags: &mut Vec<Diagnostic>) -> (Vec<LoadedExt>, Vec<LoadedProfile>) {
     let mut exts = Vec::new();
     let mut profiles = Vec::new();
@@ -287,6 +371,8 @@ fn discover(dirs: &[PathBuf], diags: &mut Vec<Diagnostic>) -> (Vec<LoadedExt>, V
                         sha256: id.sha256,
                         path: path.clone(),
                         source: source.clone(),
+                        bundled: false,
+                        implicit: false,
                     });
                 }
                 Err(errs) => {
@@ -363,9 +449,12 @@ impl Candidate<'_> {
             Candidate::Profile(p) => &p.sha256,
         }
     }
-    /// Order among equal versions: a file on disk before a bundled profile.
+    /// Order among equal versions: a file on disk before a bundled one.
     fn on_disk(&self) -> bool {
-        !matches!(self, Candidate::Profile(p) if p.path.is_none())
+        match self {
+            Candidate::Ext(e) => !e.bundled,
+            Candidate::Profile(p) => p.path.is_some(),
+        }
     }
 }
 
@@ -379,18 +468,21 @@ pub fn prepare(index: &mut ManifestIndex) {
         _ => ("lock-drift", Severity::Warning),
     };
     let bundled = bundled_profiles();
+    let bundled_exts = bundled_extensions();
     let mut diags = Vec::new();
     let mut scopes: Vec<usize> = index.manifests.keys().copied().collect();
     scopes.sort_unstable();
     for scope in scopes {
         let m = &index.manifests[&scope];
         if m.manifest.uses.is_empty() {
+            implicit_loads(index, scope, &bundled_exts, &mut diags);
             continue;
         }
         let contract = m.contract_path.clone();
         let lock_path = rlm_lock::path_for(&contract);
         let dirs = search_dirs(&contract);
-        let (exts, mut profiles) = discover(&dirs, &mut diags);
+        let (mut exts, mut profiles) = discover(&dirs, &mut diags);
+        exts.extend(bundled_exts.iter().cloned());
         profiles.extend(bundled.iter().cloned());
         let candidates: Vec<Candidate> = exts
             .iter()
@@ -574,11 +666,188 @@ pub fn prepare(index: &mut ManifestIndex) {
             }
             index.profiles.insert(scope, first.clone());
         }
+        for e in &chosen_exts {
+            if let Some(req) = e.unmet_requirement() {
+                diags.push(diag(
+                    "extension-invalid",
+                    Severity::Error,
+                    format!("use.{}", e.name),
+                    format!(
+                        "extension {} requires {req}; this checker reads rlm {}",
+                        e.label(),
+                        ros_launch_manifest_types::GRAMMAR_VERSION
+                    ),
+                ));
+            }
+        }
         index.extensions.insert(scope, chosen_exts);
+        implicit_loads(index, scope, &bundled_exts, &mut diags);
     }
     validate_keys(index, &mut diags);
     derive_hazard_bounds(index, &mut diags);
     index.merge_diagnostics.extend(diags);
+}
+
+/// Phase 91 E8, for one minor release: a scope that writes the legacy
+/// vehicle keys (`entry_speed`, `settle: { decel, jerk }`) with no used
+/// extension declaring them loads the bundled `vehicle.braking`, and a
+/// plain-number `entry_speed` is read as m/s, the core key's unit; a scope
+/// whose hazards state a severity with no profile and no
+/// `severity_levels:` reads them on the implicit ISO 26262 scale. Each is
+/// `deprecated-implicit-extension`, naming the `use:` line `migrate` adds.
+fn implicit_loads(
+    index: &mut ManifestIndex,
+    scope: usize,
+    bundled: &[LoadedExt],
+    diags: &mut Vec<Diagnostic>,
+) {
+    use ros_launch_manifest_types::{extension, field_table::Context};
+    const RULE: &str = "deprecated-implicit-extension";
+    let m = &index.manifests[&scope];
+    let file = m.contract_path.file_name().map_or_else(
+        || m.contract_path.display().to_string(),
+        |f| f.to_string_lossy().into_owned(),
+    );
+    let exts = exts_of(index, scope);
+    let ext_name = extension::VEHICLE_BRAKING;
+    let undeclared = |ctx: Context, prefix: &str, k: &ExtKey| -> bool {
+        let (q, key) = split_key(&k.key);
+        let legacy = match q {
+            None => extension::is_legacy_key(ctx, key),
+            Some(q) => q == ext_name && extension::is_legacy_key(ctx, key),
+        };
+        legacy
+            && !exts.iter().any(|e| e.name == ext_name)
+            && declaring(exts, &format!("{prefix}.{key}")).is_empty()
+    };
+    let mut written: Vec<String> = Vec::new();
+    for h in index.hazards.iter().filter(|h| h.scope_id == scope) {
+        for k in &h.decl.ext {
+            if undeclared(Context::Hazard, "hazard", k) {
+                written.push(format!("hazards.{}.{}", h.name, k.key));
+            }
+        }
+    }
+    for (n, nd) in &m.manifest.nodes {
+        for (p, pd) in &nd.paths {
+            for k in pd.safe_state.iter().flat_map(|ss| &ss.settle_ext) {
+                if undeclared(Context::Settle, "settle", k) {
+                    written.push(format!("nodes.{n}.paths.{p}.safe_state.settle.{}", k.key));
+                }
+            }
+        }
+    }
+    let severities: Vec<String> = {
+        let mut v: Vec<String> = m
+            .manifest
+            .hazards
+            .values()
+            .filter_map(|h| h.severity.clone())
+            .collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+    let implicit_scale = !severities.is_empty()
+        && !index.profiles.contains_key(&scope)
+        && m.manifest.severity_levels.is_empty();
+    if implicit_scale {
+        diags.push(diag(
+            RULE,
+            Severity::Warning,
+            "use".to_string(),
+            format!(
+                "{file}: hazard severities ({}) are read on the implicit ISO 26262 scale, which \
+                 is now the bundled profile `iso26262`; the next minor release requires it to be \
+                 named -- add `use: {{ iso26262: \"^1\" }}` (`play_launch migrate` does)",
+                severities.join(", ")
+            ),
+        ));
+    }
+    if written.is_empty() {
+        return;
+    }
+    let mut ext = bundled
+        .iter()
+        .find(|e| e.name == ext_name)
+        .expect("vehicle.braking is bundled")
+        .clone();
+    ext.implicit = true;
+    diags.push(diag(
+        RULE,
+        Severity::Warning,
+        "use".to_string(),
+        format!(
+            "{file}: {} {} the key{} of the bundled extension {}, loaded implicitly because the \
+             contract does not `use:` it; the next minor release requires the `use:` line -- add \
+             `use: {{ {ext_name}: \"^1\" }}` (`play_launch migrate` does, and gives a plain-number \
+             `entry_speed` its unit, m/s)",
+            written.join(", "),
+            if written.len() == 1 { "is" } else { "are" },
+            if written.len() == 1 { "" } else { "s" },
+            ext.label()
+        ),
+    ));
+    index.extensions.entry(scope).or_default().push(ext);
+    // The core key was a plain number in m/s.
+    let with_unit = |k: &mut ExtKey| {
+        if split_key(&k.key).1 == "entry_speed"
+            && let ExtValue::Scalar(t) = &mut k.value
+            && t.trim().parse::<f64>().is_ok()
+        {
+            *t = format!("{} m/s", t.trim());
+        }
+    };
+    for h in index.hazards.iter_mut().filter(|h| h.scope_id == scope) {
+        h.decl.ext.iter_mut().for_each(with_unit);
+    }
+    if let Some(m) = index.manifests.get_mut(&scope) {
+        for h in m.manifest.hazards.values_mut() {
+            h.ext.iter_mut().for_each(with_unit);
+        }
+    }
+}
+
+/// The bundled `vehicle.braking`'s environment, for reading its keys'
+/// values outside an evaluation (the model's entry speed).
+fn vehicle_braking_env() -> &'static rlx::typeck::Env {
+    use std::sync::OnceLock;
+    static ENV: OnceLock<rlx::typeck::Env> = OnceLock::new();
+    ENV.get_or_init(|| {
+        let src = ros_launch_manifest_types::extension::BUNDLED
+            .iter()
+            .find(|(f, _)| f.starts_with(ros_launch_manifest_types::extension::VEHICLE_BRAKING))
+            .expect("vehicle.braking is bundled")
+            .1;
+        rlx::check_source(src.as_bytes())
+            .expect("the bundled vehicle.braking loads")
+            .env
+    })
+}
+
+/// A hazard's `vehicle.braking` entry speed in m/s, for the model: its
+/// `entry_speed` key (bare or qualified) read as a velocity, a plain number
+/// as m/s (the core key's unit until rlm v0.1.71).
+pub(crate) fn entry_speed_mps(decl: &ros_launch_manifest_types::HazardDecl) -> Option<f64> {
+    let k = decl.ext.iter().find(|k| {
+        names(
+            k,
+            ros_launch_manifest_types::extension::VEHICLE_BRAKING,
+            "entry_speed",
+        )
+    })?;
+    let ExtValue::Scalar(text) = &k.value else {
+        return None;
+    };
+    if let Ok(v) = text.trim().parse::<f64>() {
+        return Some(v);
+    }
+    let env = vehicle_braking_env();
+    let ty = env.key("hazard.entry_speed")?.ty.clone();
+    match env.parse_value(text, &ty).ok()? {
+        rlx::value::ContractValue::Quantity(q) => Some(q.si),
+        _ => None,
+    }
 }
 
 /// `check --update-lock`: write each contract directory's `rlm.lock` from
@@ -597,6 +866,7 @@ pub fn write_locks(index: &ManifestIndex) -> Result<Vec<PathBuf>, String> {
         });
         let mut entries: Vec<(String, Entry)> = exts_of(index, m.scope_id)
             .iter()
+            .filter(|e| !e.implicit)
             .map(|e| {
                 (
                     e.name.clone(),
@@ -647,7 +917,10 @@ pub fn render_resolution(index: &ManifestIndex) -> String {
     let mut out = String::new();
     let mut scopes: Vec<_> = index.manifests.values().collect();
     scopes.sort_by_key(|m| m.scope_id);
-    for m in scopes.into_iter().filter(|m| !m.manifest.uses.is_empty()) {
+    for m in scopes
+        .into_iter()
+        .filter(|m| !m.manifest.uses.is_empty() || !exts_of(index, m.scope_id).is_empty())
+    {
         if out.is_empty() {
             out.push_str("\n-- Extensions (--explain) --\n");
         }
@@ -667,7 +940,7 @@ pub fn render_resolution(index: &ManifestIndex) -> String {
                 e.name,
                 e.version,
                 e.sha256,
-                e.path.display()
+                e.origin()
             ));
         }
         if let Some(p) = index.profiles.get(&m.scope_id) {
@@ -831,6 +1104,16 @@ enum ParamHost<'a> {
 }
 
 fn param_number(index: &ManifestIndex, host: &ParamHost, name: &str) -> Result<f64, String> {
+    // A safe state's parameter is its node's numeric launch value: the
+    // number the image runs.
+    if let ParamHost::Node(fqn) = host {
+        return match index.launch_params.get(*fqn).and_then(|v| v.get(name)) {
+            None => Err(format!("'{name}' has no resolved launch value for {fqn}")),
+            Some(lp) => lp
+                .number
+                .ok_or_else(|| format!("'{name}' resolves to `{}`, not a number", lp.text)),
+        };
+    }
     let nodes: Vec<String> = match host {
         ParamHost::Node(fqn) => vec![fqn.to_string()],
         ParamHost::Guard(h) => {
@@ -898,6 +1181,22 @@ fn names(k: &ExtKey, ext: &str, key: &str) -> bool {
     }
 }
 
+/// Why [`gather`] could not read an input.
+enum GatherError {
+    /// A `param` key's parameter has no usable launch value.
+    Param(String),
+    /// A written value the declaration refuses.
+    Value(String),
+}
+
+impl From<GatherError> for String {
+    fn from(e: GatherError) -> String {
+        match e {
+            GatherError::Param(s) | GatherError::Value(s) => s,
+        }
+    }
+}
+
 /// The inputs an item needs, from the hazard's keys, the safe state's keys
 /// and the core values. A key the contract does not write is left out: the
 /// evaluator uses its default or names it as missing.
@@ -910,7 +1209,7 @@ fn gather(
     h: &ResolvedHazard,
     settle: Option<(&str, &SafeState)>,
     reaction_total_ms: Option<f64>,
-) -> Result<(Inputs, Vec<(String, String)>), String> {
+) -> Result<(Inputs, Vec<(String, String)>), GatherError> {
     let mut inputs = Inputs::new();
     let mut written: Vec<(String, String)> = Vec::new();
     for need in needs {
@@ -918,11 +1217,11 @@ fn gather(
             .path
             .split_once('.')
             .unwrap_or(("", need.path.as_str()));
-        let core = |text: String| -> Result<Value, String> {
+        let core = |text: String| -> Result<Value, GatherError> {
             let ContractValue::Quantity(q) = checked
                 .env
                 .parse_value(&text, &need.ty)
-                .map_err(|d| d.message)?
+                .map_err(|d| GatherError::Value(d.message))?
             else {
                 unreachable!("a core input is a quantity")
             };
@@ -965,12 +1264,12 @@ fn gather(
                 let rows = checked
                     .env
                     .parse_table(&refs, &need.ty)
-                    .map_err(|d| d.message)?;
+                    .map_err(|d| GatherError::Value(d.message))?;
                 written.push((need.path.clone(), format!("{} entries", rows.len())));
                 Value::table(&rows)
             }
             (KeyTy::Param { .. }, ExtValue::Scalar(name)) => {
-                let raw = param_number(index, &host, name)?;
+                let raw = param_number(index, &host, name).map_err(GatherError::Param)?;
                 written.push((need.path.clone(), format!("{name} = {raw}")));
                 rlx::eval::param_value(raw, &need.ty).expect("a param key")
             }
@@ -978,14 +1277,20 @@ fn gather(
                 let ContractValue::Quantity(q) = checked
                     .env
                     .parse_value(text, &need.ty)
-                    .map_err(|d| d.message)?
+                    .map_err(|d| GatherError::Value(d.message))?
                 else {
-                    return Err(format!("`{key}` names a parameter where a value belongs"));
+                    return Err(GatherError::Value(format!(
+                        "`{key}` names a parameter where a value belongs"
+                    )));
                 };
                 written.push((need.path.clone(), text.clone()));
                 Value::from_quantity(q, Some(text))
             }
-            (_, ExtValue::Map(_)) => return Err(format!("`{key}` is a table, not a value")),
+            (_, ExtValue::Map(_)) => {
+                return Err(GatherError::Value(format!(
+                    "`{key}` is a table, not a value"
+                )));
+            }
         };
         inputs.insert(need.path.clone(), value);
     }
@@ -1252,8 +1557,9 @@ fn derive_hazard_bounds(index: &mut ManifestIndex, diags: &mut Vec<Diagnostic>) 
                     ));
                     continue;
                 }
-                let result = gather(index, &ext.name, &checked, &needs, h, None, None).and_then(
-                    |(inputs, written)| {
+                let result = gather(index, &ext.name, &checked, &needs, h, None, None)
+                    .map_err(String::from)
+                    .and_then(|(inputs, written)| {
                         rlx::eval::eval_derive(&checked, target, &inputs)
                             .map(|ev| (ev, written, inputs))
                             .map_err(|d| {
@@ -1261,8 +1567,7 @@ fn derive_hazard_bounds(index: &mut ManifestIndex, diags: &mut Vec<Diagnostic>) 
                                     .trim_end()
                                     .to_string()
                             })
-                    },
-                );
+                    });
                 match result {
                     Ok((ev, written, inputs)) => {
                         let wc = worst_case(ext, &checked, &item, &inputs);
@@ -1337,19 +1642,36 @@ fn derive_hazard_bounds(index: &mut ManifestIndex, diags: &mut Vec<Diagnostic>) 
 
 /// What the settle lookup charges for a safe state whose settle a used
 /// extension derives: `None` when no used extension derives
-/// `settle.duration` from the keys it writes.
+/// `settle.duration` from the keys it writes. `literal` is what the safe
+/// state charges without the derivation (its written duration plus the
+/// response), the fallback when the derivation lacks a hazard's key.
+///
+/// The settle rules are the ones the core braking profile had before phase
+/// 91 E8, for any extension's settle: `settle-param-unresolved` (a
+/// parameter the derivation reads has no usable launch value; one finding
+/// per declaration, however many hazards reach it), `settle-entry-missing`
+/// (the hazard writes no value for a key the derivation needs and has no
+/// default of: the literal settle is charged), `settle-conflict` (a
+/// written duration and the derivation disagree by more than 1%; the
+/// derivation is charged) and `derive-conflict` (a written duration that is
+/// itself derived).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn derived_settle(
     index: &ManifestIndex,
     h: &ResolvedHazard,
+    rung: &str,
     scope_id: usize,
     node_fqn: &str,
     at: &str,
     ss: &SafeState,
+    literal: super::value_rules::Settle,
     diags: &mut Vec<Diagnostic>,
 ) -> Option<super::value_rules::Settle> {
+    use super::value_rules::{Settle, site};
     if ss.settle_ext.is_empty() {
         return None;
     }
+    let where_ = site(index, scope_id, at);
     for ext in exts_of(index, scope_id) {
         let checked = ext.checked();
         let Some(needs) = checked
@@ -1361,8 +1683,27 @@ pub(crate) fn derived_settle(
         if !writes_any(&ext.name, &needs, h, Some(ss)) {
             continue;
         }
+        if let Some(d) = ss
+            .settle
+            .as_ref()
+            .and_then(|b| b.source.as_ref())
+            .and_then(|s| s.derived.as_deref())
+        {
+            diags.push(diag(
+                "derive-conflict",
+                Severity::Error,
+                at.to_string(),
+                format!(
+                    "{where_}: the settle is derived twice: by {} and as a written duration {} \
+                     -- keep one. {} is charged",
+                    ext.label(),
+                    super::budget_book::derived_label(d),
+                    ext.label()
+                ),
+            ));
+        }
         let reads_response = needs.iter().any(|n| n.path == "settle.response");
-        let result = gather(
+        let (inputs, written) = match gather(
             index,
             &ext.name,
             &checked,
@@ -1370,18 +1711,76 @@ pub(crate) fn derived_settle(
             h,
             Some((node_fqn, ss)),
             None,
-        )
-        .and_then(|(inputs, _)| {
-            rlx::eval::eval_derive(&checked, "settle.duration", &inputs)
-                .map(|ev| (ev, inputs))
-                .map_err(|d| {
-                    d.render(&ext.path.display().to_string(), ext.source.as_bytes())
-                        .trim_end()
-                        .to_string()
-                })
+        ) {
+            Ok(ok) => ok,
+            Err(GatherError::Param(e)) => {
+                diags.push(diag(
+                    "settle-param-unresolved",
+                    Severity::Error,
+                    at.to_string(),
+                    format!(
+                        "{where_}: the settle {} derives for {node_fqn} cannot be read: {e}. The \
+                         settle is derived from the parameters the image runs, or not at all",
+                        ext.label()
+                    ),
+                ));
+                return Some(literal);
+            }
+            Err(GatherError::Value(e)) => {
+                diags.push(diag(
+                    "extension-eval",
+                    Severity::Error,
+                    at.to_string(),
+                    format!(
+                        "hazard '{}': {} cannot derive the settle: {e}",
+                        h.name,
+                        ext.label()
+                    ),
+                ));
+                return Some(Settle {
+                    ms: None,
+                    how: "none",
+                    response_ms: None,
+                    derivation: None,
+                });
+            }
+        };
+        let missing: Vec<&str> = needs
+            .iter()
+            .filter(|n| n.kind == KeyKind::Key && !n.has_default && !inputs.contains_key(&n.path))
+            .filter_map(|n| n.path.strip_prefix("hazard."))
+            .collect();
+        if let Some(first) = missing.first() {
+            diags.push(diag(
+                "settle-entry-missing",
+                Severity::Warning,
+                format!("hazards.{}.{first}", h.name),
+                format!(
+                    "{}: hazard '{}' reaches rung '{rung}', whose settle {} derives ({node_fqn}), \
+                     but the hazard states no {} -- {}",
+                    site(index, h.scope_id, &format!("hazards.{}", h.name)),
+                    h.name,
+                    ext.label(),
+                    missing
+                        .iter()
+                        .map(|k| format!("`{k}`"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    match literal.ms {
+                        Some(l) => format!("falling back to the literal settle {l:.2}ms"),
+                        None => "and there is no literal settle to fall back to".to_string(),
+                    }
+                ),
+            ));
+            return Some(literal);
+        }
+        let result = rlx::eval::eval_derive(&checked, "settle.duration", &inputs).map_err(|d| {
+            d.render(&ext.path.display().to_string(), ext.source.as_bytes())
+                .trim_end()
+                .to_string()
         });
         return match result {
-            Ok((ev, inputs)) => {
+            Ok(ev) => {
                 let item = ItemRef::Derive("settle.duration".to_string());
                 let wc = worst_case(ext, &checked, &item, &inputs);
                 wc.report(at, diags);
@@ -1399,7 +1798,8 @@ pub(crate) fn derived_settle(
                     Severity::Info,
                     at.to_string(),
                     format!(
-                        "hazard '{}': settle = {ms:.2}ms derived by {} (sha256 {}){}\n{}{}",
+                        "{where_}: hazard '{}', rung '{rung}': settle = {ms:.2}ms derived by {} \
+                         (sha256 {}){}\n{}{}",
                         h.name,
                         ext.label(),
                         &ext.sha256[..12],
@@ -1411,10 +1811,37 @@ pub(crate) fn derived_settle(
                         wc.suffix()
                     ),
                 ));
-                Some(super::value_rules::Settle {
+                if let Some(l) = ss.written_settle_ms()
+                    && (l - ms).abs() > 0.01 * ms
+                {
+                    diags.push(diag(
+                        "settle-conflict",
+                        Severity::Warning,
+                        at.to_string(),
+                        format!(
+                            "{where_}: hazard '{}', rung '{rung}': the literal settle {l:.2}ms \
+                             and {}'s {ms:.2}ms differ by {:.1}% -- one of them describes a \
+                             different vehicle or a different speed. The derived value is \
+                             charged{}",
+                            h.name,
+                            ext.label(),
+                            (l - ms).abs() / ms * 100.0,
+                            response_ms
+                                .map(|r| format!(" (both include the written response {r:.2}ms)"))
+                                .unwrap_or_default()
+                        ),
+                    ));
+                }
+                Some(Settle {
                     ms: Some(ms),
                     how: "derived",
                     response_ms,
+                    derivation: Some(Box::new(derivation(
+                        ext,
+                        written,
+                        &ev.trace,
+                        wc.line.as_deref(),
+                    ))),
                 })
             }
             Err(e) => {
@@ -1428,10 +1855,11 @@ pub(crate) fn derived_settle(
                         ext.label()
                     ),
                 ));
-                Some(super::value_rules::Settle {
+                Some(Settle {
                     ms: None,
                     how: "none",
                     response_ms: None,
+                    derivation: None,
                 })
             }
         };
@@ -1477,6 +1905,25 @@ pub fn run_checks(index: &mut ManifestIndex) {
         .filter(|r| r.role == RungRole::Floor)
         .filter_map(|r| r.total_ms.map(|t| (r.hazard.as_str(), t)))
         .collect();
+    // The safe state the hazard's floor ends at: a check may read its keys
+    // (rail's stopping distance reads the brake build-up and the
+    // deceleration table).
+    let floor_settle: BTreeMap<&str, (&str, &SafeState)> = index
+        .budgets
+        .iter()
+        .filter(|r| r.role == RungRole::Floor)
+        .filter_map(|r| {
+            let (node, path) = r.settle_at.as_ref()?;
+            let ss = index
+                .node_paths
+                .iter()
+                .find(|p| p.node_fqn == *node && p.path_name == *path)?
+                .path
+                .safe_state
+                .as_ref()?;
+            Some((r.hazard.as_str(), (node.as_str(), ss)))
+        })
+        .collect();
     for h in &index.hazards {
         for ext in exts_of(index, h.scope_id) {
             let checked = ext.checked();
@@ -1494,7 +1941,8 @@ pub fn run_checks(index: &mut ManifestIndex) {
                 let Some(needs) = checked.env.reads(&item) else {
                     continue;
                 };
-                if !named && !writes_any(&ext.name, &needs, h, None) {
+                let settle = floor_settle.get(h.name.as_str()).copied();
+                if !named && !writes_any(&ext.name, &needs, h, settle.map(|(_, ss)| ss)) {
                     continue;
                 }
                 let at = format!("hazards.{}", h.name);
@@ -1516,7 +1964,8 @@ pub fn run_checks(index: &mut ManifestIndex) {
                     ));
                     continue;
                 }
-                let gathered = gather(index, &ext.name, &checked, &needs, h, None, rt);
+                let gathered =
+                    gather(index, &ext.name, &checked, &needs, h, settle, rt).map_err(String::from);
                 let render = |d: rlx::diag::Diagnostic| {
                     d.render(&ext.path.display().to_string(), ext.source.as_bytes())
                         .trim_end()

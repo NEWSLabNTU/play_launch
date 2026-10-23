@@ -1,0 +1,96 @@
+# Phase 91 E9: extension-examples.md section 5 on contract_fault's chain.
+# rail.ebd derives the settle as a bounded sum over the emergency
+# deceleration table and checks the stopping distance beside the ftti:
+# settle = 1.0 + 2.5 + (27.78 m/s)/0.75 + (16.67 m/s)/0.70 = 64.35 s, and
+# 155.56 + 514.40 + 859.79 = 1529.75 m <= 1600 m. The reaction is
+# 100 + 7 + 64346.56 ms against a 90 s interval.
+version: 1
+use: { rail.ebd: "^0.1", en50129: "^1" }
+
+hazards:
+  drive_blind:
+    severity: SIL_4
+    description: train passes the end of its movement authority
+    guards: [/safety/scan]
+    on: omission
+    ftti: 90s
+    reaction: safety.stop
+    entry_speed: 160 km/h
+    distance_to_eoa: 1600 m
+
+nodes:
+  lidar_driver:
+    pub:
+      scan: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 50 } }
+        output: [scan]
+        max_latency: 2ms
+
+  obstacle_detector:
+    sub:
+      scan:
+        min_rate_hz: 50
+        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
+        on_violation:
+          on: [omission]
+          reaction: declare_lost
+          within: 10ms
+    pub:
+      obstacles: {}
+    paths:
+      detect:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 12ms
+      declare_lost:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 2ms
+
+  brake_controller:
+    sub:
+      obstacles:
+        max_age: 60ms
+        on_violation:
+          on: [late, omission]
+          reaction: emergency_stop
+          within: 20ms
+    pub:
+      brake_cmd: {}
+    paths:
+      brake:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 8ms
+      emergency_stop:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 5ms
+        safe_state:
+          emits: brake_cmd
+          settle:
+            traction_cut_off: 1.0s
+            brake_build_up: 2.5s
+            a_ebd: { 0 km/h: 0.75 m/s^2, 100 km/h: 0.70 m/s^2 }
+
+paths:
+  safety.stop:
+    trigger: { input: [/safety/scan] }
+    output: [/safety/brake_cmd]
+    max_latency: 100ms
+
+topics:
+  /safety/scan:
+    type: std_msgs/msg/String
+    pub: [lidar_driver/scan]
+    sub: [obstacle_detector/scan]
+  /safety/obstacles:
+    type: std_msgs/msg/String
+    pub: [obstacle_detector/obstacles]
+    sub: [brake_controller/obstacles]
+  /safety/brake_cmd:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [brake_controller/brake_cmd]

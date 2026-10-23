@@ -1,0 +1,23 @@
+# Phase 91 E9: what `check --explain` prints for contract_ext_vehicle, line by line.
+# The test finds each line below in the output (a line may be part of a
+# longer one); `#` lines are comments. Regenerate with tmp/e8/golden.py
+# only after reading the change.
+# exit 0
+info[fault-reaction-budget]: bringup.contract.yaml:18: hazard 'drive_blind': detection 100.00ms (/safety/obstacle_detector/scan detects within 100.00ms) + reaction 4429.67ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 4422.67ms) = 4529.67ms fits the fault-tolerant time interval 10000.00ms with 5470.33ms of slack
+info[settle-derived]: bringup.contract.yaml:77: hazard 'drive_blind', rung 'safety.stop': settle = 4422.67ms derived by vehicle.braking 1.0.0 (sha256 349731db33be)
+entry_speed = 8.3333 m/s   (30 km/h)
+decel = 2.5 m/s^2
+jerk = 1.5 m/s^3
+response = 256 ms   (256ms)
+braking_time(entry_speed, decel, jerk) = 4.1667 s
+v0 = 8.3333 m/s
+a = 2.5 m/s^2
+j = 1.5 m/s^3
+v_r = a^2 / (2 j) = 2.0833 m/s
+if v0 > v_r: 8.3333 m/s > 2.0833 m/s, true: take `then`
+settle.duration = response + braking_time(entry_speed, decel, jerk) = 4.4227 s
+worst case: proved increasing in entry_speed, response; decreasing in decel, jerk
+drive_blind  safety.stop  floor  100.00     0.00   7.00  4422.67 derived  4529.67  10000.00  5470.33
+drive_blind  4529.67  (floor 'safety.stop')
+vehicle.braking 1.0.0  extension  sha256 349731db33beff03738e0b25a67301edb5910930a67bbfd62c4ec974e1db1b8f
+iso26262 1.0.0  profile  sha256 9d0c941effbe16fe4b8b32b596a467b7243b79145dce81de8767af31b4ec13cb

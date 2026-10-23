@@ -1,0 +1,19 @@
+# Phase 91 E9: what `check --explain` prints for contract_ext_process, line by line.
+# The test finds each line below in the output (a line may be part of a
+# longer one); `#` lines are comments. Regenerate with tmp/e8/golden.py
+# only after reading the change.
+# exit 0
+info[ftti-derived]: hazard 'drive_blind': ftti = 4 s derived by process.pst 0.1.0
+trip_setpoint = 900 kPa
+hazard_pressure = 1.1 MPa   (11 bar)
+max_rise_rate = 50000 kg/(m*s^3)   (0.5 bar/s)
+hazard.ftti = (hazard_pressure - trip_setpoint) / max_rise_rate = 4 s
+worst case: proved decreasing in max_rise_rate; increasing in hazard_pressure
+info[fault-reaction-budget]: bringup.contract.yaml:11: hazard 'drive_blind': detection 100.00ms (/safety/obstacle_detector/scan detects within 100.00ms) + reaction 2007.00ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 2000.00ms) = 2107.00ms fits the fault-tolerant time interval 4000.00ms with 1893.00ms of slack
+info[settle-derived]: bringup.contract.yaml:73: hazard 'drive_blind', rung 'safety.stop': settle = 2000.00ms derived by process.pst 0.1.0 (sha256 7c2e84dde81d)
+valve_stroke = 2 s   (2s)
+settle.duration = valve_stroke = 2 s
+drive_blind  safety.stop  floor  100.00     0.00   7.00  2000.00 derived  2107.00  4000.00  1893.00  unstated  -
+drive_blind  2107.00  (floor 'safety.stop')
+process.pst 0.1.0  extension  sha256 7c2e84dde81df3f00695d897fd9b93868aa37547f282a19329b75667841a3987
+iso26262 1.0.0  profile  sha256 9d0c941effbe16fe4b8b32b596a467b7243b79145dce81de8767af31b4ec13cb

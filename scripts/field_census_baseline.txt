@@ -88,14 +88,6 @@ observe_ms         # SettleSuperviseContract (model, rlm v0.1.62). The
                    # arms a standstill deadline from the model yet (the
                    # safety island's route 2 is configured by hand).
 
-major              # VersionReq (rlm v0.1.66, phase 91 E4): a component of
-                   # a `use:` requirement. It is consumed, but only inside
-                   # `VersionReq::matches` in rlm's types.rs, which the census
-                   # files as a struct definition; `extensions.rs` calls
-                   # `matches` on the whole `req`. Not a debt: a census that
-                   # classifies by file cannot see a read inside a method of
-                   # the type that holds the field.
-
 min_interarrival   # EndpointProps / SrvEndpointProps (rlm v0.1.68, nano-ros
                    # RFC-0108 D1, phase-509 P4): the least time between two
                    # arrivals at an input. The resolver lowers it into the
@@ -107,3 +99,15 @@ min_interarrival   # EndpointProps / SrvEndpointProps (rlm v0.1.68, nano-ros
 budget_period      # EndpointProps / SrvEndpointProps (rlm v0.1.68): the
                    # server period of an input's `budget`; same state as
                    # `min_interarrival` (nano-ros reads `budget_period_ms`).
+
+settle_derived     # SafeStateContract (rlm v0.2.0, phase 91 E10): where a
+                   # derived `settle_ms` came from (extension, version,
+                   # sha256, inputs). A record for a reviewer and a lock,
+                   # deliberately read by no rule: the number beside it is
+                   # what every consumer reads, so an image never evaluates
+                   # an extension. Drop this line if a check ever compares
+                   # the record with the lock.
+ftti_derived       # HazardContract (rlm v0.2.0, phase 91 E10): as
+                   # `settle_derived`, for a derived `ftti_ms`.
+detection_derived  # HazardContract (rlm v0.2.0, phase 91 E10): as
+                   # `settle_derived`, for a derived `detection_ms`.

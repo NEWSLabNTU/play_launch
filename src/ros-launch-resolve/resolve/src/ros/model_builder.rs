@@ -431,6 +431,22 @@ fn qos_contract(q: &QosDecl) -> model::Qos {
     }
 }
 
+/// A derivation record as the model carries it (phase 91 E10).
+fn source_of(d: &ros_launch_manifest_types::Derivation) -> model::DerivedSource {
+    model::DerivedSource {
+        by: d.by.clone(),
+        version: d.version.clone(),
+        sha256: d.sha256.clone(),
+        hazard: None,
+        inputs: d.inputs.iter().cloned().collect(),
+    }
+}
+
+/// The source of a bound an extension derived, `None` for a written one.
+fn derived_source(b: Option<&Bound>) -> Option<model::DerivedSource> {
+    Some(source_of(b?.source.as_ref()?.derived.as_deref()?))
+}
+
 /// A supervision's reaction, by its key in the model (phase 93): a node
 /// path's in `contracts.node_paths`, a scope path's in
 /// `contracts.scope_paths`.
@@ -479,13 +495,9 @@ fn path_contract(
         safe_state: decl.safe_state.as_ref().map(|s| model::SafeStateContract {
             emits: emits_key(&s.emits),
             settle_ms: s.written_settle_ms(),
-            settle_profile: s
-                .settle_profile
-                .as_ref()
-                .map(|p| model::SettleProfileContract {
-                    decel: p.decel.clone(),
-                    jerk: p.jerk.clone(),
-                }),
+            // Phase 91 E10: a derived settle is set by the caller from the
+            // fault walk, which knows the hazards that reach it.
+            settle_derived: None,
             // rlm v0.1.62: set by the caller from the lowering, node paths
             // only.
             supervise: None,
@@ -1293,6 +1305,36 @@ pub fn build_system_model(
                 mechanism: model_mechanism(mechanism),
             });
         }
+        // Phase 91 E10: a settle an extension derives is a plain number on
+        // the path, the largest over the hazards whose reaction ends here
+        // (it differs per hazard: an entry speed is the hazard's), with its
+        // source. A hazard that fell back to the written duration counts
+        // with that.
+        if let Some(ss) = contract.safe_state.as_mut()
+            && let Some(top) = index
+                .budgets
+                .iter()
+                .filter(|b| {
+                    b.settle_at
+                        .as_ref()
+                        .is_some_and(|(n, path)| *n == p.node_fqn && *path == p.path_name)
+                })
+                .filter(|b| b.settle_ms.is_some())
+                .max_by(|a, b| a.settle_ms.partial_cmp(&b.settle_ms).expect("finite"))
+            && index.budgets.iter().any(|b| {
+                b.settle_derivation.is_some()
+                    && b.settle_at
+                        .as_ref()
+                        .is_some_and(|(n, path)| *n == p.node_fqn && *path == p.path_name)
+            })
+        {
+            ss.settle_ms = top.settle_ms;
+            ss.settle_derived = top.settle_derivation.as_deref().map(|d| {
+                let mut src = source_of(d);
+                src.hazard = Some(top.hazard.clone());
+                src
+            });
+        }
         contracts
             .node_paths
             .insert(format!("{node_fqn}/{}", p.path_name), contract);
@@ -1481,7 +1523,9 @@ pub fn build_system_model(
                     .entry()
                     .map(|r| scope_scoped_key(&scope_key(Some(h.scope_id)), r)),
                 when: h.decl.when.as_ref().map(predicate),
-                entry_speed_mps: h.decl.entry_speed,
+                ftti_derived: derived_source(h.decl.ftti.as_ref()),
+                detection_ms: h.decl.detection.ms(),
+                detection_derived: derived_source(h.decl.detection.as_ref()),
             },
         );
     }

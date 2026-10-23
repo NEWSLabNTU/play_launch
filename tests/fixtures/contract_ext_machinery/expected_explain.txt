@@ -1,0 +1,22 @@
+# Phase 91 E9: what `check --explain` prints for contract_ext_machinery, line by line.
+# The test finds each line below in the output (a line may be part of a
+# longer one); `#` lines are comments. Regenerate with tmp/e8/golden.py
+# only after reading the change.
+# exit 0
+info[extension-check]: hazard 'drive_blind': machine.iso13855/safety_distance PASS (machine.iso13855 0.3.0, the hazard's deadline_by)
+detection_capability = 30 mm   (30 mm)
+device_response = 15 ms   (15ms)
+installed_distance = 650 mm   (650 mm)
+reaction_total = 287 ms   (287.00ms)
+T = device_response + reaction_total = 302 ms
+C = if detection_capability <= 40 mm then 8 * (detection_capability - 14 mm) else 850 mm = 128 mm
+if detection_capability <= 40 mm: 30 mm <= 40 mm, true: take `then`
+s_2000 = 2000 mm/s * T + C = 732 mm
+required = if s_2000 <= 500 mm then max(s_2000, 100 mm) else max(1600 mm/s * T + C, 500 mm) = 611.2 mm
+if s_2000 <= 500 mm: 732 mm <= 500 mm, false: take `else`
+safety_distance: required <= installed_distance: 611.2 mm <= 650 mm (margin 38.8 mm) PASS
+worst case: proved increasing in reaction_total, device_response
+drive_blind  safety.stop  floor  100.00     0.00   7.00  180.00 literal  287.00     -      -  measured+unstated  unsupervised
+drive_blind  287.00  (floor 'safety.stop')
+machine.iso13855 0.3.0  extension  sha256 594b23c059caff947adf55d3a7864c1786d73274181d7a8fba74b1246d3ea03e
+iso26262 1.0.0  profile  sha256 9d0c941effbe16fe4b8b32b596a467b7243b79145dce81de8767af31b4ec13cb

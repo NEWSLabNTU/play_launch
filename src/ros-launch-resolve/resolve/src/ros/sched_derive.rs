@@ -1075,6 +1075,112 @@ mod tests {
         );
     }
 
+    /// Phase 91 E8's gate: every contract fixture, migrated by the E8
+    /// rewrites alone (`use-implicit`, `entry-speed-unit`), checks with the
+    /// verdicts and fault-reaction totals it has unmigrated -- where the
+    /// vehicle keys and the ISO 26262 scale load implicitly -- less the
+    /// `deprecated-implicit-extension` warnings, and raises none of them.
+    #[test]
+    fn every_fixture_checks_the_same_once_migrated() {
+        use ros_launch_manifest_types::migrate::migrate_str;
+        const E8: [&str; 2] = ["use-implicit", "entry-speed-unit"];
+        const DEPRECATED: &str = "deprecated-implicit-extension";
+        let fixtures = repo_root().join("tests/fixtures");
+        let tmp = tempfile::tempdir().unwrap();
+        let verdicts = |index: &ManifestIndex| -> Vec<String> {
+            let mut v: Vec<String> = index
+                .merge_diagnostics
+                .iter()
+                .filter(|d| d.rule_id != DEPRECATED)
+                .map(|d| format!("{} {:?} {}", d.rule_id, d.severity, d.path))
+                .collect();
+            v.sort();
+            v
+        };
+        let totals = |index: &ManifestIndex| -> Vec<String> {
+            let mut v: Vec<String> = index
+                .budgets
+                .iter()
+                .map(|b| {
+                    format!(
+                        "{}/{} {:?}",
+                        b.hazard,
+                        b.rung,
+                        b.total_ms.map(|t| format!("{t:.2}"))
+                    )
+                })
+                .collect();
+            v.sort();
+            v
+        };
+        let (mut compared, mut migrated, mut warned) = (0usize, 0usize, 0usize);
+        for launch in contract_fixture_launches() {
+            let rel = launch.strip_prefix(&fixtures).unwrap();
+            let fixture = rel.components().next().unwrap().as_os_str().to_owned();
+            let copy = tmp.path().join(&fixture);
+            if !copy.exists() {
+                copy_tree(&fixtures.join(&fixture), &copy);
+                let mut stack = vec![copy.clone()];
+                while let Some(dir) = stack.pop() {
+                    for e in std::fs::read_dir(&dir).unwrap().flatten() {
+                        let p = e.path();
+                        if e.file_type().unwrap().is_dir() {
+                            stack.push(p);
+                            continue;
+                        }
+                        if !p.to_string_lossy().ends_with(".contract.yaml") {
+                            continue;
+                        }
+                        let text = std::fs::read_to_string(&p).unwrap();
+                        let Ok(m) = migrate_str(&text) else { continue };
+                        let mut edits: Vec<_> =
+                            m.edits.iter().filter(|e| E8.contains(&e.rewrite)).collect();
+                        if edits.is_empty() {
+                            continue;
+                        }
+                        edits.sort_by_key(|e| std::cmp::Reverse(e.range.start));
+                        let mut out = text.clone();
+                        for e in edits {
+                            out.replace_range(e.range.clone(), &e.replacement);
+                        }
+                        std::fs::write(&p, out).unwrap();
+                        migrated += 1;
+                    }
+                }
+            }
+            let name = fixture_name(&launch);
+            let before = index_of(&dump_of(&launch), &name);
+            let after = index_of(&dump_of(&tmp.path().join(rel)), &name);
+            warned += before
+                .merge_diagnostics
+                .iter()
+                .filter(|d| d.rule_id == DEPRECATED)
+                .count();
+            let left: Vec<_> = after
+                .merge_diagnostics
+                .iter()
+                .filter(|d| d.rule_id == DEPRECATED)
+                .map(|d| d.message.clone())
+                .collect();
+            assert!(
+                left.is_empty(),
+                "{name}: still implicit once migrated: {left:?}"
+            );
+            assert_eq!(
+                verdicts(&before),
+                verdicts(&after),
+                "{name}: verdicts moved"
+            );
+            assert_eq!(totals(&before), totals(&after), "{name}: totals moved");
+            compared += 1;
+        }
+        eprintln!(
+            "{compared} fixture launch(es) compared, {migrated} contract(s) migrated, \
+             {warned} deprecation warning(s) before"
+        );
+        assert!(compared >= 20 && migrated >= 10 && warned >= 10);
+    }
+
     /// The permanent form of W2's parity gate (Gates 1 of the phase): the
     /// plan the one derivation makes of every contract fixture launch, from
     /// its own contract and platform file, is the committed one, byte for

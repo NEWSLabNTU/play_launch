@@ -33,7 +33,7 @@ use super::{
 use ros_launch_manifest_check::{Diagnostic, Severity};
 use ros_launch_manifest_types::{
     EffectiveTrigger, FaultKind, NodeDecl, OptBound, ParamBinding, PredicateValue, SafeState,
-    SettleProfile, SpanIndex, ValuePredicate,
+    SpanIndex, ValuePredicate,
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -1184,14 +1184,16 @@ pub struct Settle {
     /// settle states one: `ms` = profile + response, or (phase 90 G6) the
     /// written duration + response.
     pub response_ms: Option<f64>,
+    /// The extension that derived `ms` (phase 91 E10), for the model.
+    pub derivation: Option<Box<ros_launch_manifest_types::Derivation>>,
 }
 
 /// The settle a safe state contributes for hazard `h`, with the
 /// `settle-*` findings. `node_fqn` is the node whose path declares `ss`.
-#[allow(clippy::too_many_arguments)]
+/// A settle an extension derives (since phase 91 E8 the braking profile
+/// too, as the bundled `vehicle.braking`) is [`super::extensions::derived_settle`]'s.
 pub(crate) fn settle_for(
     index: &ManifestIndex,
-    params: &HashMap<String, BTreeMap<String, LaunchParam>>,
     h: &ResolvedHazard,
     rung: &str,
     node_fqn: &str,
@@ -1207,182 +1209,28 @@ pub(crate) fn settle_for(
         ms: literal,
         how: if literal.is_some() { "literal" } else { "none" },
         response_ms: literal.and(written_response),
+        derivation: None,
     };
     // Phase 91 E4: a settle a used extension derives.
     if !ss.settle_ext.is_empty()
         && let Some((scope_id, node_name, _)) = contract_node(index, node_fqn)
     {
         let at = format!("nodes.{node_name}.paths.{path_name}.safe_state.settle");
-        if let Some(s) =
-            super::extensions::derived_settle(index, h, scope_id, node_fqn, &at, ss, diags)
-        {
+        if let Some(s) = super::extensions::derived_settle(
+            index,
+            h,
+            rung,
+            scope_id,
+            node_fqn,
+            &at,
+            ss,
+            literal_settle.clone(),
+            diags,
+        ) {
             return s;
         }
     }
-    let Some(profile) = &ss.settle_profile else {
-        return literal_settle;
-    };
-    let (scope_id, node_name, decl) = match contract_node(index, node_fqn) {
-        Some(n) => n,
-        None => return literal_settle,
-    };
-    let at = format!("nodes.{node_name}.paths.{path_name}.safe_state.settle");
-    let where_ = site(index, scope_id, &at);
-    // Phase 91 E1: a written duration DERIVED by an extension beside the
-    // braking profile is two derivations of one value. `settle-conflict`
-    // compares a measurement with a derivation; two derivations have no
-    // order to compare in, so one must go.
-    if let Some(d) = ss
-        .settle
-        .as_ref()
-        .and_then(|b| b.source.as_ref())
-        .and_then(|s| s.derived.as_deref())
-    {
-        diags.push(diag(
-            "derive-conflict",
-            Severity::Error,
-            format!(
-                "{where_}: the settle is derived twice: by the braking profile (`decel`, \
-                 `jerk`) and as a written duration {} -- keep one. The profile is charged",
-                super::budget_book::derived_label(d)
-            ),
-            at.clone(),
-        ));
-    }
-    let read = |name: &str| -> Result<(f64, String), String> {
-        let declared = decl.params.as_ref().is_some_and(|p| p.contains_key(name));
-        if !declared {
-            return Err(format!(
-                "'{name}' is not declared under `nodes.{node_name}.params`"
-            ));
-        }
-        match params.get(node_fqn).and_then(|v| v.get(name)) {
-            None => Err(format!(
-                "'{name}' has no resolved launch value for {node_fqn}"
-            )),
-            Some(LaunchParam { number: None, text }) => {
-                Err(format!("'{name}' resolves to `{text}`, not a number"))
-            }
-            Some(LaunchParam {
-                number: Some(v),
-                text,
-            }) => Ok((*v, text.clone())),
-        }
-    };
-    let (decel, jerk) = match (read(&profile.decel), read(&profile.jerk)) {
-        (Ok(a), Ok(j)) => (a, j),
-        (a, j) => {
-            let why: Vec<String> = [a.err(), j.err()].into_iter().flatten().collect();
-            diags.push(diag(
-                "settle-param-unresolved",
-                Severity::Error,
-                format!(
-                    "{where_}: the braking profile of {node_fqn}/{path_name} cannot be read: {}. \
-                     The settle is the parameter the image runs, or it is not derived at all",
-                    why.join("; ")
-                ),
-                at.clone(),
-            ));
-            return literal_settle;
-        }
-    };
-    let Some(v0) = h.decl.entry_speed else {
-        diags.push(diag(
-            "settle-entry-missing",
-            Severity::Warning,
-            format!(
-                "{}: hazard '{}' reaches rung '{rung}', whose settle is a braking profile \
-                 ({node_fqn}: {} = {}, {} = {}), but the hazard states no `entry_speed` -- \
-                 {}",
-                site(index, h.scope_id, &format!("hazards.{}", h.name)),
-                h.name,
-                profile.decel,
-                decel.1,
-                profile.jerk,
-                jerk.1,
-                match literal {
-                    Some(l) => format!("falling back to the literal settle {l:.2}ms"),
-                    None => "and there is no literal settle to fall back to".to_string(),
-                }
-            ),
-            format!("hazards.{}.entry_speed", h.name),
-        ));
-        return literal_settle;
-    };
-    let (a, j) = (decel.0.abs(), jerk.0.abs());
-    let Some(t) = SettleProfile::settle_s(v0, a, j) else {
-        diags.push(diag(
-            "settle-param-unresolved",
-            Severity::Error,
-            format!(
-                "{where_}: the braking profile of {node_fqn}/{path_name} is degenerate \
-                 ({} = {}, {} = {}): a zero deceleration or jerk never stops the vehicle",
-                profile.decel, decel.1, profile.jerk, jerk.1
-            ),
-            at.clone(),
-        ));
-        return literal_settle;
-    };
-    let profile_ms = t * 1000.0;
-    // Phase 10 B2: the vehicle's response, written beside the profile, is
-    // added to it.
-    let response_ms = written_response;
-    let ms = profile_ms + response_ms.unwrap_or(0.0);
-    let v_r = a * a / (2.0 * j);
-    let arithmetic = if v0 <= v_r {
-        format!(
-            "v_r = a^2/(2j) = {a}^2/(2*{j}) = {v_r:.4} m/s; v0 = {v0} <= v_r, so t = sqrt(2 v0/j) \
-             = sqrt(2*{v0}/{j}) = {profile_ms:.2}ms"
-        )
-    } else {
-        format!(
-            "v_r = a^2/(2j) = {a}^2/(2*{j}) = {v_r:.4} m/s; v0 = {v0} > v_r, so t = a/j + \
-             (v0 - v_r)/a = {a}/{j} + ({v0} - {v_r:.4})/{a} = {:.2} + {:.2} = {profile_ms:.2}ms",
-            a / j * 1000.0,
-            (v0 - v_r) / a * 1000.0
-        )
-    };
-    let arithmetic = match response_ms {
-        Some(r) => format!(
-            "{arithmetic}; + response {r:.2}ms (written) = settle {ms:.2}ms (profile \
-             {profile_ms:.2}ms + response {r:.2}ms)"
-        ),
-        None => arithmetic,
-    };
-    diags.push(diag(
-        "settle-derived",
-        Severity::Info,
-        format!(
-            "{where_}: hazard '{}', rung '{rung}': settle from {node_fqn}'s braking profile, \
-             a = |{}| = {a} m/s^2, j = |{}| = {j} m/s^3, v0 = entry_speed {v0} m/s: {arithmetic}",
-            h.name, profile.decel, profile.jerk
-        ),
-        at.clone(),
-    ));
-    if let Some(l) = literal
-        && (l - ms).abs() > 0.01 * ms
-    {
-        diags.push(diag(
-            "settle-conflict",
-            Severity::Warning,
-            format!(
-                "{where_}: hazard '{}', rung '{rung}': the literal settle {l:.2}ms and the \
-                 profile's {ms:.2}ms differ by {:.1}% -- one of them describes a different \
-                 vehicle or a different speed. The derived value is charged{}",
-                h.name,
-                (l - ms).abs() / ms * 100.0,
-                response_ms
-                    .map(|r| format!(" (both include the written response {r:.2}ms)"))
-                    .unwrap_or_default()
-            ),
-            at.clone(),
-        ));
-    }
-    Settle {
-        ms: Some(ms),
-        how: "derived",
-        response_ms,
-    }
+    literal_settle
 }
 
 #[cfg(test)]

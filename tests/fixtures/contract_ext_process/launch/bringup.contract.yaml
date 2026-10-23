@@ -5,7 +5,7 @@
 # 7 + 2000 = 2107ms. `trip_setpoint` is `param Pressure unit bar`, the
 # lidar_driver's `pt101_trip` (9): ftti (11 - 9) bar / 0.5 bar/s = 4s.
 version: 1
-use: { process.pst: "^0.1" }
+use: { process.pst: "^0.1", iso26262: "^1" }
 
 hazards:
   drive_blind:

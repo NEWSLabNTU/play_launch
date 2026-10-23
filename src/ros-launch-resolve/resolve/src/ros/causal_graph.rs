@@ -166,7 +166,8 @@ pub struct SafeStateOut {
     pub emits: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub settle_ms: Option<f64>,
-    /// `true` when the settle is derived from a braking profile.
+    /// `true` when an extension derives the settle (a braking profile is
+    /// `vehicle.braking`'s, phase 91 E8).
     pub derived: bool,
 }
 
@@ -473,7 +474,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             safe_state: p.path.safe_state.as_ref().map(|ss| SafeStateOut {
                 emits: ss.emits.clone(),
                 settle_ms: ss.written_settle_ms(),
-                derived: ss.settle_profile.is_some(),
+                derived: !ss.settle_ext.is_empty(),
             }),
             max_latency_ms: p.path.max_latency.ms(),
             tolerance_ms: p.path.tolerance.map(|d| d.as_millis_f64()),
@@ -544,7 +545,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             on: h.decl.on.iter().map(|k| fault_kind(*k)).collect(),
             ftti_ms: h.decl.ftti.ms(),
             reaction: h.decl.entry().cloned(),
-            entry_speed_mps: h.decl.entry_speed,
+            entry_speed_mps: super::extensions::entry_speed_mps(&h.decl),
         })
         .collect();
     let functions: Vec<FunctionOut> = index

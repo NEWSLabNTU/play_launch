@@ -5,7 +5,7 @@
 # fault-reaction-budget is an error. `alarm_threshold` names a parameter
 # of the node that publishes the guard (lidar_driver: 300, in mmHg).
 version: 1
-use: { medical.occlusion: "^0.1" }
+use: { medical.occlusion: "^0.1", iso26262: "^1" }
 
 hazards:
   drive_blind:

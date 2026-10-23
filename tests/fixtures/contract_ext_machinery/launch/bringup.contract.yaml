@@ -5,7 +5,7 @@
 # 2000 mm/s * T + C = 732mm > 500mm, so required = 1600 mm/s * T + C =
 # 611.2mm <= installed 650mm: PASS.
 version: 1
-use: { machine.iso13855: "^0.3" }
+use: { machine.iso13855: "^0.3", iso26262: "^1" }
 
 hazards:
   drive_blind:

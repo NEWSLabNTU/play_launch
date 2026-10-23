@@ -1738,7 +1738,9 @@ fn takeover_ladder_fits_and_explains_itself() {
     for needle in [
         // The emergency profile at the island's assumed 3.0 m/s: the island
         // contract's own hand arithmetic, now the checker's.
-        "v0 = 3 > v_r, so t = a/j + (v0 - v_r)/a = 2.5/1.5 + (3 - 2.0833)/2.5 = 1666.67 + 366.67 = 2033.33ms",
+        // Phase 91 E8: the bundled vehicle.braking's, loaded implicitly.
+        "hazard 'hpc_loss', rung 'estop': settle = 2033.33ms derived by vehicle.braking 1.0.0",
+        "if v0 > v_r: 3 m/s > 2.0833 m/s, true: take `then`",
         // F1: charged, the comfortable rung would have failed a 3 s interval.
         "hazard 'hpc_loss': detection 500.00ms",
         "= 2676.67ms fits the fault-tolerant time interval 3000.00ms",
@@ -2038,15 +2040,15 @@ fn takeover_budget_rules_fire_on_their_fixture() {
         "fallback rung 'comfortable' cannot make the fault-tolerant time interval",
         "detection 120.00ms + 'takeover' reaction 110.00ms + window 10000.00ms + reaction 410.00ms + settle 9996.67ms = 20636.67ms against 20000.00ms",
         "warning[settle-conflict]",
-        "the literal settle 5000.00ms and the profile's 9996.67ms differ by 50.0%",
+        "the literal settle 5000.00ms and vehicle.braking 1.0.0's 9996.67ms differ by 50.0%",
         "warning[settle-entry-missing]",
         "hazard 'odd_exit_unbounded' reaches rung 'comfortable'",
         "falling back to the literal settle 5000.00ms",
         "error[settle-param-unresolved]",
-        "'target_decel' is not declared under `nodes.estop_op.params`",
+        "'target_decel' has no resolved launch value for /estop_op",
         "warning[reaction-unbudgeted]",
         // 4.23 m/s: 2525.33 ms, and the 3 s interval is missed.
-        "(4.23 - 2.0833)/2.5 = 1666.67 + 858.67 = 2525.33ms",
+        "hazard 'hpc_observed', rung 'estop_ok': settle = 2525.33ms derived by vehicle.braking",
         "hazard 'hpc_observed': detection 500.00ms",
         "= 3168.67ms exceeds the fault-tolerant time interval 3000.00ms",
         // Phase 84: this handler declares no tick, so when it reads the
@@ -2153,9 +2155,10 @@ fn a_settles_written_response_is_added_to_the_profile() {
     let (code, out) = check_takeover("contract_takeover_response", &["--explain"]);
     assert_eq!(code, 0, "{out}");
     for needle in [
-        "1666.67 + 366.67 = 2033.33ms; + response 300.00ms (written) = settle 2333.33ms \
-         (profile 2033.33ms + response 300.00ms)",
-        "3333.33 + 6663.33 = 9996.67ms; + response 500.00ms (written) = settle 10496.67ms",
+        // Phase 91 E8: vehicle.braking reads the response itself.
+        "hazard 'hpc_loss', rung 'estop': settle = 2333.33ms derived by vehicle.braking 1.0.0",
+        "response = 300 ms   (300ms)",
+        "settle = 10496.67ms derived by vehicle.braking 1.0.0",
         "= 2976.67ms fits the fault-tolerant time interval 3000.00ms with 23.33ms of slack",
         "odd_exit  comfortable  rung     120.00  10110.00  410.00   10496.67 derived  21136.67",
         "hpc_loss/estop: settle = profile 2033.33ms + response 300.00ms",
@@ -2214,8 +2217,9 @@ fn a_measured_budget_its_observations_do_not_give_is_budget_rule() {
          -> 106, work 5 x 1.2 (n=12) = 6.00 -> 6;",
         "error[budget-rule]: bringup.contract.yaml:156: `nodes.planner.paths.follow.max_latency: \
          300ms` is measured, but its observations give 288ms (240 x 1.2 (n=5) = 288.00 -> 288;",
-        // Phase 93: the two measured budgets nothing supervises warn.
-        "(2 errors, 4 warnings)",
+        // Phase 93: the two measured budgets nothing supervises warn; phase
+        // 91 E8: and the implicit vehicle.braking.
+        "(2 errors, 5 warnings)",
         "warning[measured-unsupervised]",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
@@ -2518,7 +2522,7 @@ fn g3b_a_topic_transport_warns_and_migrates_to_the_same_verdict() {
         out.contains(
             "topic-max-transport-subscribers: `max_transport: 3ms` -> (nothing) \
              (topics./safety/obstacles.max_transport)"
-        ) && out.contains("1 rewritten (2 edit(s))"),
+        ) && out.contains("1 rewritten (3 edit(s))"),
         "{out}"
     );
     let migrated = std::fs::read_to_string(&contract).unwrap();
@@ -2545,7 +2549,12 @@ fn g3b_a_topic_transport_warns_and_migrates_to_the_same_verdict() {
                     || l.contains("warning[")
                     || l.contains("note[")
             })
-            .filter(|l| !l.contains("deprecated-spelling") && !l.contains("declared-not-charged"))
+            .filter(|l| {
+                !l.contains("deprecated-spelling")
+                    && !l.contains("declared-not-charged")
+                    // Phase 91 E8: `migrate` also names the ASIL scale.
+                    && !l.contains("deprecated-implicit-extension")
+            })
             .map(without_lines)
             .collect();
         v.sort();
@@ -2684,8 +2693,8 @@ fn e1_two_derivations_and_no_requirement_are_errors() {
         (
             "contract_derive_conflict",
             "error[derive-conflict]: bringup.contract.yaml:71: the settle is derived twice: by \
-             the braking profile (`decel`, `jerk`) and as a written duration derived by \
-             vehicle.braking 1.0.0 -- keep one",
+             vehicle.braking 1.0.0 and as a written duration derived by vehicle.braking 1.0.0 \
+             -- keep one",
         ),
         (
             "contract_hazard_no_requirement",
@@ -2754,7 +2763,7 @@ fn e4_uav_derives_its_settle_and_checks_its_energy() {
     let (code, out) = ext_fixture("contract_ext_uav", &["--explain"]);
     assert_eq!(code, 0, "{out}");
     for needle in [
-        "info[settle-derived]: hazard 'drive_blind': settle = 50952.38ms derived by uav.descent \
+        "hazard 'drive_blind', rung 'safety.stop': settle = 50952.38ms derived by uav.descent \
          0.2.0",
         "drive_blind  safety.stop  floor  100.00     0.00   7.00  50952.38 derived  51059.38  \
          120000.00  68940.62",
@@ -3110,7 +3119,8 @@ fn migrate_rewrites_the_deprecated_spellings_in_place() {
         "exit-on-holds: `on` -> `holds` (modes.takeover.exit.on)",
         "-    reaction: engaged",
         "+    enters: engaged",
-        "1 contract(s) scanned, 1 to rewrite (3 edit(s))",
+        // Phase 91 E8: plus `use-implicit` and two `entry-speed-unit`.
+        "1 contract(s) scanned, 1 to rewrite (6 edit(s))",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
@@ -3118,13 +3128,25 @@ fn migrate_rewrites_the_deprecated_spellings_in_place() {
     assert_eq!(code, 0);
     let (code, out) = run(&["--check"]);
     assert_eq!(code, 0, "{out}");
-    // The migrated text is the current twin's, below the header comment.
+    // The migrated text is the current twin's, below the header comment,
+    // once the twin is migrated too (phase 91 E8: it still loads
+    // `vehicle.braking` implicitly).
     let migrated = std::fs::read_to_string(&c).unwrap();
-    let twin = std::fs::read_to_string(
+    let twin = dir.path().join("twin.contract.yaml");
+    std::fs::copy(
         fixtures::repo_root()
             .join("tests/fixtures/contract_takeover_jitter/launch/bringup.contract.yaml"),
+        &twin,
     )
     .unwrap();
+    let out = play_launch_cmd()
+        .arg("migrate")
+        .arg("--write")
+        .arg(&twin)
+        .output()
+        .expect("play_launch migrate runs");
+    assert!(out.status.success());
+    let twin = std::fs::read_to_string(&twin).unwrap();
     assert!(migrated.ends_with(&twin), "{migrated}");
 }
 
@@ -3643,4 +3665,160 @@ fn a_lowered_settle_supervision_reaches_the_model() {
     assert_eq!(sv["mechanism"].as_str(), Some("timer"));
     // The emergency stop's settle is not supervised.
     assert!(paths["/estop_op/on_timer"]["safe_state"]["supervise"].is_null());
+}
+
+/// Phase 91 E9's gate, play_launch half: each reference extension's fixture
+/// (`contract_ext_<domain>`, the examples document's section on
+/// contract_fault's chain) prints what its `expected_explain.txt` records:
+/// the verdicts, the derivation traces, the proved worst cases, the budget
+/// row and the resolution with its sha256. rlm's own test holds the files to
+/// the document and proves them; this one holds the checker's output.
+#[test]
+fn e9_each_reference_fixture_explains_as_recorded() {
+    for dir in [
+        "contract_ext_vehicle",
+        "contract_ext_machinery",
+        "contract_ext_medical",
+        "contract_ext_uav",
+        "contract_ext_rail",
+        "contract_ext_process",
+    ] {
+        let root = fixtures::repo_root().join("tests/fixtures").join(dir);
+        let expected = std::fs::read_to_string(root.join("expected_explain.txt")).unwrap();
+        let code: i32 = expected
+            .lines()
+            .find_map(|l| l.strip_prefix("# exit "))
+            .and_then(|c| c.parse().ok())
+            .expect("the file records the exit status");
+        let (got, out) = ext_fixture(dir, &["--explain"]);
+        assert_eq!(got, code, "{dir}:\n{out}");
+        for needle in expected
+            .lines()
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        {
+            assert!(
+                out.lines().any(|l| l.contains(needle)),
+                "{dir}: expected `{needle}`:\n{out}"
+            );
+        }
+        assert!(
+            !out.contains("deprecated-implicit-extension"),
+            "{dir}:\n{out}"
+        );
+    }
+}
+
+/// Phase 91 E9: the fixtures ship the reference extensions as rlm publishes
+/// them (`types::extension::REFERENCE`), byte for byte, so the files the
+/// checker's output is recorded for are the ones rlm proves.
+#[test]
+fn e9_the_fixtures_ship_the_reference_extensions_unchanged() {
+    use ros_launch_manifest_types::extension::REFERENCE;
+    for (dir, file) in [
+        ("contract_ext_machinery", "iso13855.rlx"),
+        ("contract_ext_medical", "occlusion.rlx"),
+        ("contract_ext_uav", "descent.rlx"),
+        ("contract_ext_rail", "ebd.rlx"),
+        ("contract_ext_process", "pst.rlx"),
+    ] {
+        let ours = std::fs::read_to_string(
+            fixtures::repo_root()
+                .join("tests/fixtures")
+                .join(dir)
+                .join("launch/rlm")
+                .join(file),
+        )
+        .unwrap();
+        let theirs = REFERENCE.iter().find(|(f, _)| *f == file).unwrap().1;
+        assert_eq!(ours, theirs, "{dir}/{file} differs from rlm's reference");
+    }
+}
+
+/// `resolve` on a launch file at any path.
+fn resolve_model_at(launch: &std::path::Path) -> Option<ros_launch_manifest_model::SystemModel> {
+    let bin = ros_launch_resolve_bin()?;
+    let out_dir = tempfile::TempDir::new().expect("temp dir");
+    let model_path = out_dir.path().join("system_model.yaml");
+    let out = resolve_cmd(&bin)
+        .arg("resolve")
+        .arg(launch)
+        .arg("-o")
+        .arg(&model_path)
+        .output()
+        .expect("ros-launch-resolve resolve runs");
+    assert!(
+        out.status.success(),
+        "resolve failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let yaml = std::fs::read_to_string(&model_path).expect("model written");
+    Some(ros_launch_manifest_model::SystemModel::from_yaml_str(&yaml).expect("model parses"))
+}
+
+/// Phase 91 E10's gate, model half: a settle `vehicle.braking` derives
+/// reaches the model as the plain number a hand-written settle would, so
+/// the image nano-ros builds from either has the same monitors and sizing.
+/// `contract_ext_vehicle` is resolved as is, and again with the settle
+/// written by hand -- the derived duration, the same response, no
+/// extension keys; the two models' contracts are equal once the derived
+/// source (which only the first has) is set aside.
+#[test]
+fn e10_a_derived_settle_reaches_the_model_as_a_written_one_would() {
+    let root = fixtures::repo_root().join("tests/fixtures/contract_ext_vehicle");
+    let Some(derived) = resolve_model_at(&root.join("launch/bringup.launch.xml")) else {
+        eprintln!("SKIP: ros-launch-resolve not built");
+        return;
+    };
+    let key = "/safety/brake_controller/emergency_stop";
+    let ss = derived.contracts.node_paths[key]
+        .safe_state
+        .clone()
+        .unwrap();
+    let src = ss.settle_derived.clone().expect("the settle's source");
+    assert_eq!(
+        (src.by.as_str(), src.version.as_str()),
+        ("vehicle.braking", "1.0.0")
+    );
+    assert_eq!(src.hazard.as_deref(), Some("drive_blind"));
+    assert_eq!(src.inputs["hazard.entry_speed"], "30 km/h");
+    let settle = ss.settle_ms.unwrap();
+    assert!((settle - 4422.6667).abs() < 1e-3, "{settle}");
+
+    let tmp = tempfile::tempdir().unwrap();
+    copy_tree(&root, tmp.path());
+    let contract = tmp.path().join("launch/bringup.contract.yaml");
+    let text = std::fs::read_to_string(&contract).unwrap();
+    let by_hand = text
+        .replace(
+            "use: { vehicle.braking: \"^1\", iso26262: \"^1\" }",
+            "use: { iso26262: \"^1\" }",
+        )
+        .replace("    entry_speed: 30 km/h\n", "")
+        .replace(
+            "            decel: target_acceleration\n            jerk: target_jerk\n",
+            &format!("            duration: {:.6}ms\n", settle - 256.0),
+        );
+    assert_ne!(by_hand, text);
+    std::fs::write(&contract, by_hand).unwrap();
+    let written = resolve_model_at(&tmp.path().join("launch/bringup.launch.xml")).unwrap();
+
+    let normalise = |m: &ros_launch_manifest_model::SystemModel| {
+        let mut c = m.contracts.clone();
+        for p in c.node_paths.values_mut() {
+            if let Some(ss) = p.safe_state.as_mut() {
+                ss.settle_derived = None;
+                ss.settle_ms = ss.settle_ms.map(|v| (v * 1000.0).round() / 1000.0);
+            }
+        }
+        serde_yaml_ng::to_string(&c).unwrap()
+    };
+    assert_eq!(normalise(&derived), normalise(&written));
+    assert!(
+        written.contracts.node_paths[key]
+            .safe_state
+            .as_ref()
+            .unwrap()
+            .settle_derived
+            .is_none()
+    );
 }

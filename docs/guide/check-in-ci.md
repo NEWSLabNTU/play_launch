@@ -178,7 +178,8 @@ The rules that read it:
   supervised settle (the standstill deadline, below). A settle's `response`
   supervised on its own does not: it is one term of the settle.
 - A supervised settle (rlm v0.1.62): `safe_state.settle: { decel, jerk,
-  response, supervise: { enters | reaction, mechanism, observes } }`
+  response, supervise: { enters | reaction, mechanism, observes } }` (the
+  braking profile is the `vehicle.braking` extension's, below)
   supervises the WHOLE settle, from the safe state's command to standstill
   (the derived profile, or the written duration, plus the response). The
   platform arms due = command + settle + how late it sees standstill, and
@@ -222,6 +223,37 @@ The rules that read it:
   `policy: { unsupervised_measured: error }`.
 - `measured-unsupervised`: a measured budget nothing supervises, a warning,
   or an error under `policy: { unsupervised_measured: error }`.
+
+## Extensions: names, locks and deprecations
+
+A contract names the extensions and the severity profile it uses:
+`use: { vehicle.braking: "^1", iso26262: "^1" }`. `vehicle.braking` (the
+braking profile: `entry_speed` on a hazard, `settle: { decel, jerk }` on a
+safe state) and the seven reference profiles ship with the checker; any
+other extension is an rlx file in an `rlm/` directory beside the contract
+or in a package that registers the ament resource `rlm_extensions`. Three
+things belong in CI:
+
+- **The lock.** `play_launch check --update-lock <launch>` writes
+  `rlm.lock` beside each contract: the version and sha256 of every extension
+  and profile it resolved. Commit it, and run CI with `--locked`: a changed
+  extension, a vanished version or an unlocked `use:` entry is then an
+  error (`lock-mismatch`, `lock-missing`) rather than the warning it is
+  without the flag (`lock-drift`). `--explain` lists every resolution with
+  its full sha256.
+- **Deprecations.** A contract that writes the braking keys without
+  `use: { vehicle.braking: "^1" }`, or hazard severities with no profile and
+  no `severity_levels:`, checks as before plus
+  `warning[deprecated-implicit-extension]`; the next minor release refuses
+  it. `play_launch migrate <dir> --write` adds the `use:` lines (and gives a
+  plain-number `entry_speed` its unit, `m/s`); `play_launch migrate <dir>
+  --check` exits 1 while anything is left to rewrite.
+- **Worst cases.** A derived value's direction is proved by Z3;
+  `worst-case-unknown` is a warning that `check --strict` makes an error.
+
+What an extension derives reaches the SystemModel as a plain number with
+its source (`safe_state.settle_derived`, `hazards.<h>.ftti_derived`), so an
+image built from the model never evaluates the extension.
 
 ## Two notices about what the arithmetic reads
 

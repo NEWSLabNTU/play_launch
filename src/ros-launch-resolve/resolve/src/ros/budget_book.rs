@@ -41,16 +41,17 @@ pub struct StatedBudget {
 
 /// Every budget a manifest states, as (dotted path, ms), in a stable order:
 /// the duration bounds of [`Manifest::bounds`] that are budgets (phase 90
-/// G2). A settle's written `duration` beside a braking profile is the
-/// profile's fallback, not a budget of its own: the profile's `response` is.
-/// A written duration with no profile (`settle: { duration, response }`,
+/// G2). A settle's written `duration` beside the keys an extension derives
+/// it from (a braking profile, `vehicle.braking`'s since phase 91 E8) is the
+/// derivation's fallback, not a budget of its own: the `response` is. A
+/// written duration with nothing derived (`settle: { duration, response }`,
 /// phase 90 G6) is one.
 pub(crate) fn enumerate(m: &Manifest) -> Vec<(String, f64)> {
     let mut beside_profile: BTreeSet<String> = BTreeSet::new();
     let mut note = |at: String, p: &ros_launch_manifest_types::PathDecl| {
         if p.safe_state
             .as_ref()
-            .is_some_and(|ss| ss.settle_profile.is_some())
+            .is_some_and(|ss| !ss.settle_ext.is_empty())
         {
             beside_profile.insert(format!("{at}.safe_state.settle.duration"));
         }

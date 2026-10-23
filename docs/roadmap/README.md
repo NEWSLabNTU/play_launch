@@ -98,7 +98,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 88 | [Data-flow chains without contracts](./phase-88-data-flow-chains.md) | ✅ C1–C4 | 2026-10-14 |
 | 89 | [Helping with DDS without touching it](./phase-89-dds-assist.md) | ✅ | 2026-10-14 |
 | 90 | [A tidy grammar](./phase-90-a-tidy-grammar.md) | ✅ Complete | — |
-| 91 | [Domain extensions](./phase-91-domain-extensions.md) | 🔄 E0–E7 done | — |
+| 91 | [Domain extensions](./phase-91-domain-extensions.md) | 🔄 E0–E10 done; E11 releases pending | — |
 | 92 | [One PyPI package](./phase-92-one-pypi-package.md) | ✅ Complete | — |
 | 93 | [Supervised budgets](./phase-93-supervised-budgets.md) | 🔄 | — |
 
@@ -321,11 +321,14 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     keys; one place per fact; one meaning per key; derived-only
     criticality; one settle shape), with fix-its and a migration command.
     [phase-90-a-tidy-grammar.md](./phase-90-a-tidy-grammar.md).
-  - **Phase 91** - in progress, E0-E7 done (rlm v0.1.66: the core interface,
-    rlx's front end, dimension checker and evaluator, and `use:`; four of the
-    design's examples run end to end; Numbat rejected; v0.1.70: worst-case
-    proofs; v0.1.71: severity profiles; ament-index packaging, qualified keys
-    and `rlm.lock`): domain extensions (2026-10-17). Stage 2: rlx
+  - **Phase 91** - in progress, E0-E10 done, E11's docs done (rlm v0.1.66:
+    the core interface, rlx's front end, dimension checker and evaluator, and
+    `use:`; Numbat rejected; v0.1.70: worst-case proofs; v0.1.71: severity
+    profiles, ament-index packaging, qualified keys and `rlm.lock`; v0.2.0:
+    the vehicle keys and the ASIL default moved out of the core, the
+    reference extensions, derived bounds in the model, the extension
+    reference and author's guide; the play_launch release and the consumer
+    PRs remain): domain extensions (2026-10-17). Stage 2: rlx
     extensions (a units-checked, total expression language with traced
     derivations and Z3-proved worst cases), YAML severity profiles, ament
     packaging, and the vehicle keys and the ASIL default moved out of the
