@@ -25,10 +25,14 @@
 //! `check --strict`). The prover is rlx's (`rlx::prove`); this module only
 //! hands it the contract's point and reports.
 //!
-//! Finding extensions: the `rlm/` directory beside the contract, then
-//! `share/<pkg>/rlm/` under each `AMENT_PREFIX_PATH` prefix; for each `use:`
-//! entry the highest version its requirement accepts. A lock file and the
-//! ament resource index are E7's.
+//! Finding extensions and profiles (phase 91 E6, E7): the `rlm/` directory
+//! beside the contract, then `share/<pkg>/rlm/` of each package registered
+//! under the ament resource `rlm_extensions` ([`search_dirs`]), plus the
+//! reference profiles bundled with the checker; for each `use:` entry the
+//! version `rlm.lock` names while it is installed and accepted, else the
+//! highest the requirement accepts ([`prepare`], [`super::rlm_lock`]). A
+//! profile gives its scope the severity scale and criticality map
+//! ([`severity_scale`]).
 //!
 //! A `param` key names a node parameter. In `settle` it is a parameter of
 //! the node whose path states the safe state (as a braking profile's are);
@@ -47,6 +51,7 @@ use rlx::{
 use ros_launch_manifest_check::{Diagnostic, Severity};
 use ros_launch_manifest_types::{
     Bound, BudgetSource, Derivation, ExtKey, ExtValue, SafeState, SourceKind,
+    profile::{self, Profile},
 };
 
 use super::manifest_loader::{ManifestIndex, ResolvedHazard, RungRole};
@@ -86,6 +91,82 @@ impl LoadedExt {
     }
 }
 
+/// One profile a contract uses (phase 91 E6): a severity scale and its
+/// criticality map.
+#[derive(Debug, Clone)]
+pub struct LoadedProfile {
+    pub profile: Profile,
+    /// sha256 of the file's bytes as shipped (a profile is YAML data; it has
+    /// no canonical form to hash).
+    pub sha256: String,
+    /// The file; `None` for a reference profile bundled with the checker.
+    pub path: Option<PathBuf>,
+}
+
+impl LoadedProfile {
+    fn label(&self) -> String {
+        format!("{} {}", self.profile.name, self.profile.version)
+    }
+}
+
+/// The severity scale a scope's hazards draw from, with the criticality
+/// each level derives.
+#[derive(Debug, Clone)]
+pub struct SeverityScale {
+    pub levels: Vec<String>,
+    pub criticality: Vec<Option<ros_launch_manifest_sched::Criticality>>,
+    /// Where the scale came from, for messages: `profile iec61508 1.0.0`,
+    /// `severity_levels`, or `the default (ISO 26262)`.
+    pub source: String,
+    /// True when the contract wrote neither a profile nor `severity_levels`.
+    pub default: bool,
+}
+
+/// The scale scope `scope_id`'s hazards draw from: the profile it uses,
+/// else its `severity_levels:` (split into thirds), else ISO 26262's.
+pub fn severity_scale(index: &ManifestIndex, scope_id: usize) -> SeverityScale {
+    use ros_launch_manifest_sched::Criticality;
+    let crit = |c: Option<&str>| match c? {
+        "low" => Some(Criticality::Low),
+        "medium" => Some(Criticality::Medium),
+        _ => Some(Criticality::High),
+    };
+    if let Some(p) = index.profiles.get(&scope_id) {
+        return SeverityScale {
+            levels: p.profile.scale.clone(),
+            criticality: p.profile.criticality.iter().map(|c| crit(*c)).collect(),
+            source: format!("profile {}", p.label()),
+            default: false,
+        };
+    }
+    let (levels, source, default) = match index
+        .manifests
+        .get(&scope_id)
+        .filter(|m| !m.manifest.severity_levels.is_empty())
+    {
+        Some(m) => (
+            m.manifest.severity_levels.clone(),
+            "severity_levels".to_string(),
+            false,
+        ),
+        None => (
+            ros_launch_manifest_types::severity::DEFAULT_SEVERITY_LEVELS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            "the default (ISO 26262)".to_string(),
+            true,
+        ),
+    };
+    let n = levels.len();
+    SeverityScale {
+        criticality: (0..n).map(|r| Criticality::from_severity(r, n)).collect(),
+        levels,
+        source,
+        default,
+    }
+}
+
 fn diag(rule: &str, severity: Severity, path: String, message: String) -> Diagnostic {
     Diagnostic {
         rule_id: rule.to_string(),
@@ -96,6 +177,13 @@ fn diag(rule: &str, severity: Severity, path: String, message: String) -> Diagno
     }
 }
 
+/// Where a contract's extensions and profiles are looked for: the `rlm/`
+/// directory beside it, then `share/<pkg>/rlm/` of each package that
+/// registers the ament resource `rlm_extensions`, in `AMENT_PREFIX_PATH`
+/// order (phase 91 E7). A package registers with
+/// `ament_index_register_resource(rlm_extensions)` and installs its files
+/// to `share/${PROJECT_NAME}/rlm`; one that does not register is not
+/// searched, so the checker never walks every package's `share/`.
 fn search_dirs(contract: &Path) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(parent) = contract.parent() {
@@ -104,41 +192,96 @@ fn search_dirs(contract: &Path) -> Vec<PathBuf> {
     if let Some(prefixes) = std::env::var_os("AMENT_PREFIX_PATH") {
         for prefix in std::env::split_paths(&prefixes) {
             let share = prefix.join("share");
-            let Ok(pkgs) = std::fs::read_dir(&share) else {
+            let index = share.join("ament_index/resource_index/rlm_extensions");
+            let Ok(entries) = std::fs::read_dir(&index) else {
                 continue;
             };
-            let mut found: Vec<PathBuf> = pkgs
+            let mut pkgs: Vec<String> = entries
                 .filter_map(|e| e.ok())
-                .map(|e| e.path().join("rlm"))
-                .filter(|p| p.is_dir())
+                .filter_map(|e| e.file_name().into_string().ok())
+                .filter(|n| !n.starts_with('.'))
                 .collect();
-            found.sort();
-            dirs.extend(found);
+            pkgs.sort();
+            dirs.extend(pkgs.iter().map(|p| share.join(p).join("rlm")));
         }
     }
     dirs
 }
 
-fn discover(dirs: &[PathBuf], diags: &mut Vec<Diagnostic>) -> Vec<LoadedExt> {
-    let mut out = Vec::new();
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// A profile file, parsed and its `functions:` type-checked.
+fn load_profile(source: &str, path: Option<&Path>, shown: &str) -> Result<LoadedProfile, String> {
+    let profile = profile::parse_profile(source)?;
+    if let Some(src) = profile.functions_source()
+        && let Err(errs) = rlx::check_source(src.as_bytes())
+    {
+        let lines: Vec<String> = errs
+            .iter()
+            .map(|d| d.render(shown, src.as_bytes()).trim_end().to_string())
+            .collect();
+        return Err(format!("`functions:` does not load: {}", lines.join("; ")));
+    }
+    Ok(LoadedProfile {
+        profile,
+        sha256: sha256_hex(source.as_bytes()),
+        path: path.map(Path::to_path_buf),
+    })
+}
+
+/// The reference profiles bundled with the checker (rlm
+/// `types::profile::REFERENCE`).
+fn bundled_profiles() -> Vec<LoadedProfile> {
+    profile::REFERENCE
+        .iter()
+        .map(|(file, src)| load_profile(src, None, file).expect("a reference profile loads"))
+        .collect()
+}
+
+fn discover(dirs: &[PathBuf], diags: &mut Vec<Diagnostic>) -> (Vec<LoadedExt>, Vec<LoadedProfile>) {
+    let mut exts = Vec::new();
+    let mut profiles = Vec::new();
     for dir in dirs {
         let Ok(entries) = std::fs::read_dir(dir) else {
             continue;
         };
-        let mut files: Vec<PathBuf> = entries
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|x| x == "rlx"))
-            .collect();
+        let mut files: Vec<PathBuf> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
         files.sort();
         for path in files {
+            let is_profile = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with(profile::FILE_SUFFIX));
+            let is_rlx = path.extension().is_some_and(|x| x == "rlx");
+            if !is_profile && !is_rlx {
+                continue;
+            }
             let Ok(source) = std::fs::read_to_string(&path) else {
                 continue;
             };
+            let shown = path.display().to_string();
+            if is_profile {
+                match load_profile(&source, Some(&path), &shown) {
+                    Ok(p) => profiles.push(p),
+                    Err(e) => diags.push(diag(
+                        "extension-invalid",
+                        Severity::Error,
+                        shown.clone(),
+                        format!("profile {shown} does not load: {e}"),
+                    )),
+                }
+                continue;
+            }
             match rlx::check_source(source.as_bytes()) {
                 Ok(checked) => {
                     let id = rlx::eval::identity(&checked);
-                    out.push(LoadedExt {
+                    exts.push(LoadedExt {
                         name: id.name,
                         version: id.version,
                         sha256: id.sha256,
@@ -147,7 +290,6 @@ fn discover(dirs: &[PathBuf], diags: &mut Vec<Diagnostic>) -> Vec<LoadedExt> {
                     });
                 }
                 Err(errs) => {
-                    let shown = path.display().to_string();
                     let lines: Vec<String> = errs
                         .iter()
                         .map(|d| d.render(&shown, source.as_bytes()).trim_end().to_string())
@@ -162,7 +304,7 @@ fn discover(dirs: &[PathBuf], diags: &mut Vec<Diagnostic>) -> Vec<LoadedExt> {
             }
         }
     }
-    out
+    (exts, profiles)
 }
 
 fn version_key(v: &str) -> (u64, u64, u64) {
@@ -195,8 +337,48 @@ fn declaring<'a>(exts: &'a [LoadedExt], path: &str) -> Vec<&'a LoadedExt> {
         .collect()
 }
 
-/// Step 1: load, validate and derive the hazard-level bounds.
+/// Something a `use:` entry may resolve to.
+#[derive(Clone, Copy)]
+enum Candidate<'a> {
+    Ext(&'a LoadedExt),
+    Profile(&'a LoadedProfile),
+}
+
+impl Candidate<'_> {
+    fn name(&self) -> &str {
+        match self {
+            Candidate::Ext(e) => &e.name,
+            Candidate::Profile(p) => &p.profile.name,
+        }
+    }
+    fn version(&self) -> &str {
+        match self {
+            Candidate::Ext(e) => &e.version,
+            Candidate::Profile(p) => &p.profile.version,
+        }
+    }
+    fn sha256(&self) -> &str {
+        match self {
+            Candidate::Ext(e) => &e.sha256,
+            Candidate::Profile(p) => &p.sha256,
+        }
+    }
+    /// Order among equal versions: a file on disk before a bundled profile.
+    fn on_disk(&self) -> bool {
+        !matches!(self, Candidate::Profile(p) if p.path.is_none())
+    }
+}
+
+/// Step 1: resolve each contract's `use:` (honouring `rlm.lock`), load,
+/// validate and derive the hazard-level bounds.
 pub fn prepare(index: &mut ManifestIndex) {
+    use super::rlm_lock::{self, LockMode};
+    let mode = index.lock_mode;
+    let (drift_rule, drift_severity) = match mode {
+        LockMode::Locked => ("lock-mismatch", Severity::Error),
+        _ => ("lock-drift", Severity::Warning),
+    };
+    let bundled = bundled_profiles();
     let mut diags = Vec::new();
     let mut scopes: Vec<usize> = index.manifests.keys().copied().collect();
     scopes.sort_unstable();
@@ -205,79 +387,356 @@ pub fn prepare(index: &mut ManifestIndex) {
         if m.manifest.uses.is_empty() {
             continue;
         }
-        let dirs = search_dirs(&m.contract_path);
-        let available = discover(&dirs, &mut diags);
-        let mut chosen = Vec::new();
-        for u in &m.manifest.uses {
-            let pick = available
-                .iter()
-                .filter(|e| e.name == u.name && u.req.matches(&e.version))
-                .max_by_key(|e| version_key(&e.version));
-            match pick {
-                Some(e) => chosen.push(e.clone()),
-                None => {
-                    let seen: Vec<String> = available
-                        .iter()
-                        .filter(|e| e.name == u.name)
-                        .map(|e| e.version.clone())
-                        .collect();
+        let contract = m.contract_path.clone();
+        let lock_path = rlm_lock::path_for(&contract);
+        let dirs = search_dirs(&contract);
+        let (exts, mut profiles) = discover(&dirs, &mut diags);
+        profiles.extend(bundled.iter().cloned());
+        let candidates: Vec<Candidate> = exts
+            .iter()
+            .map(Candidate::Ext)
+            .chain(profiles.iter().map(Candidate::Profile))
+            .collect();
+        let lock = if mode == LockMode::Update {
+            None
+        } else {
+            match rlm_lock::read(&contract) {
+                Ok(l) => l,
+                Err(e) => {
                     diags.push(diag(
-                        "extension-not-found",
+                        "lock-invalid",
                         Severity::Error,
-                        format!("use.{}", u.name),
-                        format!(
-                            "`use: {{ {}: \"{}\" }}`: no such extension {} -- searched {}{}",
-                            u.name,
-                            u.req,
-                            if seen.is_empty() {
-                                "was found".to_string()
-                            } else {
-                                format!("accepts the versions found ({})", seen.join(", "))
-                            },
-                            if dirs.is_empty() {
-                                "nothing".to_string()
-                            } else {
-                                dirs.iter()
-                                    .map(|d| d.display().to_string())
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            },
-                            ""
-                        ),
+                        lock_path.display().to_string(),
+                        e,
                     ));
+                    None
                 }
             }
+        };
+        if mode == LockMode::Locked && lock.is_none() {
+            diags.push(diag(
+                "lock-missing",
+                Severity::Error,
+                "use".to_string(),
+                format!(
+                    "`check --locked`: {} uses extensions and has no {} beside it -- write one \
+                     with `check --update-lock`",
+                    contract.display(),
+                    lock_path.display()
+                ),
+            ));
         }
-        index.extensions.insert(scope, chosen);
+        let mut chosen_exts = Vec::new();
+        let mut chosen_profiles: Vec<LoadedProfile> = Vec::new();
+        for u in &m.manifest.uses {
+            let accepted: Vec<Candidate> = candidates
+                .iter()
+                .copied()
+                .filter(|c| c.name() == u.name && u.req.matches(c.version()))
+                .collect();
+            let highest = accepted
+                .iter()
+                .copied()
+                .max_by_key(|c| (version_key(c.version()), c.on_disk()));
+            let Some(highest) = highest else {
+                let seen: Vec<String> = candidates
+                    .iter()
+                    .filter(|c| c.name() == u.name)
+                    .map(|c| c.version().to_string())
+                    .collect();
+                diags.push(diag(
+                    "extension-not-found",
+                    Severity::Error,
+                    format!("use.{}", u.name),
+                    format!(
+                        "`use: {{ {}: \"{}\" }}`: no such extension {} -- searched {}",
+                        u.name,
+                        u.req,
+                        if seen.is_empty() {
+                            "was found".to_string()
+                        } else {
+                            format!("accepts the versions found ({})", seen.join(", "))
+                        },
+                        if dirs.is_empty() {
+                            "nothing".to_string()
+                        } else {
+                            dirs.iter()
+                                .map(|d| d.display().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        },
+                    ),
+                ));
+                continue;
+            };
+            let mut pick = highest;
+            if let Some(lock) = &lock {
+                let mut drift = |why: String| {
+                    diags.push(diag(
+                        drift_rule,
+                        drift_severity,
+                        format!("use.{}", u.name),
+                        format!("{}: {why}", lock_path.display()),
+                    ))
+                };
+                match lock.resolved.get(&u.name) {
+                    None => drift(format!(
+                        "`{}` is not locked; resolved {} {} -- run `check --update-lock`",
+                        u.name,
+                        highest.name(),
+                        highest.version()
+                    )),
+                    Some(e) => {
+                        let same: Vec<Candidate> = accepted
+                            .iter()
+                            .copied()
+                            .filter(|c| c.version() == e.version)
+                            .collect();
+                        if let Some(c) = same.iter().find(|c| c.sha256() == e.sha256) {
+                            pick = *c;
+                        } else if let Some(c) = same.first() {
+                            pick = *c;
+                            drift(format!(
+                                "{} {} changed since it was locked: sha256 {} locked, {} now \
+                                 -- review the change, then `check --update-lock`",
+                                u.name,
+                                e.version,
+                                &e.sha256[..e.sha256.len().min(12)],
+                                &c.sha256()[..12]
+                            ));
+                        } else {
+                            drift(format!(
+                                "{} {} is locked but {}; resolved {} -- run `check \
+                                 --update-lock`",
+                                u.name,
+                                e.version,
+                                if candidates
+                                    .iter()
+                                    .any(|c| c.name() == u.name && c.version() == e.version)
+                                {
+                                    format!("`{}` no longer accepts it", u.req)
+                                } else {
+                                    "not installed".to_string()
+                                },
+                                highest.version()
+                            ));
+                        }
+                    }
+                }
+            }
+            match pick {
+                Candidate::Ext(e) => chosen_exts.push(e.clone()),
+                Candidate::Profile(p) => chosen_profiles.push(p.clone()),
+            }
+        }
+        if let [first, rest @ ..] = chosen_profiles.as_slice() {
+            if !rest.is_empty() {
+                diags.push(diag(
+                    "profile-multiple",
+                    Severity::Error,
+                    "use".to_string(),
+                    format!(
+                        "a contract uses one profile; this one uses {} -- the scale is {}'s",
+                        chosen_profiles
+                            .iter()
+                            .map(LoadedProfile::label)
+                            .collect::<Vec<_>>()
+                            .join(" and "),
+                        first.label()
+                    ),
+                ));
+            }
+            if !m.manifest.severity_levels.is_empty() {
+                diags.push(diag(
+                    "severity-scale-conflict",
+                    Severity::Error,
+                    "severity_levels".to_string(),
+                    format!(
+                        "`severity_levels:` beside the profile {}: the profile states the scale \
+                         and its criticality map -- delete `severity_levels:`",
+                        first.label()
+                    ),
+                ));
+            }
+            let grammar = ros_launch_manifest_types::GRAMMAR_VERSION;
+            if let Some(req) = &first.profile.requires_rlm
+                && !req.matches(grammar)
+            {
+                diags.push(diag(
+                    "extension-invalid",
+                    Severity::Error,
+                    format!("use.{}", first.profile.name),
+                    format!(
+                        "profile {} requires rlm {req}; this checker reads rlm {grammar}",
+                        first.label()
+                    ),
+                ));
+            }
+            index.profiles.insert(scope, first.clone());
+        }
+        index.extensions.insert(scope, chosen_exts);
     }
     validate_keys(index, &mut diags);
     derive_hazard_bounds(index, &mut diags);
     index.merge_diagnostics.extend(diags);
 }
 
+/// `check --update-lock`: write each contract directory's `rlm.lock` from
+/// what [`prepare`] resolved. Two contracts in one directory that resolved
+/// one name differently cannot share a lock, and nothing is written.
+pub fn write_locks(index: &ManifestIndex) -> Result<Vec<PathBuf>, String> {
+    use super::rlm_lock::{self, Entry, Lock};
+    let mut locks: BTreeMap<PathBuf, Lock> = BTreeMap::new();
+    let mut scopes: Vec<_> = index.manifests.values().collect();
+    scopes.sort_by_key(|m| m.scope_id);
+    for m in scopes.into_iter().filter(|m| !m.manifest.uses.is_empty()) {
+        let path = rlm_lock::path_for(&m.contract_path);
+        let lock = locks.entry(path.clone()).or_insert_with(|| Lock {
+            version: 1,
+            ..Lock::default()
+        });
+        let mut entries: Vec<(String, Entry)> = exts_of(index, m.scope_id)
+            .iter()
+            .map(|e| {
+                (
+                    e.name.clone(),
+                    Entry {
+                        version: e.version.clone(),
+                        sha256: e.sha256.clone(),
+                        kind: "extension".into(),
+                    },
+                )
+            })
+            .collect();
+        if let Some(p) = index.profiles.get(&m.scope_id) {
+            entries.push((
+                p.profile.name.clone(),
+                Entry {
+                    version: p.profile.version.clone(),
+                    sha256: p.sha256.clone(),
+                    kind: "profile".into(),
+                },
+            ));
+        }
+        for (name, e) in entries {
+            if let Some(prev) = lock.resolved.get(&name)
+                && *prev != e
+            {
+                return Err(format!(
+                    "{}: two contracts in this directory resolve {name} differently ({} and \
+                     {}); one lock cannot hold both",
+                    path.display(),
+                    prev.version,
+                    e.version
+                ));
+            }
+            lock.resolved.insert(name, e);
+        }
+    }
+    for (path, lock) in &locks {
+        std::fs::write(path, rlm_lock::render(lock))
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    Ok(locks.into_keys().collect())
+}
+
+/// `check --explain`'s extensions block (phase 91 E7): per contract, each
+/// extension and profile it resolved, with the version, the full sha256 and
+/// where it was found.
+pub fn render_resolution(index: &ManifestIndex) -> String {
+    let mut out = String::new();
+    let mut scopes: Vec<_> = index.manifests.values().collect();
+    scopes.sort_by_key(|m| m.scope_id);
+    for m in scopes.into_iter().filter(|m| !m.manifest.uses.is_empty()) {
+        if out.is_empty() {
+            out.push_str("\n-- Extensions (--explain) --\n");
+        }
+        let lock = super::rlm_lock::path_for(&m.contract_path);
+        out.push_str(&format!(
+            "{}  (lock: {})\n",
+            m.contract_path.display(),
+            if lock.is_file() {
+                lock.display().to_string()
+            } else {
+                "none".to_string()
+            }
+        ));
+        for e in exts_of(index, m.scope_id) {
+            out.push_str(&format!(
+                "    {} {}  extension  sha256 {}  {}\n",
+                e.name,
+                e.version,
+                e.sha256,
+                e.path.display()
+            ));
+        }
+        if let Some(p) = index.profiles.get(&m.scope_id) {
+            out.push_str(&format!(
+                "    {}  profile  sha256 {}  {}\n",
+                p.label(),
+                p.sha256,
+                p.path
+                    .as_ref()
+                    .map_or("bundled with the checker".to_string(), |p| p
+                        .display()
+                        .to_string())
+            ));
+        }
+    }
+    out
+}
+
 /// Every extension key the contracts write must be declared by exactly one
-/// used extension, and its value must be one that declaration accepts.
+/// used extension (a bare key) or by the extension it names (a qualified
+/// `<extension>/<key>`, phase 91 E7), and its value must be one that
+/// declaration accepts.
 fn validate_keys(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
     let check =
         |exts: &[LoadedExt], ctx: &str, k: &ExtKey, at: String, diags: &mut Vec<Diagnostic>| {
-            let path = format!("{ctx}.{}", k.key);
-            let decl = declaring(exts, &path);
-            match decl.as_slice() {
+            let (qualifier, key) = split_key(&k.key);
+            let path = format!("{ctx}.{key}");
+            let used = || {
+                if exts.is_empty() {
+                    "none loaded".to_string()
+                } else {
+                    exts.iter()
+                        .map(LoadedExt::label)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }
+            };
+            let candidates: Vec<&LoadedExt> = match qualifier {
+                Some(q) => {
+                    let Some(e) = exts.iter().find(|e| e.name == q) else {
+                        diags.push(diag(
+                            "extension-key-unknown",
+                            Severity::Error,
+                            at,
+                            format!(
+                                "`{}` qualifies `{key}` with `{q}`, which is not an extension \
+                                 this contract uses ({})",
+                                k.key,
+                                used()
+                            ),
+                        ));
+                        return;
+                    };
+                    declaring(std::slice::from_ref(e), &path)
+                }
+                None => declaring(exts, &path),
+            };
+            match candidates.as_slice() {
                 [] => diags.push(diag(
                     "extension-key-unknown",
                     Severity::Error,
                     at,
                     format!(
-                        "`{}` is not a key of `{ctx}` in any extension this contract uses ({}) -- \
-                     an unknown key would otherwise be dropped in silence",
+                        "`{}` is not a key of `{ctx}` in {} -- an unknown key would otherwise \
+                         be dropped in silence",
                         k.key,
-                        if exts.is_empty() {
-                            "none loaded".to_string()
-                        } else {
-                            exts.iter()
-                                .map(LoadedExt::label)
-                                .collect::<Vec<_>>()
-                                .join(", ")
+                        match qualifier {
+                            Some(q) => format!("extension {q}"),
+                            None => format!("any extension this contract uses ({})", used()),
                         }
                     ),
                 )),
@@ -298,13 +757,16 @@ fn validate_keys(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
                     Severity::Error,
                     at,
                     format!(
-                        "`{}` is declared by {} -- the qualified spelling that tells them apart \
-                     is not implemented yet",
-                        k.key,
+                        "`{key}` is declared in `{ctx}` by {} -- a bare key names one extension's; \
+                         write the qualified spelling: {}",
                         many.iter()
                             .map(|e| e.label())
                             .collect::<Vec<_>>()
-                            .join(" and ")
+                            .join(" and "),
+                        many.iter()
+                            .map(|e| format!("`{}/{key}:`", e.name))
+                            .collect::<Vec<_>>()
+                            .join(" or ")
                     ),
                 )),
             }
@@ -417,12 +879,32 @@ fn param_number(index: &ManifestIndex, host: &ParamHost, name: &str) -> Result<f
     }
 }
 
+/// A written key split into its qualifier and key (phase 91 E7):
+/// `vehicle.braking/decel` is `(Some("vehicle.braking"), "decel")`, a bare
+/// `decel` is `(None, "decel")`.
+fn split_key(written: &str) -> (Option<&str>, &str) {
+    match written.split_once('/') {
+        Some((ext, key)) => (Some(ext), key),
+        None => (None, written),
+    }
+}
+
+/// Whether the written key `k` is extension `ext`'s `key`: bare, or
+/// qualified with `ext`'s name.
+fn names(k: &ExtKey, ext: &str, key: &str) -> bool {
+    match split_key(&k.key) {
+        (None, bare) => bare == key,
+        (Some(q), bare) => q == ext && bare == key,
+    }
+}
+
 /// The inputs an item needs, from the hazard's keys, the safe state's keys
 /// and the core values. A key the contract does not write is left out: the
 /// evaluator uses its default or names it as missing.
 #[allow(clippy::too_many_arguments)]
 fn gather(
     index: &ManifestIndex,
+    ext: &str,
     checked: &rlx::Checked,
     needs: &[Need],
     h: &ResolvedHazard,
@@ -471,7 +953,7 @@ fn gather(
             ("settle", Some((node, ss))) => (&ss.settle_ext, ParamHost::Node(node)),
             _ => continue,
         };
-        let Some(k) = keys.iter().find(|k| k.key == key) else {
+        let Some(k) = keys.iter().find(|k| names(k, ext, key)) else {
             continue;
         };
         let value = match (&need.ty, &k.value) {
@@ -512,10 +994,12 @@ fn gather(
 
 /// Whether the hazard (and safe state) write any key the item reads: an
 /// item none of whose keys the contract writes is not about this hazard.
-fn writes_any(needs: &[Need], h: &ResolvedHazard, settle: Option<&SafeState>) -> bool {
+fn writes_any(ext: &str, needs: &[Need], h: &ResolvedHazard, settle: Option<&SafeState>) -> bool {
     needs.iter().any(|n| match n.path.split_once('.') {
-        Some(("hazard", k)) => h.decl.ext.iter().any(|e| e.key == k),
-        Some(("settle", k)) => settle.is_some_and(|ss| ss.settle_ext.iter().any(|e| e.key == k)),
+        Some(("hazard", k)) => h.decl.ext.iter().any(|e| names(e, ext, k)),
+        Some(("settle", k)) => {
+            settle.is_some_and(|ss| ss.settle_ext.iter().any(|e| names(e, ext, k)))
+        }
         _ => false,
     })
 }
@@ -747,7 +1231,7 @@ fn derive_hazard_bounds(index: &mut ManifestIndex, diags: &mut Vec<Diagnostic>) 
                 let Some(needs) = checked.env.reads(&item) else {
                     continue;
                 };
-                if !writes_any(&needs, h, None) {
+                if !writes_any(&ext.name, &needs, h, None) {
                     continue;
                 }
                 let at = format!("hazards.{}.{key}", h.name);
@@ -768,8 +1252,8 @@ fn derive_hazard_bounds(index: &mut ManifestIndex, diags: &mut Vec<Diagnostic>) 
                     ));
                     continue;
                 }
-                let result =
-                    gather(index, &checked, &needs, h, None, None).and_then(|(inputs, written)| {
+                let result = gather(index, &ext.name, &checked, &needs, h, None, None).and_then(
+                    |(inputs, written)| {
                         rlx::eval::eval_derive(&checked, target, &inputs)
                             .map(|ev| (ev, written, inputs))
                             .map_err(|d| {
@@ -777,7 +1261,8 @@ fn derive_hazard_bounds(index: &mut ManifestIndex, diags: &mut Vec<Diagnostic>) 
                                     .trim_end()
                                     .to_string()
                             })
-                    });
+                    },
+                );
                 match result {
                     Ok((ev, written, inputs)) => {
                         let wc = worst_case(ext, &checked, &item, &inputs);
@@ -873,21 +1358,28 @@ pub(crate) fn derived_settle(
         else {
             continue;
         };
-        if !writes_any(&needs, h, Some(ss)) {
+        if !writes_any(&ext.name, &needs, h, Some(ss)) {
             continue;
         }
         let reads_response = needs.iter().any(|n| n.path == "settle.response");
-        let result = gather(index, &checked, &needs, h, Some((node_fqn, ss)), None).and_then(
-            |(inputs, _)| {
-                rlx::eval::eval_derive(&checked, "settle.duration", &inputs)
-                    .map(|ev| (ev, inputs))
-                    .map_err(|d| {
-                        d.render(&ext.path.display().to_string(), ext.source.as_bytes())
-                            .trim_end()
-                            .to_string()
-                    })
-            },
-        );
+        let result = gather(
+            index,
+            &ext.name,
+            &checked,
+            &needs,
+            h,
+            Some((node_fqn, ss)),
+            None,
+        )
+        .and_then(|(inputs, _)| {
+            rlx::eval::eval_derive(&checked, "settle.duration", &inputs)
+                .map(|ev| (ev, inputs))
+                .map_err(|d| {
+                    d.render(&ext.path.display().to_string(), ext.source.as_bytes())
+                        .trim_end()
+                        .to_string()
+                })
+        });
         return match result {
             Ok((ev, inputs)) => {
                 let item = ItemRef::Derive("settle.duration".to_string());
@@ -1002,7 +1494,7 @@ pub fn run_checks(index: &mut ManifestIndex) {
                 let Some(needs) = checked.env.reads(&item) else {
                     continue;
                 };
-                if !named && !writes_any(&needs, h, None) {
+                if !named && !writes_any(&ext.name, &needs, h, None) {
                     continue;
                 }
                 let at = format!("hazards.{}", h.name);
@@ -1024,7 +1516,7 @@ pub fn run_checks(index: &mut ManifestIndex) {
                     ));
                     continue;
                 }
-                let gathered = gather(index, &checked, &needs, h, None, rt);
+                let gathered = gather(index, &ext.name, &checked, &needs, h, None, rt);
                 let render = |d: rlx::diag::Diagnostic| {
                     d.render(&ext.path.display().to_string(), ext.source.as_bytes())
                         .trim_end()

@@ -773,6 +773,7 @@ mod tests {
             &ContractSources {
                 overlay: None,
                 provider: true,
+                lock: Default::default(),
             },
         )
         .unwrap_or_else(|e| panic!("{name}: load manifests: {e}"))

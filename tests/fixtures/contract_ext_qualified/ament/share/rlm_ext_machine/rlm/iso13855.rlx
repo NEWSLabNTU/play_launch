@@ -1,0 +1,19 @@
+-- share/rlm_ext_machine/rlm/iso13855.rlx
+extension machine.iso13855 0.3.0
+requires rlm >= 0.2.0
+
+key hazard.detection_capability : Length  "ESPE detection capability d"
+key hazard.device_response      : Time    "ESPE response time"
+key hazard.installed_distance   : Length  "detection zone to hazard zone"
+input reaction_total : Time               -- core: detection + route + settle
+
+check safety_distance: required <= installed_distance
+  where T        = device_response + reaction_total
+    and C        = if detection_capability <= 40 mm
+                   then 8 * (detection_capability - 14 mm)
+                   else 850 mm
+    and s_2000   = 2000 mm/s * T + C
+    and required = if s_2000 <= 500 mm then max(s_2000, 100 mm)
+                   else max(1600 mm/s * T + C, 500 mm)
+  worst_case: increasing in reaction_total, device_response
+  domain: detection_capability in [14 mm, 40 mm]

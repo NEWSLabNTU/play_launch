@@ -869,6 +869,7 @@ mod tests {
         let sources = crate::ros::manifest_loader::ContractSources {
             overlay: None,
             provider: true,
+            lock: Default::default(),
         };
         crate::ros::manifest_loader::load_manifests(dump, &sources)
             .unwrap_or_else(|e| panic!("{name}: load manifests: {e}"))
@@ -958,6 +959,120 @@ mod tests {
             .position(|(a, e)| a != e)
             .unwrap_or_else(|| actual.lines().count().min(expected.lines().count()))
             + 1
+    }
+
+    fn copy_tree(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for e in std::fs::read_dir(from).unwrap().flatten() {
+            let dest = to.join(e.file_name());
+            let kind = e.file_type().unwrap();
+            if kind.is_symlink() {
+                std::os::unix::fs::symlink(std::fs::read_link(e.path()).unwrap(), &dest).unwrap();
+            } else if kind.is_dir() {
+                copy_tree(&e.path(), &dest);
+            } else {
+                std::fs::copy(e.path(), &dest).unwrap();
+            }
+        }
+    }
+
+    /// Each node's derived criticality, and each severity refusal, of a
+    /// loaded index: what a profile may change.
+    fn criticality_of(index: &ManifestIndex) -> (BTreeMap<String, String>, Vec<String>) {
+        let nodes = index
+            .derived_criticality
+            .iter()
+            .map(|(n, d)| {
+                (
+                    n.clone(),
+                    format!("{:?} ({} {})", d.bucket(), d.level, d.role),
+                )
+            })
+            .collect();
+        let refusals = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id.contains("criticality") || d.rule_id.starts_with("severity"))
+            .map(|d| format!("{}: {}", d.rule_id, d.path))
+            .collect();
+        (nodes, refusals)
+    }
+
+    /// Phase 91 E6's gate: under the `iso26262` profile every contract
+    /// fixture derives the criticality it derives with no profile. Each
+    /// fixture is copied, `use: { iso26262: "^1" }` is added to every
+    /// contract file that declares hazards on the default scale, and the
+    /// derivation is compared node by node.
+    #[test]
+    fn every_fixture_derives_the_same_criticality_under_iso26262() {
+        let fixtures = repo_root().join("tests/fixtures");
+        let tmp = tempfile::tempdir().unwrap();
+        let mut compared = 0usize;
+        let mut nodes_compared = 0usize;
+        for launch in contract_fixture_launches() {
+            let rel = launch.strip_prefix(&fixtures).unwrap();
+            let fixture = rel.components().next().unwrap().as_os_str().to_owned();
+            let copy = tmp.path().join(&fixture);
+            if !copy.exists() {
+                copy_tree(&fixtures.join(&fixture), &copy);
+            }
+            let mut edited = 0;
+            let mut stack = vec![copy.clone()];
+            while let Some(dir) = stack.pop() {
+                for e in std::fs::read_dir(&dir).unwrap().flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        stack.push(p);
+                        continue;
+                    }
+                    if !p.to_string_lossy().ends_with(".yaml") {
+                        continue;
+                    }
+                    let text = std::fs::read_to_string(&p).unwrap();
+                    let at_root = |k: &str| text.lines().any(|l| l.starts_with(k));
+                    if !at_root("hazards:") || at_root("use:") || at_root("severity_levels:") {
+                        continue;
+                    }
+                    std::fs::write(&p, format!("use: {{ iso26262: \"^1\" }}\n{text}")).unwrap();
+                    edited += 1;
+                }
+            }
+            if edited == 0 {
+                continue;
+            }
+            let name = fixture_name(&launch);
+            let before = criticality_of(&index_of(&dump_of(&launch), &name));
+            let under = tmp.path().join(rel);
+            let after_index = index_of(&dump_of(&under), &name);
+            // A contract the parser refuses loads nothing either way.
+            let loaded = after_index
+                .manifests
+                .values()
+                .filter(|m| !m.manifest.uses.is_empty())
+                .count();
+            assert_eq!(
+                after_index
+                    .profiles
+                    .values()
+                    .filter(|p| p.profile.name == "iso26262")
+                    .count(),
+                loaded,
+                "{name}: the profile was not used"
+            );
+            let after = criticality_of(&after_index);
+            assert_eq!(
+                before, after,
+                "{name}: iso26262 changed the derived criticality"
+            );
+            compared += 1;
+            nodes_compared += before.0.len();
+        }
+        eprintln!("{compared} fixture launch(es), {nodes_compared} derived node(s) compared");
+        assert!(compared >= 10, "only {compared} fixtures declare hazards");
+        assert!(
+            nodes_compared >= 20,
+            "only {nodes_compared} nodes derive a criticality"
+        );
     }
 
     /// The permanent form of W2's parity gate (Gates 1 of the phase): the
@@ -1269,6 +1384,7 @@ mod tests {
                 scale_len: 5,
                 hazard: "h1".to_string(),
                 role: "reaction",
+                criticality: None,
             },
         );
         // talker is labelled `low`; the hazard that reaches it says ASIL D.
@@ -1280,6 +1396,7 @@ mod tests {
                 scale_len: 5,
                 hazard: "h1".to_string(),
                 role: "detector",
+                criticality: Some(ros_launch_manifest_sched::Criticality::High),
             },
         );
         let dump = dump_with_two_nodes();

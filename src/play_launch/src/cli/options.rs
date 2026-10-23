@@ -402,6 +402,17 @@ pub struct CheckArgs {
     #[arg(long)]
     pub strict: bool,
 
+    /// Phase 91 E7: refuse any extension or profile resolution other than
+    /// the `rlm.lock` beside each contract (a changed file, another version,
+    /// an unlocked `use:` entry, or no lock at all).
+    #[arg(long, conflicts_with = "update_lock")]
+    pub locked: bool,
+
+    /// Phase 91 E7: resolve each `use:` to the highest version it accepts and
+    /// write the `rlm.lock` beside each contract that uses any.
+    #[arg(long)]
+    pub update_lock: bool,
+
     /// Output format: terminal (default, with source excerpts) or json
     #[arg(long, default_value = "terminal")]
     pub format: String,
@@ -1145,6 +1156,7 @@ impl CommonOptions {
                 self.contract_opts.contracts.as_deref(),
             )?,
             provider: !self.contract_opts.no_provider_contracts,
+            lock: Default::default(),
         })
     }
 }

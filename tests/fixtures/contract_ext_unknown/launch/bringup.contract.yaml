@@ -1,10 +1,10 @@
-# Phase 91 E4: what the extension layer refuses. `iec61511` is not an
+# Phase 91 E4: what the extension layer refuses. `process.sis` is not an
 # extension found anywhere (`extension-not-found`), and `installed_distanse`
 # is a key no used extension declares (`extension-key-unknown`): without the
 # check it would be dropped, and the safety distance would then fail to
 # evaluate for want of `installed_distance`.
 version: 1
-use: { machine.iso13855: "^0.3", iec61511: "^1" }
+use: { machine.iso13855: "^0.3", process.sis: "^1" }
 
 hazards:
   drive_blind:

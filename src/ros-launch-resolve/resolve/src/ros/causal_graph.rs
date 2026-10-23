@@ -919,6 +919,7 @@ paths:
         let sources = ContractSources {
             overlay: Some(tmp.path().to_path_buf()),
             provider: false,
+            lock: Default::default(),
         };
         crate::ros::manifest_loader::load_manifests(&dump, &sources)
             .expect("synthetic manifest loads")

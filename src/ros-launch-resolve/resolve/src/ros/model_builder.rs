@@ -1548,18 +1548,18 @@ pub fn build_system_model(
         }
     }
     // The severity scale those entries were derived on. The loader reads
-    // each hazard's scale from its own manifest; the model has one field, so
-    // the first declared scale in scope order is carried, and an empty one
-    // means every manifest used the ISO 26262 default.
-    let mut scoped: Vec<&super::manifest_loader::ResolvedManifest> =
-        index.manifests.values().collect();
-    scoped.sort_by_key(|m| m.scope_id);
+    // each hazard's scale from its own manifest (a used profile's, else
+    // `severity_levels:`); the model has one field, so the first declared
+    // scale in scope order is carried, and an empty one means every
+    // manifest used the ISO 26262 default.
+    let mut scoped: Vec<usize> = index.manifests.keys().copied().collect();
+    scoped.sort_unstable();
     if let Some(scale) = scoped
         .iter()
-        .map(|m| &m.manifest.severity_levels)
-        .find(|s| !s.is_empty())
+        .map(|&scope| super::extensions::severity_scale(index, scope))
+        .find(|s| !s.default)
     {
-        contracts.severity_levels = scale.clone();
+        contracts.severity_levels = scale.levels;
     }
 
     // The declared parameters (nano-ros phase 446), keyed by node FQN the way
@@ -3180,6 +3180,7 @@ mod tests {
             scale_len: 3,
             hazard: "h".to_string(),
             role: "reacts to",
+            criticality: ros_launch_manifest_sched::Criticality::from_severity(rank, 3),
         };
         // ASIL-D-like top of a three-level scale: High, overriding `low`.
         index

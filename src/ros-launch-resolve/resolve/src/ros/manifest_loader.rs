@@ -55,6 +55,8 @@ pub struct ContractSources {
     /// Whether the provider-sidecar channel is enabled (on by default;
     /// `--no-provider-contracts` sets this to `false`).
     pub provider: bool,
+    /// How extension resolution treats `rlm.lock` (phase 91 E7).
+    pub lock: super::rlm_lock::LockMode,
 }
 
 /// Discover the overlay root shared by contracts and platform files (Phase
@@ -292,18 +294,17 @@ pub struct DerivedCriticality {
     /// The hazard that set it, and how the node relates to it.
     pub hazard: String,
     pub role: &'static str,
+    /// The criticality the level derives, by the scale's map: a profile's
+    /// as stated (phase 91 E6), else the grammar's split into thirds.
+    pub criticality: Option<ros_launch_manifest_sched::Criticality>,
 }
 
 impl DerivedCriticality {
-    /// Fold the declared scale into the mapper's three buckets. Rank 0 (the
-    /// scale's first entry) is no requirement; the rest split evenly, top
-    /// third to `High`. On the default five-level scale: A → Low, B → Medium,
-    /// C and D → High.
-    ///
-    /// The map is the grammar's (rlm `types::severity`, phase 90 G5), printed
-    /// in the format reference; this only applies it.
+    /// The mapper's bucket for this level: the scale's map, applied when
+    /// the derivation ran (`extensions::severity_scale`). On the default
+    /// five-level scale: QM none, A Low, B Medium, C and D High.
     pub fn bucket(&self) -> Option<ros_launch_manifest_sched::Criticality> {
-        ros_launch_manifest_sched::Criticality::from_severity(self.rank, self.scale_len)
+        self.criticality
     }
 }
 
@@ -466,6 +467,11 @@ pub struct ManifestIndex {
     pub budgets: Vec<RungBudget>,
     /// The extensions each scope's contract uses (phase 91 E4), by scope.
     pub extensions: BTreeMap<usize, Vec<super::extensions::LoadedExt>>,
+    /// The profile each scope's contract uses, if any (phase 91 E6).
+    pub profiles: BTreeMap<usize, super::extensions::LoadedProfile>,
+    /// How extension resolution treats `rlm.lock` (phase 91 E7), copied
+    /// from [`ContractSources::lock`].
+    pub lock_mode: super::rlm_lock::LockMode,
     /// Every stated budget with its source and what checks it, for
     /// `--explain` and `declared-not-charged` (phase 10 B7, B8).
     pub stated: Vec<super::budget_book::StatedBudget>,
@@ -622,7 +628,10 @@ pub fn load_manifests(
     launch_dump: &LaunchDump,
     sources: &ContractSources,
 ) -> eyre::Result<ManifestIndex> {
-    let mut index = ManifestIndex::default();
+    let mut index = ManifestIndex {
+        lock_mode: sources.lock,
+        ..ManifestIndex::default()
+    };
     let mut loaded = 0usize;
     let mut skipped = 0usize;
     let mut overlay_loaded = 0usize;
@@ -4165,9 +4174,6 @@ fn endpoint_field_declared(e: &ros_launch_manifest_types::EndpointProps, field: 
 // Phase 72 — criticality from hazards
 // ---------------------------------------------------------------------------
 
-const DEFAULT_SEVERITY_SCALE: &[&str] =
-    &ros_launch_manifest_types::severity::DEFAULT_SEVERITY_LEVELS;
-
 /// Which nodes a hazard reaches, and why. `criticality-from-hazards.md`'s
 /// rule: severity is never a property of a component, it is allocated
 /// inward from an outcome. Three ways in:
@@ -4205,26 +4211,27 @@ fn derive_criticality_from_hazards(
         let Some(level) = &h.decl.severity else {
             continue;
         };
-        let scale: Vec<String> = index
-            .manifests
-            .get(&h.scope_id)
-            .filter(|m| !m.manifest.severity_levels.is_empty())
-            .map(|m| m.manifest.severity_levels.clone())
-            .unwrap_or_else(|| {
-                DEFAULT_SEVERITY_SCALE
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect()
-            });
-        let Some(rank) = scale.iter().position(|s| s.eq_ignore_ascii_case(level)) else {
+        let scale = super::extensions::severity_scale(index, h.scope_id);
+        let Some(rank) = scale
+            .levels
+            .iter()
+            .position(|s| s.eq_ignore_ascii_case(level))
+        else {
             diags.push(Diagnostic {
                 rule_id: "severity-unknown".to_string(),
                 severity: Severity::Error,
                 message: format!(
-                    "hazard '{}' declares severity '{level}', which is not in the scale [{}]. \
-                     Declare `severity_levels:` if the scale is not ISO 26262's",
+                    "hazard '{}' declares severity '{level}', which is not in the scale [{}] \
+                     ({}).{}",
                     h.name,
-                    scale.join(", ")
+                    scale.levels.join(", "),
+                    scale.source,
+                    if scale.default {
+                        " Use the profile of your standard (`use: { iec61508: \"^1\" }`) or \
+                         declare `severity_levels:` if the scale is not ISO 26262's"
+                    } else {
+                        ""
+                    }
                 ),
                 path: format!("hazards.{}.severity", h.name),
                 span: None,
@@ -4234,9 +4241,10 @@ fn derive_criticality_from_hazards(
         let mk = |role: &'static str| DerivedCriticality {
             level: level.clone(),
             rank,
-            scale_len: scale.len(),
+            scale_len: scale.levels.len(),
             hazard: h.name.clone(),
             role,
+            criticality: scale.criticality[rank],
         };
 
         // Guards: publishers and their upstream causal closure.
@@ -6614,6 +6622,7 @@ mod tests {
         let sources = ContractSources {
             overlay: Some(tmp.path().to_path_buf()),
             provider: false,
+            lock: Default::default(),
         };
         load_manifests(dump, &sources).unwrap()
     }
@@ -8654,6 +8663,7 @@ mod tests {
         let sources = ContractSources {
             overlay: Some(overlay_root.clone()),
             provider: true,
+            lock: Default::default(),
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert_eq!(index.manifests[&0].channel, ContractChannel::Overlay);
@@ -8663,6 +8673,7 @@ mod tests {
         let sources = ContractSources {
             overlay: None,
             provider: true,
+            lock: Default::default(),
         };
         let dump = make_dump(vec![scope_with_path(
             0,
@@ -8685,6 +8696,7 @@ mod tests {
         let sources = ContractSources {
             overlay: None,
             provider: true,
+            lock: Default::default(),
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert!(index.manifests.is_empty());
@@ -8707,6 +8719,7 @@ mod tests {
         let sources = ContractSources {
             overlay: None,
             provider: false,
+            lock: Default::default(),
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert!(index.manifests.is_empty());
@@ -8727,6 +8740,7 @@ mod tests {
         let sources = ContractSources {
             overlay: Some(overlay_root),
             provider: false,
+            lock: Default::default(),
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert_eq!(index.manifests.len(), 1);
@@ -8986,6 +9000,7 @@ paths:
         let sources = ContractSources {
             overlay: Some(tmp.path().to_path_buf()),
             provider: false,
+            lock: Default::default(),
         };
         load_manifests(dump, &sources).unwrap()
     }

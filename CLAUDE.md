@@ -553,7 +553,7 @@ add `src/ros-launch-resolve` to `members`. `just check-layer2-isolation`
 boundary breaks: no ROS crates in the graph, no ROS shared libraries linked,
 and both launch frontends resolve with no ROS installed.
 
-**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.1.69`), not a
+**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.1.71`), not a
 submodule — phase-55 W2. Layer 2 now has no submodules at all. **Three**
 manifests name the tag and must move together:
 `src/play_launch/Cargo.toml`, `src/ros-launch-resolve/Cargo.toml` and
@@ -694,6 +694,24 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-10-23**: **Severity profiles, ament packaging and `rlm.lock`**
+  (phase 91 E6/E7, rlm v0.1.71). A contract's `use:` names an rlx
+  extension or a profile (`types::profile`, seven bundled); the scale and
+  criticality map a scope's hazards use come from ONE place,
+  `extensions::severity_scale` (profile, else `severity_levels:` in
+  thirds, else ISO 26262), which the phase-72 derivation and the model
+  both read. Extensions are found beside the contract or in packages
+  registered under the ament resource `rlm_extensions`, never by scanning
+  `share/`. A qualified key `<ext>/<key>` reaches only its extension.
+  `rlm.lock` (`ros/rlm_lock.rs`) is preferred whenever present; drift is a
+  warning, an error under `check --locked`; `--update-lock` rewrites it.
+  The lock mode rides `ContractSources.lock` into `ManifestIndex`, because
+  resolution happens inside `load_manifests`. Two things a later change
+  must keep: the reference profiles are bundled, so a name a test uses for
+  "no such extension" must not be a profile's (`contract_ext_unknown` used
+  `iec61511`); and the fixtures exercise only ASIL_B and ASIL_D, so the
+  iso26262 gate's power on the other levels is rlm's unit test.
 
 - **2026-10-22**: **A worst case is proved, not asserted** (phase 91 E5,
   rlm v0.1.70). An extension's `worst_case: increasing in x` is what lets

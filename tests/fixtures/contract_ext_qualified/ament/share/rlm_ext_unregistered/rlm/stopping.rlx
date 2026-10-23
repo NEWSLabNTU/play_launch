@@ -1,0 +1,11 @@
+-- share/rlm_ext_unregistered/rlm/stopping.rlx: installed but NOT registered
+-- in the ament index (no rlm_extensions marker), so never searched. Were it
+-- found, its higher version would win and its check would fail.
+extension machine.stopping 0.2.0
+requires rlm >= 0.2.0
+
+key hazard.device_response : Time
+key hazard.max_stop_time   : Time
+input reaction_total : Time
+
+check stop_time: 10 * (device_response + reaction_total) <= max_stop_time

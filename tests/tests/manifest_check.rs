@@ -2837,13 +2837,188 @@ fn e4_an_unknown_extension_or_key_is_an_error() {
     let (code, out) = ext_fixture("contract_ext_unknown", &[]);
     assert_eq!(code, 1, "{out}");
     for needle in [
-        "error[extension-not-found]: `use: { iec61511: \"^1\" }`: no such extension was found",
+        "error[extension-not-found]: `use: { process.sis: \"^1\" }`: no such extension was found",
         "error[extension-key-unknown]: `installed_distanse` is not a key of `hazard` in any \
          extension this contract uses (machine.iso13855 0.3.0)",
         "error[rlx-missing-input]: no value for `hazard.installed_distance`",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
+}
+
+/// Phase 91 E6: a contract under the iec61508 profile draws its severity
+/// from the SIL scale, and each node the hazard reaches takes the
+/// criticality the profile's map names (SIL_2: `medium`).
+#[test]
+fn e6_a_sil_contract_derives_criticality_through_its_profile() {
+    let (code, out) = ext_fixture("contract_profile_sil", &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("iec61508 1.0.0  profile  sha256 ")
+            && out.contains("bundled with the checker"),
+        "{out}"
+    );
+    assert!(!out.contains("severity-"), "{out}");
+    for node in [
+        "/safety/lidar_driver",
+        "/safety/obstacle_detector",
+        "/safety/brake_controller",
+    ] {
+        assert_eq!(
+            derived_criticality("contract_profile_sil", node).as_deref(),
+            Some("medium"),
+            "{node}"
+        );
+    }
+}
+
+/// Phase 91 E6: a profile states the scale, so `severity_levels:` beside
+/// it is an error, and a level the profile lacks names the profile.
+#[test]
+fn e6_a_profile_refuses_a_second_scale_and_a_foreign_level() {
+    let (code, out) = ext_fixture("contract_profile_refused", &[]);
+    assert_eq!(code, 1, "{out}");
+    for needle in [
+        "error[severity-scale-conflict]: `severity_levels:` beside the profile iec61508 1.0.0",
+        "error[severity-unknown]: hazard 'drive_blind' declares severity 'ASIL_D', which is \
+         not in the scale [none, SIL_1, SIL_2, SIL_3, SIL_4] (profile iec61508 1.0.0)",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+}
+
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap().flatten() {
+        let dest = to.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            copy_tree(&e.path(), &dest);
+        } else {
+            std::fs::copy(e.path(), &dest).unwrap();
+        }
+    }
+}
+
+/// `contract_ext_qualified` copied whole (its contract and its ament
+/// prefix), so a test may edit either.
+fn qualified_copy() -> (tempfile::TempDir, std::path::PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    copy_tree(
+        &fixtures::repo_root().join("tests/fixtures/contract_ext_qualified"),
+        tmp.path(),
+    );
+    let root = tmp.path().to_path_buf();
+    (tmp, root)
+}
+
+/// `check` on a `contract_ext_qualified` tree at `root`, its packages on
+/// `AMENT_PREFIX_PATH`.
+fn check_qualified(root: &std::path::Path, extra: &[&str]) -> (i32, String) {
+    let out = play_launch_cmd()
+        .env("AMENT_PREFIX_PATH", root.join("ament"))
+        .arg("check")
+        .args(extra)
+        .arg(root.join("launch/bringup.launch.xml"))
+        .output()
+        .expect("play_launch check runs");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr),
+    )
+}
+
+/// Phase 91 E7: two packages registered under `rlm_extensions` declare
+/// `hazard.device_response`. Qualified, each extension reads its own value;
+/// bare, the key is refused with both spellings. The unregistered package
+/// beside them (a higher machine.stopping) is never searched.
+#[test]
+fn e7_two_packages_declaring_one_key_force_the_qualified_spelling() {
+    let root = fixtures::repo_root().join("tests/fixtures/contract_ext_qualified");
+    let (code, out) = check_qualified(&root, &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    for needle in [
+        "info[extension-check]: hazard 'drive_blind': machine.iso13855/safety_distance PASS \
+         (machine.iso13855 0.3.0, the hazard's deadline_by)",
+        "info[extension-check]: hazard 'drive_blind': machine.stopping/stop_time PASS \
+         (machine.stopping 0.1.0)",
+        "327 ms <= 400 ms",
+        "machine.stopping 0.1.0  extension  sha256 ",
+        "ament/share/rlm_ext_stopping/rlm/stopping.rlx",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    assert!(!out.contains("rlm_ext_unregistered"), "{out}");
+
+    let (_tmp, copy) = qualified_copy();
+    let contract = copy.join("launch/bringup.contract.yaml");
+    let text = std::fs::read_to_string(&contract).unwrap().replace(
+        "    machine.iso13855/device_response: 15ms\n    machine.stopping/device_response: 40ms\n",
+        "    device_response: 15ms\n",
+    );
+    std::fs::write(&contract, text).unwrap();
+    let (code, out) = check_qualified(&copy, &[]);
+    assert_eq!(code, 1, "{out}");
+    let needle = "error[extension-key-ambiguous]: `device_response` is declared in `hazard` by \
+                  machine.iso13855 0.3.0 and machine.stopping 0.1.0 -- a bare key names one \
+                  extension's; write the qualified spelling: \
+                  `machine.iso13855/device_response:` or `machine.stopping/device_response:`";
+    assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+}
+
+/// Phase 91 E7: `--update-lock` writes `rlm.lock` beside the contract;
+/// `--locked` accepts that resolution and refuses it once the extension
+/// changes under the same version (a warning without `--locked`), and
+/// refuses a contract with no lock at all.
+#[test]
+fn e7_a_changed_extension_under_locked_is_refused() {
+    let (_tmp, root) = qualified_copy();
+    let (code, out) = check_qualified(&root, &["--locked"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("error[lock-missing]"), "{out}");
+
+    let (code, out) = check_qualified(&root, &["--update-lock"]);
+    assert_eq!(code, 0, "{out}");
+    let lock_path = root.join("launch/rlm.lock");
+    assert!(
+        out.contains(&format!("Wrote {}", lock_path.display())),
+        "{out}"
+    );
+    let lock = std::fs::read_to_string(&lock_path).unwrap();
+    for needle in [
+        "machine.iso13855:",
+        "machine.stopping:",
+        "version: 0.1.0",
+        "kind: extension",
+    ] {
+        assert!(
+            lock.contains(needle),
+            "expected `{needle}` in the lock:\n{lock}"
+        );
+    }
+    let (code, out) = check_qualified(&root, &["--locked"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("lock-"), "{out}");
+
+    // The same version, another formula.
+    let ext = root.join("ament/share/rlm_ext_stopping/rlm/stopping.rlx");
+    let text = std::fs::read_to_string(&ext).unwrap().replace(
+        "device_response + reaction_total <=",
+        "device_response + 1.1 * reaction_total <=",
+    );
+    std::fs::write(&ext, text).unwrap();
+    let (code, out) = check_qualified(&root, &["--locked"]);
+    assert_eq!(code, 1, "{out}");
+    let needle = "machine.stopping 0.1.0 changed since it was locked";
+    assert!(
+        out.contains("error[lock-mismatch]") && out.contains(needle),
+        "expected `{needle}`:\n{out}"
+    );
+    let (code, out) = check_qualified(&root, &[]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("warning[lock-drift]") && out.contains(needle),
+        "{out}"
+    );
 }
 
 /// Phase 90 G7: the two removed keys refuse the contract (exit 3) with a

@@ -31,6 +31,8 @@ pub fn handle_check(args: &CheckArgs) -> Result<()> {
         format: args.format.clone(),
         allow_unsupported_actions: args.allow_unsupported_actions,
         strict: args.strict,
+        locked: args.locked,
+        update_lock: args.update_lock,
         rule: args.rule.clone(),
         explain: args.explain,
         export_graph: args.export_graph.clone(),

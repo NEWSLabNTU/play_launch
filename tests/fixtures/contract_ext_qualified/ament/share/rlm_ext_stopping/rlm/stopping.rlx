@@ -1,0 +1,10 @@
+-- share/rlm_ext_stopping/rlm/stopping.rlx
+extension machine.stopping 0.1.0
+requires rlm >= 0.2.0
+
+key hazard.device_response : Time  "the stop actuator's response time"
+key hazard.max_stop_time   : Time  "hazard to standstill, from the risk assessment"
+input reaction_total : Time
+
+check stop_time: device_response + reaction_total <= max_stop_time
+  worst_case: increasing in reaction_total, device_response

@@ -63,6 +63,7 @@ pub fn build_checked_model(
     let sources = crate::ros::manifest_loader::ContractSources {
         overlay: manifest_loader::discover_overlay_root(contracts)?,
         provider: !no_provider_contracts,
+        lock: Default::default(),
     };
     let index = manifest_loader::load_manifests(dump, &sources)?;
 

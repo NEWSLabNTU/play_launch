@@ -2,7 +2,7 @@
 
 Status: **in progress** (2026-10-22): E0 done (no-go: rlx owns its
 expression core); E1 and E2 done (rlm v0.1.65); E3 and E4 done (rlm v0.1.66);
-E5 done (rlm v0.1.70). Stage 2 of 2; phase 90 (a tidy grammar) is complete. Design: rlm `docs/design/extension-system.md` (with
+E5 done (rlm v0.1.70); E6 and E7 done (rlm v0.1.71). Stage 2 of 2; phase 90 (a tidy grammar) is complete. Design: rlm `docs/design/extension-system.md` (with
 `extension-language-exploration.md` and `extension-examples.md`). Work lands
 in rlm (format, language, profiles), play_launch (loader, evaluator, Z3,
 explain, packaging, migration) and the consumers (nano-ros reads the
@@ -238,6 +238,38 @@ is why a consumer passes them.
 - Gate: derived criticality unchanged on every fixture under `iso26262`;
   a SIL fixture under `iec61508`.
 
+**Done (2026-10-23).** rlm v0.1.71 (`745275d`): `types::profile`
+(`parse_profile`, the seven reference profiles bundled as
+`profile::REFERENCE`, files in `types/profiles/`). The map is stated level
+by level, not computed: `iso13849` maps PL a-c to `low` through Table 4's
+SIL correspondence, where the thirds split would give PL b and c `medium`.
+`iso26262` carries decomposition as `fn asil_decomposition_margin(parent,
+a, b) = a + b - parent` over the ranks, checked in rlx against every split
+Part 9 permits and every one-short split; no core rule calls it yet (R6's
+independence question is open), so it is library, not a write-only field.
+play_launch (`ros/extensions.rs`): a `use:` entry resolves to an rlx file
+or a profile by name (a `<name>.profile.yaml` on disk, or bundled; a file on
+disk wins a tie), `severity_scale` gives a scope its scale and map (profile,
+else `severity_levels:` split into thirds, else ISO 26262), and the phase-72
+derivation, `severity-unknown` (now naming the profile) and the model's
+`severity_levels` read it. Refused: two profiles (`profile-multiple`), a
+profile beside `severity_levels:` (`severity-scale-conflict`), a profile
+whose `requires: { rlm }` this checker does not meet.
+
+Gate, as run:
+
+- Unchanged under `iso26262`: `sched_derive`'s
+  `every_fixture_derives_the_same_criticality_under_iso26262` copies every
+  contract fixture, adds `use: { iso26262: "^1" }` to each contract on the
+  default scale and compares the derivation node by node: 21 launches, 48
+  derived nodes, identical. Negative control: mapping `ASIL_B` to `low` in
+  the profile fails it (the fixtures use only `ASIL_B` and `ASIL_D`; rlm's
+  own test pins the whole map to the default).
+- SIL fixture: `contract_profile_sil` (iec61508, `SIL_2`): the three nodes
+  the hazard reaches derive `medium` in the model, `--explain` names the
+  bundled profile and its sha256 (`e6_a_sil_contract_...`);
+  `contract_profile_refused` pins the two refusals.
+
 ### E7. Packaging, resolution and identity (play_launch)
 
 - ament resource `rlm_extensions`; `use:` with semver ranges; bare and
@@ -245,6 +277,40 @@ is why a consumer passes them.
   `--locked`, `--update-lock`.
 - Gate: two packages declaring the same key force the qualified spelling;
   a changed extension under `--locked` is refused.
+
+**Done (2026-10-23).** play_launch only (`ros/extensions.rs`,
+`ros/rlm_lock.rs`). Search: the contract's `rlm/`, then `share/<pkg>/rlm/`
+of each package with a marker under
+`share/ament_index/resource_index/rlm_extensions/` (the scan of every
+package's `share/` is gone). Keys: `<extension>/<key>` is read only by the
+extension it names (`gather`, `writes_any`), a bare key two used extensions
+declare is `extension-key-ambiguous` with both qualified spellings. Lock:
+`rlm.lock` beside the contract, name to `{version, sha256, kind}`;
+resolution prefers the locked version while installed and accepted; a
+changed file, a vanished or refused version or an unlocked entry is
+`lock-drift` (warning) or under `check --locked` `lock-mismatch` (error);
+`--locked` with no lock is `lock-missing`; `check --update-lock` resolves
+afresh and writes each directory's lock (two contracts in one directory
+resolving one name differently are refused). Both CLIs take the flags.
+`--explain` gains an Extensions block: each resolution with its full
+sha256 and file (or "bundled with the checker"). The sha256 in each
+derivation record was E4's.
+
+Gate, as run (`contract_ext_qualified`, two packages in an ament prefix,
+`machine.iso13855` and `machine.stopping`, both declaring
+`hazard.device_response`):
+
+- Qualified, each extension reads its own value (15 ms for the safety
+  distance, 40 ms for `stop_time`: 327 ms <= 400 ms); made bare, the key is
+  `extension-key-ambiguous`. An unregistered package beside them ships a
+  higher `machine.stopping` whose check would fail and is never searched.
+- `--locked` without a lock is refused; after `--update-lock` it passes;
+  with the same version's formula changed it is refused (`lock-mismatch`,
+  both sha256 prefixes) and without `--locked` it warns (`lock-drift`).
+
+Found on the way: `contract_ext_unknown` used `iec61511` as its name for
+an extension that does not exist; it is a bundled profile now, so the
+fixture names `process.sis`.
 
 ### E8. vehicle.braking and the migration (all)
 

@@ -1,0 +1,100 @@
+# Phase 91 E7: two packages, registered in the ament index under
+# `rlm_extensions` (ament/share/ament_index/resource_index/rlm_extensions),
+# both declare `hazard.device_response`: machine.iso13855's is the ESPE's
+# response, machine.stopping's the stop actuator's. A bare key would be
+# ambiguous (`extension-key-ambiguous`), so each is written qualified, and
+# each extension reads its own value:
+#   machine.iso13855/safety_distance: T = 15 + 287 = 302ms, 611.2mm <= 650mm.
+#   machine.stopping/stop_time: 40 + 287 = 327ms <= 400ms.
+# rlm_ext_unregistered ships machine.stopping 0.2.0 and is not registered,
+# so it is never searched: 0.1.0 resolves.
+version: 1
+use: { machine.iso13855: "^0.3", machine.stopping: ">=0.1.0" }
+
+hazards:
+  drive_blind:
+    severity: ASIL_D
+    description: vehicle continues with no obstacle data
+    guards: [/safety/scan]
+    on: omission
+    deadline_by: machine.iso13855/safety_distance
+    reaction: safety.stop
+    detection_capability: 30 mm
+    machine.iso13855/device_response: 15ms
+    machine.stopping/device_response: 40ms
+    max_stop_time: 400ms
+    installed_distance: 650 mm
+
+nodes:
+  lidar_driver:
+    pub:
+      scan: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 50 } }
+        output: [scan]
+        max_latency: 2ms
+
+  obstacle_detector:
+    sub:
+      scan:
+        min_rate_hz: 50
+        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
+        on_violation:
+          on: [omission]
+          reaction: declare_lost
+          within: 10ms
+    pub:
+      obstacles: {}
+    paths:
+      detect:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 12ms
+      declare_lost:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 2ms
+
+  brake_controller:
+    sub:
+      obstacles:
+        max_age: 60ms
+        on_violation:
+          on: [late, omission]
+          reaction: emergency_stop
+          within: 20ms
+    pub:
+      brake_cmd: {}
+    paths:
+      brake:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 8ms
+      emergency_stop:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 5ms
+        safe_state:
+          emits: brake_cmd
+          settle: { duration: 180ms, source: measured }
+
+paths:
+  safety.stop:
+    trigger: { input: [/safety/scan] }
+    output: [/safety/brake_cmd]
+    max_latency: 100ms
+
+topics:
+  /safety/scan:
+    type: std_msgs/msg/String
+    pub: [lidar_driver/scan]
+    sub: [obstacle_detector/scan]
+  /safety/obstacles:
+    type: std_msgs/msg/String
+    pub: [obstacle_detector/obstacles]
+    sub: [brake_controller/obstacles]
+  /safety/brake_cmd:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [brake_controller/brake_cmd]

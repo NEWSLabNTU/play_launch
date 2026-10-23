@@ -8,6 +8,28 @@ allowance heavily.
 
 ## Unreleased
 
+- **Added (`check`, phase 91 E6):** severity profiles (ros-launch-manifest
+  v0.1.71). `use: { iec61508: "^1" }` names a profile: the hazards'
+  severities come from its scale and each node a hazard reaches takes the
+  criticality its map names. Seven reference profiles ship with the checker
+  (`iso26262`, `iec61508`, `iec61511`, `do178c`, `iec62304`, `iso13849`,
+  `en50129`); a `<name>.profile.yaml` beside the contract or in a package
+  resolves the same way. `iso26262` is the default scale and map, so adding
+  it changes no derived criticality. Refused: two profiles, a profile
+  beside `severity_levels:`, a level the profile lacks (`severity-unknown`
+  names the profile).
+- **Added (`check`, phase 91 E7):** extension packaging and identity. A
+  package ships extensions in `share/<pkg>/rlm/` and registers the ament
+  resource `rlm_extensions`; only registered packages are searched (the
+  scan of every package's `share/` is gone). A key two used extensions
+  declare must be qualified (`machine.stopping/device_response:`;
+  `extension-key-ambiguous` otherwise). `check --update-lock` writes
+  `rlm.lock` beside each contract (version and sha256 of every extension
+  and profile it resolved); resolution then prefers the locked versions,
+  and a change is `lock-drift` (a warning) or, under `check --locked`,
+  `lock-mismatch` (an error). `--explain` lists each resolution with its
+  full sha256 and file.
+- **Changed:** ros-launch-manifest v0.1.70 -> v0.1.71 (profiles).
 - **Added (`check`, phase 91 E5):** worst-case proofs (ros-launch-manifest
   v0.1.70, `rlx::prove`, over Z3). A `derive` or `check` stating
   `worst_case: increasing in x` is proved at the contract's point: proved

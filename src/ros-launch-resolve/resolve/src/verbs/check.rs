@@ -73,6 +73,10 @@ pub struct CheckInputs {
     /// Phase 91 E5: an undecided worst-case claim (`worst-case-unknown`)
     /// is an error rather than a warning.
     pub strict: bool,
+    /// Phase 91 E7: any resolution other than `rlm.lock` is an error.
+    pub locked: bool,
+    /// Phase 91 E7: resolve afresh and rewrite each contract's `rlm.lock`.
+    pub update_lock: bool,
     /// Emit a derived artifact instead of running the checks. Today:
     /// `diagnostics-params` — `diagnostic_updater` parameters restated from
     /// the declared endpoint bounds (phase 71 W5).
@@ -105,6 +109,13 @@ impl CheckInputs {
         Ok(manifest_loader::ContractSources {
             overlay: manifest_loader::discover_overlay_root(self.contracts.as_deref())?,
             provider: !self.no_provider_contracts,
+            lock: if self.update_lock {
+                crate::ros::rlm_lock::LockMode::Update
+            } else if self.locked {
+                crate::ros::rlm_lock::LockMode::Locked
+            } else {
+                crate::ros::rlm_lock::LockMode::Prefer
+            },
         })
     }
 }
@@ -171,6 +182,15 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     let mut index = manifest_loader::load_manifests(&dump, &sources)?;
     if inputs.strict {
         crate::ros::extensions::strict(&mut index);
+    }
+    if inputs.update_lock {
+        let written = crate::ros::extensions::write_locks(&index).map_err(|e| eyre::eyre!(e))?;
+        for path in &written {
+            crate::say!("Wrote {}", path.display());
+        }
+        if written.is_empty() {
+            crate::say!("No contract uses an extension or profile; no rlm.lock written");
+        }
     }
 
     // Phase 71 W5: a consequence, printed rather than written. Every ROS user
@@ -585,6 +605,7 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
     }
     out.push_str(&render_stated(index));
     out.push_str(&render_reaction_totals(index));
+    out.push_str(&crate::ros::extensions::render_resolution(index));
     out
 }
 
