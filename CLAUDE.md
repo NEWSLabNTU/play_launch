@@ -2612,5 +2612,5 @@ new distribution = a row in `build-wheel` and `smoke-test` plus its Python
 in `payload.DISTRO_PYTHON`. Local: `just build` builds the sourced
 `$ROS_DISTRO`'s payload into a `py3-none-any` wheel, which
 `just publish-pypi` refuses. 0.17.0's per-distribution packages
-(`play_launch_<distro>` behind a meta package) are gone; the
-`play_launch[<distro>]` extras remain as no-ops until 0.20.
+(`play_launch_<distro>` behind a meta package) are gone, and 0.20.0
+removed the no-op `play_launch[<distro>]` extras.

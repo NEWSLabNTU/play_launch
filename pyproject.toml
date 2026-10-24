@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "play_launch"
-version = "0.19.0"
+version = "0.20.0"
 description = "ROS 2 launch inspection tool - resolve, run, and analyze launch executions with resource monitoring"
 readme = "README.md"
 license = "BSD-3-Clause"
@@ -48,15 +48,6 @@ dev = [
     "ruff>=0.8.0",
     "build",
 ]
-# No-ops, kept for one release so `pip install "play_launch[jazzy]"` lines
-# written for 0.17.0's per-distribution packages still work. The wheel now
-# carries every distribution its Python serves and picks one at run time
-# (phase 92); remove these at 0.20.
-humble = []
-jazzy = []
-kilted = []
-lyrical = []
-rolling = []
 
 [project.scripts]
 play_launch = "play_launch.cli:main"

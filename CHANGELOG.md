@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.20.0 - 2026-10-24
 
 - **Changed (`check`, phase 91 E8), breaking:** a contract that writes
   `vehicle.braking`'s keys (`entry_speed`, `settle: { decel, jerk }`)
@@ -16,6 +16,10 @@ allowance heavily.
   still loaded, so the rest of the check runs and reports as before.
   `play_launch migrate <dir> --write` adds the `use:` lines and gives a
   plain-number `entry_speed` its unit. The test fixtures are migrated.
+- **Removed (packaging):** the `play_launch[<distro>]` extras (`humble`,
+  `jazzy`, `kilted`, `lyrical`, `rolling`), no-ops since 0.18.2. pip
+  warns that the extra does not exist and installs `play_launch` as
+  before; drop the `[<distro>]` from install lines.
 
 ## 0.19.0 - 2026-10-23
 
