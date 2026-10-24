@@ -1,11 +1,13 @@
 # Phase 91 E9: extension-examples.md section 5 on contract_fault's chain.
-# rail.ebd derives the settle as a bounded sum over the emergency
-# deceleration table and checks the stopping distance beside the ftti:
-# settle = 1.0 + 2.5 + (27.78 m/s)/0.75 + (16.67 m/s)/0.70 = 64.35 s, and
-# 155.56 + 514.40 + 859.79 = 1529.75 m <= 1600 m. The reaction is
-# 100 + 7 + 64346.56 ms against a 90 s interval.
+# rail.ebd 1.0.0 derives the settle as a bounded sum over the safe
+# deceleration table from the speed the train reaches by the end of the
+# dead time, and checks the stopping distance beside the ftti:
+# dead = max(1.0, 2.5) = 2.5 s, v_bec = 44.44 + 0.56 + 0.5 x 2.5 = 46.25 m/s,
+# settle = 2.5 + (27.78 m/s)/0.65 + (18.47 m/s)/0.60 = 76.02 s, and
+# 114.06 + 593.54 + 1139.55 = 1847.15 m <= 2000 m. The reaction is
+# 100 + 7 + 76022.08 ms against a 90 s interval.
 version: 1
-use: { rail.ebd: "^0.1", en50129: "^1" }
+use: { rail.ebd: "^1", en50129: "^1" }
 
 hazards:
   drive_blind:
@@ -16,7 +18,7 @@ hazards:
     ftti: 90s
     reaction: safety.stop
     entry_speed: 160 km/h
-    distance_to_eoa: 1600 m
+    distance_to_svl: 2000 m
 
 nodes:
   lidar_driver:
@@ -71,9 +73,11 @@ nodes:
         safe_state:
           emits: brake_cmd
           settle:
+            speed_error: 2 km/h
+            acceleration: 0.5 m/s^2
             traction_cut_off: 1.0s
             brake_build_up: 2.5s
-            a_ebd: { 0 km/h: 0.75 m/s^2, 100 km/h: 0.70 m/s^2 }
+            a_safe: { 0 km/h: 0.65 m/s^2, 100 km/h: 0.60 m/s^2 }   # a 1% fall included
 
 paths:
   safety.stop:

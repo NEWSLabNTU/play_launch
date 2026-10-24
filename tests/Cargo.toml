@@ -126,16 +126,16 @@ libc = "0.2"
 # `testdata` exposes `fixture_dir()`. `manifest_check.rs` drives the CLI
 # against the manifest repository's checker fixtures; phase-55 W2 made that a
 # git dependency, so only the owning crate can name their path.
-ros-launch-manifest-check = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.2.0", features = ["testdata"] }
+ros-launch-manifest-check = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.2.1", features = ["testdata"] }
 # Issue #0042: `endpoint_transport.rs` runs the SHARED derivation over the
 # model `resolve` just produced, so the resolver's route and `derive`'s route
 # are compared on one contract rather than each being asserted alone.
-ros-launch-manifest-model = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.2.0" }
-ros-launch-manifest-derive = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.2.0" }
-ros-launch-manifest-sched = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.2.0" }
+ros-launch-manifest-model = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.2.1" }
+ros-launch-manifest-derive = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.2.1" }
+ros-launch-manifest-sched = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.2.1" }
 # `check_dx.rs` compares the grammar-refusal message with GRAMMAR_VERSION:
 # a model-only rlm release keeps the grammar version below its tag.
-ros-launch-manifest-types = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.2.0" }
+ros-launch-manifest-types = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.2.1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"

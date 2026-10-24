@@ -6,6 +6,20 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Changed (`check`):** rlm v0.2.1, whose reference extension `rail.ebd`
+  is 1.0.0, after ERA SUBSET-026-3 section 3.13: the dead time is the
+  larger of traction cut-off and brake build-up, the train may accelerate
+  through it from an under-read speed (`speed_error`, `acceleration`), the
+  table is `a_safe` (gradient folded in) and the check is
+  `stop_before_svl` against `distance_to_svl`. A contract shipping 0.1.0
+  keeps it; one moving to `^1` renames `a_ebd` and `distance_to_eoa` and
+  writes the two new keys. The distance check's worst cases over the
+  speeds and times are past what Z3 decides and report
+  `worst-case-unknown` (an error under `check --strict`); the settle's are
+  proved.
+
 ## 0.20.0 - 2026-10-24
 
 - **Changed (`check`, phase 91 E8), breaking:** a contract that writes
