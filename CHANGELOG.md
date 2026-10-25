@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.20.1 - 2026-10-25
 
 - **Changed (`check`):** rlm v0.2.1, whose reference extension `rail.ebd`
   is 1.0.0, after ERA SUBSET-026-3 section 3.13: the dead time is the
