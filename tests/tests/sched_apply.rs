@@ -637,3 +637,45 @@ fn composable_tier_silent_under_isolated() {
 
     // _proc dropped here — ManagedProcess::drop kills the process group.
 }
+
+/// Phase 80's `check` gate: `check --sched --explain` derives a tier for each
+/// composable and, having no `--container-mode`, says beside the table which
+/// modes cannot apply it. Without the note a user reads `SCHED_FIFO 20`
+/// against `/talker` and then finds the thread at the container's priority.
+#[test]
+fn composable_tier_check_explain_names_the_modes_that_cannot_apply_it() {
+    let env = fixtures::install_env();
+    let launch = fixtures::test_workspace_path("container_events")
+        .join("launch/container_events.launch.xml");
+    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let sched_path = write_sched_toml(tmp.path());
+
+    let out = fixtures::play_launch_cmd(&env)
+        .arg("check")
+        .arg(&launch)
+        .arg("--sched")
+        .arg(&sched_path)
+        .arg("--explain")
+        .output()
+        .expect("run play_launch check");
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(
+        text.contains("note: 2 composable(s) carry a tier only --container-mode isolated applies"),
+        "{text}"
+    );
+    assert!(
+        text.contains("  /talker: rt SCHED_FIFO 20 in /event_container"),
+        "{text}"
+    );
+    assert!(
+        text.contains("  /listener: rt SCHED_FIFO 20 in /event_container"),
+        "{text}"
+    );
+    // The container is a process of its own; its tier is applied in every mode.
+    assert!(!text.contains("  /event_container: rt"), "{text}");
+}

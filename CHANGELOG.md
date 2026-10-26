@@ -19,6 +19,18 @@ allowance heavily.
   direction is now refuted with a counterexample where it sometimes
   came back as "Z3 gave no model". The resolver suite is back to its
   pre-0.20.1 time, since the rail claims no longer run out their budget.
+- **Added (`check --explain`):** the install prefix behind each launch
+  file's package, and every later prefix on `AMENT_PREFIX_PATH` that
+  registers the same package. A package registered twice is shadowed and
+  noted: which copy is parsed depends on the order the shell sourced the
+  prefixes, which is how a login shell checked 163 Autoware scopes where
+  a plain one checked 169 (phase 85 I11).
+- **Added (`check --sched --explain`):** a note naming every composable
+  the plan gives a tier, with its container, since only
+  `--container-mode isolated` applies it. Under `observable` (the default)
+  and `stock` a composable runs at its container's tier; `up` already
+  warned with the mode in force, and `check` now says so beside the
+  derived table (phase 80, the last gate of #0035).
 
 ## 0.20.1 - 2026-10-25
 

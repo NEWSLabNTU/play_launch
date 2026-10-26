@@ -286,6 +286,54 @@ pub(crate) fn composable_containers(dump: &LaunchDump) -> BTreeMap<String, Strin
         .collect()
 }
 
+/// `check --explain`'s note on composable tiers (phase 80, issue #0035):
+/// every composable the plan gives a non-default tier, with its container.
+/// Only `--container-mode isolated` gives a composable a process of its own;
+/// under `observable` (the default) and `stock` it is a thread pool inside
+/// its container and runs at the container's tier. `check` has no
+/// `--container-mode`, so the note names the default and the modes that
+/// cannot apply the tier; `up` makes the same decision with the mode in
+/// force (`execution::sched_plan::composable_tiers_not_applied`). Empty when
+/// no composable carries a tier.
+pub fn render_composable_tier_note(
+    derived: &DerivedSchedPlan,
+    containers: &BTreeMap<String, String>,
+) -> String {
+    use std::fmt::Write as _;
+
+    let mut rows: Vec<(&str, &ResolvedTier, &str)> = derived
+        .plan
+        .tiers
+        .iter()
+        .filter(|t| t.name != ros_launch_manifest_sched::DEFAULT_TIER)
+        .flat_map(|t| {
+            t.members
+                .iter()
+                .filter_map(move |m| containers.get(m).map(|c| (m.as_str(), t, c.as_str())))
+        })
+        .collect();
+    if rows.is_empty() {
+        return String::new();
+    }
+    rows.sort_by(|a, b| a.0.cmp(b.0));
+
+    let mut out = format!(
+        "note: {} composable(s) carry a tier only --container-mode isolated applies;\n  \
+         under observable (the default) and stock a composable is a thread pool in its\n  \
+         container and runs at the container's tier:\n",
+        rows.len()
+    );
+    for (fqn, tier, container) in rows {
+        let class = tier.sched_class.as_deref().unwrap_or("SCHED_OTHER");
+        let _ = writeln!(
+            out,
+            "  {fqn}: {} {} {} in {container}",
+            tier.name, class, tier.priority
+        );
+    }
+    out
+}
+
 /// Result of the v2 derive→override→validate pipeline (design §5, §6):
 /// the final per-node plan (one [`ResolvedTier`] per node, except the
 /// synthesized default tier which stays grouped — see
@@ -3259,6 +3307,53 @@ nodes = ["fast_node"]
                 .expect("default tier");
             assert_eq!(default_tier.members, vec!["/slow_node".to_string()]);
         });
+    }
+
+    // ── Phase 80: a composable tier `check` cannot promise ──
+
+    fn derived_of(tiers: Vec<ResolvedTier>) -> DerivedSchedPlan {
+        DerivedSchedPlan {
+            plan: ResolvedTierTable { tiers },
+            target: "linux".into(),
+            mapper: "rate_monotonic".into(),
+            warnings: vec![],
+            provenance: BTreeMap::new(),
+            chain_member_nodes: BTreeSet::new(),
+            suppressed_contradictions: 0,
+        }
+    }
+
+    #[test]
+    fn the_composable_tier_note_names_each_tiered_composable() {
+        let mut default_tier = rt_tier(ros_launch_manifest_sched::DEFAULT_TIER, 0);
+        default_tier.sched_class = None;
+        default_tier.members = vec!["/idle_composable".into()];
+        let derived = derived_of(vec![
+            rt_tier("/cv/detect", 39),
+            rt_tier("/plain", 38),
+            default_tier,
+        ]);
+        let containers = BTreeMap::from([
+            ("/cv/detect".to_string(), "/cv/container".to_string()),
+            ("/idle_composable".to_string(), "/cv/container".to_string()),
+        ]);
+        let note = render_composable_tier_note(&derived, &containers);
+        assert!(note.starts_with("note: 1 composable(s)"), "{note}");
+        assert!(
+            note.contains("  /cv/detect: /cv/detect SCHED_FIFO 39 in /cv/container"),
+            "{note}"
+        );
+        // A standalone node is its own process, and a default tier is
+        // nothing to apply.
+        assert!(!note.contains("/plain"), "{note}");
+        assert!(!note.contains("/idle_composable"), "{note}");
+    }
+
+    #[test]
+    fn the_composable_tier_note_is_empty_without_a_tiered_composable() {
+        let derived = derived_of(vec![rt_tier("/plain", 38)]);
+        let containers = BTreeMap::from([("/c/x".to_string(), "/c/container".to_string())]);
+        assert_eq!(render_composable_tier_note(&derived, &containers), "");
     }
 
     // ── Phase 60: SCHED_DEADLINE derivation ──

@@ -164,6 +164,19 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
         dump.load_node.len(),
     );
 
+    // Phase 85 I11: which install prefix each launch file's package came
+    // from. Which shell runs `check` can change the verdict: an overlay
+    // that shadows a stock package changes the tree it parses.
+    if inputs.explain && inputs.format != "json" {
+        let note = render_install_prefixes(
+            &dump,
+            &std::env::var("AMENT_PREFIX_PATH").unwrap_or_default(),
+        );
+        if !note.is_empty() {
+            crate::say_raw!("{note}");
+        }
+    }
+
     // Gate 1 — actions this parser dropped. Evaluated BEFORE manifests
     // because it is independent of them: the launch trees this catches
     // typically have no contracts at all, and the no-manifest path below
@@ -245,6 +258,13 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
         )?;
         if inputs.explain {
             crate::ros::sched_loader::print_explain(&derived, resolved, Some(&index));
+            let note = crate::ros::sched_loader::render_composable_tier_note(
+                &derived,
+                &crate::ros::sched_loader::composable_containers(&dump),
+            );
+            if !note.is_empty() {
+                crate::say_raw!("{note}");
+            }
         }
         // Phase 93 S5: the platform file's budgets are a timer's work when
         // its contract states none.
@@ -256,7 +276,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
         }
     } else if inputs.explain && index.budgets.is_empty() {
         crate::say!(
-            "note: --explain has no effect without a resolved scheduling platform file \
+            "note: --explain prints no scheduling plan without a resolved scheduling platform file \
              (pass --sched <path>, or ship one via the overlay/provider channels)"
         );
     }
@@ -422,6 +442,77 @@ pub fn expect_verdict(
     } else {
         (1, format!("expect: FAILED -- {}", why.join("; ")))
     }
+}
+
+/// `check --explain`'s install prefixes (phase 85 I11): per package a scope
+/// was included from, the prefix `ament_index` resolves it to (the first on
+/// `prefix_path` whose resource index registers it) and every later prefix
+/// that registers it too. A package in two prefixes is shadowed: which copy
+/// is parsed depends on the order the shell sourced them, so the island's
+/// login shell parsed 163 Autoware scopes where a plain one parsed 169.
+/// Empty without `AMENT_PREFIX_PATH` or a packaged scope.
+pub(crate) fn render_install_prefixes(
+    dump: &crate::ros::launch_dump::LaunchDump,
+    prefix_path: &str,
+) -> String {
+    use std::fmt::Write as _;
+
+    let packages: std::collections::BTreeSet<&str> = dump
+        .scopes
+        .iter()
+        .filter_map(|s| s.origin.as_ref()?.pkg.as_deref())
+        .collect();
+    let prefixes: Vec<&str> = prefix_path.split(':').filter(|p| !p.is_empty()).collect();
+    if packages.is_empty() || prefixes.is_empty() {
+        return String::new();
+    }
+
+    let rows: Vec<(&str, Vec<&str>)> = packages
+        .into_iter()
+        .map(|pkg| {
+            let found = prefixes
+                .iter()
+                .copied()
+                .filter(|prefix| {
+                    std::path::Path::new(prefix)
+                        .join("share/ament_index/resource_index/packages")
+                        .join(pkg)
+                        .exists()
+                })
+                .collect();
+            (pkg, found)
+        })
+        .collect();
+    let pkg_w = rows.iter().map(|(p, _)| p.len()).max().unwrap_or(7).max(7);
+
+    let mut out = String::from("\n-- Install prefixes (--explain) --\n");
+    let _ = writeln!(out, "{:pkg_w$}  PREFIX", "PACKAGE");
+    let mut shadowed = 0;
+    for (pkg, found) in &rows {
+        match found.split_first() {
+            None => {
+                let _ = writeln!(out, "{pkg:pkg_w$}  (not registered on AMENT_PREFIX_PATH)");
+            }
+            Some((first, rest)) => {
+                let _ = writeln!(out, "{pkg:pkg_w$}  {first}");
+                for r in rest {
+                    let _ = writeln!(out, "{:pkg_w$}    shadows {r}", "");
+                }
+                if !rest.is_empty() {
+                    shadowed += 1;
+                }
+            }
+        }
+    }
+    if shadowed > 0 {
+        let _ = writeln!(
+            out,
+            "note: {shadowed} package(s) are registered in more than one prefix; the first \
+             on AMENT_PREFIX_PATH is parsed, so a shell that sources the prefixes in \
+             another order checks another launch tree"
+        );
+    }
+    out
 }
 
 /// `check --explain`'s fault-reaction table (phase 83): per hazard, every
@@ -1363,5 +1454,98 @@ mod dropped_action_tests {
             detail: None,
         };
         assert!(report_dropped_actions(&dump_with(vec![d]), false));
+    }
+}
+
+#[cfg(test)]
+mod install_prefix_tests {
+    use std::collections::HashMap;
+
+    use super::render_install_prefixes;
+    use crate::ros::launch_dump::{LaunchDump, ScopeEntry, ScopeOrigin};
+
+    fn register(prefix: &std::path::Path, package: &str) {
+        let marker = prefix.join("share/ament_index/resource_index/packages");
+        std::fs::create_dir_all(&marker).unwrap();
+        std::fs::write(marker.join(package), "").unwrap();
+    }
+
+    fn dump_of(packages: &[Option<&str>]) -> LaunchDump {
+        let mut d = LaunchDump::empty();
+        d.scopes = packages
+            .iter()
+            .enumerate()
+            .map(|(id, pkg)| ScopeEntry {
+                id,
+                origin: Some(ScopeOrigin {
+                    pkg: pkg.map(String::from),
+                    file: "x.launch.xml".into(),
+                    path: None,
+                }),
+                ns: "/".into(),
+                args: HashMap::new(),
+                parent: None,
+            })
+            .collect();
+        d
+    }
+
+    #[test]
+    fn a_shadowed_package_names_both_prefixes_in_search_order() {
+        let overlay = tempfile::tempdir().unwrap();
+        let underlay = tempfile::tempdir().unwrap();
+        register(overlay.path(), "tier4_system_launch");
+        register(underlay.path(), "tier4_system_launch");
+        register(underlay.path(), "autoware_launch");
+        let path = format!("{}:{}", overlay.path().display(), underlay.path().display());
+        let out = render_install_prefixes(
+            &dump_of(&[
+                Some("autoware_launch"),
+                Some("tier4_system_launch"),
+                Some("tier4_system_launch"),
+                Some("missing_pkg"),
+                None,
+            ]),
+            &path,
+        );
+
+        let o = overlay.path().display().to_string();
+        let u = underlay.path().display().to_string();
+        assert!(
+            out.contains(&format!("autoware_launch      {u}\n")),
+            "{out}"
+        );
+        assert!(
+            out.contains(&format!("tier4_system_launch  {o}\n")),
+            "{out}"
+        );
+        assert!(out.contains(&format!("    shadows {u}\n")), "{out}");
+        assert!(
+            out.contains("missing_pkg          (not registered on AMENT_PREFIX_PATH)"),
+            "{out}"
+        );
+        assert!(
+            out.contains("note: 1 package(s) are registered in more than one prefix"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_package_in_one_prefix_has_no_note() {
+        let only = tempfile::tempdir().unwrap();
+        register(only.path(), "pkg");
+        let out =
+            render_install_prefixes(&dump_of(&[Some("pkg")]), &only.path().display().to_string());
+        assert!(out.contains("-- Install prefixes (--explain) --"), "{out}");
+        assert!(!out.contains("shadows") && !out.contains("note:"), "{out}");
+    }
+
+    #[test]
+    fn nothing_without_a_prefix_path_or_a_packaged_scope() {
+        assert_eq!(render_install_prefixes(&dump_of(&[Some("pkg")]), ""), "");
+        assert_eq!(
+            render_install_prefixes(&dump_of(&[None]), "/opt/ros/humble"),
+            ""
+        );
     }
 }

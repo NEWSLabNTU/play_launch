@@ -1,6 +1,14 @@
 # Phase 80 - the plan and what was applied
 
-Status: **planned** (2026-09-21). Follows issue
+Status: **complete** (2026-10-26). W1-W4 landed as `38f75d18`
+(2026-09-22), which left one gate unmet: `check --explain` could not say a
+composable's tier goes unapplied. It does now: `check --sched --explain`
+prints a note after the derived table naming each tiered composable and its
+container, and that only `--container-mode isolated` applies the tier
+(`sched_loader::render_composable_tier_note`; test
+`composable_tier_check_explain_names_the_modes_that_cannot_apply_it`). The
+default container mode is `observable` since 615d0de2, so the case this
+phase reports is the default one. Planned 2026-09-21. Follows issue
 `docs/issues/0035-composable-tier-silently-dropped-in-non-isolated-containers.md`,
 filed from brief C on 2026-09-18 and re-verified against 0.11.0 (`5eaa3191`;
 `src/` is unchanged at `ec8d716a`). Relates to phase 44.4, which built the one

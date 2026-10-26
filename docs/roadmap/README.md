@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 95 phases total (1–93, plus 14.5 and 30b); 74 complete, 15 in progress, 5 planned, 1 dropped — as of 2026-10-26.
+Started October 2025. 95 phases total (1–93, plus 14.5 and 30b); 75 complete, 15 in progress, 4 planned, 1 dropped — as of 2026-10-26.
 
 Phase docs through phase 28 are in `archive/`; from phase 29 on, a phase's doc
 stays in this directory whatever its status, and its status line (the first
@@ -87,7 +87,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 77 | [Inferred graph, measured](./phase-77-graph-verified.md) | ✅ | 2026-09-09 |
 | 78 | [One derivation, two consumers](./phase-78-one-derivation-two-consumers.md) | ✅ | 2026-09-22 |
 | 79 | [Runtime enforcement is a gate](./phase-79-runtime-enforcement-is-a-gate.md) | ✅ | 2026-09-22 |
-| 80 | [The plan and what was applied](./phase-80-the-plan-and-what-was-applied.md) | 📋 planned | — |
+| 80 | [The plan and what was applied](./phase-80-the-plan-and-what-was-applied.md) | ✅ | 2026-10-26 |
 | 81 | [The docs describe the code](./phase-81-the-docs-describe-the-code.md) | ✅ | 2026-09-23 |
 | 82 | [What a detector may see](./phase-82-what-a-detector-may-see.md) | ✅ | 2026-09-25 |
 | 83 | [A takeover the contract can state](./phase-83-a-takeover-the-contract-can-state.md) | ✅ | 2026-09-28 |
@@ -349,7 +349,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     lowering nano-ros's deadline monitor reads; a timer period's feasible
     range (S5). The island's S3, S4, S6, S7 and nano-ros's monitor remain
     there; no realizer reads `safe_state.supervise` yet. [phase-93-supervised-budgets.md](./phase-93-supervised-budgets.md).
-  - **Phase 80** - planned: the plan and what was applied (2026-09-21). A
+  - **Phase 80** - ✅ (W1-W4 2026-09-22, `check` gate 2026-10-26): the plan and what was applied (2026-09-21). A
     composable's derived tier is printed by `check --sched --explain`, written
     into the model's `execution.bindings`, and then dropped for every
     composable under `--container-mode observable|stock` with no message
@@ -437,7 +437,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     (0.13.1). Structural on `phase85-rest` with rlm v0.1.49: I1 (the link
     charged on the guard edge), D1 (`jitter:`), D3 (`on_demand:`), D5
     (`rlm:` header), I6 (export v2), D7 (text); D2, D4, D8-D10 decided,
-    not built; D6, I11 open.
+    not built; D6 open (I11 done 2026-10-26).
     [phase-85-what-the-island-left-open.md](./phase-85-what-the-island-left-open.md).
   - **Phase 84** - complete: a window is a least time, and its notice is
     charged once (2026-09-29, rlm **v0.1.47**, text only). rlm said a

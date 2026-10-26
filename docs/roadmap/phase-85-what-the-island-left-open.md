@@ -315,6 +315,12 @@ island's `src/safety_island_bringup/launch/safety_island.contract.yaml`
   instead of 169, every MRM hazard then `hazard-unguarded`. Print, under
   `--explain` or `-v`, the resolved prefix per package, and flag a
   package resolved from more than one prefix on the search path.
+  **Done** (2026-10-26): `check --explain` prints an "Install prefixes"
+  table after the parse line, one row per package a scope was included
+  from, the prefix `ament_index` picks, a `shadows <prefix>` line for each
+  later prefix registering it, and a note counting shadowed packages
+  (`verbs/check.rs::render_install_prefixes`). `-v` was not added: `check`
+  has no verbose flag, and `--explain` is where the other tables live.
 
 ## Test/check
 
@@ -580,8 +586,8 @@ rlm commits on its `main`: D3 `356383c`, D1 `957075d`, D5 `7936317`, D7
   The derivation would stay the max over hazards and print the bound as
   a justification. No work until the WG rules on decomposition.
 
-Still open: D6 (contract vs code, consumer of nano-ros 463), I11 (install
-prefix per scope), the provenance field (D7, D9), and the
+Still open: D6 (contract vs code, consumer of nano-ros 463), the
+provenance field (D7, D9), and the
 island's own move (phase 9 W5: call_mrm 206 -> 149, and the link re-sized
 from 57 to about 81 ms).
 
