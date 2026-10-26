@@ -1,0 +1,17 @@
+# Phase 94: source-on-reference. A value read from the launch tree has its
+# provenance recorded; a `source:` beside it is a second, competing one.
+version: 1
+nodes:
+  source:
+    pub:
+      out: {}
+  handler:
+    sub:
+      in: { max_age: { duration: $(param timeout) s, source: requirement } }
+
+topics:
+  /in:
+    type: std_msgs/msg/String
+    pub: [source/out]
+    sub: [handler/in]
+

@@ -8,6 +8,29 @@ allowance heavily.
 
 ## Unreleased
 
+- **Added (`check`, `resolve`):** a contract can READ a number the launch
+  tree already holds instead of retyping it (rlm v0.2.4, phase 94):
+  `$(param [<node>] <name>) <unit>`, `$(var <name>) <unit>` and `$(let
+  <name>)` from a root `let:`, combined with `+ - * /`, wherever a duration,
+  a rate or a count is written. Every reference is evaluated per scope
+  instance against the launch tree before any rule reads the contract, so
+  `check bringup.launch.xml lidar_hz:=100` checks the system at 100 Hz where
+  it used to check a contract still saying 50. A reference takes a unit,
+  always (`$(param watchdog_ms) ms`): a parameter carries none. New rules:
+  `param-unset` (no launch source sets it and the contract declares no
+  `params.<p>.default`), `param-node-unknown`, `param-node-missing`,
+  `param-not-number`, `param-dimension` (with the inverse suggested when it
+  is one), `var-unset`, `value-range`; `source:` beside a reference is a
+  parse error. A contract bound to several scopes names the instance
+  (`camera.contract.yaml:7 [/sensing/right]: …`). `check --explain` prints
+  each read value and where it came from, and the model carries the same
+  provenance in `sources:` beside each number. An extension key typed
+  `param` takes the read form (`decel: $(param target_acceleration)
+  m/s^2`); the bare form stays legal and `migrate` rewrites it.
+  `examples/rt_av_demo`'s contract reads its rates and leases; its derived
+  schedule is byte-identical, and it now also names `use: { iso26262 }`,
+  without which it no longer loaded.
+
 - **Added (`check`):** a contract can acknowledge a finding it keeps, with
   rlm v0.2.3's root `acknowledged:` list of `{ rule, at, reason }`. A
   warning or info whose rule id and path match an entry is printed as

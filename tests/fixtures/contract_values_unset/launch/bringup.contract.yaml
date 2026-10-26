@@ -1,0 +1,22 @@
+# Phase 94: param-unset. No launch source sets `init_timeout` on /handler,
+# so the node runs its compiled-in default, which the contract cannot see.
+# `grace` is unset too, and its `default:` is what the contract reads.
+version: 1
+nodes:
+  source:
+    pub:
+      out: {}
+  handler:
+    params:
+      grace: { type: double, default: 0.2 }
+    sub:
+      in:
+        max_age: $(param init_timeout) s
+        max_transport: $(param grace) s
+
+topics:
+  /in:
+    type: std_msgs/msg/String
+    pub: [source/out]
+    sub: [handler/in]
+

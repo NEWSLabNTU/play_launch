@@ -241,6 +241,7 @@ fn pub_contract(p: &EndpointProps, topic_qos: Option<&QosDecl>) -> Option<model:
         max_rate_hz: p.max_rate_hz.hz(),
         qos,
         on_demand,
+        sources: BTreeMap::new(),
     })
 }
 
@@ -387,6 +388,7 @@ fn sub_contract(
         min_interarrival_ms: p.min_interarrival.map(|d| d.as_millis_f64()),
         budget_ms: p.budget.map(|d| d.as_millis_f64()),
         budget_period_ms: p.budget_period.map(|d| d.as_millis_f64()),
+        sources: BTreeMap::new(),
     })
 }
 
@@ -399,6 +401,7 @@ fn srv_contract(p: &ros_launch_manifest_types::SrvEndpointProps) -> Option<model
         min_interarrival_ms: p.min_interarrival.map(|d| d.as_millis_f64()),
         budget_ms: p.budget.map(|d| d.as_millis_f64()),
         budget_period_ms: p.budget_period.map(|d| d.as_millis_f64()),
+        sources: BTreeMap::new(),
     };
     (c != model::SrvContract::default()).then_some(c)
 }
@@ -429,6 +432,104 @@ fn qos_contract(q: &QosDecl) -> model::Qos {
         deadline_ms: q.deadline.map(|d| d.as_millis_f64()),
         lease_duration_ms: q.lease_duration.map(|d| d.as_millis_f64()),
     }
+}
+
+/// The model field a value read from the launch tree fills, from its
+/// contract path below the entry (`max_age.duration` -> `max_age_ms`,
+/// `trigger.timer.rate_hz` -> `rate_hz`).
+fn model_field(rest: &str) -> String {
+    const MS: &[&str] = &[
+        "max_age",
+        "max_transport",
+        "max_latency",
+        "min_latency",
+        "max_jitter",
+        "within",
+        "ftti",
+        "detection",
+        "max_response",
+        "min_interarrival",
+        "budget",
+        "budget_period",
+        "deadline",
+        "lease_duration",
+        "lifespan",
+        "max_interval",
+        "timeout",
+        "response",
+    ];
+    let rest = rest
+        .strip_suffix(".duration")
+        .or_else(|| rest.strip_suffix(".value"))
+        .unwrap_or(rest);
+    match rest {
+        "trigger.timer.rate_hz" => return "rate_hz".to_string(),
+        "trigger.timer.jitter" => return "timer_jitter_ms".to_string(),
+        "window" => return "window.duration_ms".to_string(),
+        "safe_state.settle" => return "safe_state.settle_ms".to_string(),
+        _ => {}
+    }
+    let (head, last) = rest.rsplit_once('.').unwrap_or(("", rest));
+    let field = if MS.contains(&last) {
+        format!("{last}_ms")
+    } else {
+        last.to_string()
+    };
+    if head.is_empty() {
+        field
+    } else {
+        format!("{head}.{field}")
+    }
+}
+
+/// Phase 94: where each value of the contract entry at `prefix` that was
+/// read from the launch tree came from, keyed by the model field it fills.
+/// Empty for an entry whose numbers are all written.
+fn value_sources(
+    manifest: &ros_launch_manifest_types::Manifest,
+    prefix: &str,
+) -> BTreeMap<String, model::ValueSource> {
+    use ros_launch_manifest_types::values::ReadKind;
+    let mut out = BTreeMap::new();
+    for r in &manifest.value_refs {
+        let Some(rest) = r
+            .path
+            .strip_prefix(prefix)
+            .and_then(|x| x.strip_prefix('.'))
+        else {
+            continue;
+        };
+        let Some(res) = &r.resolved else { continue };
+        let reads = res
+            .reads
+            .iter()
+            .map(|x| match &x.kind {
+                ReadKind::Param { node, name } => model::ValueRead::Param {
+                    node: node.clone(),
+                    name: name.clone(),
+                    value: x.value.clone(),
+                    at: x.at.clone(),
+                },
+                ReadKind::Var { name } => model::ValueRead::Var {
+                    name: name.clone(),
+                    value: x.value.clone(),
+                    at: x.at.clone(),
+                },
+                ReadKind::Let { name } => model::ValueRead::Let {
+                    name: name.clone(),
+                    value: x.value.clone(),
+                },
+            })
+            .collect();
+        out.insert(
+            model_field(rest),
+            model::ValueSource {
+                written: r.written.clone(),
+                reads,
+            },
+        );
+    }
+    out
 }
 
 /// A derivation record as the model carries it (phase 91 E10).
@@ -537,6 +638,8 @@ fn path_contract(
         timer_jitter_ms,
         // Phase 93: set by the caller from the lowering, node paths only.
         supervise: None,
+        // Phase 94: set by the caller, which knows the contract path.
+        sources: BTreeMap::new(),
     }
 }
 
@@ -773,7 +876,7 @@ pub fn build_system_model(
                 name: name.clone(),
                 value: lower_scalar(value),
             },
-            DumpParamSource::File { content } => model::ParamSource::File {
+            DumpParamSource::File { content, .. } => model::ParamSource::File {
                 content: content.clone(),
             },
         }));
@@ -1125,6 +1228,18 @@ pub fn build_system_model(
             max_transport_ms: t.max_transport_ms,
             drop: t.drop.as_ref().map(drop_contract),
             qos: t.qos.as_ref().map(qos_contract),
+            sources: index
+                .manifests
+                .values()
+                .flat_map(|m| {
+                    m.manifest
+                        .topics
+                        .keys()
+                        .filter(|k| super::manifest_loader::qualify_name(&m.ns, k) == *fqn_t)
+                        .flat_map(|k| value_sources(&m.manifest, &format!("topics.{k}")))
+                        .collect::<Vec<_>>()
+                })
+                .collect(),
         };
         if tc != model::TopicContract::default() {
             contracts.topics.insert(fqn_t.clone(), tc);
@@ -1208,13 +1323,15 @@ pub fn build_system_model(
             let node_fqn = resolve_node_ref(&structure.nodes, &fqn(&m.ns, name));
             for (ep, props) in &decl.publishers {
                 let ep_ref = format!("{node_fqn}/{ep}");
-                if let Some(c) = pub_contract(props, topic_qos_of.get(&ep_ref)) {
+                if let Some(mut c) = pub_contract(props, topic_qos_of.get(&ep_ref)) {
+                    c.sources = value_sources(&m.manifest, &format!("nodes.{name}.pub.{ep}"));
                     contracts.pub_endpoints.insert(ep_ref, c);
                 }
             }
             for (ep, props) in &decl.subscribers {
                 let ep_ref = format!("{node_fqn}/{ep}");
-                if let Some(c) = sub_contract(&node_fqn, props, topic_qos_of.get(&ep_ref)) {
+                if let Some(mut c) = sub_contract(&node_fqn, props, topic_qos_of.get(&ep_ref)) {
+                    c.sources = value_sources(&m.manifest, &format!("nodes.{name}.sub.{ep}"));
                     contracts.sub_endpoints.insert(ep_ref, c);
                 }
             }
@@ -1230,7 +1347,8 @@ pub fn build_system_model(
                 }
             }
             for (ep, props) in &decl.srv {
-                if let Some(c) = srv_contract(props) {
+                if let Some(mut c) = srv_contract(props) {
+                    c.sources = value_sources(&m.manifest, &format!("nodes.{name}.srv.{ep}"));
                     contracts
                         .srv_endpoints
                         .insert(format!("{node_fqn}/{ep}"), c);
@@ -1335,20 +1453,32 @@ pub fn build_system_model(
                 src
             });
         }
+        if let Some(m) = index.manifests.get(&p.scope_id)
+            && let Some(key) = m.manifest.nodes.keys().find(|k| {
+                super::manifest_loader::resolve_node_fqn(index, p.scope_id, &m.ns, k) == p.node_fqn
+            })
+        {
+            contract.sources =
+                value_sources(&m.manifest, &format!("nodes.{key}.paths.{}", p.path_name));
+        }
         contracts
             .node_paths
             .insert(format!("{node_fqn}/{}", p.path_name), contract);
     }
     for p in &index.scope_paths {
+        let mut c = path_contract(
+            &p.path,
+            p.input_topics.clone(),
+            p.output_topics.clone(),
+            &|t| t.to_string(),
+            None,
+        );
+        if let Some(m) = index.manifests.get(&p.scope_id) {
+            c.sources = value_sources(&m.manifest, &format!("paths.{}", p.path_name));
+        }
         contracts.scope_paths.insert(
             scope_scoped_key(&scope_key(Some(p.scope_id)), &p.path_name),
-            path_contract(
-                &p.path,
-                p.input_topics.clone(),
-                p.output_topics.clone(),
-                &|t| t.to_string(),
-                None,
-            ),
+            c,
         );
     }
 
@@ -1495,6 +1625,11 @@ pub fn build_system_model(
                     on: key(&e.holds),
                     to: key(&e.to),
                 }),
+                sources: index
+                    .manifests
+                    .get(&m.scope_id)
+                    .map(|r| value_sources(&r.manifest, &format!("modes.{}", m.name)))
+                    .unwrap_or_default(),
             },
         );
     }
@@ -1526,6 +1661,11 @@ pub fn build_system_model(
                 ftti_derived: derived_source(h.decl.ftti.as_ref()),
                 detection_ms: h.decl.detection.ms(),
                 detection_derived: derived_source(h.decl.detection.as_ref()),
+                sources: index
+                    .manifests
+                    .get(&h.scope_id)
+                    .map(|r| value_sources(&r.manifest, &format!("hazards.{}", h.name)))
+                    .unwrap_or_default(),
             },
         );
     }

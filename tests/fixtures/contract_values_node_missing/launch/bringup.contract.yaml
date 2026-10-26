@@ -1,0 +1,17 @@
+# Phase 94: param-node-missing. A topic is under no node, so a one-argument
+# `$(param timeout)` does not say whose parameter it reads.
+version: 1
+nodes:
+  source:
+    pub:
+      out: {}
+  handler:
+    sub:
+      in: {}
+
+topics:
+  /in:
+    type: std_msgs/msg/String
+    pub: [source/out]
+    sub: [handler/in]
+    max_transport: $(param timeout) s

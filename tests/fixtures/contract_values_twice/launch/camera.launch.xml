@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="cam_hz" default="15"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="driver"/>
+</launch>

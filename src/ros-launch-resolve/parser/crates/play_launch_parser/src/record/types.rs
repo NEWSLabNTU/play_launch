@@ -330,7 +330,14 @@ pub enum ParamSource {
     /// `params_files` (the spawn path materializes it to a temp file and
     /// passes `--params-file`). A launch-created temp params file is expanded
     /// into `Inline` entries instead, mirroring what the Python dumper does.
-    File { content: String },
+    File {
+        content: String,
+        /// The file the content was read from (play_launch phase 94: the
+        /// provenance a contract value read from it names). Absent for a
+        /// record from an older parser or the Python dumper.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+    },
 }
 
 /// Fields ordered alphabetically to match Python output

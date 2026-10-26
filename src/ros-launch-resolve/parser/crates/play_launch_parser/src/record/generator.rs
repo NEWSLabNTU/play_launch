@@ -353,8 +353,10 @@ impl CommandGenerator {
                                 "Failed to load and resolve parameter file '{path}': {e}"
                             ))
                         })?;
-                        node_param_sources
-                            .push(crate::record::types::ParamSource::File { content });
+                        node_param_sources.push(crate::record::types::ParamSource::File {
+                            content,
+                            path: Some(path),
+                        });
                     }
                 }
             }

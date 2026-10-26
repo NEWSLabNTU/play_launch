@@ -8,6 +8,7 @@ pub mod acknowledge;
 pub mod budget_book;
 pub mod causal_dag_global;
 pub mod causal_graph;
+pub mod contract_values;
 pub mod contract_vs_code;
 pub mod dds_env;
 pub mod extensions;

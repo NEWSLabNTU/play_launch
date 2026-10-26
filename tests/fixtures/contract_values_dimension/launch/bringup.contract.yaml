@@ -1,0 +1,17 @@
+# Phase 94: param-dimension. `max_age` is a Time; a rate read in Hz is a
+# Frequency. The inverse is what was meant.
+version: 1
+nodes:
+  source:
+    pub:
+      out: {}
+  handler:
+    sub:
+      in: { max_age: $(param update_rate) Hz }
+
+topics:
+  /in:
+    type: std_msgs/msg/String
+    pub: [source/out]
+    sub: [handler/in]
+

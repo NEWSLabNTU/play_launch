@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!-- Phase 94: contract_takeover's ladder with its configured numbers READ
+     from here instead of retyped. The handler's rate comes from a parameter
+     file, the lease from a launch argument, the emergency profile from the
+     operator's parameters; the window stays a requirement the parameter is
+     checked against. The verdicts and totals are contract_takeover's. -->
+<launch>
+  <arg name="lease_ms" default="500"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="handler">
+    <param from="$(dirname)/handler.param.yaml"/>
+    <param name="takeover_timeout" value="10.0"/>
+    <param name="lease_ms" value="$(var lease_ms)"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="listener" name="comfort_op">
+    <param name="min_acceleration" value="-1.0"/>
+    <param name="min_jerk" value="-0.3"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="listener" name="estop_op">
+    <param name="update_rate" value="30"/>
+    <param name="target_acceleration" value="-2.5"/>
+    <param name="target_jerk" value="-1.5"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="talker" name="gate"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="planner"/>
+</launch>

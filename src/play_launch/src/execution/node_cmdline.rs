@@ -375,6 +375,7 @@ pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeR
             },
             model::ParamSource::File { content } => ParamSource::File {
                 content: content.clone(),
+                path: None,
             },
         })
         .collect();
@@ -595,7 +596,7 @@ impl NodeCommandLine {
                     ParamSource::Inline { name, value } => {
                         run.push((name.clone(), value.clone()));
                     }
-                    ParamSource::File { content } => {
+                    ParamSource::File { content, .. } => {
                         flush_run(&mut run, &mut idx, &mut out)?;
                         let path = params_files_dir.join(format!("ordered-{idx}-file.yaml"));
                         fs::write(&path, content)

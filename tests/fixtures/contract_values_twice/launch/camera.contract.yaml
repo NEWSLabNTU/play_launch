@@ -1,0 +1,17 @@
+# Phase 94: evaluated once per include scope. `cam_hz` is 30 where the left
+# camera is included and `fast` where the right one is.
+version: 1
+nodes:
+  driver:
+    pub:
+      image: { min_rate_hz: $(var cam_hz) Hz }
+    paths:
+      grab:
+        trigger: { timer: { rate_hz: $(var cam_hz) Hz } }
+        output: [image]
+
+topics:
+  image:
+    type: sensor_msgs/msg/Image
+    pub: [driver/image]
+    external: sub

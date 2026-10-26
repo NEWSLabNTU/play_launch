@@ -2045,7 +2045,7 @@ fn takeover_budget_rules_fire_on_their_fixture() {
         "hazard 'odd_exit_unbounded' reaches rung 'comfortable'",
         "falling back to the literal settle 5000.00ms",
         "error[settle-param-unresolved]",
-        "'target_decel' has no resolved launch value for /estop_op",
+        "`$(param target_decel) m/s^2`: no launch source sets `target_decel` on /estop_op",
         "warning[reaction-unbudgeted]",
         // 4.23 m/s: 2525.33 ms, and the 3 s interval is missed.
         "hazard 'hpc_observed', rung 'estop_ok': settle = 2525.33ms derived by vehicle.braking",
@@ -3118,7 +3118,7 @@ fn migrate_rewrites_the_deprecated_spellings_in_place() {
         "exit-on-holds: `on` -> `holds` (modes.takeover.exit.on)",
         "-    reaction: engaged",
         "+    enters: engaged",
-        "1 contract(s) scanned, 1 to rewrite (3 edit(s))",
+        "1 contract(s) scanned, 1 to rewrite (7 edit(s))",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
@@ -3810,4 +3810,226 @@ fn e10_a_derived_settle_reaches_the_model_as_a_written_one_would() {
             .settle_derived
             .is_none()
     );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 94: contract values read from the launch tree
+// ---------------------------------------------------------------------------
+
+/// The safety-island excerpt: contract_takeover with its configured
+/// numbers read from the launch tree (a parameter file, a launch argument
+/// through a `<param>`, the emergency profile, a `let:`), the window kept a
+/// checked requirement and the comfortable profile its bare `decel:`.
+/// Every verdict and total is contract_takeover's, and `--explain` says
+/// where each read value came from.
+#[test]
+fn contract_values_island_reads_the_launch_tree_and_keeps_its_verdicts() {
+    let (code, out) = check_takeover("contract_values_island", &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    let (tcode, takeover) = check_takeover("contract_takeover", &["--explain"]);
+    assert_eq!(tcode, 0, "{takeover}");
+    for needle in [
+        "hazard 'hpc_loss', rung 'estop': settle = 2033.33ms derived by vehicle.braking 1.0.0",
+        "hazard 'odd_exit', rung 'comfortable': settle = 9996.67ms derived by vehicle.braking 1.0.0",
+        "hazard 'odd_exit', rung 'estop': settle = 4165.33ms derived by vehicle.braking 1.0.0",
+        "= 2676.67ms fits the fault-tolerant time interval 3000.00ms with 323.33ms of slack",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+        assert!(
+            takeover.contains(needle),
+            "takeover lost `{needle}`:\n{takeover}"
+        );
+    }
+    for needle in [
+        // The extension keys, read and bare, and the `let:`.
+        "entry_speed = 8.33 m/s   ($(let odd_speed))",
+        "decel = 2.5 m/s^2   ($(param target_acceleration) m/s^2)",
+        "decel = 1 m/s^2   (min_acceleration)",
+        // Where each core value came from.
+        "-- Values read from the launch tree (--explain) --",
+        "/handler paths.on_timer.trigger.timer.rate_hz = 10 Hz",
+        "<- /handler update_rate = 10 Hz, handler.param.yaml",
+        "/handler sub.availability.qos.lease_duration = 500 ms",
+        "<- /handler lease_ms = 500 ms, bringup.launch.xml",
+        "<- /estop_op update_rate = 30 Hz, bringup.launch.xml",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    // The fault-reaction rows: the same numbers, row for row.
+    let rows = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter(|l| l.starts_with("hpc_loss ") || l.starts_with("odd_exit "))
+            .filter(|l| l.contains("floor") || l.contains("rung") || l.contains("window"))
+            .map(|l| l.split_whitespace().take(9).collect::<Vec<_>>().join(" "))
+            .collect()
+    };
+    assert_eq!(rows(&out), rows(&takeover), "{out}");
+    assert!(!rows(&out).is_empty(), "{out}");
+}
+
+/// Each rule of the design's resolution table, one fixture each, with the
+/// message the design shows; `--expect` holds that it is the only error.
+#[test]
+fn each_unreadable_contract_value_names_its_rule() {
+    for (dir, rule, needles) in [
+        (
+            "contract_values_unset",
+            "param-unset",
+            vec![
+                "error[param-unset]: bringup.contract.yaml:14: `$(param init_timeout) s`: no \
+                 launch source sets `init_timeout` on /handler (sources: bringup.launch.xml), so \
+                 it runs the code's default, which a contract cannot see. Set it in the launch \
+                 file, or declare `params: { init_timeout: { type: double, default: ",
+            ],
+        ),
+        (
+            "contract_values_node_unknown",
+            "param-node-unknown",
+            vec![
+                "error[param-node-unknown]: bringup.contract.yaml:7: `$(param handlr \
+                 update_rate) Hz`: `handlr` is not a node of this contract; did you mean \
+                 `handler`?",
+                "error[param-node-unknown]: bringup.contract.yaml:10: `$(param /safety/handler \
+                 update_rate) Hz`: the launch tree starts no node /safety/handler",
+            ],
+        ),
+        (
+            "contract_values_node_missing",
+            "param-node-missing",
+            vec![
+                "error[param-node-missing]: bringup.contract.yaml:17: `topics./in.max_transport` \
+                 is under no node, so `$(param timeout)` must name one: `$(param <node> \
+                 timeout)`. Nodes of this contract with a `timeout` parameter: handler.",
+            ],
+        ),
+        (
+            "contract_values_not_number",
+            "param-not-number",
+            vec![
+                "error[param-not-number]: bringup.contract.yaml:9: `$(param mode) Hz` reads \
+                 `mode` on /handler, which is `fast` (a string, bringup.launch.xml), not a number",
+            ],
+        ),
+        (
+            "contract_values_dimension",
+            "param-dimension",
+            vec![
+                "error[param-dimension]: bringup.contract.yaml:10: `max_age` is a Time, and \
+                 `$(param update_rate) Hz` is a Frequency (10 Hz, bringup.launch.xml). Did you \
+                 mean `1 / $(param update_rate) Hz`?",
+            ],
+        ),
+        (
+            "contract_values_var_unset",
+            "var-unset",
+            vec![
+                "error[var-unset]: bringup.contract.yaml:7: `$(var rate) Hz`: no launch file \
+                 sets the configuration `rate` where bringup.launch.xml finishes",
+            ],
+        ),
+    ] {
+        let (code, out) = check_takeover(dir, &["--expect", rule]);
+        assert_eq!(code, 0, "{dir}: {out}");
+        assert!(
+            out.contains(&format!(
+                "expect: ok -- the errors are exactly [error[{rule}] x"
+            )),
+            "{dir}: {out}"
+        );
+        for needle in needles {
+            assert!(out.contains(needle), "{dir}: expected `{needle}`:\n{out}");
+        }
+    }
+    // An unset parameter with a `default:` is read from the contract.
+    let (_, out) = check_takeover("contract_values_unset", &["--explain"]);
+    assert!(
+        out.contains(
+            "<- /handler grace = 0.2 s, `params.grace.default` in bringup.contract.yaml (no \
+             launch source sets it)"
+        ),
+        "{out}"
+    );
+    // `source:` beside a reference: the file is refused at parse time.
+    let (code, out) = check_takeover("contract_values_source_on_ref", &[]);
+    assert_ne!(code, 0, "{out}");
+    assert!(
+        out.contains(
+            "at 'nodes.handler.sub.in.max_age.source': source-on-reference: a value read from \
+             the launch tree has its provenance recorded automatically"
+        ),
+        "{out}"
+    );
+}
+
+/// One contract bound to two include scopes is evaluated once per scope:
+/// the left camera reads 30 Hz, the right one a value that is no number,
+/// and its diagnostics name the instance.
+#[test]
+fn a_contract_bound_twice_is_evaluated_per_instance() {
+    let (code, out) = check_takeover("contract_values_twice", &["--explain"]);
+    assert_eq!(code, 1, "{out}");
+    assert_eq!(
+        out.matches("[/sensing/right]: `$(var cam_hz) Hz` reads the launch configuration `cam_hz`, which is `fast` (camera.launch.xml), not a number").count(),
+        2,
+        "{out}"
+    );
+    assert!(!out.contains("[/sensing/left]: `$(var"), "{out}");
+    for needle in [
+        "camera.contract.yaml [/sensing/left]:",
+        "/sensing/left/driver paths.grab.trigger.timer.rate_hz = 30 Hz",
+        "<- cam_hz = 30 Hz, camera.launch.xml",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+}
+
+/// `rt_av_demo`'s contract reads its rates from the launch file, so a
+/// command-line override re-derives them: the chain's boundary period and
+/// every rate follow `lidar_hz`. Before phase 94 the contract said 50 Hz
+/// whatever the launch ran at.
+#[test]
+fn rt_av_demo_rates_follow_the_command_line() {
+    let launch =
+        fixtures::repo_root().join("examples/rt_av_demo/src/rt_av_demo/launch/bringup.launch.xml");
+    let sched = launch.with_file_name("bringup.system.posix.yaml");
+    let run = |extra: &[&str]| {
+        let out = play_launch_cmd()
+            .arg("check")
+            .arg(&launch)
+            .arg("--sched")
+            .arg(&sched)
+            .arg("--explain")
+            .args(extra)
+            .output()
+            .expect("play_launch check runs");
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+    let (code, base) = run(&[]);
+    assert_eq!(code, 0, "{base}");
+    assert!(
+        base.contains("lidar_to_brake boundary RM period=20ms"),
+        "{base}"
+    );
+    assert!(
+        base.contains("<- lidar_hz = 50 Hz, bringup.launch.xml"),
+        "{base}"
+    );
+    let (code, fast) = run(&["lidar_hz:=100"]);
+    assert_eq!(code, 0, "{fast}");
+    for needle in [
+        "lidar_to_brake boundary RM period=10ms",
+        "/safety/lidar_driver paths.sample.trigger.timer.rate_hz = 100 Hz",
+        "<- /safety/lidar_driver rate_hz = 100 Hz, bringup.launch.xml",
+        "/safety/brake_controller sub.obstacles.min_rate_hz = 100 Hz",
+        "<- lidar_hz = 100 Hz, command line",
+    ] {
+        assert!(fast.contains(needle), "expected `{needle}`:\n{fast}");
+    }
 }

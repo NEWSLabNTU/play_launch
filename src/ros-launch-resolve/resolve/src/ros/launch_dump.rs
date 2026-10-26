@@ -179,8 +179,17 @@ pub struct NodeContainerRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ParamSource {
-    Inline { name: String, value: String },
-    File { content: String },
+    Inline {
+        name: String,
+        value: String,
+    },
+    File {
+        content: String,
+        /// The parameter file the content was read from (phase 94), when
+        /// the parser recorded it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+    },
 }
 
 /// The serialization format for a ROS node record.

@@ -340,7 +340,10 @@ impl NodeAction {
                     // expands launch temp files into Inline entries).
                     let path = resolve_substitutions(subs, context)
                         .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                    Ok(crate::record::types::ParamSource::File { content: path })
+                    Ok(crate::record::types::ParamSource::File {
+                        content: path,
+                        path: None,
+                    })
                 }
             })
             .collect::<Result<Vec<_>>>()?;

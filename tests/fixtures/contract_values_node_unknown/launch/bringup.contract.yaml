@@ -1,0 +1,17 @@
+# Phase 94: param-node-unknown. `handlr` is no node of this contract, and
+# /safety/handler is no node of the launch tree.
+version: 1
+nodes:
+  source:
+    pub:
+      out: { min_rate_hz: $(param handlr update_rate) Hz }
+  handler:
+    sub:
+      in: { min_rate_hz: $(param /safety/handler update_rate) Hz }
+
+topics:
+  /in:
+    type: std_msgs/msg/String
+    pub: [source/out]
+    sub: [handler/in]
+

@@ -7,6 +7,16 @@
 # claiming 8 ms for a node that burns 40 would pass the checker and miss every
 # deadline at runtime.
 version: 1
+use:
+  iso26262: "^1"
+
+# Phase 94: the numbers the launch file configures are READ from it, never
+# retyped. `lidar_hz` is the one rate the safety chain runs at; every rate
+# below follows it, so `check bringup.launch.xml lidar_hz:=100` checks the
+# chain at 100 Hz. The budgets stay written: they are requirements, and a
+# parameter edit must not change a requirement unseen.
+let:
+  lidar_rate: $(var lidar_hz) Hz
 
 # Phase 71: the hazard the chain exists to prevent, and the one number that
 # turns the rate requirements below into a safety requirement. Phase 72
@@ -48,17 +58,17 @@ nodes:
   lidar_driver:
     pub:
       scan:
-        min_rate_hz: 50
+        min_rate_hz: $(let lidar_rate)
         # Phase 74: applied to the node as qos_overrides parameters. With
         # `manual_by_topic` liveliness every publish asserts the writer is
         # alive, so a publisher that stops lapses at the lease and the
         # SUBSCRIBER's DDS reports it — no watchdog code needed to detect.
         # (`automatic` would NOT do this: it is asserted by the participant,
         # so a node that stops publishing but stays up never lapses.)
-        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
+        qos: { liveliness: manual_by_topic, lease_duration: $(param obstacle_detector watchdog_ms) ms }
     paths:
       sample:
-        trigger: { timer: { rate_hz: 50 } }
+        trigger: { timer: { rate_hz: $(param rate_hz) Hz } }
         output: [scan]
         # The boundary's own execution cost. Without it the feasibility check
         # counts this hop as ZERO and says so ("feasible ON INCOMPLETE
@@ -69,10 +79,10 @@ nodes:
   obstacle_detector:
     sub:
       scan:
-        min_rate_hz: 50
-        # The detector: 100ms without a scan is a lost lidar. `watchdog_ms`
-        # in bringup.launch.xml is this number, applied by the node itself.
-        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
+        min_rate_hz: $(let lidar_rate)
+        # The detector: `watchdog_ms` without a scan is a lost lidar, read
+        # from bringup.launch.xml, where the node applies it itself.
+        qos: { liveliness: manual_by_topic, lease_duration: $(param watchdog_ms) ms }
         on_violation:
           on: [omission]
           reaction: declare_lost
@@ -80,7 +90,7 @@ nodes:
           mechanism: qos      # DDS detects (the lease); the watchdog only reacts
     pub:
       obstacles:
-        min_rate_hz: 50
+        min_rate_hz: $(let lidar_rate)
     paths:
       detect:
         trigger: { input: [scan] }
@@ -95,7 +105,7 @@ nodes:
   brake_controller:
     sub:
       obstacles:
-        min_rate_hz: 50
+        min_rate_hz: $(let lidar_rate)
         max_age: 60ms
         on_violation:
           on: [late, omission]
@@ -104,7 +114,7 @@ nodes:
           mechanism: application
     pub:
       brake_cmd:
-        min_rate_hz: 50
+        min_rate_hz: $(let lidar_rate)
     paths:
       brake:
         trigger: { input: [obstacles] }

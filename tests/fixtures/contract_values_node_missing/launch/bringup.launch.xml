@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!-- Phase 94: a contract value read from the launch tree that cannot be
+     read. The contract beside this file names the one rule it fails. -->
+<launch>
+  <arg name="mode" default="fast"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="handler">
+    <param name="update_rate" value="10"/>
+    <param name="timeout" value="0.5"/>
+    <param name="mode" value="$(var mode)"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="talker" name="source"/>
+</launch>

@@ -1,0 +1,16 @@
+# Phase 94: param-not-number. `mode` is the string `fast`.
+version: 1
+nodes:
+  source:
+    pub:
+      out: {}
+  handler:
+    sub:
+      in: { min_rate_hz: $(param mode) Hz }
+
+topics:
+  /in:
+    type: std_msgs/msg/String
+    pub: [source/out]
+    sub: [handler/in]
+

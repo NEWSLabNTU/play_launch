@@ -358,6 +358,14 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     if inputs.explain && inputs.format != "json" && !index.period_ranges.is_empty() {
         crate::say_raw!("{}", render_periods(&index));
     }
+    // Phase 94: every value a contract read from the launch tree, with
+    // where it came from.
+    if inputs.explain && inputs.format != "json" {
+        let values = render_values(&index);
+        if !values.is_empty() {
+            crate::say_raw!("{values}");
+        }
+    }
 
     // Summary
     print_summary(&index, rule_filter.as_ref());
@@ -732,6 +740,88 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
     out.push_str(&render_reaction_totals(index));
     out.push_str(&crate::ros::extensions::render_resolution(index));
     out
+}
+
+/// `check --explain`'s values read from the launch tree (phase 94): per
+/// contract instance, each value with the reference it was written as and
+/// every read behind it, down to where the launch tree set it.
+pub(crate) fn render_values(index: &manifest_loader::ManifestIndex) -> String {
+    use ros_launch_manifest_types::values::{ReadKind, shown_si};
+    let mut scopes: Vec<_> = index.manifests.values().collect();
+    scopes.sort_by_key(|m| m.scope_id);
+    let mut by_file: std::collections::BTreeMap<&std::path::Path, usize> = Default::default();
+    for m in &scopes {
+        *by_file.entry(m.contract_path.as_path()).or_default() += 1;
+    }
+    let mut rows: Vec<(String, String, String, Vec<String>)> = Vec::new();
+    let mut out = String::new();
+    for m in scopes {
+        let resolved: Vec<_> = m
+            .manifest
+            .value_refs
+            .iter()
+            .filter_map(|r| r.resolved.as_ref().map(|v| (r, v)))
+            .collect();
+        if resolved.is_empty() {
+            continue;
+        }
+        let file = m
+            .contract_path
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let tag = crate::ros::contract_values::instance_tag(
+            by_file.get(m.contract_path.as_path()).copied().unwrap_or(1),
+            &m.ns,
+        );
+        rows.clear();
+        for (r, v) in resolved {
+            let at = r
+                .path
+                .strip_suffix(".duration")
+                .or_else(|| r.path.strip_suffix(".value"))
+                .unwrap_or(&r.path);
+            let subject = match at.strip_prefix("nodes.").and_then(|x| x.split_once('.')) {
+                Some((key, rest)) => format!(
+                    "{} {rest}",
+                    manifest_loader::resolve_node_fqn(index, m.scope_id, &m.ns, key)
+                ),
+                None => at.to_string(),
+            };
+            let reads = v
+                .reads
+                .iter()
+                .filter(|x| {
+                    !matches!(&x.kind, ReadKind::Let { name } if r.written == format!("$(let {name})"))
+                })
+                .map(|x| match &x.kind {
+                    ReadKind::Let { name } => format!("$(let {name}) = {}", x.value),
+                    ReadKind::Param { node, name } => {
+                        format!("{node} {name} = {}, {}", x.value, x.at)
+                    }
+                    ReadKind::Var { name } => format!("{name} = {}, {}", x.value, x.at),
+                })
+                .collect();
+            rows.push((subject, shown_si(v.si, v.dim), r.written.clone(), reads));
+        }
+        out.push_str(&format!("{file}{tag}:\n"));
+        let w = rows
+            .iter()
+            .map(|r| r.0.len() + r.1.len() + 3)
+            .max()
+            .unwrap_or(0);
+        for (subject, value, written, reads) in &rows {
+            let head = format!("{subject} = {value}");
+            out.push_str(&format!("  {head:<w$}  <- {written}\n"));
+            for read in reads {
+                out.push_str(&format!("  {:<w$}  <- {read}\n", ""));
+            }
+        }
+    }
+    if out.is_empty() {
+        return out;
+    }
+    format!("\n-- Values read from the launch tree (--explain) --\n{out}")
 }
 
 /// `check --explain`'s table of every timer's feasible period (phase 93

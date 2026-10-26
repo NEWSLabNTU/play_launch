@@ -829,7 +829,11 @@ fn vehicle_braking_env() -> &'static rlx::typeck::Env {
 /// A hazard's `vehicle.braking` entry speed in m/s, for the model: its
 /// `entry_speed` key (bare or qualified) read as a velocity, a plain number
 /// as m/s (the core key's unit until rlm v0.1.71).
-pub(crate) fn entry_speed_mps(decl: &ros_launch_manifest_types::HazardDecl) -> Option<f64> {
+pub(crate) fn entry_speed_mps(
+    index: &ManifestIndex,
+    scope_id: usize,
+    decl: &ros_launch_manifest_types::HazardDecl,
+) -> Option<f64> {
     let k = decl.ext.iter().find(|k| {
         names(
             k,
@@ -845,6 +849,15 @@ pub(crate) fn entry_speed_mps(decl: &ros_launch_manifest_types::HazardDecl) -> O
     }
     let env = vehicle_braking_env();
     let ty = env.key("hazard.entry_speed")?.ty.clone();
+    if ros_launch_manifest_types::values::is_reference(text) {
+        let rlx::typeck::KeyTy::Value(dim) = ty else {
+            return None;
+        };
+        return super::contract_values::ext_value(index, scope_id, text, "entry_speed", dim, None)
+            .ok()
+            .flatten()
+            .map(|v| v.si);
+    }
     match env.parse_value(text, &ty).ok()? {
         rlx::value::ContractValue::Quantity(q) => Some(q.si),
         _ => None,
@@ -1092,6 +1105,34 @@ fn parse_static(env: &rlx::typeck::Env, ty: &KeyTy, v: &ExtValue) -> Result<(), 
                 .map_err(|d| d.message)
         }
         (_, ExtValue::Map(_)) => Err("a map was written, but this key is not a table".into()),
+        // Phase 94: the read form, `$(param <name>) <unit>`. Its syntax and
+        // units are checked here; its dimension and value when it is read.
+        (KeyTy::Param { dim, .. }, ExtValue::Scalar(text))
+            if ros_launch_manifest_types::values::is_reference(text) =>
+        {
+            let e = ros_launch_manifest_types::values::parse_expr(text)?;
+            if let Some(r) = e.unitless_refs().first() {
+                return Err(format!(
+                    "`{r}` needs a unit: a parameter carries none, and the key is {} (`{r} {}`)",
+                    ros_launch_manifest_types::values::a_dim(*dim),
+                    rlx::units::example(*dim)
+                ));
+            }
+            Ok(())
+        }
+        (KeyTy::Value(dim), ExtValue::Scalar(text))
+            if ros_launch_manifest_types::values::is_reference(text) =>
+        {
+            let e = ros_launch_manifest_types::values::parse_expr(text)?;
+            if let Some(r) = e.unitless_refs().first().filter(|_| !dim.is_scalar()) {
+                return Err(format!(
+                    "`{r}` needs a unit: a parameter carries none, and the key is {} (`{r} {}`)",
+                    ros_launch_manifest_types::values::a_dim(*dim),
+                    rlx::units::example(*dim)
+                ));
+            }
+            Ok(())
+        }
         (_, ExtValue::Scalar(text)) => env.parse_value(text, ty).map(|_| ()).map_err(|d| d.message),
     }
 }
@@ -1102,6 +1143,38 @@ enum ParamHost<'a> {
     Guard(&'a ResolvedHazard),
     /// The node whose path states the safe state.
     Node(&'a str),
+}
+
+/// The node a bare `param` key's parameter is read on (phase 94): the
+/// safe state's node, or the one guard publisher that sets it.
+fn param_node(index: &ManifestIndex, host: &ParamHost, name: &str) -> Result<String, String> {
+    if let ParamHost::Node(fqn) = host {
+        return Ok(fqn.to_string());
+    }
+    let ParamHost::Guard(h) = host else {
+        unreachable!()
+    };
+    let mut nodes: Vec<String> = h
+        .guards
+        .iter()
+        .flat_map(|g| g.members.iter())
+        .filter_map(|t| index.topics.get(t))
+        .flat_map(|t| t.publishers.iter())
+        .filter_map(|ep| ep.rsplit_once('/').map(|(n, _)| n.to_string()))
+        .collect();
+    nodes.sort();
+    nodes.dedup();
+    param_number(index, host, name)?;
+    nodes
+        .into_iter()
+        .find(|n| {
+            index
+                .launch_params
+                .get(n)
+                .and_then(|p| p.get(name))
+                .is_some_and(|lp| lp.number.is_some())
+        })
+        .ok_or_else(|| format!("parameter `{name}` has no numeric launch value"))
 }
 
 fn param_number(index: &ManifestIndex, host: &ParamHost, name: &str) -> Result<f64, String> {
@@ -1160,6 +1233,19 @@ fn param_number(index: &ManifestIndex, host: &ParamHost, name: &str) -> Result<f
                 .collect::<Vec<_>>()
                 .join(", ")
         )),
+    }
+}
+
+/// The scope whose contract states the key: the hazard's, or the scope
+/// declaring the safe state's node path.
+fn host_scope(index: &ManifestIndex, host: &ParamHost, h: &ResolvedHazard) -> usize {
+    match host {
+        ParamHost::Guard(_) => h.scope_id,
+        ParamHost::Node(fqn) => index
+            .node_paths
+            .iter()
+            .find(|p| p.node_fqn == *fqn && p.path.safe_state.is_some())
+            .map_or(h.scope_id, |p| p.scope_id),
     }
 }
 
@@ -1269,10 +1355,114 @@ fn gather(
                 written.push((need.path.clone(), format!("{} entries", rows.len())));
                 Value::table(&rows)
             }
-            (KeyTy::Param { .. }, ExtValue::Scalar(name)) => {
-                let raw = param_number(index, &host, name).map_err(GatherError::Param)?;
-                written.push((need.path.clone(), format!("{name} = {raw}")));
-                rlx::eval::param_value(raw, &need.ty).expect("a param key")
+            (
+                KeyTy::Param {
+                    dim,
+                    magnitude,
+                    unit,
+                },
+                ExtValue::Scalar(text),
+            ) => {
+                // Phase 94: the read form and the bare name take one path.
+                // The bare `decel: target_acceleration` is `$(param
+                // target_acceleration) <unit>` on the node it names (the
+                // key's `unit`, else SI); a hazard's bare name is read on the
+                // guard publisher that sets it, as before.
+                let read_form = ros_launch_manifest_types::values::is_reference(text);
+                let unit_text = unit
+                    .as_ref()
+                    .map_or_else(|| rlx::units::example(*dim), |u| u.text.clone());
+                let (expr, node, scope_id) = match (&host, read_form) {
+                    (_, true) => (
+                        text.clone(),
+                        match &host {
+                            ParamHost::Node(fqn) => Some(fqn.to_string()),
+                            ParamHost::Guard(_) => None,
+                        },
+                        host_scope(index, &host, h),
+                    ),
+                    (ParamHost::Node(fqn), false) => (
+                        if unit_text.is_empty() {
+                            format!("$(param {text})")
+                        } else {
+                            format!("$(param {text}) {unit_text}")
+                        },
+                        Some(fqn.to_string()),
+                        host_scope(index, &host, h),
+                    ),
+                    (ParamHost::Guard(_), false) => {
+                        let fqn = param_node(index, &host, text).map_err(GatherError::Param)?;
+                        (
+                            if unit_text.is_empty() {
+                                format!("$(param {fqn} {text})")
+                            } else {
+                                format!("$(param {fqn} {text}) {unit_text}")
+                            },
+                            None,
+                            host_scope(index, &host, h),
+                        )
+                    }
+                };
+                let v = super::contract_values::ext_value(
+                    index,
+                    scope_id,
+                    &expr,
+                    key,
+                    *dim,
+                    node.as_deref(),
+                )
+                .map_err(|e| {
+                    GatherError::Param(format!("{} ({})", e.message.trim_end_matches('.'), e.code))
+                })?
+                .ok_or_else(|| {
+                    GatherError::Param(format!("`{text}` has no value in this launch tree"))
+                })?;
+                let si = if *magnitude { v.si.abs() } else { v.si };
+                let shown = v
+                    .reads
+                    .iter()
+                    .find(|r| {
+                        !matches!(
+                            r.kind,
+                            ros_launch_manifest_types::values::ReadKind::Let { .. }
+                        )
+                    })
+                    .map_or_else(|| format!("{si}"), |r| format!("{} ({})", r.value, r.at));
+                written.push((need.path.clone(), format!("{text} = {shown}")));
+                Value::Quantity {
+                    si,
+                    dim: *dim,
+                    written: Some(text.clone()),
+                }
+            }
+            (KeyTy::Value(dim), ExtValue::Scalar(text))
+                if ros_launch_manifest_types::values::is_reference(text) =>
+            {
+                // Phase 94: a quantity read from the launch tree or `let:`.
+                let node = match &host {
+                    ParamHost::Node(fqn) => Some(fqn.to_string()),
+                    ParamHost::Guard(_) => None,
+                };
+                let v = super::contract_values::ext_value(
+                    index,
+                    host_scope(index, &host, h),
+                    text,
+                    key,
+                    *dim,
+                    node.as_deref(),
+                )
+                .map_err(|e| {
+                    GatherError::Value(format!("{} ({})", e.message.trim_end_matches('.'), e.code))
+                })?
+                .ok_or_else(|| {
+                    GatherError::Value(format!("`{text}` has no value in this launch tree"))
+                })?;
+                written.push((need.path.clone(), text.clone()));
+                Value::Quantity {
+                    si: v.si,
+                    dim: *dim,
+                    written: Some(text.clone()),
+                }
             }
             (_, ExtValue::Scalar(text)) => {
                 let ContractValue::Quantity(q) = checked

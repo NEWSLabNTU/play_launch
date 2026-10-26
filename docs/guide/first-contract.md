@@ -159,6 +159,87 @@ requirements, and the tool has something to say at each step:
   derivation during development, where the capture answers a question a user of
   the shipped tool asks on day one.
 
+## Numbers the launch file already sets: read them
+
+A contract that types a timer's rate, a lease or a rate shared by four nodes
+has two copies of a number the launch tree already holds, and nothing notices
+when they drift. Since rlm v0.2.4 (play_launch phase 94) a contract reads
+such a number instead of restating it:
+
+```yaml
+let:
+  lidar_rate: $(var lidar_hz) Hz          # a launch argument, stated once
+nodes:
+  lidar_driver:
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: $(param rate_hz) Hz } }   # the node's parameter
+        output: [scan]
+  obstacle_detector:
+    sub:
+      scan:
+        min_rate_hz: $(let lidar_rate)
+        qos: { liveliness: manual_by_topic, lease_duration: $(param watchdog_ms) ms }
+        max_age: 3 / $(let lidar_rate)
+```
+
+`check bringup.launch.xml lidar_hz:=100` then checks the system at 100 Hz,
+and `check --explain` says where each value came from:
+
+```text
+-- Values read from the launch tree (--explain) --
+bringup.contract.yaml:
+  /safety/lidar_driver paths.sample.trigger.timer.rate_hz = 100 Hz  <- $(param rate_hz) Hz
+                                                                    <- /safety/lidar_driver rate_hz = 100 Hz, bringup.launch.xml
+  /safety/obstacle_detector sub.scan.min_rate_hz = 100 Hz           <- $(let lidar_rate)
+                                                                    <- lidar_hz = 100 Hz, command line
+```
+
+| Reference | Reads |
+|---|---|
+| `$(param <name>)` | the parameter of the node the key sits under, as the node gets it: globals, parameter files, inline values, ROS precedence |
+| `$(param <node> <name>)` | the same on another node of this contract (`<node>` is a node key) or of the launch tree (`/<fqn>`) |
+| `$(var <name>)` | a launch configuration, as it stands when the contract's launch file finishes |
+| `$(let <name>)` | an entry of the contract's own root `let:` |
+
+Three rules keep the read honest:
+
+- **A reference takes a unit, always.** A parameter carries none, and the
+  obvious default is wrong in practice: `watchdog_ms: 100` read in seconds is a
+  100 s lease. Write the unit the parameter holds (`$(param watchdog_ms) ms`,
+  `$(param timeout) s`, `$(param update_rate) Hz`). A count is the one
+  exception: it has no unit. Values combine with `+ - * /` and parentheses,
+  and a value of the wrong dimension for its key is an error that suggests the
+  inverse when it is one (`1 / $(param update_rate) Hz` for a Time).
+- **Read configuration, write requirements.** A takeover window that came out
+  of a hazard analysis is a requirement; reading it from the parameter would
+  let a parameter edit change the requirement unseen. Keep it written and bind
+  the parameter to check it: `window: { duration: 10s, param:
+  mrm_handler.takeover_request_timeout, source: requirement }`. A `source:`
+  beside a reference is refused: the reference is the source, and the model
+  records it (`sources:` beside the number).
+- **An unset parameter is an error, not a guess.** When no launch source sets
+  the parameter the node runs its compiled-in default, which no contract can
+  see, so `check` reports `param-unset`. State the default the contract may
+  assume with `params: { <name>: { type: double, default: 0.5 } }`.
+
+| Rule | When |
+|---|---|
+| `param-unset` | no launch source sets the parameter, and no `default:` |
+| `param-node-unknown` | the node is not in the contract or the launch tree (near misses named) |
+| `param-node-missing` | a one-argument `$(param)` under a key that is under no node |
+| `param-not-number` | the value is a string, a list or a boolean |
+| `param-dimension` | the value's dimension is not the key's |
+| `var-unset` | no launch file sets the configuration |
+| `value-range` | a negative duration, a rate that is not positive, a count that is not whole |
+
+A contract included twice (one camera file per camera) is evaluated once per
+include, and a diagnostic about a value names the instance:
+`camera.contract.yaml:7 [/sensing/right]: …`. An extension key typed `param`
+reads the same way (`decel: $(param target_acceleration) m/s^2`); its bare
+form, `decel: target_acceleration`, stays legal, and `play_launch migrate`
+rewrites it.
+
 ## Keeping it true: `check --against`
 
 A contract is edited by hand from here on, and the code moves under it. A

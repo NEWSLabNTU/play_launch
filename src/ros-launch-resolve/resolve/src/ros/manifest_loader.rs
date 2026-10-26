@@ -12,7 +12,7 @@ use super::{
 use ros_launch_manifest_check::{Diagnostic, Severity, run_checks_with_spans};
 use ros_launch_manifest_types::{
     EffectiveTrigger, Manifest, OptBound, ParamBinding, field_table::Context, filter_manifest,
-    parse_manifest_with_spans, resolve_args, substitute_manifest,
+    resolve_args, substitute_manifest,
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
@@ -467,6 +467,11 @@ pub struct ManifestIndex {
     /// Every node's resolved launch parameter values, keyed by node FQN
     /// (phase 83): what `window-param` and a braking-profile settle read.
     pub launch_params: HashMap<String, BTreeMap<String, super::value_rules::LaunchParam>>,
+    /// The launch tree's scopes by id, and its launch configurations at the
+    /// end of the run (phase 94): what a `$(var)` in a contract reads, kept
+    /// for the readers that run after loading (extension keys).
+    pub launch_scopes: BTreeMap<usize, ScopeEntry>,
+    pub launch_variables: HashMap<String, String>,
     /// The fault-reaction arithmetic per (hazard, rung), for `--explain`
     /// (phase 83).
     pub budgets: Vec<RungBudget>,
@@ -647,6 +652,12 @@ pub fn load_manifests(
     let mut provider_loaded = 0usize;
 
     index.launch_params = super::value_rules::launch_param_values(launch_dump);
+    index.launch_scopes = launch_dump
+        .scopes
+        .iter()
+        .map(|s| (s.id, s.clone()))
+        .collect();
+    index.launch_variables = launch_dump.variables.clone();
     index.executor_of = super::sched_loader::composable_containers(launch_dump);
 
     // Snapshot scope tree (parent links) for cross-scope checks.
@@ -700,6 +711,15 @@ pub fn load_manifests(
         }
     }
 
+    // Phase 94: how many scopes each contract file is bound to, so a
+    // diagnostic about a value read in one instance names the instance.
+    let mut instances: HashMap<PathBuf, usize> = HashMap::new();
+    for scope in launch_dump.scopes.iter().filter(|s| s.is_file_scope()) {
+        if let Some((path, _)) = resolve_contract_path(scope, sources) {
+            *instances.entry(path).or_default() += 1;
+        }
+    }
+
     for scope in &launch_dump.scopes {
         if !scope.is_file_scope() {
             continue;
@@ -724,8 +744,29 @@ pub fn load_manifests(
             path.display()
         );
 
-        let parsed = match parse_manifest_with_spans(&path) {
-            Ok(p) => p,
+        // Phase 94: values read from the launch tree are evaluated for THIS
+        // scope instance before any rule reads the contract.
+        let contract_file = path
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let parsed = std::fs::read_to_string(&path)
+            .map_err(ros_launch_manifest_types::parse::ParseError::from)
+            .and_then(|source| {
+                super::contract_values::parse_scope_instance(
+                    &source,
+                    &contract_file,
+                    scope,
+                    instances.get(&path).copied().unwrap_or(1),
+                    &index,
+                    launch_dump,
+                )
+            });
+        let parsed = match parsed {
+            Ok((p, _, value_diags)) => {
+                index.merge_diagnostics.extend(value_diags);
+                p
+            }
             Err(e) => {
                 // Phase 83: name the line too, when the error names a key the
                 // span index can find -- a closed grammar refuses a file for
@@ -6546,7 +6587,7 @@ fn quoted_list(items: &[&str]) -> String {
 }
 
 /// Levenshtein distance, two rows.
-fn edit_distance(a: &str, b: &str) -> usize {
+pub(crate) fn edit_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     let mut prev: Vec<usize> = (0..=b.len()).collect();

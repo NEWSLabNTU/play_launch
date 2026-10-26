@@ -116,7 +116,7 @@ nodes:
         output: [velocity_limit]
         safe_state:
           emits: velocity_limit
-          settle: { decel: min_acceleration, jerk: min_jerk }
+          settle: { decel: $(param min_acceleration) m/s^2, jerk: $(param min_jerk) m/s^3 }
 
   estop_op:
     params:
@@ -132,7 +132,7 @@ nodes:
         output: [cmd]
         safe_state:
           emits: cmd
-          settle: { decel: target_acceleration, jerk: target_jerk }
+          settle: { decel: $(param target_acceleration) m/s^2, jerk: $(param target_jerk) m/s^3 }
 
 topics:
   /availability:

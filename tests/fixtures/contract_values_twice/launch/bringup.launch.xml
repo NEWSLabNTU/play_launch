@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<!-- Phase 94: one contract bound to two scopes. camera.launch.xml is
+     included twice; its contract reads `cam_hz`, which each include passes.
+     The right camera's value is not a number, and the diagnostic names the
+     instance. -->
+<launch>
+  <group>
+    <push-ros-namespace namespace="sensing/left"/>
+    <include file="$(dirname)/camera.launch.xml">
+      <arg name="cam_hz" value="30"/>
+    </include>
+  </group>
+  <group>
+    <push-ros-namespace namespace="sensing/right"/>
+    <include file="$(dirname)/camera.launch.xml">
+      <arg name="cam_hz" value="fast"/>
+    </include>
+  </group>
+</launch>

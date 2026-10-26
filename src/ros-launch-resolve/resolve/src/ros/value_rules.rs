@@ -99,6 +99,10 @@ pub struct LaunchParam {
     pub text: String,
     /// The value as a number, when it is one (a bool is not).
     pub number: Option<f64>,
+    /// Where the launch tree set it (phase 94): `bringup.launch.xml` for an
+    /// inline `<param>`, a parameter file's name, `<set_parameter>` for a
+    /// global one. Empty when not known.
+    pub at: String,
 }
 
 impl LaunchParam {
@@ -106,6 +110,25 @@ impl LaunchParam {
         LaunchParam {
             text: text.to_string(),
             number: text.trim().parse::<f64>().ok().filter(|v| v.is_finite()),
+            at: String::new(),
+        }
+    }
+
+    fn at(mut self, at: &str) -> Self {
+        self.at = at.to_string();
+        self
+    }
+
+    /// A type name for a message saying what the value is when it is not a
+    /// number.
+    pub(crate) fn kind(&self) -> &'static str {
+        let t = self.text.trim();
+        if t == "true" || t == "false" || t == "True" || t == "False" {
+            "a boolean"
+        } else if t.starts_with('[') {
+            "a list"
+        } else {
+            "a string"
         }
     }
 
@@ -115,19 +138,23 @@ impl LaunchParam {
             V::Int(i) => LaunchParam {
                 text: i.to_string(),
                 number: Some(*i as f64),
+                at: String::new(),
             },
             V::Float(f) => LaunchParam {
                 text: f.to_string(),
                 number: Some(*f),
+                at: String::new(),
             },
             V::Bool(b) => LaunchParam {
                 text: b.to_string(),
                 number: None,
+                at: String::new(),
             },
             V::Str(s) => LaunchParam::from_text(s),
             V::StrList(l) => LaunchParam {
                 text: format!("[{}]", l.join(", ")),
                 number: None,
+                at: String::new(),
             },
         }
     }
@@ -151,29 +178,37 @@ pub(crate) fn launch_param_values(
             continue;
         }
         let fqn = fqn_for(dump, n.namespace.as_deref(), &bare, n.scope);
+        let launch_file = launch_file_of(dump, n.scope);
         let mut values: BTreeMap<String, LaunchParam> = BTreeMap::new();
-        let file = |content: &str, values: &mut BTreeMap<String, LaunchParam>| {
-            for (k, v) in ros_launch_manifest_model::param_file_values(content, &fqn) {
-                values.insert(k, LaunchParam::from_value(&v));
-            }
-        };
+        let file =
+            |content: &str, path: Option<&str>, values: &mut BTreeMap<String, LaunchParam>| {
+                let at = path
+                    .and_then(|p| std::path::Path::new(p).file_name())
+                    .map(|f| f.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "a parameter file".to_string());
+                for (k, v) in ros_launch_manifest_model::param_file_values(content, &fqn) {
+                    values.insert(k, LaunchParam::from_value(&v).at(&at));
+                }
+            };
         for (k, v) in n.global_params.as_deref().unwrap_or(&[]) {
-            values.insert(k.clone(), LaunchParam::from_text(v));
+            values.insert(k.clone(), LaunchParam::from_text(v).at("<set_parameter>"));
         }
         if n.param_sources.is_empty() {
             for content in &n.params_files {
-                file(content, &mut values);
+                file(content, None, &mut values);
             }
             for (k, v) in &n.params {
-                values.insert(k.clone(), LaunchParam::from_text(v));
+                values.insert(k.clone(), LaunchParam::from_text(v).at(&launch_file));
             }
         } else {
             for src in &n.param_sources {
                 match src {
                     ParamSource::Inline { name, value } => {
-                        values.insert(name.clone(), LaunchParam::from_text(value));
+                        values.insert(name.clone(), LaunchParam::from_text(value).at(&launch_file));
                     }
-                    ParamSource::File { content } => file(content, &mut values),
+                    ParamSource::File { content, path } => {
+                        file(content, path.as_deref(), &mut values)
+                    }
                 }
             }
         }
@@ -184,14 +219,31 @@ pub(crate) fn launch_param_values(
             continue;
         }
         let fqn = fqn_for(dump, Some(c.namespace.as_str()), &c.node_name, c.scope);
+        let launch_file = launch_file_of(dump, c.scope);
         let values = c
             .params
             .iter()
-            .map(|(k, v)| (k.clone(), LaunchParam::from_text(v)))
+            .map(|(k, v)| (k.clone(), LaunchParam::from_text(v).at(&launch_file)))
             .collect();
         out.insert(fqn, values);
     }
     out
+}
+
+/// The launch file a record of `scope` was declared in: its nearest file
+/// scope's file name.
+pub(crate) fn launch_file_of(dump: &LaunchDump, scope: Option<usize>) -> String {
+    let mut at = scope;
+    while let Some(id) = at {
+        let Some(s) = dump.scopes.iter().find(|s| s.id == id) else {
+            break;
+        };
+        if let Some(f) = s.file() {
+            return f.to_string();
+        }
+        at = s.parent;
+    }
+    "the launch file".to_string()
 }
 
 /// The contract declaration of the node whose launch FQN is `fqn`, with the
@@ -1062,12 +1114,15 @@ fn bound_value(
                 format!(", and '{node_name}' does not declare it under `params:`")
             }
         )),
-        Some(LaunchParam { number: None, text }) => Err(format!(
+        Some(LaunchParam {
+            number: None, text, ..
+        }) => Err(format!(
             "'{name}' resolves to `{text}`, which is not a number"
         )),
         Some(LaunchParam {
             number: Some(v),
             text,
+            ..
         }) => Ok((*v, text.clone())),
     }
 }

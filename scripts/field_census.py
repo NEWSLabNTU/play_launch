@@ -142,6 +142,13 @@ CONSUMING_PATTERNS = [
     # diagnostics `check` prints; a match changes the verdict's counts, an
     # entry on an error is `ack-error`, one on nothing is `ack-stale`.
     (r"resolve/src/ros/acknowledge\.rs$", "acknowledgement matching (phase 85 D8)"),
+    # phase 94: a value read from the launch tree. rlm's `values` module
+    # evaluates `let:` and every reference-bearing value (dimensions, units,
+    # ranges); the resolver's `contract_values` is the launch tree it is
+    # evaluated against, per scope instance, with the rules that refuse an
+    # unreadable value (`param-unset`, `param-dimension`, ...).
+    (r"types/src/values\.rs$", "value evaluation (phase 94)"),
+    (r"resolve/src/ros/contract_values\.rs$", "contract values (phase 94)"),
     (r"sched/src/", "scheduling"),
     (r"^rlm/derive/src/", "shared mapper derivation (rlm derive)"),
     (r"check/src/graph\.rs$", "dataflow graph"),

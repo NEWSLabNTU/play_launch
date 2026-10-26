@@ -1,0 +1,17 @@
+# Phase 94: var-unset. No launch file sets `rate` (the launch file's
+# argument is `mode`).
+version: 1
+nodes:
+  source:
+    pub:
+      out: { min_rate_hz: $(var rate) Hz }
+  handler:
+    sub:
+      in: {}
+
+topics:
+  /in:
+    type: std_msgs/msg/String
+    pub: [source/out]
+    sub: [handler/in]
+

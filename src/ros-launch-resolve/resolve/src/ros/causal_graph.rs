@@ -545,7 +545,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             on: h.decl.on.iter().map(|k| fault_kind(*k)).collect(),
             ftti_ms: h.decl.ftti.ms(),
             reaction: h.decl.entry().cloned(),
-            entry_speed_mps: super::extensions::entry_speed_mps(&h.decl),
+            entry_speed_mps: super::extensions::entry_speed_mps(index, h.scope_id, &h.decl),
         })
         .collect();
     let functions: Vec<FunctionOut> = index
