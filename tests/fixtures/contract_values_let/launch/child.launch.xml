@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<!-- An include does not scope configurations: this `<let>` is the
+     includer's afterwards. -->
+<launch>
+  <let name="child_hz" value="20"/>
+</launch>

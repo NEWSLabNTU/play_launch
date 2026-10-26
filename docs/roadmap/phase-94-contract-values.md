@@ -1,6 +1,6 @@
 # Phase 94 - contract values read from the launch tree
 
-**Status: 🔄 wave 1 complete (2026-10-27, rlm v0.2.4); wave 2 in progress.** Phase 85's D9, and DX 1.1's provenance for
+**Status: ✅ complete (2026-10-27): wave 1 with rlm v0.2.4, wave 2 in play_launch alone (rlm unchanged).** Phase 85's D9, and DX 1.1's provenance for
 numbers a parameter holds. Design of record: rlm
 `docs/design/contract-values.md`.
 
@@ -92,17 +92,41 @@ play_launch (resolver):
 
 ## Wave 2 - `<let>` and the configuration log
 
-- [ ] W2.1 Parser: a per-scope log of configuration events (set, group push,
+- [x] W2.1 Parser: a per-scope log of configuration events (set, group push,
       group pop) with file, line and sequence number, and each node's
       sequence number, in both frontends; crosses the pyexec C ABI (bump).
-- [ ] W2.2 `$(var x)` reads the file's final state and refuses an ambiguous
+      *2026-10-27: `RecordJson.config_log` (`ConfigEvent { kind: set | unset
+      | push | pop | reset, name, value, origin: cli | arg | let | include |
+      group, file, line }`), `ScopeEntry.config_span` (`[start, end)`, the
+      include's arguments included), `config_seq` on every node, container
+      and composable record, and `NodeRecord.param_origins` (where an inline
+      `<param>` written as a substitution was written). Every assignment in
+      `LaunchContext` goes through `assign_configuration`, which logs it; the
+      `.launch.py` half returns its events in `Produced.config_events` and
+      the driver appends them at the hand-over, offsetting the captures'
+      sequence numbers. pyexec C ABI 10 -> 11. The Python dumper records the
+      same log from `launch`'s own actions (`dump/visitor/action.py`).*
+- [x] W2.2 `$(var x)` reads the file's final state and refuses an ambiguous
       name (`var-ambiguous`); `$(var x @<node>)` reads the state where the
-      node was declared.
-- [ ] W2.3 `--explain` follows a parameter whose text came from a `$(var)` to
-      its assignment or the command line.
-- [ ] W2.4 Fixtures: a reassigned `<let>`, a `<let>` inside a scoped group,
+      node was declared. *2026-10-27, `contract_values.rs`: the log is
+      replayed (`config_state`: a push saves, a pop restores, a reset
+      clears) to the end of the contract scope's span, or to the node's
+      `config_seq`.*
+- [x] W2.3 `--explain` follows a parameter whose text came from a `$(var)` to
+      its assignment or the command line. *2026-10-27: `LaunchParam.via`;
+      `<- <param> bringup.launch.xml:29 = $(var lidar_hz)` `<- lidar_hz =
+      100, command line`, one line per step.*
+- [x] W2.4 Fixtures: a reassigned `<let>`, a `<let>` inside a scoped group,
       a child file's `<let>` reaching its parent; the Python frontend through
-      the same tests.
+      the same tests. *2026-10-27: `contract_values_let` (XML) and
+      `contract_values_let_py` (the same contract on a `.launch.py`), the
+      Python dumper on `contract_values_let`, and the parser's
+      `include_semantics` matrix, where every node name is built from
+      `$(var …)` and is what stock `ros2 launch` starts: replaying the log to
+      each node's position must spell its name, across XML, YAML and Python
+      includes and scoped groups. Negative controls: the group pop left
+      unlogged fails the replay test; the ambiguity check disabled fails the
+      fixture test.*
 
 ## Decisions where the design is silent (wave 1)
 
@@ -128,7 +152,9 @@ play_launch (resolver):
   never a guessed timer.
 - **`$(var x)` in wave 1** reads the scope's own table for an include (the
   parser records it once the file has run) and, for the root, the command
-  line and then the record's final `variables`.
+  line and then the record's final `variables`. Wave 2 replaces this with the
+  configuration log wherever a record carries one; it remains the path for
+  a record without one (an older dump).
 - **`$(param <node> <name>)` with a bare node** must name a node key of this
   contract (else `param-node-unknown`, near misses named); `/<fqn>` may be
   any node of the launch tree, and its `default:` is found when a contract
@@ -140,6 +166,27 @@ play_launch (resolver):
 - **A reference error on an extension key** is reported inside the rule
   that needed the value (`settle-param-unresolved`, `extension-eval`), with
   the rule id of the reference in parentheses.
+
+## Decisions where the design is silent (wave 2)
+
+- **"Every assignment made during that file"** is the scope's span: its
+  include's arguments, its own sets and declarations, and what the files it
+  included set, including sets inside scoped groups that later ended. Two
+  assignments are the same value when they are equal as numbers (`0.5`,
+  `0.50`) or as text.
+- **A declaration that does not set** (an `<arg>` whose name is already set,
+  by the command line or an include) is not an assignment and is not
+  logged; its default is not a value the name ever had.
+- **`var-unset` says why** when the name was assigned but is not in force
+  where it is read: `(it is assigned at <let> bringup.launch.xml:12, out of
+  scope here)`.
+- **The suggestion's `@<node>`** names the contract's first node key; the
+  author picks the right one.
+- **Provenance is spelled as the file spells it**: `<let>`, `<arg>
+  default`, `include argument`, `command line`; for a `.launch.py`
+  `SetLaunchConfiguration` and `DeclareLaunchArgument default`.
+- **`@<node>` takes a node key of the contract or a `/<fqn>`**, as
+  `$(param <node> …)` does, and names near misses when it matches neither.
 
 ## Deviations
 
@@ -167,6 +214,20 @@ play_launch (resolver):
   `decel`/`jerk` keys): it is the twin `migrate` must reproduce from
   `contract_spelling_deprecated`, and `migrate` now rewrites the bare form.
   Its findings and totals are unchanged.
+
+- **The Python frontend records no line numbers** (a `.launch.py` action
+  carries none; the Python dumper sees `launch`'s actions, which carry none
+  either), so its provenance names the file alone.
+- **A composable node has no `param_origins`**: its parameters reach the
+  record as resolved values, and `--explain` names its launch file only.
+- **W2.4's Python half is three tests, not the same test run twice**: the
+  pyexec frontend through `contract_values_let_py`, the Python dumper
+  through `resolve --parser python` on the XML fixture (both refusals, no
+  other error), and the parser matrix's `.launch.py` cases.
+- **The Python dumper gained the log too**, which the plan did not list:
+  without it `resolve --parser python` read every `<let>` as `var-unset`,
+  since that dumper records no configurations at all, and the two parsers'
+  models would disagree on any contract reading one.
 
 ## Evidence (wave 1)
 
@@ -196,6 +257,37 @@ two failures in its first run, both expectations this phase changes
 `ext-param-read` rewrites; and `settle-param-unresolved` naming the parameter
 through `param-unset`'s message); both updated, and `manifest_check` (94
 tests) and the resolver's 304 tests rerun green.
+
+## Evidence (wave 2)
+
+`rt_av_demo` with `lidar_hz:=100`, `check --explain`:
+
+```text
+  /safety/lidar_driver paths.sample.trigger.timer.rate_hz = 100 Hz  <- $(param rate_hz) Hz
+                                                                    <- /safety/lidar_driver rate_hz = 100 Hz, <param> bringup.launch.xml:29 = $(var lidar_hz)
+                                                                    <- lidar_hz = 100, command line
+```
+
+`contract_values_let`, the same verdicts from the Rust parser, the pyexec
+frontend (`contract_values_let_py`) and the Python dumper:
+
+```text
+error[var-ambiguous]: bringup.contract.yaml:17: `$(var timeout) s` was assigned 0.5 (<let> bringup.launch.xml:7) and 2.0 (<let> bringup.launch.xml:9). Name the point: `$(var timeout @gate)`.
+error[var-unset]: bringup.contract.yaml:22: `$(var inner_hz) Hz`: no launch configuration `inner_hz` is in force where bringup.launch.xml finishes (it is assigned at <let> bringup.launch.xml:12, out of scope here)
+  /gate sub.cmd.max_age = 500 ms        <- $(var timeout @gate) s
+  /other sub.cmd.min_rate_hz = 0.5 Hz   <- 1 / $(var timeout @other) s
+  /inner pub.status.min_rate_hz = 5 Hz  <- $(var inner_hz @inner) Hz
+  /source pub.cmd.min_rate_hz = 20 Hz   <- $(var child_hz) Hz
+                                        <- child_hz = 20 Hz, <let> child.launch.xml:5
+```
+
+Gates: `just check` failed once on ruff (B905, a `zip()` without
+`strict=` in the dumper), fixed and clean on the rerun. `just test-all`
+green: parity gates (simple_test, container_events, lifecycle,
+rt_workspace, autoware; lifecycle_autostart skips on Humble), stock parity
+18 of 18, integration 321 of 321, resolver 308, parser 563/517/473 by
+suite. The IR suite caught two `LaunchTraverser` literals missing the new
+`include_line` field, #0040's shape again.
 
 ## Out of scope
 

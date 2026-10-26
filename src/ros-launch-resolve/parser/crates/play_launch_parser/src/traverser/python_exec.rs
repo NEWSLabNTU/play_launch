@@ -119,6 +119,25 @@ impl PythonIncludeHost<'_> {
     fn take_in(&mut self, mut produced: Produced) {
         FileSubstitutions::of(&self.path).rewrite_produced(&mut produced);
         let ctx = &mut self.traverser.context;
+        // Phase 94: the batch's configuration events join the log here, and
+        // each capture's position, counted into the batch, becomes one in
+        // the whole log.
+        let base = ctx.config_log_len();
+        ctx.extend_config_log(produced.config_events);
+        let at = |seq: &mut Option<usize>| {
+            if let Some(s) = seq.as_mut() {
+                *s += base;
+            }
+        };
+        for n in &mut produced.nodes {
+            at(&mut n.config_seq);
+        }
+        for c in &mut produced.containers {
+            at(&mut c.config_seq);
+        }
+        for l in &mut produced.load_nodes {
+            at(&mut l.config_seq);
+        }
         ctx.captured_nodes_mut().extend(produced.nodes);
         ctx.captured_containers_mut().extend(produced.containers);
         ctx.captured_load_nodes_mut().extend(produced.load_nodes);

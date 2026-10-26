@@ -335,6 +335,7 @@ impl ContainerAction {
 
         Ok(ComposableNodeContainerRecord {
             start_delay_secs: None,
+            config_seq: Some(context.config_log_len()),
             args: arguments,
             cmd,
             env,
@@ -430,6 +431,8 @@ impl ContainerAction {
 
         Ok(NodeRecord {
             start_delay_secs: None,
+            config_seq: Some(context.config_log_len()),
+            param_origins: Vec::new(),
             on_exit_shutdown: self.on_exit_shutdown,
             // The container process itself; a lifecycle composable is
             // modelled from its contract, not here.
@@ -693,6 +696,7 @@ impl ComposableNodeAction {
 
         LoadNodeRecord {
             start_delay_secs: None,
+            config_seq: Some(context.config_log_len()),
             package,
             plugin,
             target_container_name,

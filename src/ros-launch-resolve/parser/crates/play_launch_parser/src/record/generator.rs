@@ -318,10 +318,19 @@ impl CommandGenerator {
         // a launch temp params file which expands into Inline entries exactly
         // as the split path above does (Python dumper parity).
         let mut node_param_sources: Vec<crate::record::types::ParamSource> = Vec::new();
+        let mut param_origins: Vec<crate::record::ParamOrigin> = Vec::new();
         for src in &node.param_sources {
             match src {
                 crate::actions::node::ParamSourceSpec::Inline(p) => {
                     let (name, value) = p.evaluate(context)?;
+                    if let Some((written, line)) = &p.written {
+                        param_origins.push(crate::record::ParamOrigin {
+                            name: name.clone(),
+                            written: written.clone(),
+                            file: context.current_filename(),
+                            line: *line,
+                        });
+                    }
                     node_param_sources
                         .push(crate::record::types::ParamSource::Inline { name, value });
                 }
@@ -449,6 +458,8 @@ impl CommandGenerator {
 
         Ok(NodeRecord {
             start_delay_secs: None,
+            config_seq: Some(context.config_log_len()),
+            param_origins,
             on_exit_shutdown: node.on_exit_shutdown,
             lifecycle: node.lifecycle.then_some(true),
             lifecycle_autostart: node
@@ -621,6 +632,8 @@ impl CommandGenerator {
 
         Ok(NodeRecord {
             start_delay_secs: None,
+            config_seq: Some(context.config_log_len()),
+            param_origins: Vec::new(),
             on_exit_shutdown: exec.on_exit_shutdown,
             lifecycle: None,
             lifecycle_autostart: None,

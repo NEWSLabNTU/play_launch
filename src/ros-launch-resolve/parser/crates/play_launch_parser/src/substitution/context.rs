@@ -154,6 +154,9 @@ pub struct LaunchContext {
     /// Actions the Python frontend recognised but could not model, as
     /// `(action, detail)`. Drained by `execute_python_file`.
     unsupported_actions: Vec<(String, Option<String>)>,
+    /// Every change to the launch configurations, in order (phase 94).
+    /// Local like the captures: a member captured here records its index.
+    config_log: Vec<crate::record::ConfigEvent>,
 }
 
 impl LaunchContext {
@@ -174,6 +177,7 @@ impl LaunchContext {
             unsupported_actions: Vec::new(),
             captured_declarations: Vec::new(),
             opaque_depth: 0,
+            config_log: Vec::new(),
         }
     }
 
@@ -208,6 +212,7 @@ impl LaunchContext {
             unsupported_actions: Vec::new(),
             captured_declarations: Vec::new(),
             opaque_depth: 0,
+            config_log: Vec::new(),
         }
     }
 
@@ -278,6 +283,52 @@ impl LaunchContext {
             .insert(name, vec![Substitution::Text(value)]);
     }
 
+    /// Set a configuration as a launch action does (phase 94): stored
+    /// verbatim, like [`Self::set_configuration_literal`], and logged with
+    /// what set it and where, for a contract's `$(var)`. `origin` is `cli`,
+    /// `arg`, `let`, `include` or `group`.
+    pub fn assign_configuration(
+        &mut self,
+        name: String,
+        value: String,
+        origin: &str,
+        line: Option<usize>,
+    ) {
+        let mut ev = crate::record::ConfigEvent::set(&name, &value, origin);
+        ev.file = self.current_filename();
+        ev.line = line;
+        self.config_log.push(ev);
+        self.set_configuration_literal(name, value);
+    }
+
+    /// Log a configuration event that does not set a value (phase 94).
+    pub fn log_config_event(&mut self, kind: crate::record::ConfigEventKind) {
+        let mut ev = crate::record::ConfigEvent::bare(kind);
+        ev.file = self.current_filename();
+        self.config_log.push(ev);
+    }
+
+    /// How many configuration events have been logged here.
+    pub fn config_log_len(&self) -> usize {
+        self.config_log.len()
+    }
+
+    /// The configuration events logged here.
+    pub fn config_log(&self) -> &[crate::record::ConfigEvent] {
+        &self.config_log
+    }
+
+    /// Take the configuration events, leaving none.
+    pub fn take_config_log(&mut self) -> Vec<crate::record::ConfigEvent> {
+        std::mem::take(&mut self.config_log)
+    }
+
+    /// Append events another context logged (a `.launch.py`'s, at a
+    /// hand-over).
+    pub fn extend_config_log(&mut self, events: Vec<crate::record::ConfigEvent>) {
+        self.config_log.extend(events);
+    }
+
     /// Whether the configuration is set at all — present, whatever it
     /// resolves to.
     pub fn has_configuration(&self, name: &str) -> bool {
@@ -286,6 +337,10 @@ impl LaunchContext {
 
     /// launch's `UnsetLaunchConfiguration`.
     pub fn unset_configuration(&mut self, name: &str) {
+        let mut ev = crate::record::ConfigEvent::bare(crate::record::ConfigEventKind::Unset);
+        ev.name = Some(name.to_string());
+        ev.file = self.current_filename();
+        self.config_log.push(ev);
         self.local_configurations.remove(name);
     }
 
@@ -521,7 +576,8 @@ impl LaunchContext {
     /// returns `[SetLaunchConfiguration(..)..., description]`), so whatever
     /// the included file declares or `<let>`s is visible to the includer's
     /// later actions unless a group around the include pops it.
-    pub fn push_launch_configurations(&self) -> ConfigurationSnapshot {
+    pub fn push_launch_configurations(&mut self) -> ConfigurationSnapshot {
+        self.log_config_event(crate::record::ConfigEventKind::Push);
         ConfigurationSnapshot {
             configurations: self.local_configurations.clone(),
             environment: self.local_environment.clone(),
@@ -536,6 +592,12 @@ impl LaunchContext {
     /// configurations too — and only `keep` is set again. `GroupAction`
     /// emits it inside its push/pop when `forwarding=False`.
     pub fn reset_launch_configurations(&mut self, keep: Vec<(String, String)>) {
+        self.log_config_event(crate::record::ConfigEventKind::Reset);
+        for (k, v) in &keep {
+            let mut ev = crate::record::ConfigEvent::set(k, v, "group");
+            ev.file = self.current_filename();
+            self.config_log.push(ev);
+        }
         self.local_configurations.clear();
         self.parent = None;
         self.namespace_stack = vec!["/".to_string()];
@@ -571,6 +633,7 @@ impl LaunchContext {
     /// Put back what [`Self::push_launch_configurations`] saved, discarding
     /// every configuration and environment change made since.
     pub fn pop_launch_configurations(&mut self, snapshot: ConfigurationSnapshot) {
+        self.log_config_event(crate::record::ConfigEventKind::Pop);
         self.local_configurations = snapshot.configurations;
         self.local_environment = snapshot.environment;
         self.namespace_stack = snapshot.namespace_stack;
@@ -861,17 +924,20 @@ impl LaunchContext {
     }
 
     /// Capture a node definition
-    pub fn capture_node(&mut self, node: NodeCapture) {
+    pub fn capture_node(&mut self, mut node: NodeCapture) {
+        node.config_seq.get_or_insert(self.config_log.len());
         self.captured_nodes.push(node);
     }
 
     /// Capture a container definition
-    pub fn capture_container(&mut self, container: ContainerCapture) {
+    pub fn capture_container(&mut self, mut container: ContainerCapture) {
+        container.config_seq.get_or_insert(self.config_log.len());
         self.captured_containers.push(container);
     }
 
     /// Capture a composable node load operation
-    pub fn capture_load_node(&mut self, load_node: LoadNodeCapture) {
+    pub fn capture_load_node(&mut self, mut load_node: LoadNodeCapture) {
+        load_node.config_seq.get_or_insert(self.config_log.len());
         self.captured_load_nodes.push(load_node);
     }
 

@@ -139,6 +139,7 @@ impl ComposableNodeContainer {
             env_vars: n.env,
             global_params: Some(n.global_params),
             scope_id: None,
+            config_seq: None,
             start_delay_secs: None,
             on_exit_shutdown: this.borrow().on_exit_shutdown,
             respawn,

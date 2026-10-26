@@ -230,6 +230,7 @@ impl LaunchTraverser {
             default.as_deref(),
             description,
             choices.as_deref(),
+            None,
         )?;
 
         Ok(())
@@ -270,7 +271,11 @@ impl LaunchTraverser {
             }
         }
 
-        let include = IncludeAction { file, args };
+        let include = IncludeAction {
+            file,
+            args,
+            line: None,
+        };
         self.process_include(&include)
     }
 
@@ -528,7 +533,7 @@ impl LaunchTraverser {
 
         log::debug!("YAML setting {} = {} in context", name, resolved_value);
         self.context
-            .set_configuration_literal(name.to_string(), resolved_value);
+            .assign_configuration(name.to_string(), resolved_value, "let", None);
         Ok(())
     }
 
@@ -1059,6 +1064,7 @@ fn yaml_parameters(param_map: &Mapping) -> Result<Vec<Parameter>> {
         Some(Value::Sequence(items)) => {
             let list = items.iter().map(&native).collect::<Result<Vec<_>>>()?;
             Ok(vec![Parameter {
+                written: None,
                 name,
                 value: Vec::new(),
                 value_type,
@@ -1066,6 +1072,7 @@ fn yaml_parameters(param_map: &Mapping) -> Result<Vec<Parameter>> {
             }])
         }
         Some(v) => Ok(vec![Parameter {
+            written: None,
             value: native(v)?,
             name,
             value_type,

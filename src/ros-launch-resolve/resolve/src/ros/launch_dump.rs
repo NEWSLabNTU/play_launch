@@ -36,6 +36,12 @@ pub struct ScopeEntry {
     #[serde(default)]
     pub args: HashMap<String, String>,
     pub parent: Option<usize>,
+    /// The entries of [`LaunchDump::config_log`] made while this file ran,
+    /// `[start, end)` (phase 94). Mirrors the parser's
+    /// `record::ScopeEntry::config_span`; absent from the Python dumper and
+    /// from older records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_span: Option<(usize, usize)>,
 }
 
 impl ScopeEntry {
@@ -92,6 +98,52 @@ pub struct LaunchDump {
     /// launch tree whose nodes it had thrown away.
     #[serde(default)]
     pub dropped_actions: Vec<DroppedAction>,
+    /// Every change to the launch configurations, in order (phase 94):
+    /// what a contract's `$(var)` reads. Mirrors the parser's
+    /// `record::RecordJson::config_log`; empty from the Python dumper.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub config_log: Vec<ConfigEvent>,
+}
+
+/// One change to the launch configurations (phase 94). Mirrors the parser's
+/// `record::ConfigEvent`.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct ConfigEvent {
+    pub kind: ConfigEventKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    /// `cli`, `arg`, `let`, `include` or `group`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+}
+
+/// What a [`ConfigEvent`] does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigEventKind {
+    Set,
+    Unset,
+    Push,
+    Pop,
+    Reset,
+}
+
+/// Where an inline `<param>` whose value is a substitution was written
+/// (phase 94). Mirrors the parser's `record::ParamOrigin`.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct ParamOrigin {
+    pub name: String,
+    pub written: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
 }
 
 impl LaunchDump {
@@ -111,6 +163,7 @@ impl LaunchDump {
             variables: HashMap::new(),
             scopes: Vec::new(),
             dropped_actions: Vec::new(),
+            config_log: Vec::new(),
         }
     }
 }
@@ -170,6 +223,10 @@ pub struct NodeContainerRecord {
     /// before `<timer>` was supported.
     #[serde(default)]
     pub start_delay_secs: Option<f64>,
+    /// Phase 94: how many entries of [`LaunchDump::config_log`] had happened
+    /// where this member was declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_seq: Option<usize>,
 }
 
 /// phase-54 (issue 0007) — one parameter source in ROS's ordered model.
@@ -246,6 +303,14 @@ pub struct NodeRecord {
     /// before `<timer>` was supported.
     #[serde(default)]
     pub start_delay_secs: Option<f64>,
+    /// Phase 94: how many entries of [`LaunchDump::config_log`] had happened
+    /// where this member was declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_seq: Option<usize>,
+    /// Phase 94: where each inline `<param>` whose value is a substitution
+    /// was written.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_origins: Vec<ParamOrigin>,
 }
 
 /// The serialization format for a composable node record.
@@ -283,6 +348,10 @@ pub struct ComposableNodeRecord {
     /// before `<timer>` was supported.
     #[serde(default)]
     pub start_delay_secs: Option<f64>,
+    /// Phase 94: how many entries of [`LaunchDump::config_log`] had happened
+    /// where this member was declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_seq: Option<usize>,
 }
 
 /// Read an deserialize the launch record dump.

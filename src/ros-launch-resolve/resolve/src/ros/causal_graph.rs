@@ -897,6 +897,7 @@ paths:
         std::fs::write(dest_dir.join("synthetic.contract.yaml"), yaml).unwrap();
 
         let dump = LaunchDump {
+            config_log: Default::default(),
             dropped_actions: Vec::new(),
             node: vec![],
             load_node: vec![],
@@ -905,6 +906,7 @@ paths:
             file_data: HashMap::new(),
             variables: HashMap::new(),
             scopes: vec![ScopeEntry {
+                config_span: Default::default(),
                 id: 0,
                 origin: Some(ScopeOrigin {
                     pkg: Some("synthetic_pkg".to_string()),

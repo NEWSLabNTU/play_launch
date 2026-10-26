@@ -3352,6 +3352,11 @@ RankedPlan {
     ],
     warnings: [],
 }
+== contract_values_let/launch/bringup.launch.xml
+RankedPlan {
+    items: [],
+    warnings: [],
+}
 == contract_values_node_missing/launch/bringup.launch.xml
 RankedPlan {
     items: [],

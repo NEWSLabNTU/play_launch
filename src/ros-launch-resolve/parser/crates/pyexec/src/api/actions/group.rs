@@ -81,7 +81,7 @@ impl GroupAction {
         if !scoped {
             with_launch_context(|ctx| {
                 for (k, v) in given {
-                    ctx.set_configuration_literal(k, v);
+                    ctx.assign_configuration(k, v, "group", None);
                 }
             });
             for action in &actions {
@@ -94,7 +94,7 @@ impl GroupAction {
         if forwarding {
             with_launch_context(|ctx| {
                 for (k, v) in given {
-                    ctx.set_configuration_literal(k, v);
+                    ctx.assign_configuration(k, v, "group", None);
                 }
             });
         } else {

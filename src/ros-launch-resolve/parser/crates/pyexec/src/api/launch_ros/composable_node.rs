@@ -191,6 +191,7 @@ impl ComposableNode {
                     .collect(),
             ),
             scope_id: None,
+            config_seq: None,
             start_delay_secs: None,
         });
         crate::api::visit::stamp_delay(mark);

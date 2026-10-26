@@ -45,7 +45,7 @@ impl SetLaunchConfiguration {
         let name = pyobject_to_string(py, &me.name)?;
         let value = pyobject_to_string(py, &me.value)?;
         log::debug!("Python Launch SetLaunchConfiguration: {}={}", name, value);
-        with_launch_context(|ctx| ctx.set_configuration_literal(name, value));
+        with_launch_context(|ctx| ctx.assign_configuration(name, value, "let", None));
         Ok(())
     }
 }

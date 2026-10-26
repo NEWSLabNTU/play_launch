@@ -89,6 +89,8 @@ pub struct LaunchTraverser {
     /// — a `log::warn!` was the only trace before, which is why a `<timer>`
     /// could delete a whole subtree and still exit 0.
     pub(crate) dropped_actions: Vec<record::DroppedAction>,
+    /// The line of the `<include>` whose arguments are being set (phase 94).
+    pub(crate) include_line: Option<usize>,
 }
 
 impl LaunchTraverser {
@@ -100,7 +102,7 @@ impl LaunchTraverser {
         let mut context = LaunchContext::new();
         // Apply CLI args to LaunchContext for substitution resolution
         for (k, v) in &cli_args {
-            context.set_configuration_literal(k.clone(), v.clone());
+            context.assign_configuration(k.clone(), v.clone(), "cli", None);
         }
 
         Self {
@@ -114,6 +116,7 @@ impl LaunchTraverser {
             scope_table: record::ScopeTable::new(),
             current_scope_id: 0,
             dropped_actions: Vec::new(),
+            include_line: None,
         }
     }
 

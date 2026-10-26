@@ -63,7 +63,9 @@ impl DeclareLaunchArgument {
             match &me.default_value {
                 Some(default) => {
                     let value = pyobject_to_string(py, default)?;
-                    with_launch_context(|ctx| ctx.set_configuration_literal(name.clone(), value));
+                    with_launch_context(|ctx| {
+                        ctx.assign_configuration(name.clone(), value, "arg", None)
+                    });
                 }
                 None => unset = true,
             }

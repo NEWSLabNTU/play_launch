@@ -123,6 +123,7 @@ impl LoadComposableNodeAction {
                     extra_args: node.extra_args.clone(),
                     global_params: Some(context.global_parameters().into_iter().collect()),
                     scope_id: None,
+                    config_seq: None,
                     start_delay_secs: None,
                 }
             })
@@ -193,6 +194,7 @@ impl LoadComposableNodeAction {
                 // Build LoadNodeRecord
                 LoadNodeRecord {
                     start_delay_secs: None,
+                    config_seq: Some(context.config_log_len()),
                     package,
                     plugin,
                     target_container_name: normalized_target.clone(),

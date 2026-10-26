@@ -41,6 +41,8 @@ impl NodeCapture {
                 respawn: self.respawn,
                 respawn_delay: self.respawn_delay,
                 start_delay_secs: self.start_delay_secs,
+                config_seq: self.config_seq,
+                param_origins: Vec::new(),
                 ros_args: None,
                 scope: None,
             });
@@ -100,6 +102,8 @@ impl NodeCapture {
             respawn: self.respawn,
             respawn_delay: self.respawn_delay,
             start_delay_secs: self.start_delay_secs,
+            config_seq: self.config_seq,
+            param_origins: Vec::new(),
             ros_args: (!self.ros_arguments.is_empty()).then(|| self.ros_arguments.clone()),
             scope: None,
         })
@@ -242,6 +246,7 @@ impl ContainerCapture {
             respawn_delay: self.respawn_delay,
             on_exit_shutdown: self.on_exit_shutdown,
             start_delay_secs: self.start_delay_secs,
+            config_seq: self.config_seq,
             ros_args: (!self.ros_arguments.is_empty()).then(|| self.ros_arguments.clone()),
             scope: None,
         })
@@ -283,6 +288,7 @@ impl LoadNodeCapture {
 
         Ok(LoadNodeRecord {
             start_delay_secs: self.start_delay_secs,
+            config_seq: self.config_seq,
             package: self.package.clone(),
             plugin: self.plugin.clone(),
             target_container_name: self.target_container_name.clone(),
@@ -412,6 +418,7 @@ pub fn drain_produced(ctx: &mut LaunchContext) -> crate::exchange::Produced {
         load_nodes: std::mem::take(ctx.captured_load_nodes_mut()),
         declared_arguments: std::mem::take(ctx.captured_declarations_mut()),
         unsupported: ctx.take_unsupported_actions(),
+        config_events: ctx.take_config_log(),
     }
 }
 

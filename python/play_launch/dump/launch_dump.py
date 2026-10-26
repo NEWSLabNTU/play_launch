@@ -24,6 +24,10 @@ class ScopeEntry:
     ns: str
     args: dict[str, str] = field(default_factory=dict)
     parent: int | None = None
+    # Phase 94: the entries of `LaunchDump.config_log` made while this file
+    # ran, [start, end) -- its include's arguments, its own declarations and
+    # sets, and the files it included.
+    config_span: tuple[int, int] | None = None
 
     def pkg(self) -> str | None:
         """Package name (if file scope with known package)."""
@@ -73,6 +77,9 @@ class NodeRecord:
     lifecycle_autostart: bool | None = None
     global_params: list[tuple[str, str]] | None = None  # From SetParameter action
     scope: int | None = None
+    # Phase 94: how many `config_log` entries had happened where this member
+    # was declared -- the point a contract's `$(var x @<node>)` reads at.
+    config_seq: int | None = None
 
 
 @dataclass
@@ -88,6 +95,9 @@ class LoadNodeRecord:
     extra_args: dict[str, str]
     env: list[tuple[str, str]] | None = None
     scope: int | None = None
+    # Phase 94: how many `config_log` entries had happened where this member
+    # was declared -- the point a contract's `$(var x @<node>)` reads at.
+    config_seq: int | None = None
 
 
 @dataclass
@@ -109,6 +119,9 @@ class ComposableNodeContainerRecord:
     respawn_delay: float | None = None
     global_params: list[tuple[str, str]] | None = None
     scope: int | None = None
+    # Phase 94: how many `config_log` entries had happened where this member
+    # was declared -- the point a contract's `$(var x @<node>)` reads at.
+    config_seq: int | None = None
 
 
 @dataclass
@@ -119,7 +132,30 @@ class LaunchDump:
     lifecycle_node: list[str]
     file_data: dict[str, str]
     scopes: list[ScopeEntry] = field(default_factory=list)
+    # Phase 94: every change to the launch configurations, in order.
+    config_log: list[dict] = field(default_factory=list)
     _scope_stack: list[int] = field(default_factory=list, repr=False)
+
+    def log_config(
+        self,
+        kind: str,
+        name: str | None = None,
+        value: str | None = None,
+        origin: str | None = None,
+        file: str | None = None,
+    ) -> None:
+        """Append one configuration event (`set`, `unset`, `push`, `pop`, `reset`)."""
+        event = {"kind": kind}
+        for key, v in (("name", name), ("value", value), ("origin", origin), ("file", file)):
+            if v is not None:
+                event[key] = v
+        self.config_log.append(event)
+
+    @property
+    def current_file(self) -> str | None:
+        """The launch file being run: the current scope's file."""
+        sid = self.current_scope_id
+        return self.scopes[sid].file() if sid is not None else None
 
     def push_scope(
         self,
@@ -140,6 +176,7 @@ class LaunchDump:
                 ns=ns,
                 args=args or {},
                 parent=parent,
+                config_span=(len(self.config_log), len(self.config_log)),
             )
         )
         self._scope_stack.append(scope_id)
@@ -148,7 +185,10 @@ class LaunchDump:
     def pop_scope(self) -> None:
         """Pop the current scope."""
         if self._scope_stack:
-            self._scope_stack.pop()
+            sid = self._scope_stack.pop()
+            span = self.scopes[sid].config_span
+            if span is not None:
+                self.scopes[sid].config_span = (span[0], len(self.config_log))
 
     @property
     def current_scope_id(self) -> int | None:

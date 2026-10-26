@@ -99,7 +99,7 @@ impl GroupAction {
             for (name, value) in &self.keep {
                 let name = resolve(name, context)?;
                 let value = resolve(value, context)?;
-                context.set_configuration_literal(name, value);
+                context.assign_configuration(name, value, "group", None);
             }
         }
         Ok(scope)

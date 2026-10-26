@@ -13,6 +13,8 @@ pub struct IncludeAction {
     /// Args as Vec to preserve order (later args can reference earlier ones).
     /// Values are parsed substitutions (resolved at use site in process_include).
     pub args: Vec<(String, Vec<Substitution>)>,
+    /// The line of the `<include>` (phase 94: where its arguments were set).
+    pub line: Option<usize>,
 }
 
 impl IncludeAction {
@@ -62,7 +64,11 @@ impl IncludeAction {
             }
         }
 
-        Ok(Self { file, args })
+        Ok(Self {
+            file,
+            args,
+            line: Some(entity.line_number()),
+        })
     }
 }
 

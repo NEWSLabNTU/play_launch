@@ -15,6 +15,8 @@ pub struct ArgAction {
     pub description: Option<String>,
     /// `<choice value="…"/>` children.
     pub choices: Option<Vec<String>>,
+    /// The line it was written at (phase 94: where a default came from).
+    pub line: Option<usize>,
 }
 
 impl ArgAction {
@@ -31,6 +33,7 @@ impl ArgAction {
             })
             .collect();
         Ok(Self {
+            line: Some(entity.line_number()),
             name: entity
                 .required_attr("name")?
                 .ok_or_else(|| ParseError::MissingAttribute {
@@ -52,7 +55,7 @@ impl ArgAction {
         if !context.has_configuration(&self.name)
             && let Some(v) = cli_args.get(&self.name)
         {
-            context.set_configuration_literal(self.name.clone(), v.clone());
+            context.assign_configuration(self.name.clone(), v.clone(), "cli", self.line);
         }
         let default = self
             .default
@@ -65,6 +68,7 @@ impl ArgAction {
             default.as_deref(),
             self.description.as_deref(),
             self.choices.as_deref(),
+            self.line,
         )
     }
 }
@@ -84,13 +88,14 @@ pub fn declare(
     default: Option<&[crate::substitution::Substitution]>,
     description: Option<&str>,
     choices: Option<&[String]>,
+    line: Option<usize>,
 ) -> Result<()> {
     if !context.has_configuration(name) {
         match default {
             Some(subs) => {
                 let value = crate::substitution::resolve_substitutions(subs, context)
                     .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                context.set_configuration_literal(name.to_string(), value);
+                context.assign_configuration(name.to_string(), value, "arg", line);
             }
             None => {
                 return Err(ParseError::RequiredArgumentNotProvided {
@@ -163,6 +168,7 @@ mod tests {
             default: Some("default_val".to_string()),
             description: None,
             choices: None,
+            line: None,
         };
 
         let mut context = LaunchContext::new();
@@ -181,6 +187,7 @@ mod tests {
             default: Some("default_val".to_string()),
             description: None,
             choices: None,
+            line: None,
         };
 
         let mut context = LaunchContext::new();

@@ -173,6 +173,7 @@ fn test_scope_serialization_roundtrip() {
         ns: "/".to_string(),
         args: HashMap::new(),
         parent: None,
+        config_span: None,
     });
 
     let json = record.to_json().unwrap();

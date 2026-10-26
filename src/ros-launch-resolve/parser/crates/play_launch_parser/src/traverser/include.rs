@@ -56,6 +56,7 @@ impl LaunchTraverser {
         // any argument.
         let file_path_str = resolve_substitutions(&include.file, &self.context)
             .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+        self.include_line = include.line;
         self.process_include_target(&file_path_str, IncludeArgs::Subs(&include.args))
     }
 
@@ -65,6 +66,7 @@ impl LaunchTraverser {
     /// afterwards. Returns them resolved.
     fn set_include_args(&mut self, args: IncludeArgs) -> Result<Vec<(String, String)>> {
         let mut out = Vec::new();
+        let line = self.include_line.take();
         match args {
             IncludeArgs::Subs(args) => {
                 for (key, value_subs) in args {
@@ -72,14 +74,14 @@ impl LaunchTraverser {
                         .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
                     log::trace!("  Include arg: {} = {}", key, value);
                     self.context
-                        .set_configuration_literal(key.clone(), value.clone());
+                        .assign_configuration(key.clone(), value.clone(), "include", line);
                     out.push((key.clone(), value));
                 }
             }
             IncludeArgs::Resolved(args) => {
                 for (key, value) in args {
                     self.context
-                        .set_configuration_literal(key.clone(), value.clone());
+                        .assign_configuration(key.clone(), value.clone(), "include", line);
                     out.push((key.clone(), value.clone()));
                 }
             }
@@ -165,6 +167,7 @@ impl LaunchTraverser {
         if resolved_path.extension().and_then(|s| s.to_str()) == Some("py") {
             log::debug!("Including Python launch file: {}", resolved_path.display());
 
+            let span_start = self.context.config_log_len();
             self.set_include_args(args)?;
 
             let py_file_name = resolved_path
@@ -203,6 +206,11 @@ impl LaunchTraverser {
             self.stamp_scope_since(mark, child_scope_id);
             let final_args = self.context.configurations();
             self.scope_table.update_args(child_scope_id, final_args);
+            self.scope_table.set_config_span(
+                child_scope_id,
+                span_start,
+                self.context.config_log_len(),
+            );
             self.current_scope_id = prev_scope_id;
             return result;
         }
@@ -253,6 +261,7 @@ impl LaunchTraverser {
         };
         check_required_include_args(&required, &given, &resolved_path)?;
 
+        let span_start = self.context.config_log_len();
         self.set_include_args(args)?;
 
         // Push a new scope for this include
@@ -294,6 +303,8 @@ impl LaunchTraverser {
         // has run, including the defaults its `<arg>`s supplied.
         let final_args = self.context.configurations();
         self.scope_table.update_args(child_scope_id, final_args);
+        self.scope_table
+            .set_config_span(child_scope_id, span_start, self.context.config_log_len());
         self.current_scope_id = prev_scope_id;
 
         result

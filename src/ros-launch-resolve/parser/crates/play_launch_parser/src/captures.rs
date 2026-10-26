@@ -35,6 +35,11 @@ pub struct NodeCapture {
     pub global_params: Option<Vec<(String, String)>>,
     /// Scope ID from the launch tree (set by traverser after capture)
     pub scope_id: Option<usize>,
+    /// Phase 94: how many configuration events preceded the declaration
+    /// (relative to the batch a `.launch.py` hands over, until the traverser
+    /// takes it in). Set when captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_seq: Option<usize>,
     /// Seconds to wait after launch start before this member is spawned,
     /// accumulated from the enclosing `<timer period="N">` actions. `None`
     /// for the ordinary (undelayed) case. Stamped by the traverser after the
@@ -104,6 +109,11 @@ pub struct ContainerCapture {
     pub respawn_delay: Option<f64>,
     /// Scope ID from the launch tree (set by traverser after capture)
     pub scope_id: Option<usize>,
+    /// Phase 94: how many configuration events preceded the declaration
+    /// (relative to the batch a `.launch.py` hands over, until the traverser
+    /// takes it in). Set when captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_seq: Option<usize>,
     /// Seconds to wait after launch start before this member is spawned,
     /// accumulated from the enclosing `<timer period="N">` actions. `None`
     /// for the ordinary (undelayed) case. Stamped by the traverser after the
@@ -137,6 +147,11 @@ pub struct LoadNodeCapture {
     pub global_params: Option<Vec<(String, String)>>,
     /// Scope ID from the launch tree (set by traverser after capture)
     pub scope_id: Option<usize>,
+    /// Phase 94: how many configuration events preceded the declaration
+    /// (relative to the batch a `.launch.py` hands over, until the traverser
+    /// takes it in). Set when captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_seq: Option<usize>,
     /// Seconds to wait after launch start before this member is spawned,
     /// accumulated from the enclosing `<timer period="N">` actions. `None`
     /// for the ordinary (undelayed) case. Stamped by the traverser after the

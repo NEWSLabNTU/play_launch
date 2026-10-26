@@ -176,7 +176,10 @@ impl std::error::Error for LoadError {}
 /// on nodes, `ExecuteProcess`es and containers. A v9 object reports
 /// neither, so a `.launch.py` process declared to respawn silently stays
 /// dead.
-const ABI_VERSION: u32 = 10;
+/// 11: what crosses carries the configuration log (play_launch phase 94).
+/// A v10 object reports none, so a contract's `$(var x)` would read a
+/// `.launch.py`'s assignments as never made.
+const ABI_VERSION: u32 = 11;
 
 /// What `sysconfig` says about an interpreter.
 #[derive(Debug, Clone)]

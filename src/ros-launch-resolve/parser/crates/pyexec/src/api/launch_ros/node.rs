@@ -321,6 +321,7 @@ impl NodeSpec {
             env_vars: n.env.clone(),
             global_params: Some(n.global_params.clone()),
             scope_id: None,
+            config_seq: None,
             start_delay_secs: None,
             on_exit_shutdown,
             lifecycle: lifecycle.map(|_| true),

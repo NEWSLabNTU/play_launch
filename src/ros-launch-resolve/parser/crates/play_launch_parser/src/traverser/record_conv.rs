@@ -3,7 +3,12 @@ use crate::{error::Result, record::RecordJson};
 use std::collections::HashMap;
 
 impl LaunchTraverser {
-    pub fn into_record_json(self) -> Result<RecordJson> {
+    pub fn into_record_json(mut self) -> Result<RecordJson> {
+        // Phase 94: the root file's run covers every configuration event.
+        let events = self.context.config_log_len();
+        if let Some(root) = self.scope_table.get(0).map(|s| s.id) {
+            self.scope_table.set_config_span(root, 0, events);
+        }
         // Convert captures from context to records
         let captured_count = self.context.captured_nodes().len();
         log::debug!("Processing {} captured nodes from context", captured_count);
@@ -79,6 +84,7 @@ impl LaunchTraverser {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let config_log = self.context.take_config_log();
         nodes.extend(self.records);
         containers.extend(self.containers);
         load_nodes.extend(self.load_nodes);
@@ -92,6 +98,7 @@ impl LaunchTraverser {
             variables: self.context.configurations(),
             scopes: self.scope_table.into_entries(),
             dropped_actions: self.dropped_actions,
+            config_log,
         })
     }
 }

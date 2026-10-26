@@ -3850,7 +3850,8 @@ fn contract_values_island_reads_the_launch_tree_and_keeps_its_verdicts() {
         "/handler paths.on_timer.trigger.timer.rate_hz = 10 Hz",
         "<- /handler update_rate = 10 Hz, handler.param.yaml",
         "/handler sub.availability.qos.lease_duration = 500 ms",
-        "<- /handler lease_ms = 500 ms, bringup.launch.xml",
+        "<- /handler lease_ms = 500 ms, <param> bringup.launch.xml:12 = $(var lease_ms)\n",
+        "<- lease_ms = 500, <arg> default bringup.launch.xml:8\n",
         "<- /estop_op update_rate = 30 Hz, bringup.launch.xml",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
@@ -3969,7 +3970,7 @@ fn a_contract_bound_twice_is_evaluated_per_instance() {
     let (code, out) = check_takeover("contract_values_twice", &["--explain"]);
     assert_eq!(code, 1, "{out}");
     assert_eq!(
-        out.matches("[/sensing/right]: `$(var cam_hz) Hz` reads the launch configuration `cam_hz`, which is `fast` (camera.launch.xml), not a number").count(),
+        out.matches("[/sensing/right]: `$(var cam_hz) Hz` reads the launch configuration `cam_hz`, which is `fast` (include argument bringup.launch.xml:15), not a number").count(),
         2,
         "{out}"
     );
@@ -3977,7 +3978,7 @@ fn a_contract_bound_twice_is_evaluated_per_instance() {
     for needle in [
         "camera.contract.yaml [/sensing/left]:",
         "/sensing/left/driver paths.grab.trigger.timer.rate_hz = 30 Hz",
-        "<- cam_hz = 30 Hz, camera.launch.xml",
+        "<- cam_hz = 30 Hz, include argument bringup.launch.xml:9",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
@@ -4018,7 +4019,7 @@ fn rt_av_demo_rates_follow_the_command_line() {
         "{base}"
     );
     assert!(
-        base.contains("<- lidar_hz = 50 Hz, bringup.launch.xml"),
+        base.contains("<- lidar_hz = 50 Hz, <arg> default bringup.launch.xml:"),
         "{base}"
     );
     let (code, fast) = run(&["lidar_hz:=100"]);
@@ -4026,10 +4027,125 @@ fn rt_av_demo_rates_follow_the_command_line() {
     for needle in [
         "lidar_to_brake boundary RM period=10ms",
         "/safety/lidar_driver paths.sample.trigger.timer.rate_hz = 100 Hz",
-        "<- /safety/lidar_driver rate_hz = 100 Hz, bringup.launch.xml",
+        // W2.3: the parameter followed to the `$(var)` it was written as,
+        // and on to the command line.
+        "<- /safety/lidar_driver rate_hz = 100 Hz, <param> bringup.launch.xml:29 = $(var lidar_hz)\n",
+        "<- lidar_hz = 100, command line\n",
         "/safety/brake_controller sub.obstacles.min_rate_hz = 100 Hz",
         "<- lidar_hz = 100 Hz, command line",
     ] {
         assert!(fast.contains(needle), "expected `{needle}`:\n{fast}");
     }
+}
+
+/// Run `check --explain` on a phase 94 W2 fixture's launch file.
+fn check_values_fixture(dir: &str, launch: &str) -> (i32, String) {
+    let launch = fixtures::repo_root()
+        .join("tests/fixtures")
+        .join(dir)
+        .join("launch")
+        .join(launch);
+    let out = play_launch_cmd()
+        .arg("check")
+        .arg(&launch)
+        .arg("--explain")
+        .output()
+        .expect("play_launch check runs");
+    (
+        out.status.code().unwrap_or(-1),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+/// Phase 94 W2: a `$(var)` read through the configuration log. A reassigned
+/// `<let>` is refused without a point and read at `@<node>`; a `<let>`
+/// inside a scoped group is in force only inside it; an included file's
+/// `<let>` reaches its includer, as `ros2 launch` runs them.
+#[test]
+fn a_contract_reads_the_configuration_where_a_node_was_declared() {
+    let (code, out) = check_values_fixture("contract_values_let", "bringup.launch.xml");
+    assert_eq!(code, 1, "{out}");
+    for needle in [
+        "error[var-ambiguous]: bringup.contract.yaml:17: `$(var timeout) s` was assigned 0.5 \
+         (<let> bringup.launch.xml:7) and 2.0 (<let> bringup.launch.xml:9). Name the point: \
+         `$(var timeout @gate)`.",
+        "error[var-unset]: bringup.contract.yaml:22: `$(var inner_hz) Hz`: no launch \
+         configuration `inner_hz` is in force where bringup.launch.xml finishes (it is \
+         assigned at <let> bringup.launch.xml:12, out of scope here)",
+        "/gate sub.cmd.max_age = 500 ms",
+        "<- timeout = 0.5 s, <let> bringup.launch.xml:7\n",
+        "/other sub.cmd.min_rate_hz = 0.5 Hz",
+        "<- timeout = 2 s, <let> bringup.launch.xml:9\n",
+        "/inner pub.status.min_rate_hz = 5 Hz",
+        "<- inner_hz = 5 Hz, <let> bringup.launch.xml:12\n",
+        "/source pub.cmd.min_rate_hz = 20 Hz",
+        "<- child_hz = 20 Hz, <let> child.launch.xml:5\n",
+        "(2 errors, 0 warnings)",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+}
+
+/// The same contract through the Python frontend: the configuration log
+/// crosses the pyexec boundary (C ABI 11), so a `.launch.py`'s
+/// `SetLaunchConfiguration`s, its scoped `GroupAction` and its include are
+/// read exactly as the XML file's are. The Python frontend records no line.
+#[test]
+fn a_launch_py_s_configurations_reach_the_contract() {
+    let (code, out) = check_values_fixture("contract_values_let_py", "bringup.launch.py");
+    assert_eq!(code, 1, "{out}");
+    for needle in [
+        "error[var-ambiguous]: bringup.contract.yaml:18: `$(var timeout) s` was assigned 0.5 \
+         (SetLaunchConfiguration bringup.launch.py) and 2.0 (SetLaunchConfiguration \
+         bringup.launch.py). Name the point: `$(var timeout @gate)`.",
+        "error[var-unset]: bringup.contract.yaml:23: `$(var inner_hz) Hz`",
+        "<- timeout = 0.5 s, SetLaunchConfiguration bringup.launch.py\n",
+        "<- timeout = 2 s, SetLaunchConfiguration bringup.launch.py\n",
+        "<- inner_hz = 5 Hz, SetLaunchConfiguration bringup.launch.py\n",
+        "<- child_hz = 20 Hz, SetLaunchConfiguration child.launch.py\n",
+        "(2 errors, 0 warnings)",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+}
+
+/// The Python dumper records the same configuration log (phase 94 W2), run
+/// by `launch` itself rather than our parser: the two frontends' verdicts on
+/// `contract_values_let` agree, both refusals and every value read. It
+/// records no line numbers.
+#[test]
+fn the_python_dumper_reads_the_same_configurations() {
+    let dir = fixtures::repo_root().join("tests/fixtures/contract_values_let/launch");
+    let out_dir = fixtures::repo_root().join("tmp/manifest_check");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let model = out_dir.join(format!("let_python_{}.yaml", std::process::id()));
+    let out = play_launch_cmd()
+        .args(["resolve", "--parser", "python"])
+        .arg(dir.join("bringup.launch.xml"))
+        .arg("-o")
+        .arg(&model)
+        .output()
+        .expect("play_launch resolve runs");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_ne!(out.status.code(), Some(0), "{text}");
+    for needle in [
+        "`$(var timeout) s` was assigned 0.5 (<let> bringup.launch.xml) and 2.0 (<let> \
+         bringup.launch.xml). Name the point: `$(var timeout @gate)`.",
+        "`$(var inner_hz) Hz`: no launch configuration `inner_hz` is in force where \
+         bringup.launch.xml finishes (it is assigned at <let> bringup.launch.xml, out of \
+         scope here)",
+    ] {
+        assert!(text.contains(needle), "expected `{needle}`:\n{text}");
+    }
+    // Exactly the two refusals: every `@<node>` read and the included
+    // file's `<let>` resolved.
+    assert_eq!(text.matches("error: [var-").count(), 2, "{text}");
 }

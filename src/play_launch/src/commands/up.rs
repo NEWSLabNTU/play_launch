@@ -2272,6 +2272,7 @@ fn launch_tree_from_model(
         .scopes
         .iter()
         .map(|(key, info)| ScopeEntry {
+            config_span: Default::default(),
             id: ids[key.as_str()],
             origin: Some(ScopeOrigin {
                 pkg: info.package.clone(),

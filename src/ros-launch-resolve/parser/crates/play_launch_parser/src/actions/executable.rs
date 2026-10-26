@@ -168,6 +168,7 @@ impl ExecutableAction {
             env_vars: self.environment.clone(),
             global_params: None,
             scope_id: None,
+            config_seq: None,
             start_delay_secs: None,
             on_exit_shutdown: self.on_exit_shutdown,
             lifecycle: None,

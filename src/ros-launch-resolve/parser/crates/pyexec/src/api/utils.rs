@@ -110,7 +110,7 @@ impl LaunchConfigurations {
     fn __setitem__(&self, py: Python, key: &str, value: Py<PyAny>) -> PyResult<()> {
         use play_launch_parser::bridge::with_launch_context;
         let text = pyobject_to_string(py, &value)?;
-        with_launch_context(|ctx| ctx.set_configuration_literal(key.to_string(), text));
+        with_launch_context(|ctx| ctx.assign_configuration(key.to_string(), text, "let", None));
         Ok(())
     }
 

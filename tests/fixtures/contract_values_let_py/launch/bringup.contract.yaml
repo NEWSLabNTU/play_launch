@@ -1,0 +1,36 @@
+# Phase 94 W2: `$(var)` against the configuration log, through the Python
+# frontend: the same contract as contract_values_let, read from a .launch.py.
+#   - `$(var timeout @gate)` / `@other`: the value where each node was
+#     declared (0.5 s, then 2.0 s);
+#   - `$(var timeout)`: var-ambiguous, the file assigned it twice;
+#   - `$(var inner_hz @inner)`: 5, inside the scoped group;
+#   - `$(var inner_hz)`: var-unset, the group popped it;
+#   - `$(var child_hz)`: 20, from the included file's `<let>`.
+version: 1
+nodes:
+  gate:
+    sub:
+      cmd: { max_age: $(var timeout @gate) s }
+  other:
+    sub:
+      cmd:
+        min_rate_hz: 1 / $(var timeout @other) s
+        max_age: $(var timeout) s
+  inner:
+    pub:
+      status:
+        min_rate_hz: $(var inner_hz @inner) Hz
+        max_rate_hz: $(var inner_hz) Hz
+  source:
+    pub:
+      cmd: { min_rate_hz: $(var child_hz) Hz }
+
+topics:
+  /cmd:
+    type: std_msgs/msg/String
+    pub: [source/cmd]
+    sub: [gate/cmd, other/cmd]
+  /status:
+    type: std_msgs/msg/String
+    pub: [inner/status]
+    external: sub

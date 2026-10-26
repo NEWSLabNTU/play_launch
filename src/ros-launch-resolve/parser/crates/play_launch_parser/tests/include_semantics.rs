@@ -223,3 +223,105 @@ fn python_includes_xml_like_launch() {
     let _guard = python_test_guard();
     assert_nodes("py_to_xml_args", &["c_xml_d", "p_py_set_by_child"]);
 }
+
+// ---- The configuration log agrees with what each node read (phase 94) ----
+//
+// A contract's `$(var x @<node>)` reads the launch configurations by
+// replaying the record's `config_log` up to the node's `config_seq`. Every
+// node name in these fixtures is built from `$(var …)` and is what stock
+// `ros2 launch` starts, so the replayed state must spell the same name: a
+// log that missed a push, a pop or an include's arguments would read a value
+// the node never saw.
+
+fn replay(json: &serde_json::Value, seq: usize) -> HashMap<String, String> {
+    let mut state: HashMap<String, String> = HashMap::new();
+    let mut saved: Vec<HashMap<String, String>> = Vec::new();
+    let log = json["config_log"].as_array().cloned().unwrap_or_default();
+    for ev in log.iter().take(seq) {
+        let name = ev["name"].as_str().map(str::to_string);
+        match ev["kind"].as_str().unwrap() {
+            "set" => {
+                state.insert(name.unwrap(), ev["value"].as_str().unwrap().to_string());
+            }
+            "unset" => {
+                state.remove(&name.unwrap());
+            }
+            "push" => saved.push(state.clone()),
+            "pop" => state = saved.pop().expect("a pop without a push"),
+            "reset" => state.clear(),
+            other => panic!("unknown event kind {other}"),
+        }
+    }
+    state
+}
+
+/// The name a node of these fixtures gets from the configurations `state`.
+fn name_from(state: &HashMap<String, String>, name: &str) -> String {
+    let get = |k: &str| state.get(k).cloned().unwrap_or_else(|| format!("<no {k}>"));
+    let fmt = name.split('_').nth(1).unwrap_or("");
+    if name.starts_with("c_") {
+        match state.get("parent_let") {
+            Some(p) => format!("c_{fmt}_{}_{p}", get("who")),
+            None => format!("c_{fmt}_{}", get("who")),
+        }
+    } else if name.starts_with("p_") {
+        format!("p_{fmt}_{}", get("child_let"))
+    } else {
+        let prefix = ["inside_", "after_scoped_", "after_unscoped_"]
+            .into_iter()
+            .find(|p| name.starts_with(p))
+            .unwrap_or_else(|| panic!("unexpected node {name}"));
+        format!("{prefix}{}", get("x"))
+    }
+}
+
+fn assert_log_matches(case_name: &str) {
+    let json = resolve(case_name);
+    let nodes = json["node"].as_array().unwrap();
+    assert!(!nodes.is_empty(), "{case_name}: no nodes");
+    assert!(
+        json["config_log"].as_array().is_some_and(|l| !l.is_empty()),
+        "{case_name}: no configuration log"
+    );
+    for n in nodes {
+        let name = n["name"].as_str().unwrap();
+        let seq = n["config_seq"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("{case_name}: {name} carries no config_seq"));
+        let state = replay(&json, seq as usize);
+        assert_eq!(
+            name_from(&state, name),
+            name,
+            "{case_name}: the log replayed to {name}'s position reads {state:?}"
+        );
+    }
+}
+
+#[test]
+fn the_configuration_log_replays_to_what_each_node_read() {
+    for case_name in [
+        "xml_to_xml",
+        "xml_to_yaml",
+        "yaml_to_xml",
+        "yaml_to_yaml",
+        "group_xml_to_yaml",
+        "group_yaml_to_xml",
+        "group_let_xml",
+        "group_let_yaml",
+    ] {
+        assert_log_matches(case_name);
+    }
+}
+
+#[test]
+fn the_configuration_log_replays_through_python_files() {
+    let _guard = python_test_guard();
+    for case_name in [
+        "xml_to_py",
+        "yaml_to_py",
+        "py_to_xml_args",
+        "py_to_yaml_args",
+    ] {
+        assert_log_matches(case_name);
+    }
+}

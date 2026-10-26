@@ -389,7 +389,14 @@ pub extern "C" fn play_launch_py_abi_version() -> u32 {
     // `ExecuteProcess`es and containers (play_launch #0070). Serde-defaulted,
     // so a v9 object reports neither, and a `.launch.py` process declared to
     // respawn stays dead when it exits — silently, as 8 and 9 would have.
-    10
+    //
+    // 11: what crosses carries the configuration log (play_launch phase 94):
+    // every `SetLaunchConfiguration`, argument default, group push and pop a
+    // `.launch.py` made, and each capture's place in it. Serde-defaulted, so
+    // a v10 object reports none, and a contract's `$(var x)` would read a
+    // `.launch.py`'s assignments as never made -- and accept a name it
+    // reassigned.
+    11
 }
 
 #[cfg(test)]
@@ -751,7 +758,7 @@ mod tests {
     /// launch tree that silently resolves to nothing.
     #[test]
     fn the_abi_version_moved_with_the_contract() {
-        assert_eq!(play_launch_py_abi_version(), 10);
+        assert_eq!(play_launch_py_abi_version(), 11);
     }
 
     /// `exec_file` on the old entry point is refused by name, not answered

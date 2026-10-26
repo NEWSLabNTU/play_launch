@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<!-- Phase 94 W2: launch configurations a contract reads through the
+     configuration log. `timeout` is reassigned, so the contract must name
+     the point it reads it at; `inner_hz` is set only inside a scoped group;
+     `child_hz` is set by an included file and reaches this one. -->
+<launch>
+  <let name="timeout" value="0.5"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="gate"/>
+  <let name="timeout" value="2.0"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="other"/>
+  <group scoped="true">
+    <let name="inner_hz" value="5"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="inner"/>
+  </group>
+  <include file="$(dirname)/child.launch.xml"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="source"/>
+</launch>

@@ -813,8 +813,10 @@ pub(crate) fn render_values(index: &manifest_loader::ManifestIndex) -> String {
         for (subject, value, written, reads) in &rows {
             let head = format!("{subject} = {value}");
             out.push_str(&format!("  {head:<w$}  <- {written}\n"));
-            for read in reads {
-                out.push_str(&format!("  {:<w$}  <- {read}\n", ""));
+            // A read through a chain (`<param> f:29 = $(var x)` <- `x = …,
+            // command line`) takes one line per step.
+            for step in reads.iter().flat_map(|r| r.split(" <- ")) {
+                out.push_str(&format!("  {:<w$}  <- {step}\n", ""));
             }
         }
     }
@@ -1690,6 +1692,7 @@ mod install_prefix_tests {
             .iter()
             .enumerate()
             .map(|(id, pkg)| ScopeEntry {
+                config_span: Default::default(),
                 id,
                 origin: Some(ScopeOrigin {
                     pkg: pkg.map(String::from),

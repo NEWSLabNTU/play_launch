@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 96 phases total (1–94, plus 14.5 and 30b); 75 complete, 16 in progress, 4 planned, 1 dropped — as of 2026-10-27.
+Started October 2025. 96 phases total (1–94, plus 14.5 and 30b); 76 complete, 15 in progress, 4 planned, 1 dropped — as of 2026-10-27.
 
 Phase docs through phase 28 are in `archive/`; from phase 29 on, a phase's doc
 stays in this directory whatever its status, and its status line (the first
@@ -101,7 +101,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 91 | [Domain extensions](./phase-91-domain-extensions.md) | ✅ Complete (0.19.0) | — |
 | 92 | [One PyPI package](./phase-92-one-pypi-package.md) | ✅ Complete | — |
 | 93 | [Supervised budgets](./phase-93-supervised-budgets.md) | ✅ toolchain (0.18.0/0.18.1) | 2026-10-16 |
-| 94 | [Contract values read from the launch tree](./phase-94-contract-values.md) | 🔄 wave 1 (rlm v0.2.4) | 2026-10-27 |
+| 94 | [Contract values read from the launch tree](./phase-94-contract-values.md) | ✅ (rlm v0.2.4) | 2026-10-27 |
 
 ---
 
@@ -343,12 +343,15 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     from every Jazzy-and-later wheel and a sequence-layout crash on Lyrical
     and Rolling (`rosidl_runtime_rs`). Released as 0.18.2; no consumer needed a change.
     [phase-92-one-pypi-package.md](./phase-92-one-pypi-package.md).
-  - **Phase 94** - 🔄 wave 1 (rlm v0.2.4, 2026-10-27): contract values read
+  - **Phase 94** - ✅ (rlm v0.2.4, 2026-10-27): contract values read
     from the launch tree. `$(param …) <unit>`, `$(var …) <unit>` and `$(let …)`
     in any quantity, evaluated per scope instance before any rule reads the
     contract; `rt_av_demo` reads its rates and leases, schedule byte-identical,
-    and `lidar_hz:=100` re-derives it. Wave 2 (`<let>` and the configuration
-    log) in progress. [phase-94-contract-values.md](./phase-94-contract-values.md).
+    and `lidar_hz:=100` re-derives it. Wave 2: both parsers (and the Python
+    dumper) record the configuration log, so `$(var x)` refuses a reassigned
+    name (`var-ambiguous`), `$(var x @<node>)` reads it where the node was
+    declared, and `--explain` follows a `<param>` to the assignment it read.
+    [phase-94-contract-values.md](./phase-94-contract-values.md).
   - **Phase 93** - ✅ on the toolchain side (0.18.0, 0.18.1): supervised budgets (2026-10-15). A budget
     is a bound (analysed) or supervised: `supervise: { reaction, mechanism }`
     beside `source:` (rlm), an overrun row per supervised budget checked

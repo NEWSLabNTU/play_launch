@@ -381,6 +381,8 @@ pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeR
         .collect();
 
     NodeRecord {
+        config_seq: Default::default(),
+        param_origins: Default::default(),
         executable: inst.exec.clone().unwrap_or_default(),
         package: inst.pkg.clone(),
         // `on_exit=Shutdown()` rides on the model (#0063), so a node started
@@ -488,6 +490,9 @@ impl NodeCommandLine {
             start_delay_secs: _,
             global_params,
             scope: _,
+            // What a contract reads (phase 94), never part of the command.
+            config_seq: _,
+            param_origins: _,
             param_sources,
         } = record;
 

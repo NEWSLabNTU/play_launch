@@ -652,6 +652,7 @@ pub fn prepare_composable_node_contexts_from_model(
         });
 
         let record = ComposableNodeRecord {
+            config_seq: Default::default(),
             package: inst.pkg.clone().unwrap_or_default(),
             plugin: inst.plugin.clone().unwrap_or_default(),
             target_container_name: inst.container.clone().unwrap_or_default(),

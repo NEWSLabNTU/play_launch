@@ -77,8 +77,12 @@ impl LaunchTraverser {
                         declare_arg.name,
                         resolved_default
                     );
-                    self.context
-                        .set_configuration_literal(declare_arg.name, resolved_default);
+                    self.context.assign_configuration(
+                        declare_arg.name,
+                        resolved_default,
+                        "arg",
+                        Some(entity.line_number()),
+                    );
                 }
             }
             // `<lifecycle_node>` is `<node>` plus the lifecycle marker and
@@ -182,8 +186,12 @@ impl LaunchTraverser {
                     let_action.name,
                     resolved_value
                 );
-                self.context
-                    .set_configuration_literal(let_action.name, resolved_value);
+                self.context.assign_configuration(
+                    let_action.name,
+                    resolved_value,
+                    "let",
+                    Some(entity.line_number()),
+                );
             }
             "set_env" | "set-env" => {
                 let set_env = SetEnvAction::from_entity(entity)?;

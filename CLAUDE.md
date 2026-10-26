@@ -695,6 +695,26 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-27**: **A contract reads its numbers from the launch tree**
+  (phase 94, rlm v0.2.4; `ros/contract_values.rs`). `$(param …) <unit>`,
+  `$(var … [@<node>]) <unit>` and `$(let …)` are evaluated per scope
+  instance BEFORE any rule reads the index: rlm's parser keeps each as an
+  expression and leaves the key absent, and the contract is parsed a second
+  time with the numbers in place, so no rule sees an expression. A
+  configuration has no single value, so both parsers record a
+  configuration log (`config_log`, each record's `config_seq`, each scope's
+  `config_span`) and `$(var x)` is refused as `var-ambiguous` when the file
+  assigned `x` twice. Four things a later change must keep: every
+  assignment in `LaunchContext` goes through `assign_configuration` (a
+  `set_configuration_literal` added elsewhere drops out of the log, and the
+  replay test in `include_semantics.rs`, which checks the log against node
+  names stock `ros2 launch` starts, is what notices); the Python dumper logs
+  too (`dump/visitor/action.py`), because it recorded no configurations at
+  all and `--parser python` read every `<let>` as unset; a field census
+  pattern names each new reader, or `just check` calls `lets`/`value_refs`
+  write-only; and `rt_av_demo` had not loaded on `main` since 0.20 made an
+  implicit extension an error, which nothing ran to notice.
+
 - **2026-10-26**: **A contract acknowledges a finding** (phase 85 D8, rlm
   v0.2.3, `ros/acknowledge.rs`). A root `acknowledged: [{ rule, at,
   reason }]` moves a matching warning or info out of the diagnostic lists

@@ -21,11 +21,14 @@
 //! - `param-not-number`: the value is a string, a list or a boolean;
 //! - `param-dimension`: the value's dimension is not the key's (rlm);
 //! - `var-unset`: no launch file sets the configuration;
+//! - `var-ambiguous`: the contract's launch file assigned the configuration
+//!   more than one value, so "the value" names none of them; `$(var x
+//!   @<node>)` reads the one in force where the node was declared;
 //! - `value-range`: a negative duration, a rate that is not positive, a
 //!   count that is not whole (rlm).
 
 use super::{
-    launch_dump::{LaunchDump, ScopeEntry},
+    launch_dump::{ConfigEvent, ConfigEventKind, LaunchDump, ParamOrigin, ScopeEntry},
     manifest_loader::{ManifestIndex, resolve_node_fqn},
 };
 use ros_launch_manifest_check::{Diagnostic, Severity};
@@ -34,6 +37,7 @@ use ros_launch_manifest_types::{
     parse::ParseError,
     values::{self, Lookup, ParamNode, Read, RefAt, Resolution},
 };
+use std::collections::HashMap;
 
 /// The launch tree one scope instance of a contract reads.
 pub(crate) struct ScopeLookup<'a> {
@@ -101,6 +105,276 @@ impl ScopeLookup<'_> {
         }
         out
     }
+}
+
+impl ScopeLookup<'_> {
+    /// A `$(var)` read from the configuration log (phase 94 W2): the state
+    /// where the contract's launch file finished, refused when that file
+    /// assigned the name more than one value, or, with `@<node>`, the state
+    /// where the node was declared.
+    fn var_from_log(&self, at: &RefAt, name: &str, node: Option<&str>) -> Read {
+        let log = &self.index.launch_config_log;
+        let file = self.scope.file().unwrap_or("the launch file").to_string();
+        let (state, place) = match node {
+            Some(n) => {
+                let fqn = if n.starts_with('/') {
+                    n.to_string()
+                } else if self.manifest.nodes.contains_key(n) {
+                    self.fqn_of(n)
+                } else {
+                    let near = near_misses(n, self.manifest.nodes.keys().map(String::as_str));
+                    return Read::Error {
+                        code: "param-node-unknown",
+                        message: format!(
+                            "`{}`: `{n}` is not a node of this contract{}",
+                            at.written,
+                            if near.is_empty() {
+                                String::new()
+                            } else {
+                                format!("; did you mean {}?", or_list(&near))
+                            }
+                        ),
+                    };
+                };
+                let Some(&seq) = self.index.launch_config_seq.get(&fqn) else {
+                    let near = near_misses(
+                        &fqn,
+                        self.index.launch_config_seq.keys().map(String::as_str),
+                    );
+                    return Read::Error {
+                        code: "param-node-unknown",
+                        message: format!(
+                            "`{}`: the launch tree starts no node {fqn}{}",
+                            at.written,
+                            if near.is_empty() {
+                                String::new()
+                            } else {
+                                format!("; did you mean {}?", or_list(&near))
+                            }
+                        ),
+                    };
+                };
+                (config_state(log, seq), format!("where {fqn} was declared"))
+            }
+            None => {
+                let (start, end) = self.scope.config_span.unwrap_or((0, log.len()));
+                let assigned: Vec<&ConfigEvent> = log[start.min(log.len())..end.min(log.len())]
+                    .iter()
+                    .filter(|e| e.kind == ConfigEventKind::Set && e.name.as_deref() == Some(name))
+                    .collect();
+                let mut distinct: Vec<&ConfigEvent> = Vec::new();
+                for e in &assigned {
+                    if !distinct.iter().any(|d| same_value(d, e)) {
+                        distinct.push(e);
+                    }
+                }
+                if distinct.len() > 1 {
+                    let listed: Vec<String> = assigned
+                        .iter()
+                        .map(|e| {
+                            format!("{} ({})", e.value.as_deref().unwrap_or(""), assigned_at(e))
+                        })
+                        .collect();
+                    let point = self
+                        .manifest
+                        .nodes
+                        .keys()
+                        .next()
+                        .map(String::as_str)
+                        .unwrap_or("<node>");
+                    return Read::Error {
+                        code: "var-ambiguous",
+                        message: format!(
+                            "`{}` was assigned {}. Name the point: `$(var {name} @{point})`.",
+                            at.written,
+                            and_list(&listed)
+                        ),
+                    };
+                }
+                (config_state(log, end), format!("where {file} finishes"))
+            }
+        };
+        match state.get(name) {
+            Some(ev) => {
+                let text = ev.value.clone().unwrap_or_default();
+                match text.trim().parse::<f64>() {
+                    Ok(raw) if raw.is_finite() => Read::Value {
+                        raw,
+                        at: assigned_at(ev),
+                        node: None,
+                    },
+                    _ => Read::Error {
+                        code: "param-not-number",
+                        message: format!(
+                            "`{}` reads the launch configuration `{name}`, which is `{text}` \
+                             ({}), not a number",
+                            at.written,
+                            assigned_at(ev)
+                        ),
+                    },
+                }
+            }
+            None => {
+                let mut names: Vec<&str> = state.keys().map(String::as_str).collect();
+                names.sort_unstable();
+                let near = near_misses(name, names.into_iter());
+                // Assigned, but not in force here: inside a scoped group
+                // that ended, or after the point named.
+                let elsewhere: Vec<String> = log
+                    .iter()
+                    .filter(|e| e.kind == ConfigEventKind::Set && e.name.as_deref() == Some(name))
+                    .map(assigned_at)
+                    .collect();
+                Read::Error {
+                    code: "var-unset",
+                    message: format!(
+                        "`{}`: {}{}",
+                        at.written,
+                        if elsewhere.is_empty() {
+                            format!("no launch file sets the configuration `{name}` {place}")
+                        } else {
+                            format!(
+                                "no launch configuration `{name}` is in force {place} (it is \
+                                 assigned at {}, out of scope here)",
+                                elsewhere.join(", ")
+                            )
+                        },
+                        if near.is_empty() {
+                            String::new()
+                        } else {
+                            format!("; did you mean {}?", or_list(&near))
+                        }
+                    ),
+                }
+            }
+        }
+    }
+}
+
+/// `a`, `a and b`, `a, b and c`.
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [head @ .., last] => format!("{} and {last}", head.join(", ")),
+    }
+}
+
+/// Whether two assignments gave the same value: numerically when both are
+/// numbers (`0.5` and `0.50`), else as text.
+fn same_value(a: &ConfigEvent, b: &ConfigEvent) -> bool {
+    let (x, y) = (
+        a.value.as_deref().unwrap_or("").trim(),
+        b.value.as_deref().unwrap_or("").trim(),
+    );
+    match (x.parse::<f64>(), y.parse::<f64>()) {
+        (Ok(p), Ok(q)) => p == q,
+        _ => x == y,
+    }
+}
+
+/// The launch configurations in force after the first `end` events of
+/// `log`, each with the event that set it. A scoped group's push saves
+/// them and its pop puts them back; a reset clears them.
+pub(crate) fn config_state(log: &[ConfigEvent], end: usize) -> HashMap<String, &ConfigEvent> {
+    let mut state: HashMap<String, &ConfigEvent> = HashMap::new();
+    let mut saved: Vec<HashMap<String, &ConfigEvent>> = Vec::new();
+    for ev in &log[..end.min(log.len())] {
+        match ev.kind {
+            ConfigEventKind::Set => {
+                if let Some(n) = &ev.name {
+                    state.insert(n.clone(), ev);
+                }
+            }
+            ConfigEventKind::Unset => {
+                if let Some(n) = &ev.name {
+                    state.remove(n);
+                }
+            }
+            ConfigEventKind::Push => saved.push(state.clone()),
+            ConfigEventKind::Pop => {
+                if let Some(s) = saved.pop() {
+                    state = s;
+                }
+            }
+            ConfigEventKind::Reset => state.clear(),
+        }
+    }
+    state
+}
+
+/// Where an assignment was made, for a message or `--explain`:
+/// `command line`, `<let> bringup.launch.xml:7`, `<arg> default
+/// bringup.launch.xml:3`, `include argument parent.launch.xml:12`,
+/// `SetLaunchConfiguration bringup.launch.py` (the Python frontend records
+/// no line).
+pub(crate) fn assigned_at(ev: &ConfigEvent) -> String {
+    // Named as the file spells it: a `.launch.py` has no `<let>`.
+    let py = ev.file.as_deref().is_some_and(|f| f.ends_with(".py"));
+    let what = match (ev.origin.as_deref(), py) {
+        (Some("cli"), _) => return "command line".to_string(),
+        (Some("arg"), false) => "<arg> default",
+        (Some("arg"), true) => "DeclareLaunchArgument default",
+        (Some("let"), false) => "<let>",
+        (Some("let"), true) => "SetLaunchConfiguration",
+        (Some("include"), _) => "include argument",
+        (Some("group"), false) => "group",
+        (Some("group"), true) => "GroupAction",
+        _ => "set",
+    };
+    match (&ev.file, ev.line) {
+        (Some(f), Some(l)) => format!("{what} {f}:{l}"),
+        (Some(f), None) => format!("{what} {f}"),
+        _ => what.to_string(),
+    }
+}
+
+/// The names a substitution text reads with `$(var <name>)`, in order.
+fn var_names(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(i) = rest.find("$(var ") {
+        rest = &rest[i + 6..];
+        let name = rest
+            .split(|c: char| c.is_whitespace() || c == ')')
+            .next()
+            .unwrap_or("");
+        if !name.is_empty() && !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
+}
+
+/// What an inline `<param>` written as a substitution read (phase 94
+/// W2.3): `<param> bringup.launch.xml:29 = $(var lidar_hz)`, then each
+/// configuration it names as it stood where the node was declared.
+pub(crate) fn param_chain(
+    dump: &LaunchDump,
+    origin: &ParamOrigin,
+    seq: Option<usize>,
+) -> Vec<String> {
+    let site = match (&origin.file, origin.line) {
+        (Some(f), Some(l)) => format!("{f}:{l}"),
+        (Some(f), None) => f.clone(),
+        _ => "the launch file".to_string(),
+    };
+    let mut out = vec![format!("<param> {site} = {}", origin.written)];
+    if let Some(seq) = seq
+        && !dump.config_log.is_empty()
+    {
+        let state = config_state(&dump.config_log, seq);
+        for name in var_names(&origin.written) {
+            if let Some(ev) = state.get(name) {
+                out.push(format!(
+                    "{name} = {}, {}",
+                    ev.value.as_deref().unwrap_or(""),
+                    assigned_at(ev)
+                ));
+            }
+        }
+    }
+    out
 }
 
 impl Lookup for ScopeLookup<'_> {
@@ -186,7 +460,7 @@ impl Lookup for ScopeLookup<'_> {
                     at: if lp.at.is_empty() {
                         "the launch tree".to_string()
                     } else {
-                        lp.at.clone()
+                        lp.provenance()
                     },
                     node: Some(fqn),
                 },
@@ -256,14 +530,19 @@ impl Lookup for ScopeLookup<'_> {
     }
 
     fn var(&self, at: &RefAt, name: &str, node: Option<&str>) -> Read {
+        if !self.index.launch_config_log.is_empty() {
+            return self.var_from_log(at, name, node);
+        }
         if let Some(n) = node {
-            // Wave 2 reads the configuration log; until then the point a
-            // value is read at cannot be told apart from the file's end.
+            // Without the configuration log (the Python dumper records
+            // none) the point a value is read at cannot be told apart from
+            // the file's end.
             return Read::Error {
                 code: "var-ambiguous",
                 message: format!(
                     "`{}`: reading `{name}` where `{n}` was declared needs the launch \
-                     configuration log, which this parser does not record",
+                     configuration log, which the Python launch dumper does not record; \
+                     use the default parser",
                     at.written
                 ),
             };
@@ -457,4 +736,91 @@ pub(crate) fn ext_value(
         contract_file: &file,
     };
     m.manifest.evaluate_text(text, key, want, node, &lookup)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn set(name: &str, value: &str, origin: &str, line: usize) -> ConfigEvent {
+        ConfigEvent {
+            kind: ConfigEventKind::Set,
+            name: Some(name.into()),
+            value: Some(value.into()),
+            origin: Some(origin.into()),
+            file: Some("bringup.launch.xml".into()),
+            line: Some(line),
+        }
+    }
+
+    fn bare(kind: ConfigEventKind) -> ConfigEvent {
+        ConfigEvent {
+            kind,
+            name: None,
+            value: None,
+            origin: None,
+            file: None,
+            line: None,
+        }
+    }
+
+    /// A scoped group's pop puts back what its push saved; a reset clears.
+    #[test]
+    fn the_state_replays_groups_and_resets() {
+        let log = vec![
+            set("x", "1", "arg", 3),
+            bare(ConfigEventKind::Push),
+            set("x", "2", "let", 5),
+            set("y", "9", "let", 6),
+            bare(ConfigEventKind::Pop),
+            set("z", "4", "let", 8),
+            bare(ConfigEventKind::Reset),
+        ];
+        let value =
+            |end: usize, n: &str| config_state(&log, end).get(n).and_then(|e| e.value.clone());
+        assert_eq!(value(4, "x").as_deref(), Some("2"));
+        assert_eq!(value(4, "y").as_deref(), Some("9"));
+        assert_eq!(value(5, "x").as_deref(), Some("1"));
+        assert_eq!(value(5, "y"), None);
+        assert_eq!(value(6, "z").as_deref(), Some("4"));
+        assert!(config_state(&log, 7).is_empty());
+        // An end past the log is the whole log.
+        assert!(config_state(&log, 99).is_empty());
+    }
+
+    #[test]
+    fn an_assignment_is_named_as_its_file_spells_it() {
+        assert_eq!(
+            assigned_at(&set("x", "1", "let", 7)),
+            "<let> bringup.launch.xml:7"
+        );
+        assert_eq!(assigned_at(&set("x", "1", "cli", 1)), "command line");
+        let mut py = set("x", "1", "let", 1);
+        py.file = Some("bringup.launch.py".into());
+        py.line = None;
+        assert_eq!(assigned_at(&py), "SetLaunchConfiguration bringup.launch.py");
+    }
+
+    #[test]
+    fn numbers_equal_as_numbers() {
+        assert!(same_value(
+            &set("x", "0.5", "let", 1),
+            &set("x", "0.50", "let", 2)
+        ));
+        assert!(!same_value(
+            &set("x", "0.5", "let", 1),
+            &set("x", "2.0", "let", 2)
+        ));
+        assert!(!same_value(
+            &set("x", "a", "let", 1),
+            &set("x", "b", "let", 2)
+        ));
+    }
+
+    #[test]
+    fn the_vars_a_substitution_reads() {
+        assert_eq!(var_names("$(var a)"), ["a"]);
+        assert_eq!(var_names("x_$(var a)_$(var b)_$(var a)"), ["a", "b"]);
+        assert!(var_names("10").is_empty());
+    }
 }

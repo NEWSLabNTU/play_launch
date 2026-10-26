@@ -367,6 +367,7 @@ impl NodeAction {
             env_vars: self.environment.clone(),
             global_params: None,
             scope_id: None,
+            config_seq: None,
             start_delay_secs: None,
             on_exit_shutdown: self.on_exit_shutdown,
             lifecycle: self.lifecycle.then_some(true),
@@ -408,6 +409,9 @@ pub struct Parameter {
     pub value_type: Option<String>,
     /// `value-sep`: the value split BEFORE substitution, one element each.
     pub list: Option<Vec<Vec<Substitution>>>,
+    /// The value as written and the line, when it holds a substitution
+    /// (phase 94: what `check --explain` follows back to its source).
+    pub written: Option<(String, Option<usize>)>,
 }
 
 impl Parameter {
@@ -418,6 +422,7 @@ impl Parameter {
             value,
             value_type: None,
             list: None,
+            written: None,
         }
     }
 
@@ -462,6 +467,9 @@ impl Parameter {
                     value: parse_substitutions(&value)?,
                     value_type,
                     list,
+                    written: value
+                        .contains("$(")
+                        .then(|| (value.clone(), Some(entity.line_number()))),
                 }])
             }
             (None, false) => {

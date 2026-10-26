@@ -48,6 +48,11 @@ def visit_include_launch_description(
         except Exception as e:
             logger.debug("Could not resolve include arg '%s': %s", arg_name, e)
 
+    # Phase 94: the include's arguments are the includer's sets; the root
+    # include's are the command line.
+    includer = dump.current_file
+    arg_origin = ("include", includer) if dump.current_scope_id is not None else ("cli", None)
+
     dump.push_scope(pkg, filename, ns, include_args, path=resolved_path)
 
     # If the location does not exist, then it's likely set to '<script>' or something.
@@ -89,7 +94,9 @@ def visit_include_launch_description(
     # Create actions to set the launch arguments into the launch configurations.
     set_launch_configuration_actions = []
     for name, value in include.launch_arguments:
-        set_launch_configuration_actions.append(SetLaunchConfiguration(name, value))
+        set_action = SetLaunchConfiguration(name, value)
+        set_action._play_launch_origin = arg_origin
+        set_launch_configuration_actions.append(set_action)
 
     # Set launch arguments as launch configurations and then include the launch description.
     return [*set_launch_configuration_actions, launch_description]

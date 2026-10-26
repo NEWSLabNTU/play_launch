@@ -77,6 +77,9 @@ pub struct Produced {
     pub declared_arguments: Vec<DeclaredArgumentCapture>,
     /// What the Python half recognised but could not model.
     pub unsupported: Vec<(String, Option<String>)>,
+    /// The changes to the launch configurations, in order (phase 94, C ABI
+    /// 11). A capture's `config_seq` counts into this batch.
+    pub config_events: Vec<crate::record::ConfigEvent>,
 }
 
 impl Produced {
@@ -86,6 +89,7 @@ impl Produced {
             && self.load_nodes.is_empty()
             && self.declared_arguments.is_empty()
             && self.unsupported.is_empty()
+            && self.config_events.is_empty()
     }
 }
 

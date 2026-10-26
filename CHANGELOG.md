@@ -31,6 +31,21 @@ allowance heavily.
   schedule is byte-identical, and it now also names `use: { iso26262 }`,
   without which it no longer loaded.
 
+- **Added (`check`, `resolve`):** `$(var <name> @<node>)`, and `$(var)`
+  read the way `launch` runs configurations (phase 94 wave 2). Both parsers
+  now record every change to the launch configurations in order (set, unset,
+  a scoped group's push and pop, a reset), with the file and, for XML and
+  YAML, the line, and each node's place in that log; the log crosses the
+  pyexec boundary (C ABI 10 -> 11). `$(var x)` reads the state where the
+  contract's launch file finished and is refused as `var-ambiguous` when that
+  file assigned `x` more than one value; `$(var x @<node>)` reads the state
+  where the node was declared. A configuration a scoped group set is
+  `var-unset` outside it, and one an included file `<let>` reaches its
+  includer. `check --explain` follows a parameter written as a substitution
+  to its `<param>` line and on to the assignment it read (`<- <param>
+  bringup.launch.xml:29 = $(var lidar_hz)` `<- lidar_hz = 100, command
+  line`).
+
 - **Added (`check`):** a contract can acknowledge a finding it keeps, with
   rlm v0.2.3's root `acknowledged:` list of `{ rule, at, reason }`. A
   warning or info whose rule id and path match an entry is printed as

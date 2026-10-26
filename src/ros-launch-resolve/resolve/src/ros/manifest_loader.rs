@@ -472,6 +472,10 @@ pub struct ManifestIndex {
     /// for the readers that run after loading (extension keys).
     pub launch_scopes: BTreeMap<usize, ScopeEntry>,
     pub launch_variables: HashMap<String, String>,
+    /// The launch configuration log (phase 94 W2), and each member's
+    /// position in it by FQN. Empty from the Python dumper.
+    pub launch_config_log: Vec<super::launch_dump::ConfigEvent>,
+    pub launch_config_seq: HashMap<String, usize>,
     /// The fault-reaction arithmetic per (hazard, rung), for `--explain`
     /// (phase 83).
     pub budgets: Vec<RungBudget>,
@@ -658,6 +662,8 @@ pub fn load_manifests(
         .map(|s| (s.id, s.clone()))
         .collect();
     index.launch_variables = launch_dump.variables.clone();
+    index.launch_config_log = launch_dump.config_log.clone();
+    index.launch_config_seq = super::value_rules::launch_config_seqs(launch_dump);
     index.executor_of = super::sched_loader::composable_containers(launch_dump);
 
     // Snapshot scope tree (parent links) for cross-scope checks.
@@ -6681,6 +6687,7 @@ mod tests {
 
     fn make_dump(scopes: Vec<ScopeEntry>) -> LaunchDump {
         LaunchDump {
+            config_log: Default::default(),
             dropped_actions: Vec::new(),
             node: vec![],
             load_node: vec![],
@@ -6694,6 +6701,7 @@ mod tests {
 
     fn scope(id: usize, pkg: &str, file: &str, ns: &str, parent: Option<usize>) -> ScopeEntry {
         ScopeEntry {
+            config_span: Default::default(),
             id,
             origin: Some(ScopeOrigin {
                 pkg: Some(pkg.to_string()),
@@ -6837,6 +6845,7 @@ mod tests {
             scope(0, "manifest_simple", "manifest.launch.xml", "", None),
             // Group scope (no origin)
             ScopeEntry {
+                config_span: Default::default(),
                 id: 1,
                 origin: None,
                 ns: "/system".to_string(),
@@ -6940,6 +6949,7 @@ mod tests {
             scope(0, "manifest_simple", "manifest.launch.xml", "/", None),
             // Group scope wrapping the system namespace
             ScopeEntry {
+                config_span: Default::default(),
                 id: 1,
                 origin: None,
                 ns: "/system".to_string(),
@@ -6955,6 +6965,7 @@ mod tests {
             ),
             // Another group scope
             ScopeEntry {
+                config_span: Default::default(),
                 id: 3,
                 origin: None,
                 ns: "/perception".to_string(),
@@ -6991,6 +7002,7 @@ mod tests {
         let dump = make_dump(vec![
             scope(0, "manifest_simple", "manifest.launch.xml", "/", None),
             ScopeEntry {
+                config_span: Default::default(),
                 id: 1,
                 origin: None,
                 ns: "/".to_string(),
@@ -6999,6 +7011,7 @@ mod tests {
             },
             scope(2, "nonexistent", "tier1.launch.xml", "/", Some(1)),
             ScopeEntry {
+                config_span: Default::default(),
                 id: 3,
                 origin: None,
                 ns: "/planning".to_string(),
@@ -7007,6 +7020,7 @@ mod tests {
             },
             scope(4, "nonexistent", "tier2.launch.xml", "/planning", Some(3)),
             ScopeEntry {
+                config_span: Default::default(),
                 id: 5,
                 origin: None,
                 ns: "/planning/scenario".to_string(),
@@ -7021,6 +7035,7 @@ mod tests {
                 Some(5),
             ),
             ScopeEntry {
+                config_span: Default::default(),
                 id: 7,
                 origin: None,
                 ns: "/planning/scenario/lane".to_string(),
@@ -7035,6 +7050,7 @@ mod tests {
                 Some(7),
             ),
             ScopeEntry {
+                config_span: Default::default(),
                 id: 9,
                 origin: None,
                 ns: "/planning/scenario/lane/motion".to_string(),
@@ -7085,6 +7101,8 @@ mod tests {
         ]);
         // Only add a node to scope 0, scope 1 has no entities
         dump.node.push(NodeRecord {
+            config_seq: Default::default(),
+            param_origins: Default::default(),
             start_delay_secs: None,
             on_exit_shutdown: None,
             lifecycle: None,
@@ -7134,6 +7152,8 @@ mod tests {
             None,
         )]);
         dump.node.push(NodeRecord {
+            config_seq: Default::default(),
+            param_origins: Default::default(),
             start_delay_secs: None,
             on_exit_shutdown: None,
             lifecycle: None,
@@ -7243,6 +7263,7 @@ mod tests {
             // shape as autoware's `<group ns="/control">` wrapping
             // `vehicle_cmd_gate` inside `control.launch.xml`'s own file scope.
             ScopeEntry {
+                config_span: Default::default(),
                 id: 1,
                 origin: None,
                 ns: "/perception/inner".to_string(),
@@ -7251,6 +7272,8 @@ mod tests {
             },
         ]);
         dump.node.push(NodeRecord {
+            config_seq: Default::default(),
+            param_origins: Default::default(),
             start_delay_secs: None,
             on_exit_shutdown: None,
             lifecycle: None,
@@ -8653,6 +8676,7 @@ mod tests {
         path: Option<&std::path::Path>,
     ) -> ScopeEntry {
         ScopeEntry {
+            config_span: Default::default(),
             id,
             origin: Some(ScopeOrigin {
                 pkg: pkg.map(String::from),
@@ -8999,6 +9023,7 @@ paths:
         let resolve_one = |yaml: &str| {
             let manifest = parse_manifest_str(yaml).expect("parses");
             let scope = ScopeEntry {
+                config_span: Default::default(),
                 id: 0,
                 origin: None,
                 ns: "/perception".to_string(),
@@ -9072,6 +9097,8 @@ paths:
         )]);
         if with_records {
             dump.node.push(NodeRecord {
+                config_seq: Default::default(),
+                param_origins: Default::default(),
                 start_delay_secs: None,
                 on_exit_shutdown: None,
                 lifecycle: None,

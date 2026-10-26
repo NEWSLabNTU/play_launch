@@ -190,17 +190,40 @@ and `check --explain` says where each value came from:
 -- Values read from the launch tree (--explain) --
 bringup.contract.yaml:
   /safety/lidar_driver paths.sample.trigger.timer.rate_hz = 100 Hz  <- $(param rate_hz) Hz
-                                                                    <- /safety/lidar_driver rate_hz = 100 Hz, bringup.launch.xml
+                                                                    <- /safety/lidar_driver rate_hz = 100 Hz, <param> bringup.launch.xml:29 = $(var lidar_hz)
+                                                                    <- lidar_hz = 100, command line
   /safety/obstacle_detector sub.scan.min_rate_hz = 100 Hz           <- $(let lidar_rate)
                                                                     <- lidar_hz = 100 Hz, command line
 ```
+
+A parameter whose launch file wrote it as a substitution is followed to the
+configuration it read, and on to where that was assigned: the command line,
+an `<arg>` default, a `<let>` or an include's argument, with its line.
 
 | Reference | Reads |
 |---|---|
 | `$(param <name>)` | the parameter of the node the key sits under, as the node gets it: globals, parameter files, inline values, ROS precedence |
 | `$(param <node> <name>)` | the same on another node of this contract (`<node>` is a node key) or of the launch tree (`/<fqn>`) |
 | `$(var <name>)` | a launch configuration, as it stands when the contract's launch file finishes |
+| `$(var <name> @<node>)` | the same, as it stood where `<node>` (a node key, or `/<fqn>`) was declared |
 | `$(let <name>)` | an entry of the contract's own root `let:` |
+
+A launch configuration has no single value: a `<let>` may assign a name
+twice, a file you include may set one (an include does not scope
+configurations), and a scoped `<group>` puts them back when it ends.
+`$(var x)` is therefore accepted only when every assignment the contract's
+launch file made gave the same value; otherwise `check` lists them and asks
+for the point:
+
+```text
+error[var-ambiguous]: bringup.contract.yaml:17: `$(var timeout) s` was assigned 0.5
+  (<let> bringup.launch.xml:7) and 2.0 (<let> bringup.launch.xml:9). Name the point:
+  `$(var timeout @gate)`.
+```
+
+`$(var timeout @gate)` reads 0.5: the value `gate`'s own `$(var timeout)`
+read. Where both exist, `$(param …)` is usually the better reference, since
+it reads what the node got after every override.
 
 Three rules keep the read honest:
 
@@ -230,7 +253,8 @@ Three rules keep the read honest:
 | `param-node-missing` | a one-argument `$(param)` under a key that is under no node |
 | `param-not-number` | the value is a string, a list or a boolean |
 | `param-dimension` | the value's dimension is not the key's |
-| `var-unset` | no launch file sets the configuration |
+| `var-unset` | no launch file sets the configuration, or it is not in force there (a scoped group ended) |
+| `var-ambiguous` | the launch file assigned the configuration more than one value; name the point with `@<node>` |
 | `value-range` | a negative duration, a rate that is not positive, a count that is not whole |
 
 A contract included twice (one camera file per camera) is evaluated once per

@@ -104,6 +104,11 @@ pub struct ScopeEntry {
     pub args: HashMap<String, String>,
     /// Parent scope ID (None for root)
     pub parent: Option<usize>,
+    /// The entries of [`RecordJson::config_log`] made while this file ran,
+    /// `[start, end)`: its include's arguments, its own declarations and
+    /// `<let>`s, and the files it included (phase 94).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_span: Option<(usize, usize)>,
 }
 
 impl ScopeEntry {
@@ -170,6 +175,7 @@ impl ScopeTable {
             ns,
             args,
             parent,
+            config_span: None,
         });
         id
     }
@@ -183,8 +189,16 @@ impl ScopeTable {
             ns,
             args: HashMap::new(),
             parent,
+            config_span: None,
         });
         id
+    }
+
+    /// Record the configuration events a file scope's run covered.
+    pub fn set_config_span(&mut self, id: usize, start: usize, end: usize) {
+        if let Some(entry) = self.entries.get_mut(id) {
+            entry.config_span = Some((start, end));
+        }
     }
 
     /// Update the args of an existing scope entry.
@@ -262,6 +276,83 @@ pub struct DroppedAction {
     pub detail: Option<String>,
 }
 
+/// One change to the launch configurations, in the order the launch ran
+/// (phase 94): what a contract's `$(var)` reads, with where it was made.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfigEvent {
+    pub kind: ConfigEventKind,
+    /// The configuration set or unset (`set`, `unset`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The value set (`set`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    /// What set it: `cli`, `arg` (a declaration's default), `let`,
+    /// `include` (an include's argument), `group` (a group's forwarded
+    /// configuration).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    /// The launch file (its name) and line it was made at, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+}
+
+/// What a [`ConfigEvent`] does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigEventKind {
+    /// A configuration is set.
+    Set,
+    /// A configuration is unset.
+    Unset,
+    /// A scoped group saved every configuration (`PushLaunchConfigurations`).
+    Push,
+    /// ...and put them back (`PopLaunchConfigurations`).
+    Pop,
+    /// Every configuration is cleared (`ResetLaunchConfigurations`).
+    Reset,
+}
+
+impl ConfigEvent {
+    /// A `set` of `name` to `value`.
+    pub fn set(name: &str, value: &str, origin: &str) -> Self {
+        ConfigEvent {
+            kind: ConfigEventKind::Set,
+            name: Some(name.to_string()),
+            value: Some(value.to_string()),
+            origin: Some(origin.to_string()),
+            file: None,
+            line: None,
+        }
+    }
+
+    /// An event with no name (`push`, `pop`, `reset`).
+    pub fn bare(kind: ConfigEventKind) -> Self {
+        ConfigEvent {
+            kind,
+            name: None,
+            value: None,
+            origin: None,
+            file: None,
+            line: None,
+        }
+    }
+}
+
+/// Where an inline `<param>` whose value is a substitution was written.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParamOrigin {
+    pub name: String,
+    /// The value as written (`$(var lidar_hz)`).
+    pub written: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+}
+
 /// Root structure for record.json
 /// Fields ordered to match Python output
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -285,6 +376,9 @@ pub struct RecordJson {
     /// told not to.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dropped_actions: Vec<DroppedAction>,
+    /// Every change to the launch configurations, in order (phase 94).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub config_log: Vec<ConfigEvent>,
 }
 
 impl RecordJson {
@@ -298,6 +392,7 @@ impl RecordJson {
             variables: HashMap::new(),
             scopes: Vec::new(),
             dropped_actions: Vec::new(),
+            config_log: Vec::new(),
         }
     }
 
@@ -391,6 +486,15 @@ pub struct NodeRecord {
     /// defaulted so records written before this field still deserialize.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_delay_secs: Option<f64>,
+    /// Phase 94: how many entries of [`RecordJson::config_log`] had
+    /// happened where this member was declared -- the point a contract's
+    /// `$(var x @<node>)` reads the launch configurations at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_seq: Option<usize>,
+    /// Phase 94: where each inline `<param>` whose value is a substitution
+    /// was written, for `check --explain` to follow a value to its source.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_origins: Vec<ParamOrigin>,
 }
 
 /// Composable node container record
@@ -434,6 +538,11 @@ pub struct ComposableNodeContainerRecord {
     /// defaulted so records written before this field still deserialize.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_delay_secs: Option<f64>,
+    /// Phase 94: how many entries of [`RecordJson::config_log`] had
+    /// happened where this member was declared -- the point a contract's
+    /// `$(var x @<node>)` reads the launch configurations at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_seq: Option<usize>,
 }
 
 /// Load node record (for composable nodes)
@@ -461,6 +570,11 @@ pub struct LoadNodeRecord {
     /// defaulted so records written before this field still deserialize.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_delay_secs: Option<f64>,
+    /// Phase 94: how many entries of [`RecordJson::config_log`] had
+    /// happened where this member was declared -- the point a contract's
+    /// `$(var x @<node>)` reads the launch configurations at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_seq: Option<usize>,
 }
 
 #[cfg(test)]
@@ -509,6 +623,8 @@ mod tests {
     fn test_serialize_node_record() {
         let node = NodeRecord {
             start_delay_secs: None,
+            config_seq: None,
+            param_origins: Vec::new(),
             on_exit_shutdown: None,
             lifecycle: None,
             lifecycle_autostart: None,
@@ -545,6 +661,8 @@ mod tests {
     fn test_tuple_serialization() {
         let node = NodeRecord {
             start_delay_secs: None,
+            config_seq: None,
+            param_origins: Vec::new(),
             on_exit_shutdown: None,
             lifecycle: None,
             lifecycle_autostart: None,

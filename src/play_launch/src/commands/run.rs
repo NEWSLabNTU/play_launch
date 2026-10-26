@@ -132,6 +132,8 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
 
     // Create a minimal LaunchDump with a single node
     let node_record = NodeRecord {
+        config_seq: Default::default(),
+        param_origins: Default::default(),
         // `play_launch run` builds one node by hand; there is no launch file
         // and so no on_exit handler to honour.
         on_exit_shutdown: None,
@@ -160,6 +162,7 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
     };
 
     let launch_dump = LaunchDump {
+        config_log: Default::default(),
         node: vec![node_record],
         load_node: vec![],
         container: vec![],

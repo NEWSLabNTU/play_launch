@@ -103,6 +103,11 @@ pub struct LaunchParam {
     /// inline `<param>`, a parameter file's name, `<set_parameter>` for a
     /// global one. Empty when not known.
     pub at: String,
+    /// What the value was read through, when `at` is not the whole story
+    /// (phase 94 W2.3): an inline `<param>` written as a substitution is
+    /// `<param> bringup.launch.xml:29 = $(var lidar_hz)`, then each
+    /// configuration it read, as assigned where the node was declared.
+    pub via: Vec<String>,
 }
 
 impl LaunchParam {
@@ -111,12 +116,23 @@ impl LaunchParam {
             text: text.to_string(),
             number: text.trim().parse::<f64>().ok().filter(|v| v.is_finite()),
             at: String::new(),
+            via: Vec::new(),
         }
     }
 
     fn at(mut self, at: &str) -> Self {
         self.at = at.to_string();
         self
+    }
+
+    /// Where the value came from, for a message: the chain it was read
+    /// through when there is one, else where it was set.
+    pub(crate) fn provenance(&self) -> String {
+        if self.via.is_empty() {
+            self.at.clone()
+        } else {
+            self.via.join(" <- ")
+        }
     }
 
     /// A type name for a message saying what the value is when it is not a
@@ -139,22 +155,26 @@ impl LaunchParam {
                 text: i.to_string(),
                 number: Some(*i as f64),
                 at: String::new(),
+                via: Vec::new(),
             },
             V::Float(f) => LaunchParam {
                 text: f.to_string(),
                 number: Some(*f),
                 at: String::new(),
+                via: Vec::new(),
             },
             V::Bool(b) => LaunchParam {
                 text: b.to_string(),
                 number: None,
                 at: String::new(),
+                via: Vec::new(),
             },
             V::Str(s) => LaunchParam::from_text(s),
             V::StrList(l) => LaunchParam {
                 text: format!("[{}]", l.join(", ")),
                 number: None,
                 at: String::new(),
+                via: Vec::new(),
             },
         }
     }
@@ -179,6 +199,13 @@ pub(crate) fn launch_param_values(
         }
         let fqn = fqn_for(dump, n.namespace.as_deref(), &bare, n.scope);
         let launch_file = launch_file_of(dump, n.scope);
+        let inline = |name: &str, value: &str| {
+            let mut lp = LaunchParam::from_text(value).at(&launch_file);
+            if let Some(o) = n.param_origins.iter().rev().find(|o| o.name == name) {
+                lp.via = super::contract_values::param_chain(dump, o, n.config_seq);
+            }
+            lp
+        };
         let mut values: BTreeMap<String, LaunchParam> = BTreeMap::new();
         let file =
             |content: &str, path: Option<&str>, values: &mut BTreeMap<String, LaunchParam>| {
@@ -198,13 +225,13 @@ pub(crate) fn launch_param_values(
                 file(content, None, &mut values);
             }
             for (k, v) in &n.params {
-                values.insert(k.clone(), LaunchParam::from_text(v).at(&launch_file));
+                values.insert(k.clone(), inline(k, v));
             }
         } else {
             for src in &n.param_sources {
                 match src {
                     ParamSource::Inline { name, value } => {
-                        values.insert(name.clone(), LaunchParam::from_text(value).at(&launch_file));
+                        values.insert(name.clone(), inline(name, value));
                     }
                     ParamSource::File { content, path } => {
                         file(content, path.as_deref(), &mut values)
@@ -226,6 +253,37 @@ pub(crate) fn launch_param_values(
             .map(|(k, v)| (k.clone(), LaunchParam::from_text(v).at(&launch_file)))
             .collect();
         out.insert(fqn, values);
+    }
+    out
+}
+
+/// Each member's position in the configuration log (phase 94), keyed by
+/// FQN: where a contract's `$(var x @<node>)` reads the configurations.
+pub(crate) fn launch_config_seqs(dump: &LaunchDump) -> HashMap<String, usize> {
+    let mut out = HashMap::new();
+    for n in &dump.node {
+        let Some(bare) = n.name.clone().or_else(|| n.exec_name.clone()) else {
+            continue;
+        };
+        if let Some(seq) = n.config_seq {
+            out.insert(fqn_for(dump, n.namespace.as_deref(), &bare, n.scope), seq);
+        }
+    }
+    for c in &dump.container {
+        if let Some(seq) = c.config_seq {
+            out.insert(
+                fqn_for(dump, Some(c.namespace.as_str()), &c.name, c.scope),
+                seq,
+            );
+        }
+    }
+    for c in &dump.load_node {
+        if let Some(seq) = c.config_seq {
+            out.insert(
+                fqn_for(dump, Some(c.namespace.as_str()), &c.node_name, c.scope),
+                seq,
+            );
+        }
     }
     out
 }

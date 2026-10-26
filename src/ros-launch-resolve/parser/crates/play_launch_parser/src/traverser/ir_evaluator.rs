@@ -259,6 +259,7 @@ impl LaunchTraverser {
             scope_table: std::mem::take(&mut self.scope_table),
             current_scope_id: self.current_scope_id,
             dropped_actions: Vec::new(),
+            include_line: None,
         };
 
         child_traverser.evaluate_ir(body)?;
