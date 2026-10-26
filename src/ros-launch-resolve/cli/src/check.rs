@@ -26,6 +26,7 @@ pub fn handle_check(args: &CheckArgs) -> Result<()> {
         strict: args.strict,
         locked: args.locked,
         update_lock: args.update_lock,
+        against: args.against.clone(),
         rule: args.rule.clone(),
         explain: args.explain,
         export_graph: args.export_graph.clone(),

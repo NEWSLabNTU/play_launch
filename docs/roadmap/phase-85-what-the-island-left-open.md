@@ -159,6 +159,23 @@ island's `src/safety_island_bringup/launch/safety_island.contract.yaml`
   the docs and the newer binary. Decide the key's name, whether it is
   required, and how it relates to `version: 1`.
 - **D6 (DX 1.6, with nano-ros): check the contract against the code.**
+  **Done (2026-10-26), host half.** `check --against <run-dir>` reads a
+  run's `interception/endpoints.tsv` (every publisher and subscription
+  created, with node and type) and, for each node a contract names, emits
+  one `contract-vs-code` warning per topic endpoint only one side has and
+  an error per type the run contradicts
+  (`resolve/src/ros/contract_vs_code.rs`). Input (b) below, from a
+  play_launch run; no new dump format was needed, because the image half
+  is nano-ros's own: phase 463 landed `nros ws entity-census check`, which
+  refuses an island build on this disagreement, so (a) has a checker
+  already and the island needs nothing from play_launch here. Not
+  compared: services and actions (the file records only the two topic init
+  hooks), QoS (not in the file), infrastructure topics, and nodes no
+  contract names. Missing and extra are warnings because a run sees one
+  branch of the launch file. Tests: eight unit tests beside the rule, and
+  two in `tests/tests/contract_capture.rs` (a capture is clean against its
+  own run; three edits to the run give the three findings).
+  Original item:
   Diff each node's declared endpoints (pub, sub, srv, cli, with type and
   QoS) against the endpoints the code creates: an omitted one is today
   found at boot, a phantom one never. Inputs, in order of cost: (a)
@@ -586,8 +603,7 @@ rlm commits on its `main`: D3 `356383c`, D1 `957075d`, D5 `7936317`, D7
   The derivation would stay the max over hazards and print the bound as
   a justification. No work until the WG rules on decomposition.
 
-Still open: D6 (contract vs code, consumer of nano-ros 463), the
-provenance field (D7, D9), and the
+Still open: the provenance field (D7, D9), and the
 island's own move (phase 9 W5: call_mrm 206 -> 149, and the link re-sized
 from 57 to about 81 ms).
 

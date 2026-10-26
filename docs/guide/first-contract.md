@@ -159,6 +159,29 @@ requirements, and the tool has something to say at each step:
   derivation during development, where the capture answers a question a user of
   the shipped tool asks on day one.
 
+## Keeping it true: `check --against`
+
+A contract is edited by hand from here on, and the code moves under it. A
+`sub:` row that the code creates and the contract lacks, or one the contract
+declares and the code never creates, passes every rule `check` has, because
+both sides of the comparison come from the contract. Give `check` a recorded
+run and it compares the two:
+
+```sh
+play_launch check my_pkg bringup.launch.xml --contracts contracts \
+    --against play_log/latest
+```
+
+It reads the same `interception/endpoints.tsv` the capture reads, so record
+the run with `--interception on`. For each node a contract names, every topic
+endpoint only one side has is a `contract-vs-code` warning, and a message type
+the run contradicts is an error. Nodes no contract names are not compared.
+Services and actions are not compared either, because the file records only
+publishers and subscriptions. QoS is not compared, because the file does not
+carry it. A run sees one branch of the launch file, so an endpoint the code
+creates only under other arguments reads as missing. That is why a missing or
+extra endpoint is a warning rather than an error.
+
 ## Related
 
 - `docs/design/contract-primitives.md` — the rule this verb follows: a

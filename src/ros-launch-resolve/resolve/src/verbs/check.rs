@@ -77,6 +77,9 @@ pub struct CheckInputs {
     pub locked: bool,
     /// Phase 91 E7: resolve afresh and rewrite each contract's `rlm.lock`.
     pub update_lock: bool,
+    /// Phase 85 D6: a recorded run whose created endpoints are compared with
+    /// the contracts' declared ones (`contract-vs-code`).
+    pub against: Option<PathBuf>,
     /// Emit a derived artifact instead of running the checks. Today:
     /// `diagnostics-params` — `diagnostic_updater` parameters restated from
     /// the declared endpoint bounds (phase 71 W5).
@@ -279,6 +282,23 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
             "note: --explain prints no scheduling plan without a resolved scheduling platform file \
              (pass --sched <path>, or ship one via the overlay/provider channels)"
         );
+    }
+
+    // Phase 85 D6: the declared endpoints against a recorded run's.
+    if let Some(run) = &inputs.against {
+        let against = crate::ros::contract_vs_code::check_against(&index, run)?;
+        crate::say!(
+            "Compared with {}: {} endpoint(s) created{}, {} contract-vs-code finding(s)",
+            against.endpoints_file.display(),
+            against.rows,
+            if against.malformed > 0 {
+                format!(", {} unparseable line(s)", against.malformed)
+            } else {
+                String::new()
+            },
+            against.diagnostics.len()
+        );
+        index.merge_diagnostics.extend(against.diagnostics);
     }
 
     // "None found" and "found, but none could be read" are different verdicts.

@@ -76,12 +76,12 @@ const INFRA_TOPICS: &[&str] = &[
 ];
 const INFRA_SUFFIXES: &[&str] = &["/_container/component_events"];
 
-fn is_infra(topic: &str) -> bool {
+pub(crate) fn is_infra(topic: &str) -> bool {
     INFRA_TOPICS.contains(&topic) || INFRA_SUFFIXES.iter().any(|s| topic.ends_with(s))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Direction {
+pub(crate) enum Direction {
     /// Sorted before `Pub` deliberately: `sub:` is rendered first, so a
     /// reader meets a node's inputs before its outputs.
     Sub,
@@ -89,7 +89,7 @@ enum Direction {
 }
 
 impl Direction {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Direction::Sub => "sub",
             Direction::Pub => "pub",
@@ -106,14 +106,14 @@ impl Direction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct EndpointRow {
-    member: String,
-    fqn: String,
-    direction: Direction,
-    topic: String,
+pub(crate) struct EndpointRow {
+    pub(crate) member: String,
+    pub(crate) fqn: String,
+    pub(crate) direction: Direction,
+    pub(crate) topic: String,
     /// `pkg/msg/Name`, or empty when introspection could not answer (or when
     /// the bundle predates the column).
-    msg_type: String,
+    pub(crate) msg_type: String,
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -130,7 +130,7 @@ struct TopicFacts {
 // ---------------------------------------------------------------------------
 
 /// Accept a run directory, its `interception/` dir, or a file inside it.
-fn run_paths(arg: &Path) -> (PathBuf, PathBuf) {
+pub(crate) fn run_paths(arg: &Path) -> (PathBuf, PathBuf) {
     let mut run = arg.to_path_buf();
     if run.is_file() {
         run = run.parent().map(Path::to_path_buf).unwrap_or_default();
@@ -158,7 +158,7 @@ fn run_paths(arg: &Path) -> (PathBuf, PathBuf) {
 /// field is empty only where introspection could not answer. The count works
 /// as a discriminator precisely because the writer always emits the field — an
 /// omitted-when-unknown column would make the two widths ambiguous.
-fn load_endpoints(body: &str) -> (BTreeSet<EndpointRow>, usize) {
+pub(crate) fn load_endpoints(body: &str) -> (BTreeSet<EndpointRow>, usize) {
     let mut rows = BTreeSet::new();
     let mut malformed = 0usize;
     for line in body.lines() {

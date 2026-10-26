@@ -413,6 +413,14 @@ pub struct CheckArgs {
     #[arg(long)]
     pub update_lock: bool,
 
+    /// Phase 85 D6: compare each contracted node's declared topic endpoints
+    /// with the ones the code created in a recorded run: a `play_log/<ts>`
+    /// directory (or its `interception/`) from a run made with
+    /// `--interception on`. One `contract-vs-code` diagnostic per endpoint
+    /// that only one side has, and per type the two disagree on.
+    #[arg(long, value_name = "RUN_DIR")]
+    pub against: Option<std::path::PathBuf>,
+
     /// Output format: terminal (default, with source excerpts) or json
     #[arg(long, default_value = "terminal")]
     pub format: String,

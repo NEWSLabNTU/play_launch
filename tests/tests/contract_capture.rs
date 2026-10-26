@@ -252,3 +252,97 @@ fn a_capture_passes_check_as_it_stands() {
     // (phase 69: "found, but none could be read" is a different verdict).
     assert!(combined.contains("manifest(s) checked"), "{combined}");
 }
+
+/// Write the contract a capture produced beside a launch file, and run
+/// `check` on it with `extra` arguments. `None` when the ROS environment or
+/// `demo_nodes_cpp` is absent.
+fn check_capture(dir: &Path, contract: &str, extra: &[&str]) -> Option<(bool, String)> {
+    let env = fixtures::install_env();
+    if !env.contains_key("AMENT_PREFIX_PATH") {
+        eprintln!("SKIP: no ROS environment; `check` cannot parse the launch file");
+        return None;
+    }
+    let launch_dir = dir.join("launch");
+    std::fs::create_dir_all(&launch_dir).unwrap();
+    let launch = launch_dir.join("cap.launch.xml");
+    std::fs::write(&launch, LAUNCH).unwrap();
+    std::fs::write(launch_dir.join("cap.contract.yaml"), contract).unwrap();
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.args(["check", launch.to_str().unwrap()]);
+    cmd.args(extra);
+    let out = cmd.output().expect("failed to run play_launch check");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if combined.contains("not found in AMENT_PREFIX_PATH") {
+        eprintln!("SKIP: demo_nodes_cpp not installed");
+        return None;
+    }
+    Some((out.status.success(), combined))
+}
+
+/// Phase 85 D6: a contract captured from a run agrees with that run.
+#[test]
+fn a_capture_checks_clean_against_its_own_run() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let (run, model) = write_bundle(dir.path());
+    let text = capture_text(&run, &model);
+    let Some((ok, out)) = check_capture(dir.path(), &text, &["--against", run.to_str().unwrap()])
+    else {
+        return;
+    };
+    assert!(ok, "{out}");
+    assert!(out.contains("0 contract-vs-code finding(s)"), "{out}");
+    assert!(!out.contains("contract-vs-code]"), "{out}");
+}
+
+/// Phase 85 D6: against a run whose code differs from the contract, `check`
+/// names each endpoint only one side has, and a type the run contradicts
+/// fails it. The second run is the first with three edits, one per finding.
+#[test]
+fn check_against_names_each_endpoint_the_contract_and_the_code_disagree_on() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let (run, model) = write_bundle(dir.path());
+    let text = capture_text(&run, &model);
+
+    let changed = dir.path().join("play_log/2026-09-25_00-01-00/interception");
+    std::fs::create_dir_all(&changed).unwrap();
+    let endpoints = ENDPOINTS
+        // The listener no longer subscribes (it still runs: /rosout stays).
+        .replace(
+            "/cap/listener\t102\t/cap/listener\tsub\t/cap/chatter\tstd_msgs/msg/String\n",
+            "/cap/listener\t102\t/cap/listener\tpub\t/rosout\trcl_interfaces/msg/Log\n",
+        )
+        // The quiet node publishes another type.
+        .replace(
+            "pub\t/cap/silent_topic\tstd_msgs/msg/String",
+            "pub\t/cap/silent_topic\tstd_msgs/msg/Int32",
+        )
+        // The talker creates a publisher the contract never heard of.
+        + "/cap/talker\t101\t/cap/talker\tpub\t/cap/extra\tstd_msgs/msg/String\n";
+    std::fs::write(changed.join("endpoints.tsv"), endpoints).unwrap();
+
+    let Some((ok, out)) =
+        check_capture(dir.path(), &text, &["--against", changed.to_str().unwrap()])
+    else {
+        return;
+    };
+    assert!(!ok, "a contradicted type must fail the check:\n{out}");
+    assert!(out.contains("3 contract-vs-code finding(s)"), "{out}");
+    assert!(
+        out.contains("declares a sub on '/cap/chatter' for /cap/listener"),
+        "{out}"
+    );
+    assert!(
+        out.contains("/cap/talker created a pub on '/cap/extra'"),
+        "{out}"
+    );
+    assert!(
+        out.contains("types '/cap/silent_topic' as std_msgs/msg/String")
+            && out.contains("std_msgs/msg/Int32"),
+        "{out}"
+    );
+}

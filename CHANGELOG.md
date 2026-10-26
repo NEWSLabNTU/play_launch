@@ -19,6 +19,14 @@ allowance heavily.
   direction is now refuted with a counterexample where it sometimes
   came back as "Z3 gave no model". The resolver suite is back to its
   pre-0.20.1 time, since the rail claims no longer run out their budget.
+- **Added (`check --against <run-dir>`):** compare each contracted
+  node's declared topic endpoints with the ones its code created in a run
+  recorded with `--interception on`. An endpoint only one side has is a
+  `contract-vs-code` warning: one the contract declares and the code never
+  creates over-provisions everything sized from the contract, and one the
+  code creates and the contract leaves out is missing from it. A message
+  type the run contradicts is an error. Services, actions and QoS are not
+  compared, since the run does not record them (phase 85 D6).
 - **Added (`check --explain`):** the install prefix behind each launch
   file's package, and every later prefix on `AMENT_PREFIX_PATH` that
   registers the same package. A package registered twice is shadowed and
