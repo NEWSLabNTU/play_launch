@@ -412,6 +412,27 @@ pub fn play_launch_cmd(env: &HashMap<String, String>) -> Command {
     cmd
 }
 
+/// The web UI port for a command [`play_launch_cmd`] built: 19000 plus the
+/// `ROS_DOMAIN_ID` it claimed, so no two running tests share one.
+///
+/// Tests used to bind port 0, read the port and release it for play_launch
+/// to bind, leaving a window in which anything else could take it. When
+/// something did, play_launch ran without its web UI. The polling loops
+/// skipped their deadline on every failed request, so the test spun until
+/// nextest killed it at 60 s, and the failure looked like a slow test. The
+/// domain is held under `flock` for the test's whole life, and 19001-19233
+/// lies below the kernel's ephemeral range (32768-60999), so no client socket
+/// is handed one of these ports either.
+pub fn web_port(cmd: &Command) -> u16 {
+    let domain: u16 = cmd
+        .get_envs()
+        .find(|(k, _)| *k == "ROS_DOMAIN_ID")
+        .and_then(|(_, v)| v)
+        .and_then(|v| v.to_str()?.parse().ok())
+        .expect("play_launch_cmd sets ROS_DOMAIN_ID");
+    19000 + domain
+}
+
 /// Put a spawned test process in the environment every suite must share.
 ///
 /// Split out of [`play_launch_cmd`] for issue #0051: a suite that builds its

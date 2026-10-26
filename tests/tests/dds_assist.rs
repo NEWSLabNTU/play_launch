@@ -34,14 +34,6 @@ fn http_get(port: u16, path: &str) -> (u16, String) {
     (status, body)
 }
 
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
 fn domain_of(cmd: &std::process::Command) -> String {
     cmd.get_envs()
         .find(|(k, _)| *k == "ROS_DOMAIN_ID")
@@ -89,8 +81,8 @@ fn a_node_on_another_domain_is_reported_before_spawn() {
 
     // `launch`: warned before the spawn, and an issue on the Health page.
     let work_dir = tempfile::TempDir::new().unwrap();
-    let port = free_port();
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     let ours = domain_of(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
@@ -195,8 +187,8 @@ fn a_message_larger_than_a_datagram_is_reported_with_the_hosts_settings() {
     let env = fixtures::install_env();
     let launch = fixtures::test_workspace_path("simple_test").join("launch/big_message.launch.xml");
     let work_dir = tempfile::TempDir::new().unwrap();
-    let port = free_port();
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
         "launch",

@@ -780,13 +780,8 @@ fn test_event_recording_switches_at_runtime() {
         work_dir.path(),
         "interception:\n  enabled: true\n  stats: true\n",
     );
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
         "launch",
@@ -896,13 +891,8 @@ fn test_health_reports_one_issue_per_incompatible_topic() {
     let launch =
         fixtures::test_workspace_path("simple_test").join("launch/qos_mismatch.launch.xml");
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
         "launch",
@@ -970,13 +960,8 @@ fn test_health_reports_crash_loops_and_members_that_stay_down() {
     let env = fixtures::install_env();
     let launch = fixtures::test_workspace_path("simple_test").join("launch/crash_loop.launch.xml");
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
         "launch",
@@ -995,6 +980,10 @@ fn test_health_reports_crash_loops_and_members_that_stay_down() {
         std::thread::sleep(Duration::from_millis(500));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
         if status != 200 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the web UI on port {port} stopped answering"
+            );
             continue;
         }
         let snap: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -1052,13 +1041,8 @@ fn test_health_reports_an_error_burst_with_its_signature() {
     let launch =
         fixtures::test_workspace_path("simple_test").join("launch/error_logger.launch.xml");
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
         "launch",
@@ -1077,6 +1061,10 @@ fn test_health_reports_an_error_burst_with_its_signature() {
         std::thread::sleep(Duration::from_millis(500));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
         if status != 200 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the web UI on port {port} stopped answering"
+            );
             continue;
         }
         let snap: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -1134,13 +1122,8 @@ fn test_delivery_latency_separates_a_slow_subscriber_from_a_fast_one() {
     let launch =
         fixtures::test_workspace_path("simple_test").join("launch/latency_probe.launch.xml");
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
         "launch",
@@ -1170,6 +1153,10 @@ fn test_delivery_latency_separates_a_slow_subscriber_from_a_fast_one() {
         let (s1, entities) = http(port, "GET", "/api/entities", None);
         let (s2, health) = http(port, "GET", "/api/health/issues", None);
         if s1 != 200 || s2 != 200 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the web UI on port {port} stopped answering"
+            );
             continue;
         }
         let rows: Vec<serde_json::Value> = serde_json::from_str::<serde_json::Value>(&entities)
@@ -1240,13 +1227,8 @@ fn test_carried_edges_form_a_chain_and_an_old_stamp_is_reported() {
     let env = fixtures::install_env();
     let launch = fixtures::test_workspace_path("simple_test").join("launch/chain_probe.launch.xml");
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
         "launch",
@@ -1269,6 +1251,10 @@ fn test_carried_edges_form_a_chain_and_an_old_stamp_is_reported() {
         let (s1, chains) = http(port, "GET", "/api/chains", None);
         let (s2, health) = http(port, "GET", "/api/health/issues", None);
         if s1 != 200 || s2 != 200 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the web UI on port {port} stopped answering"
+            );
             continue;
         }
         let chains: serde_json::Value = serde_json::from_str(&chains).unwrap();
@@ -1455,13 +1441,8 @@ fn graph_probe_issues(interception: bool) -> Vec<serde_json::Value> {
     let launch = fixtures::test_workspace_path("simple_test").join("launch/graph_probe.launch.xml");
     let script = fixtures::test_workspace_path("simple_test").join("scripts/graph_probe.py");
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
         "launch",
@@ -1497,6 +1478,10 @@ fn graph_probe_issues(interception: bool) -> Vec<serde_json::Value> {
         std::thread::sleep(Duration::from_millis(1000));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
         if status != 200 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the web UI on port {port} stopped answering"
+            );
             continue;
         }
         let open: Vec<serde_json::Value> = serde_json::from_str::<serde_json::Value>(&body)
@@ -1569,13 +1554,8 @@ fn test_startup_timeline_names_the_slow_constructor() {
     let launch =
         fixtures::test_workspace_path("parallel_loading").join("launch/mixed_fast_slow.launch.xml");
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
         "launch",
@@ -1599,6 +1579,10 @@ fn test_startup_timeline_names_the_slow_constructor() {
         std::thread::sleep(Duration::from_millis(1000));
         let (status, body) = http(port, "GET", "/api/startup", None);
         if status != 200 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the web UI on port {port} stopped answering"
+            );
             continue;
         }
         let t: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -1651,13 +1635,8 @@ fn test_health_reports_a_dds_config_the_rmw_does_not_read() {
         r#"<CycloneDDS><Domain><Internal><SocketReceiveBufferSize min="10MB"/></Internal></Domain></CycloneDDS>"#,
     )
     .unwrap();
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
         "launch",
@@ -1678,6 +1657,10 @@ fn test_health_reports_a_dds_config_the_rmw_does_not_read() {
         std::thread::sleep(Duration::from_millis(500));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
         if status != 200 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the web UI on port {port} stopped answering"
+            );
             continue;
         }
         let snap: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -1715,13 +1698,8 @@ fn test_health_reports_a_member_that_keeps_growing() {
     let env = fixtures::install_env();
     let launch = fixtures::test_workspace_path("simple_test").join("launch/leaker.launch.xml");
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
         "launch",
@@ -1740,6 +1718,10 @@ fn test_health_reports_a_member_that_keeps_growing() {
         std::thread::sleep(Duration::from_millis(1000));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
         if status != 200 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the web UI on port {port} stopped answering"
+            );
             continue;
         }
         let snap: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -1786,13 +1768,8 @@ fn test_health_compares_running_parameters_with_the_launch() {
     let launch =
         fixtures::test_workspace_path("simple_test").join("launch/params_probe.launch.xml");
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
         "launch",
@@ -1837,6 +1814,10 @@ fn test_health_compares_running_parameters_with_the_launch() {
         std::thread::sleep(Duration::from_millis(1000));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
         if status != 200 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the web UI on port {port} stopped answering"
+            );
             continue;
         }
         let snap: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -1901,13 +1882,8 @@ fn test_health_reports_a_clock_that_goes_back_and_stops() {
     let env = fixtures::install_env();
     let launch = fixtures::test_workspace_path("simple_test").join("launch/clock_probe.launch.xml");
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
         "launch",
@@ -1930,6 +1906,10 @@ fn test_health_reports_a_clock_that_goes_back_and_stops() {
         std::thread::sleep(Duration::from_millis(1000));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
         if status != 200 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the web UI on port {port} stopped answering"
+            );
             continue;
         }
         let snap: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -1973,13 +1953,8 @@ fn test_health_reads_the_tf_tree_as_published() {
     let env = fixtures::install_env();
     let launch = fixtures::test_workspace_path("simple_test").join("launch/tf_probe.launch.xml");
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
         "launch",
@@ -2002,6 +1977,10 @@ fn test_health_reads_the_tf_tree_as_published() {
         std::thread::sleep(Duration::from_millis(1000));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
         if status != 200 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the web UI on port {port} stopped answering"
+            );
             continue;
         }
         let snap: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -2049,13 +2028,8 @@ fn test_startup_timeline_shows_lifecycle_activation() {
     let launch =
         fixtures::test_workspace_path("simple_test").join("launch/lifecycle_probe.launch.xml");
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-
     let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
     cmd.current_dir(work_dir.path());
     cmd.args([
         "launch",
@@ -2077,6 +2051,10 @@ fn test_startup_timeline_shows_lifecycle_activation() {
         std::thread::sleep(Duration::from_millis(1000));
         let (status, body) = http(port, "GET", "/api/startup", None);
         if status != 200 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the web UI on port {port} stopped answering"
+            );
             continue;
         }
         let t: serde_json::Value = serde_json::from_str(&body).unwrap();
