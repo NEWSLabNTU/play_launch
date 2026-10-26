@@ -6,6 +6,20 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Changed (`check`):** rlm v0.2.2. Every worst-case claim of every
+  reference extension is proved: `rail.ebd`'s distance check no longer
+  reports `worst-case-unknown` over `speed_error`, `acceleration`,
+  `traction_cut_off` and `brake_build_up`, so `check --strict` accepts a
+  contract using it. The prover first proves how each `where` binding
+  moves between the two points it compares and gives the final query
+  those facts. `rail.ebd` 1.0.1 names the braking distance (`braking`);
+  the formula and every number are 1.0.0's. A wrong `worst_case:`
+  direction is now refuted with a counterexample where it sometimes
+  came back as "Z3 gave no model". The resolver suite is back to its
+  pre-0.20.1 time, since the rail claims no longer run out their budget.
+
 ## 0.20.1 - 2026-10-25
 
 - **Changed (`check`):** rlm v0.2.1, whose reference extension `rail.ebd`

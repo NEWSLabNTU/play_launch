@@ -1,5 +1,5 @@
 # Phase 91 E9: extension-examples.md section 5 on contract_fault's chain.
-# rail.ebd 1.0.0 derives the settle as a bounded sum over the safe
+# rail.ebd 1.0.1 derives the settle as a bounded sum over the safe
 # deceleration table from the speed the train reaches by the end of the
 # dead time, and checks the stopping distance beside the ftti:
 # dead = max(1.0, 2.5) = 2.5 s, v_bec = 44.44 + 0.56 + 0.5 x 2.5 = 46.25 m/s,

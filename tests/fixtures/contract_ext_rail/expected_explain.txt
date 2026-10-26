@@ -2,12 +2,11 @@
 # The test finds each line below in the output (a line may be part of a
 # longer one); `#` lines are comments. Regenerate from the real output only
 # after reading the change.
-# rail.ebd 1.0.0: the settle's worst cases are proved; the distance check's
-# claims over the speeds and times may be unknown (Z3 does not decide them),
-# never refuted.
+# rail.ebd 1.0.1: every worst case is proved, the distance check's included
+# (rlm v0.2.2 orders the `where` bindings before the final query).
 # exit 0
 info[fault-reaction-budget]: bringup.contract.yaml:18: hazard 'drive_blind': detection 100.00ms (/safety/obstacle_detector/scan detects within 100.00ms) + reaction 76029.08ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 76022.08ms) = 76129.08ms fits the fault-tolerant time interval 90000.00ms with 13870.92ms of slack
-info[settle-derived]: bringup.contract.yaml:75: hazard 'drive_blind', rung 'safety.stop': settle = 76022.08ms derived by rail.ebd 1.0.0 (sha256 9b6efcac3c09)
+info[settle-derived]: bringup.contract.yaml:75: hazard 'drive_blind', rung 'safety.stop': settle = 76022.08ms derived by rail.ebd 1.0.1 (sha256 6d65754efbde)
 entry_speed = 44.44 m/s   (160 km/h)
 speed_error = 0.5556 m/s   (2 km/h)
 acceleration = 0.5 m/s^2   (0.5 m/s^2)
@@ -21,16 +20,15 @@ b = [0 m/s, 27.78 m/s] 0.65 m/s^2: 42.74 s
 b = [27.78 m/s, 46.25 m/s] 0.6 m/s^2: 30.79 s
 settle.duration = dead + sum over b in a_safe.bands(0 m/s, v_bec): (b.hi - b.lo) / b.value = 76.02 s
 worst case: proved increasing in entry_speed, speed_error, acceleration, traction_cut_off, brake_build_up; decreasing in a_safe (for a_safe's 2 keys as written)
-warning[worst-case-unknown]: rail.ebd 1.0.0: check stop_before_svl: worst case
-info[extension-check]: hazard 'drive_blind': rail.ebd/stop_before_svl PASS (rail.ebd 1.0.0)
+info[extension-check]: hazard 'drive_blind': rail.ebd/stop_before_svl PASS (rail.ebd 1.0.1)
 distance_to_svl = 2000 m   (2000 m)
 v0 = entry_speed + speed_error = 45 m/s
-stopping_distance = v0 * dead + acceleration * dead^2 / 2 + sum over b in a_safe.bands(0 m/s, v_bec): (b.hi^2 - b.lo^2) / (2 b.value) = 1847.15 m
-sum over b in a_safe.bands(0 m/s, v_bec): (b.hi^2 - b.lo^2) / (2 b.value) = 1733.09 m
+braking = sum over b in a_safe.bands(0 m/s, v_bec): (b.hi^2 - b.lo^2) / (2 b.value) = 1733.09 m
 b = [0 m/s, 27.78 m/s] 0.65 m/s^2: 593.54 m
 b = [27.78 m/s, 46.25 m/s] 0.6 m/s^2: 1139.55 m
+stopping_distance = v0 * dead + acceleration * dead^2 / 2 + braking = 1847.15 m
 stop_before_svl: stopping_distance <= distance_to_svl: 1847.15 m <= 2000 m (margin 152.85 m) PASS
 drive_blind  safety.stop  floor  100.00     0.00   7.00  76022.08 derived  76129.08  90000.00  13870.92
 drive_blind  76129.08  (floor 'safety.stop')
-rail.ebd 1.0.0  extension  sha256 9b6efcac3c094cfe50f40f09c704a29ecc025d0cb67fd8cbbb2d2cffa4110478
+rail.ebd 1.0.1  extension  sha256 6d65754efbde9f22138294de46e7cb857c85d884022b93231fffdcdbf7a4750c
 en50129 1.0.0  profile  sha256 cd8cc00b0c0d1bdfbfe26747925145303b4a2fbf03249da0d9e84abfd4a1df7f

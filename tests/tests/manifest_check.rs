@@ -3691,6 +3691,9 @@ fn e9_each_reference_fixture_explains_as_recorded() {
             !out.contains("deprecated-implicit-extension"),
             "{dir}:\n{out}"
         );
+        // Every reference worst case is proved (rlm v0.2.2); an unknown is
+        // a regression in the prover or the extension, not noise.
+        assert!(!out.contains("worst-case-unknown"), "{dir}:\n{out}");
     }
 }
 
