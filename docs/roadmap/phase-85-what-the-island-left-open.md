@@ -551,7 +551,9 @@ rlm commits on its `main`: D3 `356383c`, D1 `957075d`, D5 `7936317`, D7
 
 ## Design decisions (no code)
 
-- **D2 (with nano-ros 474 D4): a service edge's cost.** Key:
+- **D2 (with nano-ros 474 D4): a service edge's cost.** Decided
+  2026-10-27: this shape (an edge cost, topic precedence), pending nano-ros's
+  agreement below. Key:
   `services.<s>.max_transport` (every client) and `cli.<ep>.max_transport`
   (one client), the same precedence as a topic's and a subscriber's, for
   the hop from the client's call to the server's dispatch (the
@@ -606,7 +608,10 @@ rlm commits on its `main`: D3 `356383c`, D1 `957075d`, D5 `7936317`, D7
   with `reason`, `acknowledged_by` and `scope`. Fixtures `contract_ack`,
   `contract_ack_error`; eight unit tests beside the matcher, rlm's parse
   test, two `check_dx` tests.
-- **D9: a general `param:` binding.** Shape: any duration or rate may be
+- **D9: a general `param:` binding.** Superseded 2026-10-27 by phase 94
+  (`phase-94-contract-values.md`): `$(param …)`/`$(var …)`/`$(let …)`
+  references with a required unit, read rather than checked; the check form
+  below stays for requirements. Original shape: any duration or rate may be
   written `{ value: <n>, param: <node>.<param>, unit: s|ms|hz }`, as
   `window: { duration, param }` already is; `lease_duration`, `max_age`
   and a timer's `rate_hz` are the island's cases (500 ms detection,
