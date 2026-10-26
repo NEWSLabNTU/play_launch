@@ -1,10 +1,11 @@
 # Phase 93 - supervised budgets: the keys, the overrun case, a period's range
 
-Status: **in progress** (2026-10-15; a supervised settle added
-2026-10-16 in 0.18.1, see Status): S1 (rlm) done on rlm main
-`33577ff`; S2 (play_launch) done on main `bfede19e`; S5 in progress
-(period-range agent). Nothing released: S1 needs rlm v0.1.61, S2 a
-play_launch release pinning it.
+Status: **complete** on the toolchain side (2026-10-26). S1 (rlm
+v0.1.61), S2 (`bfede19e`), S5 (`83713c7e`) and
+`supervised-executor-long-callback` (`ceff2f15`) shipped in 0.18.0; the
+supervised settle (rlm v0.1.62) in 0.18.1. What remains is the island's
+S3, S4, S6 and S7 and nano-ros's monitor; no realizer reads
+`safe_state.supervise` yet.
 
 The grammar belongs to `ros-launch-manifest` (rlm,
 `~/repos/ros-launch-manifest`); it is tracked here because the checker
@@ -292,8 +293,8 @@ Owner: period-range agent. Uses S1's `SourceKind::Allocated` and the
   supervised with `mechanism: timer`) are not flagged; the draft with
   `mechanism: executor` would be (call_mrm's own callback, and
   driver_exit and on_timer on the same executor).
-- S5: done (2026-10-15), branch `phase93-s5-r2` (`85c949b7`), not yet on
-  main. `ros/period_range.rs`, called after `stated`; `--explain` prints a
+- S5: done (2026-10-15), branch `phase93-s5-r2` (`85c949b7`), merged
+  to main as `83713c7e`, released in 0.18.0. `ros/period_range.rs`, called after `stated`; `--explain` prints a
   timer-period table, `period-range` refuses an allocated `rate_hz` outside
   its range. The counts are not stored on `RungBudget`: they are read off
   the rows by re-running the arithmetic with the period 1 ms longer and
@@ -365,5 +366,5 @@ Owner: period-range agent. Uses S1's `SourceKind::Allocated` and the
   0.18.1 (a standstill deadline, "A supervised settle" above).
 - Platform facts by name (play_launch phase 91's profiles):
   `supervision: { tick, switch }` is written per contract until then.
-- A release: S1 needs rlm v0.1.61, S2 and S5 a play_launch release pinning
-  it; coordinated outside this phase.
+- A release: done after the fact; 0.18.0 carries S1, S2 and S5, 0.18.1
+  the supervised settle.

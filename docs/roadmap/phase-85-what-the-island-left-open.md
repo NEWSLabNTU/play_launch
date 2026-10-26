@@ -331,6 +331,8 @@ island's `src/safety_island_bringup/launch/safety_island.contract.yaml`
   severity high, all in the root `package-lock.json`: 5 on `fast-uri`
   (#40, #41, #42, #43, #46) and 1 on `js-yaml` (#45). Bump or override the
   two packages and confirm the alerts close.
+  **Done** (2026-10-26): every alert closed, the last four (#57-#60, on
+  `fast-uri` again) by `c52b32e9` (3.1.9); 0 open.
 - **T4: version and refusal fixtures (I2, I3, D5).** `--version` matches
   `play_launch X.Y.Z (<describe>, rlm vA.B.C)`; a fixture with an unknown
   key refuses with the checker's rlm tag in the message; once D5 lands, a
@@ -579,7 +581,7 @@ rlm commits on its `main`: D3 `356383c`, D1 `957075d`, D5 `7936317`, D7
   a justification. No work until the WG rules on decomposition.
 
 Still open: D6 (contract vs code, consumer of nano-ros 463), I11 (install
-prefix per scope), T3 (Dependabot), the provenance field (D7, D9), and the
+prefix per scope), the provenance field (D7, D9), and the
 island's own move (phase 9 W5: call_mrm 206 -> 149, and the link re-sized
 from 57 to about 81 ms).
 

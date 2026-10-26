@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 94 phases total (1–92, plus 14.5 and 30b); 73 complete, 15 in progress, 5 planned, 1 dropped — as of 2026-10-17.
+Started October 2025. 95 phases total (1–93, plus 14.5 and 30b); 74 complete, 15 in progress, 5 planned, 1 dropped — as of 2026-10-26.
 
 Phase docs through phase 28 are in `archive/`; from phase 29 on, a phase's doc
 stays in this directory whatever its status, and its status line (the first
@@ -100,7 +100,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 90 | [A tidy grammar](./phase-90-a-tidy-grammar.md) | ✅ Complete | — |
 | 91 | [Domain extensions](./phase-91-domain-extensions.md) | ✅ Complete (0.19.0) | — |
 | 92 | [One PyPI package](./phase-92-one-pypi-package.md) | ✅ Complete | — |
-| 93 | [Supervised budgets](./phase-93-supervised-budgets.md) | 🔄 | — |
+| 93 | [Supervised budgets](./phase-93-supervised-budgets.md) | ✅ toolchain (0.18.0/0.18.1) | 2026-10-16 |
 
 ---
 
@@ -342,12 +342,13 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     from every Jazzy-and-later wheel and a sequence-layout crash on Lyrical
     and Rolling (`rosidl_runtime_rs`). Released as 0.18.2; no consumer needed a change.
     [phase-92-one-pypi-package.md](./phase-92-one-pypi-package.md).
-  - **Phase 93** - in progress: supervised budgets (2026-10-15). A budget
+  - **Phase 93** - ✅ on the toolchain side (0.18.0, 0.18.1): supervised budgets (2026-10-15). A budget
     is a bound (analysed) or supervised: `supervise: { reaction, mechanism }`
     beside `source:` (rlm), an overrun row per supervised budget checked
     against the FTTI with its detection delay, a LEVEL column, and the
     lowering nano-ros's deadline monitor reads; a timer period's feasible
-    range (S5). [phase-93-supervised-budgets.md](./phase-93-supervised-budgets.md).
+    range (S5). The island's S3, S4, S6, S7 and nano-ros's monitor remain
+    there; no realizer reads `safe_state.supervise` yet. [phase-93-supervised-budgets.md](./phase-93-supervised-budgets.md).
   - **Phase 80** - planned: the plan and what was applied (2026-09-21). A
     composable's derived tier is printed by `check --sched --explain`, written
     into the model's `execution.bindings`, and then dropped for every
@@ -390,7 +391,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     cannot see a class of input reads as coverage, and its block count was
     five short. Issues #0042-#0045 filed.
     [phase-81-the-docs-describe-the-code.md](./phase-81-the-docs-describe-the-code.md).
-  - **Phase 82** - in progress: what a detector may see, and what a reaction
+  - **Phase 82** - ✅ (2026-09-25): what a detector may see, and what a reaction
     may cross (2026-09-25, rlm **v0.1.43**). On the WG's L4 design, omitting a
     hazard's `on:` bought 10 ms of slack, because the FDTI took the MIN over
     every mechanism of every wanted class. W1-W3 (landed together): `on:` is
@@ -399,7 +400,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     class it reports plus the detectors declared in vain, and `max_age`
     counts toward an omission only under `mechanism: diagnostics |
     application`. Issue #0046 ruled. W4 (a sampling hop in the reaction walk)
-    is separate.
+    landed as `81bed6ac`.
     [phase-82-what-a-detector-may-see.md](./phase-82-what-a-detector-may-see.md).
   - **Phase 86** - ✅ (W0-W5 2026-10-12; Jazzy acceptance passed
     2026-10-22): a lifecycle node's autostart comes from the
@@ -420,7 +421,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     deadline/monitor (D2, with nano-ros), an on-demand topic with no
     minimum rate (D3; 2 start-up `rate-hierarchy-runtime` violations on the
     board), and route versus callback at run time (D4). Plus 6 open
-    Dependabot alerts (T3). Extended 2026-10-05 with the checker's DX gaps
+    Dependabot alerts (T3, closed 2026-10-26). Extended 2026-10-05 with the checker's DX gaps
     from the island's survey (`docs/dx-ux-gaps-2026-10.md` there): a
     contract that states the grammar it needs (D5; the PATH 0.12.0 refuses
     the island contract with an unknown key and never names a version),
@@ -436,7 +437,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     (0.13.1). Structural on `phase85-rest` with rlm v0.1.49: I1 (the link
     charged on the guard edge), D1 (`jitter:`), D3 (`on_demand:`), D5
     (`rlm:` header), I6 (export v2), D7 (text); D2, D4, D8-D10 decided,
-    not built; D6, I11, T3 open.
+    not built; D6, I11 open.
     [phase-85-what-the-island-left-open.md](./phase-85-what-the-island-left-open.md).
   - **Phase 84** - complete: a window is a least time, and its notice is
     charged once (2026-09-29, rlm **v0.1.47**, text only). rlm said a
