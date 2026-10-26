@@ -237,7 +237,8 @@ island's `src/safety_island_bringup/launch/safety_island.contract.yaml`
   the old ones; the clean run also prints `derivable-rate` infos asking
   to delete declarations the island keeps. An in-file "acknowledged, with
   reason" the checker reads (rule id + target + reason), reported as
-  acknowledged rather than dropped.
+  acknowledged rather than dropped. **Done (2026-10-26)**: rlm v0.2.3's
+  `acknowledged:`; see D8 under Design decisions.
 - **D9 (DX 1.8, rlm with play_launch): generalise the parameter binding.**
   The window is bound to `takeover_request_timeout` (`window-param`) and
   settle is derived from parameter files, but the 500 ms detection is
@@ -584,6 +585,27 @@ rlm commits on its `main`: D3 `356383c`, D1 `957075d`, D5 `7936317`, D7
   on the diagnostic path being stable enough to match (today it is the
   rule's `path:`; the two island `reaction-unguarded` warnings have
   distinct ones, `hazards.<h>.reaction`).
+  **Done (2026-10-26), rlm v0.2.3.** rlm parses the list (context
+  `acknowledged[]`; all three keys required and non-empty, a duplicate
+  rule + path refused, refused in an inline include);
+  `resolve/src/ros/acknowledge.rs` matches it in `check`, after
+  `--strict` and `--against`, so an entry is judged against the printed
+  verdict. Decisions the item left open: matching is exact on rule id and
+  path; a per-scope diagnostic matches only its own contract's entries,
+  a cross-scope one (the island's `reaction-unguarded` is cross-scope:
+  `Diagnostic` carries no scope) matches any contract's, lowest scope
+  first; infos can be acknowledged too (the island's `derivable-rate`
+  notices); an entry on an error is `error[ack-error]` (path
+  `acknowledged[<i>]`) and the error still prints; `--expect` counts
+  errors only, so acknowledgements leave it as it was, and `ack-error`
+  counts as an unexpected error. Terminal: an `Acknowledged` section
+  (`ack[<rule>]`, path, entry, reason), `(N errors, M warnings, K
+  acknowledged)`, and each cross-scope diagnostic now prints its path
+  (`at <path>`), since that is what an entry names. JSON: every element
+  carries `acknowledged`; the matched ones form an `<acknowledged>` group
+  with `reason`, `acknowledged_by` and `scope`. Fixtures `contract_ack`,
+  `contract_ack_error`; eight unit tests beside the matcher, rlm's parse
+  test, two `check_dx` tests.
 - **D9: a general `param:` binding.** Shape: any duration or rate may be
   written `{ value: <n>, param: <node>.<param>, unit: s|ms|hz }`, as
   `window: { duration, param }` already is; `lease_duration`, `max_age`

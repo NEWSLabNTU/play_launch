@@ -8,6 +8,18 @@ allowance heavily.
 
 ## Unreleased
 
+- **Added (`check`):** a contract can acknowledge a finding it keeps, with
+  rlm v0.2.3's root `acknowledged:` list of `{ rule, at, reason }`. A
+  warning or info whose rule id and path match an entry is printed as
+  `ack[<rule>]` with the reason, in its own section, and counted apart:
+  `(0 errors, 2 warnings, 1 acknowledged)`. An entry naming an error is
+  `error[ack-error]` and the error still prints; an entry matching nothing
+  is `warning[ack-stale]`, so an acknowledgement cannot outlive its
+  finding. Exit codes and `--expect` are unchanged. Each cross-scope
+  diagnostic now prints its path (`at <path>`), which is what an entry
+  names; in `--format json` every element carries `acknowledged`, and the
+  acknowledged ones form an `<acknowledged>` group with the `reason`
+  (phase 85 D8).
 - **Changed (`check`):** rlm v0.2.2. Every worst-case claim of every
   reference extension is proved: `rail.ebd`'s distance check no longer
   reports `worst-case-unknown` over `speed_error`, `acceleration`,

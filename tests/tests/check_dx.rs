@@ -428,3 +428,117 @@ fn the_graph_export_carries_what_the_walk_reads() {
     assert_eq!(call_mrm["input"][0], "availability");
     assert_eq!(find("nodes", "fqn", "/handler")["contracted"], true);
 }
+
+/// Parse `check --format json`'s stdout: zero or more arrays, concatenated.
+fn json_elements(out: &Output) -> Vec<serde_json::Value> {
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let mut all = Vec::new();
+    let stream = serde_json::Deserializer::from_str(&stdout).into_iter::<serde_json::Value>();
+    for v in stream {
+        let v = v.unwrap_or_else(|e| panic!("stdout is not a JSON stream ({e}):\n{stdout}"));
+        all.extend(
+            v.as_array()
+                .expect("each group is an array")
+                .iter()
+                .cloned(),
+        );
+    }
+    all
+}
+
+/// D8: a warning a contract acknowledges is printed as `ack[<rule>]` with its
+/// reason and counted apart; an entry that matches nothing is
+/// `warning[ack-stale]`; the exit status is unchanged.
+#[test]
+fn an_acknowledged_warning_is_counted_apart_and_a_stale_entry_warns() {
+    let out = check("contract_ack", &[]);
+    let s = text(&out);
+    assert_eq!(out.status.code(), Some(0), "{s}");
+    assert!(
+        s.contains("(0 errors, 2 warnings, 1 acknowledged)"),
+        "summary:\n{s}"
+    );
+    assert_eq!(s.matches("ack[endpoint-unwired]").count(), 1, "{s}");
+    assert!(!s.contains("warning[endpoint-unwired]"), "{s}");
+    assert!(
+        s.contains("at nodes.control_node.sub.odom -- acknowledged[0] in bringup.contract.yaml"),
+        "{s}"
+    );
+    assert!(
+        s.contains("reason: odometry is read from a bag in this demo; nothing here publishes it"),
+        "{s}"
+    );
+    // The unacknowledged warning is still one.
+    assert!(s.contains("warning[wiring]"), "{s}");
+    assert_eq!(s.matches("warning[ack-stale]").count(), 1, "{s}");
+    assert!(
+        s.contains(
+            "acknowledged[1] (`wiring` at `nodes.control_node.paths.retired`) matches no diagnostic"
+        ),
+        "{s}"
+    );
+    // A cross-scope diagnostic names its path, which is what an entry names.
+    assert!(s.contains("    at acknowledged[1]"), "{s}");
+
+    let out = check("contract_ack", &["--format", "json"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let all = json_elements(&out);
+    let acked: Vec<&serde_json::Value> = all.iter().filter(|d| d["acknowledged"] == true).collect();
+    assert_eq!(acked.len(), 1, "{all:#?}");
+    let a = acked[0];
+    assert_eq!(a["file"], "<acknowledged>");
+    assert_eq!(a["rule"], "endpoint-unwired");
+    assert_eq!(a["severity"], "warning");
+    assert_eq!(a["path"], "nodes.control_node.sub.odom");
+    assert_eq!(
+        a["reason"],
+        "odometry is read from a bag in this demo; nothing here publishes it"
+    );
+    assert_eq!(a["acknowledged_by"]["entry"], 0);
+    assert!(
+        a["acknowledged_by"]["contract_path"]
+            .as_str()
+            .unwrap()
+            .ends_with("contract_ack/launch/bringup.contract.yaml"),
+        "{a}"
+    );
+    assert_eq!(a["scope"], "<cross-scope>");
+    // Every other element says it is not acknowledged.
+    assert!(
+        all.iter()
+            .filter(|d| d["file"] != "<acknowledged>")
+            .all(|d| d["acknowledged"] == false),
+        "{all:#?}"
+    );
+    assert!(
+        all.iter()
+            .any(|d| d["rule"] == "ack-stale" && d["path"] == "acknowledged[1]"),
+        "{all:#?}"
+    );
+}
+
+/// D8: an error cannot be acknowledged. The error still prints, the entry is
+/// `error[ack-error]`, and `--expect` sees it as an error it did not expect.
+/// An info can be acknowledged.
+#[test]
+fn an_acknowledged_error_is_refused_and_the_error_stands() {
+    let out = check("contract_ack_error", &[]);
+    let s = text(&out);
+    assert_eq!(out.status.code(), Some(1), "{s}");
+    assert!(
+        s.contains(
+            "acknowledged[0] names `rate-hierarchy` at `topics./control/cmd`, which is an ERROR"
+        ),
+        "{s}"
+    );
+    assert_eq!(s.matches("error[ack-error]").count(), 1, "{s}");
+    // contract_error's four rate-hierarchy errors, all still printed.
+    assert_eq!(s.matches("error[rate-hierarchy]").count(), 4, "{s}");
+    assert!(s.contains("ack[derivable-min-rate]"), "{s}");
+    assert!(s.contains("(5 errors, 3 warnings, 1 acknowledged)"), "{s}");
+
+    let out = check("contract_ack_error", &["--expect", "rate-hierarchy"]);
+    let s = text(&out);
+    assert_eq!(out.status.code(), Some(1), "{s}");
+    assert!(s.contains("unexpected error[ack-error] x1"), "{s}");
+}

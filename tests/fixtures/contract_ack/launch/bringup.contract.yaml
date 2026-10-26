@@ -1,0 +1,46 @@
+# Phase 85 D8 -- acknowledging a true warning. The graph is contract_unwired's,
+# which gets two warnings: `wiring` (per scope: the path output `cmd` is in
+# no topic) and `endpoint-unwired` (cross-scope: `sub: odom` is in no topic).
+#
+# - acknowledged[0] keeps the endpoint-unwired one: printed as
+#   ack[endpoint-unwired] with its reason and counted apart;
+# - acknowledged[1] names a path no diagnostic reports: warning[ack-stale].
+#
+# `wiring` stays an ordinary warning. Expected summary:
+# (0 errors, 2 warnings, 1 acknowledged), exit 0.
+version: 1
+rlm: v0.2.3
+
+acknowledged:
+  - rule: endpoint-unwired
+    at: nodes.control_node.sub.odom
+    reason: odometry is read from a bag in this demo; nothing here publishes it
+  - rule: wiring
+    at: nodes.control_node.paths.retired
+    reason: the retired path was removed, and this entry with it is overdue
+
+nodes:
+  sensor_node:
+    pub:
+      scan: {}
+    paths:
+      tick:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [scan]
+
+  control_node:
+    sub:
+      scan: {}
+      odom: { state: true }
+    pub:
+      cmd: {}
+    paths:
+      control:
+        trigger: { input: [scan] }
+        output: [cmd]
+
+topics:
+  /dx/scan:
+    type: std_msgs/msg/String
+    pub: [sensor_node/scan]
+    sub: [control_node/scan]

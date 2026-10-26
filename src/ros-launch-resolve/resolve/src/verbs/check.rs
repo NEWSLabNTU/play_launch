@@ -301,6 +301,12 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
         index.merge_diagnostics.extend(against.diagnostics);
     }
 
+    // Phase 85 D8: what the contracts acknowledge, judged against the
+    // verdict about to be printed -- after `--strict` re-grades and
+    // `--against` adds, so an entry naming a diagnostic one of them made an
+    // error is refused rather than hiding it.
+    crate::ros::acknowledge::apply(&mut index);
+
     // "None found" and "found, but none could be read" are different verdicts.
     // Only the first is a clean exit; conflating them let a contract file that
     // failed to parse report as if the user had shipped no contracts at all.
@@ -339,6 +345,9 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
 
     // Render cross-scope diagnostics (consistency, dangling-entity, budget-overflow)
     render_cross_scope_diagnostics(&index, &inputs.format, rule_filter.as_ref())?;
+
+    // Phase 85 D8: the findings the contracts acknowledge, apart.
+    render_acknowledged(&index, &inputs.format, rule_filter.as_ref())?;
 
     // Phase 83: the fault-reaction arithmetic the verdicts above were
     // computed from, one row per (hazard, rung).
@@ -391,6 +400,11 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
 ///
 /// The rule set is taken BEFORE `--rule` filtering: `--rule` narrows what is
 /// printed, `--expect` states the whole verdict.
+///
+/// Acknowledgements (phase 85 D8) do not move this verdict: only warnings and
+/// infos can be acknowledged, and this counts errors. An entry naming an
+/// error is itself `error[ack-error]`, which counts here like any other
+/// error, so a negative test cannot be passed by acknowledging its error.
 pub fn expect_verdict(
     index: &manifest_loader::ManifestIndex,
     expect: &[String],
@@ -1203,9 +1217,83 @@ fn render_cross_scope_diagnostics(
                 Severity::Info => "info",
             };
             crate::say!("  {label}[{}]: {}", diag.rule_id, diag.message);
+            // The path is what an `acknowledged:` entry names (phase 85
+            // D8); a per-scope diagnostic prints it in its source frame.
+            if !diag.path.is_empty() {
+                crate::say!("    at {}", diag.path);
+            }
         }
     }
 
+    Ok(())
+}
+
+/// Render the warnings and infos an `acknowledged:` entry matched (phase 85
+/// D8): `ack[<rule>]`, where the finding is, which entry acknowledged it, and
+/// why. In JSON, one `"file": "<acknowledged>"` group whose elements carry
+/// `"acknowledged": true`, the `reason`, the acknowledging contract and entry,
+/// and the group the diagnostic would otherwise have been printed in
+/// (`scope`).
+fn render_acknowledged(
+    index: &manifest_loader::ManifestIndex,
+    format: &str,
+    rule_filter: Option<&HashSet<&str>>,
+) -> Result<()> {
+    let shown: Vec<&crate::ros::acknowledge::Acknowledged> = index
+        .acknowledged
+        .iter()
+        .filter(|a| rule_filter.is_none_or(|set| set.contains(a.diagnostic.rule_id.as_str())))
+        .collect();
+    if shown.is_empty() {
+        return Ok(());
+    }
+    let file_of = |p: &std::path::Path| {
+        p.file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    if format == "json" {
+        let items: Vec<serde_json::Value> = shown
+            .iter()
+            .map(|a| {
+                let d = &a.diagnostic;
+                serde_json::json!({
+                    "file": "<acknowledged>",
+                    "rule": d.rule_id,
+                    "severity": d.severity.to_string(),
+                    "message": d.message,
+                    "path": d.path,
+                    "span": d.span.as_ref().map(|s| {
+                        serde_json::json!({"start": s.start, "end": s.end})
+                    }),
+                    "acknowledged": true,
+                    "reason": a.reason,
+                    "acknowledged_by": {
+                        "contract_path": a.contract_path.display().to_string(),
+                        "entry": a.entry,
+                    },
+                    "scope": match a.scope_id {
+                        Some(id) => serde_json::json!(id),
+                        None => serde_json::json!("<cross-scope>"),
+                    },
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&items)?);
+    } else {
+        crate::say!("\n── Acknowledged ──");
+        for a in shown {
+            let d = &a.diagnostic;
+            crate::say!("  ack[{}]: {}", d.rule_id, d.message);
+            crate::say!(
+                "    at {} -- acknowledged[{}] in {}",
+                d.path,
+                a.entry,
+                file_of(&a.contract_path)
+            );
+            crate::say!("    reason: {}", a.reason);
+        }
+    }
     Ok(())
 }
 
@@ -1224,6 +1312,18 @@ fn print_summary(index: &manifest_loader::ManifestIndex, rule_filter: Option<&Ha
 
     let total_errors = per_scope_errors + cross_errors + load_errors;
     let total_warnings = per_scope_warnings + cross_warnings + load_warnings;
+    // Phase 85 D8: acknowledged findings are not warnings any more; they are
+    // counted apart, and the count is printed only when there is one.
+    let acknowledged = index
+        .acknowledged
+        .iter()
+        .filter(|a| rule_filter.is_none_or(|set| set.contains(a.diagnostic.rule_id.as_str())))
+        .count();
+    let ack_note = if acknowledged > 0 {
+        format!(", {acknowledged} acknowledged")
+    } else {
+        String::new()
+    };
     let (clean_count, error_count) = tally_manifests(
         index.manifests.values().map(|m| m.diagnostics.as_slice()),
         cross_errors,
@@ -1244,12 +1344,13 @@ fn print_summary(index: &manifest_loader::ManifestIndex, rule_filter: Option<&Ha
         );
     }
     crate::say!(
-        "\n{} manifest(s) checked: {} clean, {} with errors ({} errors, {} warnings){}",
+        "\n{} manifest(s) checked: {} clean, {} with errors ({} errors, {} warnings{}){}",
         index.manifests.len(),
         clean_count,
         error_count,
         total_errors,
         total_warnings,
+        ack_note,
         filter_note,
     );
 
@@ -1350,6 +1451,9 @@ fn print_diagnostics_json(
                 "span": d.span.as_ref().map(|s| {
                     serde_json::json!({"start": s.start, "end": s.end})
                 }),
+                // Phase 85 D8: an acknowledged finding is printed in the
+                // `<acknowledged>` group instead, with `true`.
+                "acknowledged": false,
             });
             if let Some((channel, contract_path)) = channel_and_path
                 && let Some(map) = obj.as_object_mut()

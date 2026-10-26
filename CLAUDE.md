@@ -695,6 +695,18 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-10-26**: **A contract acknowledges a finding** (phase 85 D8, rlm
+  v0.2.3, `ros/acknowledge.rs`). A root `acknowledged: [{ rule, at,
+  reason }]` moves a matching warning or info out of the diagnostic lists
+  into `ManifestIndex::acknowledged` (`ack[<rule>]`, counted apart); an
+  entry on an error is `ack-error`, one on nothing `ack-stale`. Two things
+  a later change must keep: `apply` runs in `check` AFTER `--strict` and
+  `--against`, and is not idempotent (a second call reports every entry
+  stale), so do not move it into `load_manifests`; and a cross-scope
+  diagnostic carries no scope (`Diagnostic` has no field for one), so it
+  is matched against every contract's entries -- a rule that wants
+  per-file matching must emit per scope.
+
 - **2026-10-23**: **The vehicle keys are an extension, and derived bounds
   reach the model** (phase 91 E8-E10, rlm v0.2.0). `entry_speed` and
   `settle: { decel, jerk }` are keys of `vehicle.braking`, bundled with the

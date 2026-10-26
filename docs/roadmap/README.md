@@ -437,7 +437,8 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     (0.13.1). Structural on `phase85-rest` with rlm v0.1.49: I1 (the link
     charged on the guard edge), D1 (`jitter:`), D3 (`on_demand:`), D5
     (`rlm:` header), I6 (export v2), D7 (text); D2, D4, D8-D10 decided,
-    not built; D6 (`check --against`) and I11 done 2026-10-26.
+    not built; D6 (`check --against`) and I11 done 2026-10-26; D8
+    (`acknowledged:`, rlm v0.2.3) done 2026-10-26.
     [phase-85-what-the-island-left-open.md](./phase-85-what-the-island-left-open.md).
   - **Phase 84** - complete: a window is a least time, and its notice is
     charged once (2026-09-29, rlm **v0.1.47**, text only). rlm said a

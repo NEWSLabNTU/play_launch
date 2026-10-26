@@ -75,7 +75,10 @@ arrays, one per group, in this order:
 1. contracts that failed to load (`"file": "<load>"`), when any did;
 2. one array per checked contract scope that has a diagnostic
    (`"file"` is the scope label: `<pkg>/<file> (scope N) [<channel>: <path>]`);
-3. cross-scope diagnostics (`"file": "<cross-scope>"`), when any.
+3. cross-scope diagnostics (`"file": "<cross-scope>"`), when any;
+4. acknowledged findings (`"file": "<acknowledged>"`), when any (see
+   [Acknowledging a finding](#acknowledging-a-finding)). Their number is
+   the count the summary prints as `N acknowledged`.
 
 Each element:
 
@@ -89,12 +92,61 @@ Each element:
 | `span` | object or null | `{ "start", "end" }` byte offsets into the contract, when known |
 | `channel` | string | per-scope groups only: `overlay` or `provider` |
 | `contract_path` | string | per-scope groups only: the contract file |
+| `acknowledged` | bool | `true` only in the `<acknowledged>` group |
+| `reason` | string | `<acknowledged>` only: the entry's reason |
+| `acknowledged_by` | object | `<acknowledged>` only: `{ "contract_path", "entry" }`, the file and the index of the entry that matched |
+| `scope` | number or string | `<acknowledged>` only: the scope id the finding belongs to, or `"<cross-scope>"` |
 
 A refused file is an element with `"rule": "manifest-parse"` under
 `"file": "<load>"`, and the exit status is 3. A reader that wants one value
 should parse the stream as a sequence of arrays and concatenate them; the
 verdict itself is the exit status. (There is no separate verdict object; this
 documents the format as it is.)
+
+## Acknowledging a finding
+
+A warning that is true and kept on purpose (a reaction nothing guards,
+because its guard is outside the system) makes every CI run say the same
+thing, and a new warning then reads like the old ones. Name it in the
+contract, once, with why (rlm v0.2.3):
+
+```yaml
+rlm: v0.2.3
+acknowledged:
+  - rule: reaction-unguarded
+    at: hazards.lost_pose.reaction
+    reason: the MRM operator is watched by the vehicle's own watchdog
+```
+
+`rule` is the id in `warning[<rule>]` and `at` the path the diagnostic
+reports: the `at <path>` line under a cross-scope diagnostic, the label
+under a source excerpt, or `path` in `--format json`. Matching is exact on
+both. The list sits at the contract's root; all three keys are required.
+
+```
+-- Acknowledged --
+  ack[endpoint-unwired]: bringup.contract.yaml:34: node '/dx/control_node' declares `sub: odom` ...
+    at nodes.control_node.sub.odom -- acknowledged[0] in bringup.contract.yaml
+    reason: odometry is read from a bag in this demo; nothing here publishes it
+
+1 manifest(s) checked: 1 clean, 0 with errors (0 errors, 2 warnings, 1 acknowledged)
+```
+
+- An acknowledged warning or info is printed in that section and is no
+  longer counted as a warning.
+- **Errors cannot be acknowledged.** An entry naming one is
+  `error[ack-error]`, and the error is printed as before.
+- **An entry that matches nothing is `warning[ack-stale]`** (path
+  `acknowledged[<i>]`): the finding is gone, or the rule or path is
+  misspelled. An acknowledgement cannot outlive its finding.
+- Exit status and `--expect` are unchanged. `--expect` counts errors, and
+  acknowledgements touch none; an `ack-error` is an error like any other,
+  so it fails an `--expect` that does not name it.
+- A diagnostic about one contract is matched only against that contract's
+  entries. A cross-scope diagnostic (the dotted path is still the
+  contract's own, e.g. `hazards.<h>.reaction`) is matched against every
+  contract's entries, since it names no single file.
+- `--rule` filters acknowledged findings like any other.
 
 ## Output that survives a log
 

@@ -555,6 +555,10 @@ pub struct ManifestIndex {
     /// dropped the file and left the exit code at 0, so one stray key
     /// silently stopped every contract in that file from being checked.
     pub load_diagnostics: Vec<Diagnostic>,
+    /// Warnings and infos an `acknowledged:` entry matched (phase 85 D8),
+    /// moved here out of `diagnostics` / `merge_diagnostics` by
+    /// [`super::acknowledge::apply`]. Empty until `check` calls it.
+    pub acknowledged: Vec<super::acknowledge::Acknowledged>,
     /// Total errors across all manifests.
     pub total_errors: usize,
     /// Total warnings across all manifests.

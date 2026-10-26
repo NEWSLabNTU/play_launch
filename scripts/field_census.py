@@ -138,6 +138,10 @@ CONSUMING_PATTERNS = [
     # phase 91 E4: `use:` is resolved against the installed extensions; a
     # requirement no installed version matches is refused.
     (r"resolve/src/ros/extensions\.rs$", "extension resolution (phase 91)"),
+    # phase 85 D8: `acknowledged:` entries are matched against the
+    # diagnostics `check` prints; a match changes the verdict's counts, an
+    # entry on an error is `ack-error`, one on nothing is `ack-stale`.
+    (r"resolve/src/ros/acknowledge\.rs$", "acknowledgement matching (phase 85 D8)"),
     (r"sched/src/", "scheduling"),
     (r"^rlm/derive/src/", "shared mapper derivation (rlm derive)"),
     (r"check/src/graph\.rs$", "dataflow graph"),

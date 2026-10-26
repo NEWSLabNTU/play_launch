@@ -1,3 +1,45 @@
+== contract_ack/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/dx/sensor_node",
+            path: "tick",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=100)",
+        },
+    ],
+    warnings: [],
+}
+== contract_ack_error/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/control/control_node",
+            path: "control",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
+        },
+        RankItem {
+            node: "/perception/sensor_node",
+            path: "tick",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
+        },
+    ],
+    warnings: [],
+}
 == contract_action_unserved/launch/bringup.launch.xml
 RankedPlan {
     items: [
