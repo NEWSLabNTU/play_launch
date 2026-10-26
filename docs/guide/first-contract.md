@@ -193,12 +193,20 @@ bringup.contract.yaml:
                                                                     <- /safety/lidar_driver rate_hz = 100 Hz, <param> bringup.launch.xml:29 = $(var lidar_hz)
                                                                     <- lidar_hz = 100, command line
   /safety/obstacle_detector sub.scan.min_rate_hz = 100 Hz           <- $(let lidar_rate)
+                                                                    <- let lidar_rate: $(var lidar_hz) Hz = 100 Hz, bringup.contract.yaml:19
                                                                     <- lidar_hz = 100 Hz, command line
 ```
 
 A parameter whose launch file wrote it as a substitution is followed to the
 configuration it read, and on to where that was assigned: the command line,
-an `<arg>` default, a `<let>` or an include's argument, with its line.
+an `<arg>` default, a `<let>` or an include's argument, with its line. A
+`$(let)` names its entry and then whatever the entry read. Every number read
+through a reference is listed, an extension key's included (`decel:
+$(param target_acceleration) m/s^2`, `entry_speed: $(let odd_speed)`), in
+the contract's order, and the model carries each one's provenance in
+`sources:`. A derivation that uses such a number records it as the spelling
+it replaces would (the parameter's name, the literal), so a settle reads
+the same whichever form supplied it.
 
 | Reference | Reads |
 |---|---|

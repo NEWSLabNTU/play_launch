@@ -566,7 +566,7 @@ pub struct ManifestIndex {
     pub load_diagnostics: Vec<Diagnostic>,
     /// Warnings and infos an `acknowledged:` entry matched (phase 85 D8),
     /// moved here out of `diagnostics` / `merge_diagnostics` by
-    /// [`super::acknowledge::apply`]. Empty until `check` calls it.
+    /// [`super::acknowledge::apply`]. Empty until `check` or the model path calls it.
     pub acknowledged: Vec<super::acknowledge::Acknowledged>,
     /// Total errors across all manifests.
     pub total_errors: usize,
@@ -983,11 +983,14 @@ pub fn load_manifests(
         }
     }
 
+    // No counts here: this is not the verdict. `check` re-grades
+    // (`--strict`), adds (`--against`) and moves what a contract
+    // acknowledges (phase 85 D8) after loading, and its summary line is the
+    // count; a tally here disagreed with it.
     if loaded > 0 {
         info!(
             "Loaded {loaded} manifest(s) [{overlay_loaded} overlay, {provider_loaded} provider] \
-             ({skipped} scopes without manifests, {} errors, {} warnings)",
-            index.total_errors, index.total_warnings
+             ({skipped} scopes without manifests)"
         );
     } else {
         debug!(
@@ -1018,6 +1021,9 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // written for them, and derive the hazard-level bounds FIRST, so every
     // rule below reads a derived `ftti` or `detection` as a written one.
     super::extensions::prepare(index);
+    // Phase 94: an extension key read through a reference is listed and
+    // carried with its provenance like a core key's.
+    super::extensions::record_ext_reads(index);
     use super::manifest_graph::build_global_graph;
     use ros_launch_manifest_types::ExternalSide;
 

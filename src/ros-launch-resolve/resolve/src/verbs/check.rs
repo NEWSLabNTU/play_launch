@@ -756,7 +756,7 @@ pub(crate) fn render_values(index: &manifest_loader::ManifestIndex) -> String {
     let mut rows: Vec<(String, String, String, Vec<String>)> = Vec::new();
     let mut out = String::new();
     for m in scopes {
-        let resolved: Vec<_> = m
+        let mut resolved: Vec<_> = m
             .manifest
             .value_refs
             .iter()
@@ -770,6 +770,36 @@ pub(crate) fn render_values(index: &manifest_loader::ManifestIndex) -> String {
             .file_name()
             .map(|f| f.to_string_lossy().into_owned())
             .unwrap_or_default();
+        // In the file's order: the extension keys' reads are recorded after
+        // the core keys' (`extensions::record_ext_reads`).
+        let spans = ros_launch_manifest_types::SpanIndex::build(&m.source);
+        let line_of = |dotted: &str| {
+            let site = crate::ros::contract_values::line_site("", &m.source, &spans, dotted);
+            site.rsplit(':')
+                .next()
+                .and_then(|l| l.parse::<usize>().ok())
+                .unwrap_or(usize::MAX)
+        };
+        resolved.sort_by_key(|(r, _)| line_of(&r.path));
+        // A `$(let)` read names its entry: where it is, and what it is
+        // written as when that is not the number itself.
+        let let_line = |name: &str, value: &str| {
+            let site = crate::ros::contract_values::line_site(
+                &file,
+                &m.source,
+                &spans,
+                &format!("let.{name}"),
+            );
+            match m.manifest.lets.iter().find(|l| l.name == name) {
+                Some(l)
+                    if matches!(l.expr, ros_launch_manifest_types::values::Expr::Num { .. }) =>
+                {
+                    format!("let {name}: {}, {site}", l.written.trim())
+                }
+                Some(l) => format!("let {name}: {} = {value}, {site}", l.written.trim()),
+                None => format!("let {name} = {value}, {site}"),
+            }
+        };
         let tag = crate::ros::contract_values::instance_tag(
             by_file.get(m.contract_path.as_path()).copied().unwrap_or(1),
             &m.ns,
@@ -791,11 +821,8 @@ pub(crate) fn render_values(index: &manifest_loader::ManifestIndex) -> String {
             let reads = v
                 .reads
                 .iter()
-                .filter(|x| {
-                    !matches!(&x.kind, ReadKind::Let { name } if r.written == format!("$(let {name})"))
-                })
                 .map(|x| match &x.kind {
-                    ReadKind::Let { name } => format!("$(let {name}) = {}", x.value),
+                    ReadKind::Let { name } => let_line(name, &x.value),
                     ReadKind::Param { node, name } => {
                         format!("{node} {name} = {}, {}", x.value, x.at)
                     }

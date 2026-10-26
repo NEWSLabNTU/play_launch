@@ -65,7 +65,12 @@ pub fn build_checked_model(
         provider: !no_provider_contracts,
         lock: Default::default(),
     };
-    let index = manifest_loader::load_manifests(dump, &sources)?;
+    let mut index = manifest_loader::load_manifests(dump, &sources)?;
+    // Phase 85 D8 on the model path: what a contract acknowledges is
+    // embedded as acknowledged, not as a warning, and an entry naming an
+    // error (`ack-error`) refuses the model like any error. Matching runs
+    // once per index: this index is the model's own, never `check`'s.
+    crate::ros::acknowledge::apply(&mut index);
 
     // Gate: Error severity anywhere refuses emission (validity by
     // construction — RFC-0050).

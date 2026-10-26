@@ -864,6 +864,127 @@ pub(crate) fn entry_speed_mps(
     }
 }
 
+/// Phase 94: every extension key written as a reference (`decel: $(param
+/// target_acceleration) m/s^2`, `entry_speed: $(let odd_speed)`) is a read
+/// of the launch tree like a core key's, so it joins the contract's
+/// [`ros_launch_manifest_types::values::ValueRef`]s with its evaluated
+/// value: `check --explain` lists it under "Values read from the launch
+/// tree" and the model carries its `sources:` entry, through the same code
+/// as a core key's. The rlm parser cannot record these itself, since only
+/// the extension knows a key's dimension. A key that does not evaluate is
+/// left out: the rule that needs the value reports why. A bare name (`decel:
+/// target_acceleration`, the spelling `migrate` rewrites) is not recorded:
+/// it is not a reference, and a contract with none resolves as before.
+pub(crate) fn record_ext_reads(index: &mut ManifestIndex) {
+    use ros_launch_manifest_types::values::{ValueRef, is_reference, parse_expr};
+    let mut found: Vec<(usize, ValueRef)> = Vec::new();
+    for m in index.manifests.values() {
+        let exts = exts_of(index, m.scope_id);
+        if exts.is_empty() {
+            continue;
+        }
+        let checked: Vec<(&str, rlx::Checked)> = exts
+            .iter()
+            .map(|e| (e.name.as_str(), e.checked()))
+            .collect();
+        // (path prefix, extension context, node key, key)
+        let mut sites: Vec<(String, &str, Option<&str>, &ExtKey)> = Vec::new();
+        for (h, decl) in &m.manifest.hazards {
+            for k in &decl.ext {
+                sites.push((format!("hazards.{h}"), "hazard", None, k));
+            }
+        }
+        for (n, node) in &m.manifest.nodes {
+            for (p, path) in &node.paths {
+                for k in path.safe_state.iter().flat_map(|ss| &ss.settle_ext) {
+                    sites.push((
+                        format!("nodes.{n}.paths.{p}.safe_state.settle"),
+                        "settle",
+                        Some(n.as_str()),
+                        k,
+                    ));
+                }
+            }
+        }
+        for (prefix, ctx, node, k) in sites {
+            let ExtValue::Scalar(text) = &k.value else {
+                continue;
+            };
+            if !is_reference(text) {
+                continue;
+            }
+            let (qualifier, bare) = split_key(&k.key);
+            let Some(dim) = checked
+                .iter()
+                .filter(|(name, _)| qualifier.is_none_or(|q| q == *name))
+                .find_map(
+                    |(_, c)| match c.env.key(&format!("{ctx}.{bare}")).map(|i| &i.ty) {
+                        Some(KeyTy::Value(d)) => Some(*d),
+                        Some(KeyTy::Param { dim, .. }) => Some(*dim),
+                        _ => None,
+                    },
+                )
+            else {
+                continue;
+            };
+            let path = format!("{prefix}.{bare}");
+            if m.manifest.value_refs.iter().any(|r| r.path == path) {
+                continue;
+            }
+            let (Ok(Some(v)), Ok(expr)) = (
+                super::contract_values::ext_value(index, m.scope_id, text, bare, dim, node),
+                parse_expr(text),
+            ) else {
+                continue;
+            };
+            found.push((
+                m.scope_id,
+                ValueRef {
+                    path,
+                    written: text.clone(),
+                    expr,
+                    want: dim,
+                    node: node.map(str::to_string),
+                    resolved: Some(v),
+                },
+            ));
+        }
+    }
+    for (scope_id, r) in found {
+        if let Some(m) = index.manifests.get_mut(&scope_id) {
+            m.manifest.value_refs.push(r);
+        }
+    }
+}
+
+/// What a derivation records for a value read through a reference (phase
+/// 94): what the same number written the other way records, so a
+/// derivation reads the same whichever form supplied it, and the reference
+/// itself is the `sources:` entry's and `--explain`'s to show. A single
+/// `$(param … <name>)` is the parameter's bare name (the spelling it
+/// replaces); a `$(let)` of a literal is the literal; any other single read
+/// is the value it read. An expression of several terms has no other
+/// spelling and is recorded as written.
+fn derivation_text(
+    index: &ManifestIndex,
+    scope_id: usize,
+    text: &str,
+    v: &ros_launch_manifest_types::values::Resolved,
+) -> String {
+    use ros_launch_manifest_types::values::{Expr, parse_expr, shown_si};
+    match parse_expr(text) {
+        Ok(Expr::Param { name, .. }) => name,
+        Ok(Expr::Let(name)) => index
+            .manifests
+            .get(&scope_id)
+            .and_then(|m| m.manifest.lets.iter().find(|l| l.name == name))
+            .filter(|l| matches!(l.expr, Expr::Num { .. }))
+            .map_or_else(|| shown_si(v.si, v.dim), |l| l.written.trim().to_string()),
+        Ok(Expr::Var { .. }) => shown_si(v.si, v.dim),
+        _ => text.to_string(),
+    }
+}
+
 /// `check --update-lock`: write each contract directory's `rlm.lock` from
 /// what [`prepare`] resolved. Two contracts in one directory that resolved
 /// one name differently cannot share a lock, and nothing is written.
@@ -1428,11 +1549,17 @@ fn gather(
                         )
                     })
                     .map_or_else(|| format!("{si}"), |r| format!("{} ({})", r.value, r.at));
-                written.push((need.path.clone(), format!("{text} = {shown}")));
+                // The read form records what the bare name records.
+                let as_written = if read_form {
+                    derivation_text(index, scope_id, text, &v)
+                } else {
+                    text.clone()
+                };
+                written.push((need.path.clone(), format!("{as_written} = {shown}")));
                 Value::Quantity {
                     si,
                     dim: *dim,
-                    written: Some(text.clone()),
+                    written: Some(as_written),
                 }
             }
             (KeyTy::Value(dim), ExtValue::Scalar(text))
@@ -1443,9 +1570,10 @@ fn gather(
                     ParamHost::Node(fqn) => Some(fqn.to_string()),
                     ParamHost::Guard(_) => None,
                 };
+                let scope_id = host_scope(index, &host, h);
                 let v = super::contract_values::ext_value(
                     index,
-                    host_scope(index, &host, h),
+                    scope_id,
                     text,
                     key,
                     *dim,
@@ -1457,11 +1585,13 @@ fn gather(
                 .ok_or_else(|| {
                     GatherError::Value(format!("`{text}` has no value in this launch tree"))
                 })?;
-                written.push((need.path.clone(), text.clone()));
+                // Recorded as the literal it stands for would be.
+                let as_written = derivation_text(index, scope_id, text, &v);
+                written.push((need.path.clone(), as_written.clone()));
                 Value::Quantity {
                     si: v.si,
                     dim: *dim,
-                    written: Some(text.clone()),
+                    written: Some(as_written),
                 }
             }
             (_, ExtValue::Scalar(text)) => {

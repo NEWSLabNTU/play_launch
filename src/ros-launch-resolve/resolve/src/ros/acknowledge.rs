@@ -30,10 +30,13 @@
 //! Matching is exact on both the rule id and the path: a path is the key the
 //! rule names, never a prefix of it.
 //!
-//! Called by `check` only, AFTER every step that adds or re-grades
-//! diagnostics (`--strict`, `--against`), so an entry is judged against the
-//! verdict that is printed. It is not idempotent: a second call would find
-//! the acknowledged diagnostics gone and report every entry stale.
+//! Called by `check`, AFTER every step that adds or re-grades diagnostics
+//! (`--strict`, `--against`), so an entry is judged against the verdict
+//! that is printed; and by `model::build_checked_model` right after it
+//! loads its own index, so `resolve` and `launch` embed an acknowledged
+//! finding as acknowledged (`model_builder::acknowledged_line`). It is not
+//! idempotent: a second call would find the acknowledged diagnostics gone
+//! and report every entry stale, so each index is matched exactly once.
 
 use std::{
     collections::{BTreeMap, BTreeSet},

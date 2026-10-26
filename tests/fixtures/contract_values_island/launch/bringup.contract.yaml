@@ -112,7 +112,7 @@ nodes:
     params:
       takeover_timeout: { type: double }
       update_rate: { type: integer }
-      lease_ms: { type: double }
+      lease_ms: { type: integer }
     sub:
       availability:
         qos: { lease_duration: $(param lease_ms) ms }
@@ -172,6 +172,7 @@ nodes:
 
   estop_op:
     params:
+      update_rate: { type: integer }
       target_acceleration: { type: double }
       target_jerk: { type: double }
     srv:

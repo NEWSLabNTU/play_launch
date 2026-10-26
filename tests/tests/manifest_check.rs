@@ -3841,10 +3841,20 @@ fn contract_values_island_reads_the_launch_tree_and_keeps_its_verdicts() {
         );
     }
     for needle in [
-        // The extension keys, read and bare, and the `let:`.
-        "entry_speed = 8.33 m/s   ($(let odd_speed))",
-        "decel = 2.5 m/s^2   ($(param target_acceleration) m/s^2)",
+        // The extension keys, read and bare, and the `let:`: a derivation
+        // records a read the way it records the spelling it replaces (the
+        // literal, the bare parameter name), so it reads the same either
+        // way; the reference is the values section's.
+        "entry_speed = 8.33 m/s   (8.33 m/s)",
+        "decel = 2.5 m/s^2   (target_acceleration)",
         "decel = 1 m/s^2   (min_acceleration)",
+        // Every number read through a reference is listed: the extension
+        // keys, and a `$(let)` with its entry.
+        "hazards.odd_exit.entry_speed = 8.33 m/s",
+        "<- let odd_speed: 8.33 m/s, bringup.contract.yaml:44\n",
+        "/estop_op paths.on_timer.safe_state.settle.decel = -2.5 m/s^2",
+        "<- /estop_op target_acceleration = -2.5 m/s^2, bringup.launch.xml\n",
+        "/estop_op paths.on_timer.safe_state.settle.jerk = -1.5 m/s^3",
         // Where each core value came from.
         "-- Values read from the launch tree (--explain) --",
         "/handler paths.on_timer.trigger.timer.rate_hz = 10 Hz",
@@ -3866,6 +3876,75 @@ fn contract_values_island_reads_the_launch_tree_and_keeps_its_verdicts() {
     };
     assert_eq!(rows(&out), rows(&takeover), "{out}");
     assert!(!rows(&out).is_empty(), "{out}");
+    // No derivation leaks a reference's spelling.
+    assert!(!out.contains("($(param"), "{out}");
+    assert!(!out.contains("($(let"), "{out}");
+}
+
+/// Every number the island excerpt reads through a reference carries its
+/// provenance in the model, the extension keys' and a `$(let)`'s included
+/// (`sources:`, keyed by the field or contract key it fills), and the settle
+/// derivation records those inputs as the bare and literal spellings
+/// record them: the derivation reads the same whichever form supplied the
+/// number.
+#[test]
+fn contract_values_island_carries_every_read_into_the_model() {
+    use ros_launch_manifest_model::ValueRead;
+    let Some(model) = resolve_fixture_model("contract_values_island") else {
+        eprintln!("SKIP: ros-launch-resolve not built");
+        return;
+    };
+    let estop = &model.contracts.node_paths["/estop_op/on_timer"];
+    for (field, name) in [
+        ("rate_hz", "update_rate"),
+        ("safe_state.settle.decel", "target_acceleration"),
+        ("safe_state.settle.jerk", "target_jerk"),
+    ] {
+        let src = estop
+            .sources
+            .get(field)
+            .unwrap_or_else(|| panic!("no source for {field}: {:#?}", estop.sources));
+        assert!(
+            matches!(
+                src.reads.as_slice(),
+                [ValueRead::Param { node, name: n, at, .. }]
+                    if node == "/estop_op" && n == name && at == "bringup.launch.xml"
+            ),
+            "{field}: {src:#?}"
+        );
+    }
+    let odd = &model.contracts.hazards["bringup.launch.xml/odd_exit"];
+    let src = odd.sources.get("entry_speed").expect("entry_speed source");
+    assert_eq!(src.written, "$(let odd_speed)");
+    assert!(
+        matches!(
+            src.reads.as_slice(),
+            [ValueRead::Let { name, value }] if name == "odd_speed" && value == "8.33 m/s"
+        ),
+        "{src:#?}"
+    );
+    // A literal entry speed reads nothing.
+    let hpc = &model.contracts.hazards["bringup.launch.xml/hpc_loss"];
+    assert!(
+        !hpc.sources.contains_key("entry_speed"),
+        "{:#?}",
+        hpc.sources
+    );
+    let derived = estop
+        .safe_state
+        .as_ref()
+        .and_then(|s| s.settle_derived.as_ref())
+        .expect("a derived settle");
+    assert!(
+        derived.inputs["settle.decel"].starts_with("target_acceleration = "),
+        "{:#?}",
+        derived.inputs
+    );
+    assert!(
+        derived.inputs.values().all(|v| !v.contains("$(")),
+        "{:#?}",
+        derived.inputs
+    );
 }
 
 /// Each rule of the design's resolution table, one fixture each, with the

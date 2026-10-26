@@ -147,6 +147,14 @@ both. The list sits at the contract's root; all three keys are required.
   contract's own, e.g. `hazards.<h>.reaction`) is matched against every
   contract's entries, since it names no single file.
 - `--rule` filters acknowledged findings like any other.
+- `resolve` (and `launch`) apply the same entries. An acknowledged finding
+  stays in the model's `meta.diagnostics` with `acknowledged` where the
+  severity was, the entry and its reason (`[reaction-unguarded]
+  acknowledged: … (at hazards.<h>.enters; acknowledged[0] in
+  bringup.contract.yaml: <reason>)`), so a tool that keeps the model's
+  warnings no longer sees it as one; `resolve`'s summary counts it apart
+  (`N warning(s), 1 acknowledged`). An `ack-error` refuses the model like
+  any error.
 
 ## Output that survives a log
 

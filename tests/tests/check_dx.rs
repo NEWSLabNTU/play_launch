@@ -517,6 +517,65 @@ fn an_acknowledged_warning_is_counted_apart_and_a_stale_entry_warns() {
     );
 }
 
+/// D8 on the model path: `resolve` applies `acknowledged:` too, so what a
+/// contract acknowledges reaches `meta.diagnostics` as `acknowledged`, with
+/// its reason, and not as a warning (nano-ros keeps the `] warning:` lines).
+/// The stale entry is a warning there as in `check`, and the loader's line
+/// carries no counts that disagree with the verdict.
+#[test]
+fn resolve_embeds_an_acknowledged_warning_as_acknowledged() {
+    let launch =
+        fixtures::repo_root().join("tests/fixtures/contract_ack/launch/bringup.launch.xml");
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let model_path = dir.path().join("system_model.yaml");
+    let out = play_launch()
+        .arg("resolve")
+        .arg(&launch)
+        .arg("-o")
+        .arg(&model_path)
+        .output()
+        .expect("play_launch resolve runs");
+    let s = text(&out);
+    assert_eq!(out.status.code(), Some(0), "{s}");
+    assert!(s.contains("2 warning(s), 1 acknowledged)"), "{s}");
+    let loaded: Vec<&str> = s
+        .lines()
+        .filter(|l| l.contains("Loaded 1 manifest(s)"))
+        .collect();
+    assert!(!loaded.is_empty(), "{s}");
+    assert!(loaded.iter().all(|l| !l.contains("warnings")), "{s}");
+    let yaml = std::fs::read_to_string(&model_path).expect("model written");
+    let model = ros_launch_manifest_model::SystemModel::from_yaml_str(&yaml).expect("model parses");
+    let diags = &model.meta.diagnostics;
+    let acked: Vec<&String> = diags
+        .iter()
+        .filter(|d| d.contains("[endpoint-unwired] acknowledged:"))
+        .collect();
+    assert_eq!(acked.len(), 1, "{diags:#?}");
+    assert!(
+        acked[0].contains(
+            "(at nodes.control_node.sub.odom; acknowledged[0] in bringup.contract.yaml: \
+             odometry is read from a bag in this demo; nothing here publishes it)"
+        ),
+        "{}",
+        acked[0]
+    );
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.contains("[endpoint-unwired] warning:")),
+        "{diags:#?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.contains("[wiring] warning:")),
+        "{diags:#?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.contains("[ack-stale] warning:")),
+        "{diags:#?}"
+    );
+}
+
 /// D8: an error cannot be acknowledged. The error still prints, the entry is
 /// `error[ack-error]`, and `--expect` sees it as an error it did not expect.
 /// An info can be acknowledged.

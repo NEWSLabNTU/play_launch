@@ -532,6 +532,30 @@ fn value_sources(
     out
 }
 
+/// An acknowledged finding as `meta.diagnostics` carries it (phase 85 D8):
+/// the diagnostic's own line with `acknowledged` for its severity, then the
+/// entry and its reason, as `check` prints them. A per-scope finding keeps
+/// its launch file prefix, as a warning's does.
+pub(crate) fn acknowledged_line(
+    index: &super::manifest_loader::ManifestIndex,
+    a: &super::acknowledge::Acknowledged,
+) -> String {
+    let d = &a.diagnostic;
+    let file = a
+        .contract_path
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let line = format!(
+        "[{}] acknowledged: {} (at {}; acknowledged[{}] in {file}: {})",
+        d.rule_id, d.message, d.path, a.entry, a.reason
+    );
+    match a.scope_id.and_then(|id| index.manifests.get(&id)) {
+        Some(m) => format!("{}: {line}", m.file),
+        None => line,
+    }
+}
+
 /// A derivation record as the model carries it (phase 91 E10).
 fn source_of(d: &ros_launch_manifest_types::Derivation) -> model::DerivedSource {
     model::DerivedSource {
@@ -1817,6 +1841,13 @@ pub fn build_system_model(
         if !matches!(d.severity, ros_launch_manifest_check::Severity::Error) {
             diagnostics.push(d.to_string());
         }
+    }
+    // Phase 85 D8: a finding a contract acknowledges stays in the artifact,
+    // with its reason, but not as a warning -- `acknowledged` where the
+    // severity was, so a reader that keeps the warnings (`] warning:`) sees
+    // it as `check` prints it, counted apart.
+    for a in &index.acknowledged {
+        diagnostics.push(acknowledged_line(index, a));
     }
 
     // A `<timer>` says nothing here any more. Every delay — node, container

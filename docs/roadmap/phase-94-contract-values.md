@@ -1,6 +1,6 @@
 # Phase 94 - contract values read from the launch tree
 
-**Status: ✅ complete (2026-10-27): wave 1 with rlm v0.2.4, wave 2 in play_launch alone (rlm unchanged).** Phase 85's D9, and DX 1.1's provenance for
+**Status: ✅ complete (2026-10-27): wave 1 with rlm v0.2.4, wave 2 in play_launch alone (rlm unchanged); the safety island's four gaps fixed the same day (rlm unchanged).** Phase 85's D9, and DX 1.1's provenance for
 numbers a parameter holds. Design of record: rlm
 `docs/design/contract-values.md`.
 
@@ -288,6 +288,104 @@ rt_workspace, autoware; lifecycle_autostart skips on Humble), stock parity
 18 of 18, integration 321 of 321, resolver 308, parser 563/517/473 by
 suite. The IR suite caught two `LaunchTraverser` literals missing the new
 `include_line` field, #0040's shape again.
+
+## Gaps the safety island found (2026-10-27)
+
+The island migrated its real contract on `main` (1e4ba882): the three
+timers to `rate_hz: $(param update_rate) Hz`, the four settle keys through
+`migrate` (`decel: $(param target_acceleration) m/s^2`, ...), the ODD speed
+to a root `let: { odd_speed: 8.33 m/s }` read by both hazards'
+`entry_speed: $(let odd_speed)`, and two `acknowledged:` entries for the
+`reaction-unguarded` at `hazards.{hpc_loss,odd_exit}.enters`. Four gaps,
+reproduced on a copy of its contract and launch tree and fixed:
+
+- **G1: `--explain` listed the core keys only.** The rlm parser records a
+  core key's reference as a `ValueRef`, but it cannot record an extension
+  key's: only the extension knows the key's dimension. Those were evaluated
+  inside the derivation alone. `extensions::record_ext_reads` (after
+  `prepare`, before any rule) now evaluates every extension key written as a
+  reference, on a hazard or a node's settle, and adds it to the contract's
+  `value_refs` with its value, so the listing and the model read it through
+  the same code as a core key's. The listing is in the contract's order, and
+  a `$(let)` names its entry: `let odd_speed: 8.33 m/s,
+  safety_island.contract.yaml:445` for a literal, `let lidar_rate: $(var
+  lidar_hz) Hz = 100 Hz, bringup.contract.yaml:19` and then the entry's own
+  reads otherwise.
+- **G2: the model's `sources:` missed the same reads.** Fixed by G1: the
+  path's map gains `safe_state.settle.decel` and `.jerk` (the
+  `<head>.<key>` form `model_field` already gives a nested key), the
+  hazard's `entry_speed`. An extension key has no model field of its own, so
+  its source is keyed by the contract key it fills. A bare `decel:
+  target_acceleration` is not recorded: it is not a reference, and recording
+  it would move every existing fixture's model.
+- **G3: a derivation recorded the reference's spelling.** With the bare
+  name the settle's inputs read `settle.decel: target_acceleration = -2.5
+  m/s^2 (<file>)` and `hazard.entry_speed: 8.33 m/s`; with the read form
+  `settle.decel: $(param target_acceleration) m/s^2 = …` and
+  `hazard.entry_speed: $(let odd_speed)`, in the model and in the
+  `settle-derived` trace (`($(let odd_speed))`). **A defect**: a derivation
+  is about the number and where it came from, and the same number from the
+  same parameter must read the same whichever spelling supplied it, or a
+  migration that changes nothing changes the model and every reader that
+  compares models. The reference is `sources:`'s and `--explain`'s to show.
+  `extensions::derivation_text` records what the replaced spelling records:
+  a single `$(param … <name>)` is `<name>`, a `$(let)` of a literal is the
+  literal, any other single read is its value; an expression of several
+  terms has no other spelling and is recorded as written.
+- **G4a: the loader's count disagreed with the verdict.** `Loaded N
+  manifest(s) … (0 errors, 12 warnings)` was printed before
+  acknowledgement (and before `--strict` and `--against`), beside `check`'s
+  `(0 errors, 10 warnings, 2 acknowledged)`. The counts are dropped from that
+  line rather than moved: the loader cannot know the verdict, and `check`'s
+  summary and `resolve`'s `SystemModel:` line are the counts.
+- **G4b: `resolve` ignored `acknowledged:`.** `build_checked_model` now
+  calls `acknowledge::apply` right after loading its own index (once per
+  index: `check` and the model path never share one). The model's
+  diagnostics are strings (rlm `Meta.diagnostics: Vec<String>`), so no rlm
+  field was needed and rlm is unchanged (v0.2.4): an acknowledged finding is
+  embedded as `[<rule>] acknowledged: <message> (at <path>; acknowledged[<i>]
+  in <file>: <reason>)`. It is kept rather than omitted, so the artifact
+  says what was accepted and why; `acknowledged` sits where the severity
+  was, so nano-ros's `nros sync`, which keeps the `] warning:` lines, no
+  longer reports it. An `ack-error` refuses the model like any error, and
+  `ack-stale` is a warning there as in `check`. `resolve`'s summary counts
+  warnings as `check` does (`10 warning(s), 2 acknowledged`): it used to
+  count every embedded line, infos included.
+
+Evidence on the island copy (`tmp/island`, the unmigrated and migrated
+contract resolved from the same directory): `check --explain` lists nine
+values (two entry speeds, three timer rates, four settle keys), each with its
+parameter file or `let:` line, and ends `(0 errors, 10 warnings, 2
+acknowledged)` where the unmigrated contract ends `(0 errors, 12 warnings)`.
+The two models differ in exactly: the `sources:` maps (rate, decel and jerk
+on the three paths, `entry_speed` on both hazards); the contract's
+`sha256` in `meta.inputs`; the contract line numbers inside diagnostic
+messages, since the migrated file is laid out differently (two timers
+lose their `param:` line, `let:` and `acknowledged:` add eleven); and the two
+`reaction-unguarded` lines, now `acknowledged` with their reason. With
+`sources:`, the hash and the line numbers removed, only those two lines
+differ; every derivation, settle, priority and total is identical.
+
+Tests: `contract_values_island_reads_the_launch_tree_and_keeps_its_verdicts`
+(the listing, the let entry, no `($(` in a derivation),
+`contract_values_island_carries_every_read_into_the_model` (the extension
+and `let` sources, the derivation's inputs), and
+`resolve_embeds_an_acknowledged_warning_as_acknowledged` (`check_dx.rs`).
+The island fixture's contract now declares `estop_op.update_rate` and types
+`lease_ms` an integer, so it resolves to a model at all (`resolve` refused
+it on the parameter declarations); its findings and the ranked-plan
+snapshot are unchanged. Negative controls: `record_ext_reads` not called,
+both island tests fail; `acknowledge::apply` not called on the model path,
+the resolve test fails.
+
+Gates: `just check` failed once on rustfmt (the two test files and one
+`matches!`), clean on the rerun. `just test-all`: parser 563/517/473,
+resolver 308, parity gates green (lifecycle_autostart skips on Humble),
+integration 322 of 323; the one failure,
+`interception::test_health_compares_running_parameters_with_the_launch`
+(`could not set use_sim_time: 500`, a parameter service call through the
+web UI that timed out under the suite's load), touches no contract and
+passed on both reruns alone.
 
 ## Out of scope
 

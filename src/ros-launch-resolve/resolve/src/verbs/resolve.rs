@@ -84,9 +84,21 @@ pub fn run(inputs: ResolveInputs) -> Result<()> {
     } else {
         std::fs::write(&inputs.out, &yaml)
             .wrap_err_with(|| format!("writing SystemModel to {}", inputs.out))?;
+        // What a contract acknowledges is counted apart, as `check` counts
+        // it (phase 85 D8), and so are a checker's infos; everything else in
+        // `meta.diagnostics` is a warning, the lenient notes included.
+        let count = |tag: &str| {
+            model
+                .meta
+                .diagnostics
+                .iter()
+                .filter(|d| d.contains(tag))
+                .count()
+        };
+        let acknowledged = count("] acknowledged:");
         eprintln!(
             "SystemModel: {} ({} nodes, {} topics, {} contracts-carrying endpoints, \
-             {} tier(s), {} warning(s))",
+             {} tier(s), {} warning(s){})",
             inputs.out,
             model.structure.nodes.len(),
             model.structure.topics.len(),
@@ -94,7 +106,12 @@ pub fn run(inputs: ResolveInputs) -> Result<()> {
                 + model.contracts.sub_endpoints.len()
                 + model.contracts.srv_endpoints.len(),
             model.execution.tiers.len(),
-            model.meta.diagnostics.len(),
+            model.meta.diagnostics.len() - acknowledged - count("] info:"),
+            if acknowledged > 0 {
+                format!(", {acknowledged} acknowledged")
+            } else {
+                String::new()
+            },
         );
     }
     Ok(())

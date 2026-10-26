@@ -8,6 +8,30 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fixed (`check`, `resolve`):** four gaps the safety island found
+  migrating its contract to phase 94's read form. (1) `check --explain`'s
+  "Values read from the launch tree" listed the core keys only; it now
+  lists every number read through a reference, an extension key's included
+  (`decel: $(param target_acceleration) m/s^2`, `entry_speed: $(let
+  odd_speed)`), in the contract's order, and a `$(let)` names its entry
+  (`let odd_speed: 8.33 m/s, <contract>:<line>`) before what the entry
+  read. (2) The model's `sources:` carry those reads too
+  (`safe_state.settle.decel` on the path, `entry_speed` on the hazard). (3)
+  A settle derivation recorded a read input as its reference
+  (`($(param target_acceleration) m/s^2)`, `hazard.entry_speed: $(let
+  odd_speed)`) where the bare and literal spellings record the parameter's
+  name and the literal, so the same contract in the two forms gave
+  different models; it records what the replaced spelling records now, and
+  the island's contract unmigrated and migrated resolves to models that
+  differ in `sources:`, the contract's hash and line numbers, and the two
+  findings it acknowledges. (4) `acknowledged:` now applies to `resolve`
+  and `launch` as well: an acknowledged finding reaches `meta.diagnostics`
+  as `[<rule>] acknowledged: … (at <path>; acknowledged[<i>] in <file>:
+  <reason>)`, not as a warning, and `resolve`'s summary counts it apart. The
+  loader's `Loaded N manifest(s)` line no longer prints error and warning
+  counts, which it took before acknowledgement, `--strict` and `--against`
+  and which disagreed with the verdict; `check`'s summary is the count.
+
 - **Added (`check`, `resolve`):** a contract can READ a number the launch
   tree already holds instead of retyping it (rlm v0.2.4, phase 94):
   `$(param [<node>] <name>) <unit>`, `$(var <name>) <unit>` and `$(let
