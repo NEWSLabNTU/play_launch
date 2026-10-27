@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 96 phases total (1–94, plus 14.5 and 30b); 76 complete, 15 in progress, 4 planned, 1 dropped — as of 2026-10-27.
+Started October 2025. 97 phases total (1–95, plus 14.5 and 30b); 76 complete, 15 in progress, 5 planned, 1 dropped — as of 2026-10-27.
 
 Phase docs through phase 28 are in `archive/`; from phase 29 on, a phase's doc
 stays in this directory whatever its status, and its status line (the first
@@ -102,6 +102,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 92 | [One PyPI package](./phase-92-one-pypi-package.md) | ✅ Complete | — |
 | 93 | [Supervised budgets](./phase-93-supervised-budgets.md) | ✅ toolchain (0.18.0/0.18.1) | 2026-10-16 |
 | 94 | [Contract values read from the launch tree](./phase-94-contract-values.md) | ✅ (rlm v0.2.4) | 2026-10-27 |
+| 95 | [Service calls on a reaction route](./phase-95-service-calls-on-a-reaction-route.md) | 📋 Planned | — |
 
 ---
 
