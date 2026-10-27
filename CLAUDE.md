@@ -494,6 +494,8 @@ play_log/<timestamp>/
 │   ├── chains.json                 # carried edges (a node re-sent a stamp it took),
 │   │                               #   sampled edges, chains, data age per topic
 │   │                               #   (phase 88)
+│   ├── calls.json                  # service clients/servers that called or served:
+│   │                               #   requests, answers, open, request legs (phase 95)
 │   ├── endpoint_stats.json         # every pub/sub created: messages, rate, est. bytes,
 │                                   #   publish-to-take latency per subscription —
 │                                   #   silent endpoints included, busiest first
@@ -726,6 +728,21 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   diagnostic carries no scope (`Diagnostic` has no field for one), so it
   is matched against every contract's entries -- a rule that wants
   per-file matching must emit per scope.
+
+- **2026-10-27**: **Service calls on a reaction route** (phase 95, rlm
+  v0.2.5/v0.2.6). A client states `timeout`/`on_timeout`/`on_rejected`, a
+  server `idempotent`/`stale_after`; the walk records every call on every
+  branch that reaches the sink (`ReactionWalk.calls`) and `judge_calls`
+  charges each rung the worse of success and failure. Three things a later
+  change must keep: `call-unbounded` is a WARNING because as an error it
+  refused 11 fixture models and turned the island red (its floor crosses an
+  unbounded async call the design never looked at; a floor has no lower
+  rung, so no timeout can bound it); rclcpp on Humble reaches the
+  `_with_info` take hooks only through librcl's own PLT call, and a
+  thread-local flag keeps the outer id-only hook from reporting a take
+  twice; and a server take pairs with its send by (service, sequence
+  number) and the source timestamp, never the writer GUID, which under
+  Fast DDS differs between a request and its response's request id.
 
 - **2026-10-23**: **The vehicle keys are an extension, and derived bounds
   reach the model** (phase 91 E8-E10, rlm v0.2.0). `entry_speed` and

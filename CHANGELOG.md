@@ -6,6 +6,35 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Added (`check`, `resolve`; rlm v0.2.6):** service calls on a reaction
+  route (phase 95). A client states how long it waits and what it does then
+  (`cli.<e>.timeout`, `on_timeout`, `on_rejected`, `max_transport`), a
+  server what licenses a retry and refuses a stale request (`srv.<e>.
+  idempotent`, `stale_after`), a service the request leg for every client
+  (`services.<s>.max_transport`). The reaction walk charges a call the
+  worse of its success branch (the request leg, the server's route, the
+  wait for a blocking call's response) and its failure branch (`timeout x
+  attempts + backoff x (attempts - 1)` + the route `on_timeout` falls to);
+  a supervised rung takes no failure branch. Six rules judge calls on a
+  reaction route: `call-unbounded` (warning, an error under `--strict`),
+  `call-retry-not-idempotent`, `call-retry-unbounded` (errors),
+  `call-late-effect`, `call-rejected-unhandled`, `call-deadlock`
+  (warnings). The facts reach the model (`cli_endpoints`, `srv_endpoints`).
+  **Contracts that cross a call with no stated wait gain
+  `warning[call-unbounded]`**: the safety island's emergency floor
+  (`mrm_handler.cli.emergency_stop_operate`) on both hazards.
+
+- **Added (interception, Health, `measure`):** the interceptor hooks
+  service clients and servers and every request and response, and the
+  Health page reports `call_unanswered` for a request still open past its
+  client's contract `timeout:` (10 s without one). `interception/calls.json`
+  counts each client's requests, answers and request legs; `measure` offers
+  the leg's maximum as the client's `max_transport` and reports whether the
+  middleware filled each request's source timestamp (it does under Fast DDS
+  and Cyclone). A call hook costs 44 ns over the rcl call it wraps.
+
 ## 0.20.2 - 2026-10-27
 
 - **Fixed (`resolve`):** an acknowledged finding keeps its place in the

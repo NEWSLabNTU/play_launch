@@ -102,7 +102,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 92 | [One PyPI package](./phase-92-one-pypi-package.md) | ✅ Complete | — |
 | 93 | [Supervised budgets](./phase-93-supervised-budgets.md) | ✅ toolchain (0.18.0/0.18.1) | 2026-10-16 |
 | 94 | [Contract values read from the launch tree](./phase-94-contract-values.md) | ✅ (rlm v0.2.4) | 2026-10-27 |
-| 95 | [Service calls on a reaction route](./phase-95-service-calls-on-a-reaction-route.md) | 📋 Planned | — |
+| 95 | [Service calls on a reaction route](./phase-95-service-calls-on-a-reaction-route.md) | ✅ (rlm v0.2.6; open decisions for evaluation) | 2026-10-27 |
 
 ---
 
@@ -344,6 +344,15 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     from every Jazzy-and-later wheel and a sequence-layout crash on Lyrical
     and Rolling (`rosidl_runtime_rs`). Released as 0.18.2; no consumer needed a change.
     [phase-92-one-pypi-package.md](./phase-92-one-pypi-package.md).
+  - **Phase 95** - ✅ (rlm v0.2.5/v0.2.6, 2026-10-27): service calls on a
+    reaction route. A client states its wait and fallback (`timeout`,
+    `on_timeout`, `on_rejected`), a server `idempotent`/`stale_after`; the
+    walk charges a call the worse of its success and failure branches, six
+    `call-*` rules judge calls on a route, and the Health page reports
+    `call_unanswered` from new interception hooks. `call-unbounded` ships as
+    a warning (the island's floor crosses an unbounded call); five open
+    decisions stay for evaluation, with what the runs showed.
+    [phase-95-service-calls-on-a-reaction-route.md](./phase-95-service-calls-on-a-reaction-route.md).
   - **Phase 94** - ✅ (rlm v0.2.4, 2026-10-27): contract values read
     from the launch tree. `$(param …) <unit>`, `$(var …) <unit>` and `$(let …)`
     in any quantity, evaluated per scope instance before any rule reads the

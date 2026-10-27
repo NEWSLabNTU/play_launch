@@ -1,6 +1,6 @@
 # Phase 95 - service calls on a reaction route
 
-**Status: planned (2026-10-27).** Replaces phase 85's D2. Design of record:
+**Status: ✅ complete (2026-10-27): rlm v0.2.5 + v0.2.6, play_launch W1-W4; the open decisions below stay for evaluation.** Replaces phase 85's D2. Design of record:
 rlm `docs/design/service-contracts.md` (related work, the six failure modes,
 the coverage table, six simulated workflows).
 
@@ -158,8 +158,12 @@ and measures the request leg.
 
 ## Wave 4 - docs
 
-- [ ] W4.1 Guide section (the contract guide), CHANGELOG, this doc's
-      evidence.
+- [x] W4.1 Guide section (the contract guide), CHANGELOG, this doc's
+      evidence. *(2026-10-27: `docs/guide/check-in-ci.md` "Service calls on
+      a reaction route", beside "Supervised budgets", where the fault
+      arithmetic is documented; CHANGELOG Unreleased; the roadmap index row;
+      CLAUDE.md's log layout (`calls.json`) and one Key Recent Changes
+      entry for the lessons that are not obvious from the code.)*
 
 ## Open decisions (decide at evaluation)
 
@@ -265,3 +269,18 @@ it on real runs:
   design states.
 - `call-unanswered` fires on a server that never answers and stays silent on
   one that does.
+
+Results (2026-10-27):
+
+- **Island: partly met.** `0 errors, 14 warnings` (12 before), still clean;
+  the comfortable rung is supervised and gains nothing (its route note says
+  `no failure branch, the rung's effect is supervised`), but the emergency
+  floor's call is unbounded and is reported twice (`warning[call-unbounded]`
+  on `hpc_loss` and `odd_exit`). As the design's error it would have been
+  red: Deviations 1, open decision 5. The island repo was not touched.
+- **Met.** S1-S6 are `contract_call_supervised`, `contract_call_unbounded` +
+  `contract_call_retry_forever`, `contract_call_startup`,
+  `contract_call_retry`, `contract_call_timeout_budget`,
+  `contract_call_late_effect`, each with the design's verdict (W2.3).
+- **Met.** `call_unanswered` opens for a deaf and a dead server's clients and
+  never for the answered one (W3.4).

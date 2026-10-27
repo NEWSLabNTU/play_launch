@@ -284,6 +284,81 @@ The rules that read it:
 - `measured-unsupervised`: a measured budget nothing supervises, a warning,
   or an error under `policy: { unsupervised_measured: error }`.
 
+## Service calls on a reaction route
+
+A reaction route that crosses a service call (a handler calling an
+operator's `operate`) is only as bounded as the call. In stock ROS 2 a call
+can be lost to a missing server, a server that dies holding the request, a
+lost request or response, a slow or refusing server, or a deadlock;
+services report none of these, and rclcpp's client waits forever unless
+the code gives up. So a client states the wait and what it does after it
+(rlm v0.2.5):
+
+```yaml
+nodes:
+  handler:
+    concurrency: { exclusive: [] }        # the client's callback has a group of its own
+    cli:
+      operate:
+        call: blocking
+        timeout: $(param timeout_call_mrm_behavior) s
+        on_timeout: { reaction: emergency_stop }       # a mode, or a scope path
+        on_rejected: { reaction: emergency_stop }      # what it does on success: false
+        max_transport: 1.5ms                           # the request leg
+  operator:
+    srv:
+      operate: { idempotent: true, stale_after: 50ms }
+services:
+  /mrm/operate: { type: std_srvs/srv/Trigger, server: [operator/operate], client: [handler/operate],
+                  max_transport: 1ms }                 # for clients that state none
+```
+
+`on_timeout` may retry: `{ retry: { attempts: 3, backoff: 10ms }, then: {
+reaction: emergency_stop } }`, `attempts` counting every try. The route
+through the call is charged the WORSE of two branches: success (the request
+leg, the server's route, and for a blocking call whose route continues at
+the client, the wait for the response) and failure (`timeout x attempts +
+backoff x (attempts - 1)` + the route of the rung `on_timeout` falls to).
+A rung whose effect is supervised (`safe_state.settle: { ..., supervise }`,
+above) takes no failure branch at the call: the supervisor bounds it. The
+`--explain` route note names each call:
+
+```
+call /sys/handler/operate -> /comfort/operate: failure = 100.00 ms timeout (cli.operate)
+  + 10.00 ms emergency_stop route = 110.00 ms; route = the failure branch 110.00 ms (success 20.00 ms)
+```
+
+and a rung budget that the failure branch breaks says so:
+`reaction 2010.00ms (the call's failure branch: 2000.00 ms timeout
+(cli.operate) + 10.00 ms emergency_stop route)`. Only calls a reaction
+route crosses are judged; a start-up call or a parameter client is not:
+
+- `call-unbounded` (warning; an error under `--strict`): no `timeout:` and
+  `on_timeout:`, and no supervised rung. On a ladder's FLOOR a timeout
+  cannot help (there is no lower rung to fall to): supervise the floor's
+  effect, or guard its output (`reaction-unguarded`).
+- `call-retry-not-idempotent` (error): a retry, and a server that does not
+  declare `idempotent: true`: a retry after a lost response runs the
+  operation twice.
+- `call-retry-unbounded` (error): a retry with no `attempts` or no `then:`.
+- `call-late-effect` (warning): `on_timeout` falls to something that is not
+  a lower rung of the call's own ladder, and no server declares
+  `stale_after:`: a request the client gave up on may still act, and two
+  reactions then act at once.
+- `call-rejected-unhandled` (warning): a blocking call after which the
+  route continues at the client, and no `on_rejected:`.
+- `call-deadlock` (warning): a blocking call from a node with no
+  `concurrency:` declaration, so every callback serialises and the
+  response can only be taken by the callback that waits for it.
+
+At run time, with interception on, the Health page reports
+`call_unanswered` for a request still open past its client's `timeout:`
+(10 s when it states none), and `play_log/<ts>/interception/calls.json`
+counts each client's requests and answers and times the request leg.
+`play_launch measure <run-dir> --model <m.yaml>` offers the leg's observed
+maximum as the client's `max_transport`, and says whether the middleware
+filled each request's source timestamp, which `stale_after` relies on.
+
 ## Extensions: names, locks and deprecations
 
 A contract names the extensions and the severity profile it uses:
