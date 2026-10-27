@@ -62,6 +62,9 @@ pub struct Acknowledged {
     /// The scope whose own diagnostics it was; `None` for a cross-scope
     /// diagnostic.
     pub scope_id: Option<usize>,
+    /// Its index in that list before matching took it out, so an artifact
+    /// can put it back where the rule emitted it.
+    pub position: usize,
 }
 
 /// One entry, located: the first scope bound to its contract, the file, its
@@ -135,7 +138,7 @@ pub fn apply(index: &mut ManifestIndex) {
                     acked: &mut Vec<Acknowledged>|
      -> Vec<Diagnostic> {
         let mut kept = Vec::with_capacity(diags.len());
-        for d in diags {
+        for (position, d) in diags.into_iter().enumerate() {
             let Some(e) = entries.iter().find(|e| e.matches(&d)) else {
                 kept.push(d);
                 continue;
@@ -151,6 +154,7 @@ pub fn apply(index: &mut ManifestIndex) {
                 contract_path: e.contract_path.clone(),
                 entry: e.index,
                 scope_id,
+                position,
                 diagnostic: d,
             });
         }

@@ -1830,25 +1830,56 @@ pub fn build_system_model(
         // in-memory `DerivedSchedPlan`/`LaunchDump` (check, launch, replay).
     }
     // --- embedded checker warnings -----------------------------------------
-    for m in index.manifests.values() {
-        for d in &m.diagnostics {
-            if !matches!(d.severity, ros_launch_manifest_check::Severity::Error) {
-                diagnostics.push(format!("{}: {d}", m.file));
-            }
-        }
-    }
-    for d in &index.merge_diagnostics {
-        if !matches!(d.severity, ros_launch_manifest_check::Severity::Error) {
-            diagnostics.push(d.to_string());
-        }
-    }
     // Phase 85 D8: a finding a contract acknowledges stays in the artifact,
     // with its reason, but not as a warning -- `acknowledged` where the
     // severity was, so a reader that keeps the warnings (`] warning:`) sees
-    // it as `check` prints it, counted apart.
-    for a in &index.acknowledged {
-        diagnostics.push(acknowledged_line(index, a));
+    // it as `check` prints it, counted apart. It keeps the place the rule
+    // emitted it in, so acknowledging a finding changes one line of the
+    // model, not two.
+    let interleave = |kept: &[ros_launch_manifest_check::Diagnostic],
+                      scope_id: Option<usize>,
+                      line: &dyn Fn(&ros_launch_manifest_check::Diagnostic) -> String,
+                      diagnostics: &mut Vec<String>| {
+        let mut acks: Vec<&crate::ros::acknowledge::Acknowledged> = index
+            .acknowledged
+            .iter()
+            .filter(|a| a.scope_id == scope_id)
+            .collect();
+        acks.sort_by_key(|a| a.position);
+        let mut acks = acks.into_iter().peekable();
+        let mut kept = kept.iter();
+        let mut position = 0;
+        loop {
+            if let Some(a) = acks.next_if(|a| a.position <= position) {
+                diagnostics.push(acknowledged_line(index, a));
+            } else if let Some(d) = kept.next() {
+                if !matches!(d.severity, ros_launch_manifest_check::Severity::Error) {
+                    diagnostics.push(line(d));
+                }
+            } else if let Some(a) = acks.next() {
+                diagnostics.push(acknowledged_line(index, a));
+            } else {
+                break;
+            }
+            position += 1;
+        }
+    };
+    let mut scopes: Vec<_> = index.manifests.values().collect();
+    scopes.sort_by_key(|m| m.scope_id);
+    for m in scopes {
+        interleave(
+            &m.diagnostics,
+            Some(m.scope_id),
+            &|d| format!("{}: {d}", m.file),
+            &mut diagnostics,
+        );
     }
+    interleave(
+        &index.merge_diagnostics,
+        None,
+        &|d| d.to_string(),
+        &mut diagnostics,
+    );
 
     // A `<timer>` says nothing here any more. Every delay — node, container
     // and composable alike — reaches the model as

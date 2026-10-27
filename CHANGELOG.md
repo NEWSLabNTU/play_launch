@@ -8,6 +8,12 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fixed (`resolve`):** an acknowledged finding keeps its place in the
+  model's `meta.diagnostics`. It was appended at the end, so acknowledging
+  one warning showed in a diff of the model as a removal and an addition;
+  it is now one changed line. Per-scope diagnostics are also emitted in
+  scope order rather than hash order.
+
 - **Fixed (`check`, `resolve`):** four gaps the safety island found
   migrating its contract to phase 94's read form. (1) `check --explain`'s
   "Values read from the launch tree" listed the core keys only; it now

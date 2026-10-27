@@ -576,6 +576,71 @@ fn resolve_embeds_an_acknowledged_warning_as_acknowledged() {
     );
 }
 
+/// D8: acknowledging a finding changes ONE line of the model. The
+/// acknowledged line takes the warning's place in `meta.diagnostics`, so the
+/// model with the entries and the model without them differ in that line and
+/// in the stale entry's own warning, nothing else.
+#[test]
+fn an_acknowledged_warning_keeps_its_place_in_the_model() {
+    let src = fixtures::repo_root().join("tests/fixtures/contract_ack/launch");
+    let contract = std::fs::read_to_string(src.join("bringup.contract.yaml")).expect("contract");
+    let start = contract
+        .find("acknowledged:\n")
+        .expect("an acknowledged block");
+    let end = start + contract[start..].find("\nnodes:").expect("nodes after it");
+    // Comment the block out line for line, so every other line keeps its
+    // number (the messages quote them).
+    let blanked: String = contract[start..end]
+        .lines()
+        .map(|l| format!("# {l}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let without = format!("{}{blanked}{}", &contract[..start], &contract[end..]);
+
+    let resolve = |contract_text: &str| -> Vec<String> {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        std::fs::copy(
+            src.join("bringup.launch.xml"),
+            dir.path().join("bringup.launch.xml"),
+        )
+        .expect("copy launch");
+        std::fs::write(dir.path().join("bringup.contract.yaml"), contract_text).expect("write");
+        let model_path = dir.path().join("system_model.yaml");
+        let out = play_launch()
+            .arg("resolve")
+            .arg(dir.path().join("bringup.launch.xml"))
+            .arg("-o")
+            .arg(&model_path)
+            .output()
+            .expect("play_launch resolve runs");
+        assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+        let yaml = std::fs::read_to_string(&model_path).expect("model written");
+        ros_launch_manifest_model::SystemModel::from_yaml_str(&yaml)
+            .expect("model parses")
+            .meta
+            .diagnostics
+    };
+    let with = resolve(&contract);
+    let plain = resolve(&without);
+
+    let at = |diags: &[String], needle: &str| diags.iter().position(|d| d.contains(needle));
+    let warned = at(&plain, "[endpoint-unwired] warning:").expect("the warning, unacknowledged");
+    let acked = at(&with, "[endpoint-unwired] acknowledged:").expect("the acknowledged line");
+    assert_eq!(warned, acked, "with: {with:#?}\nwithout: {plain:#?}");
+
+    let mut rest: Vec<&String> = with
+        .iter()
+        .filter(|d| !d.contains("] acknowledged:") && !d.contains("[ack-stale]"))
+        .collect();
+    let mut others: Vec<&String> = plain
+        .iter()
+        .filter(|d| !d.contains("[endpoint-unwired] warning:"))
+        .collect();
+    rest.sort();
+    others.sort();
+    assert_eq!(rest, others);
+}
+
 /// D8: an error cannot be acknowledged. The error still prints, the entry is
 /// `error[ack-error]`, and `--expect` sees it as an error it did not expect.
 /// An info can be acknowledged.
