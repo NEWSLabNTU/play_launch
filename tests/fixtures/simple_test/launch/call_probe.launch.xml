@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!-- Service calls (phase 95, Health `call_unanswered`): three server and
+     client pairs on /calls/<name>, a server that answers, one that takes a
+     request and never answers, and one that dies holding its first
+     request; see the script. -->
+<launch>
+  <executable cmd="python3 $(dirname)/../scripts/call_probe.py server answered answer" name="answered_server" output="screen"/>
+  <executable cmd="python3 $(dirname)/../scripts/call_probe.py client answered" name="answered_client" output="screen"/>
+  <executable cmd="python3 $(dirname)/../scripts/call_probe.py server silent silent" name="silent_server" output="screen"/>
+  <executable cmd="python3 $(dirname)/../scripts/call_probe.py client silent" name="silent_client" output="screen"/>
+  <executable cmd="python3 $(dirname)/../scripts/call_probe.py server dies die" name="dies_server" output="screen"/>
+  <executable cmd="python3 $(dirname)/../scripts/call_probe.py client dies" name="dies_client" output="screen"/>
+</launch>

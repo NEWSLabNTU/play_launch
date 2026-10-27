@@ -2080,3 +2080,104 @@ fn test_startup_timeline_shows_lifecycle_activation() {
         "activated about a second after configure: {row}"
     );
 }
+
+/// Phase 95: service calls, end to end (`call_probe.launch.xml`). A server
+/// that answers, one that takes a request and never answers, and one that
+/// dies holding its first request, each with a client sending every 0.5 s.
+///
+/// - `calls.json` pairs every request with its response: the answered
+///   client's requests are closed and their request legs timed; the other
+///   two clients' requests stay open;
+/// - Health opens `call_unanswered` for the deaf and the dead server's
+///   clients (past the 10 s a client with no contract `timeout:` is judged
+///   by) and never for the answered one;
+/// - the hooks see the server side too: who took how many requests, and
+///   whether the middleware filled each request's source timestamp.
+#[test]
+fn test_calls_unanswered_reach_health_and_request_legs_are_timed() {
+    let config = r#"
+interception:
+  enabled: true
+  stats: true
+"#;
+    let work_dir = run_launch_with_config(
+        "launch/call_probe.launch.xml",
+        config,
+        Duration::from_secs(15),
+    );
+    let play_log = work_dir.path().join("play_log/latest");
+    let path = play_log.join("interception/calls.json");
+    assert!(
+        wait_for_file(&path, Duration::from_secs(5)),
+        "calls.json not found at {}",
+        path.display()
+    );
+    let body = std::fs::read_to_string(&path).expect("calls.json");
+    let snap: serde_json::Value = serde_json::from_str(&body).expect("calls.json parses");
+    let client = |name: &str| -> &serde_json::Value {
+        snap["clients"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| {
+                c["node"] == format!("/calls/{name}_client")
+                    && c["service"] == format!("/calls/{name}")
+            })
+            .unwrap_or_else(|| panic!("no client for /calls/{name}: {body}"))
+    };
+    let server = |name: &str| -> &serde_json::Value {
+        snap["servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| {
+                s["node"] == format!("/calls/{name}_server")
+                    && s["service"] == format!("/calls/{name}")
+            })
+            .unwrap_or_else(|| panic!("no server for /calls/{name}: {body}"))
+    };
+    let n = |v: &serde_json::Value, k: &str| v[k].as_u64().unwrap_or_else(|| panic!("{k}: {v}"));
+
+    let answered = client("answered");
+    assert!(n(answered, "sent") >= 10, "{answered}");
+    assert!(
+        n(answered, "answered") + 1 >= n(answered, "sent"),
+        "{answered}"
+    );
+    let leg = &answered["request_leg"];
+    assert!(
+        leg["n"].as_u64().unwrap_or(0) >= 5,
+        "request legs timed: {answered}"
+    );
+    assert!(leg["max_ms"].as_f64().unwrap() < 1000.0, "{answered}");
+    assert!(n(server("answered"), "responded") >= 10, "{body}");
+
+    for name in ["silent", "dies"] {
+        let c = client(name);
+        assert_eq!(n(c, "answered"), 0, "{c}");
+        assert!(n(c, "open") >= 10, "{c}");
+        assert!(c["oldest_open_ms"].as_f64().unwrap() > 10_000.0, "{c}");
+        // The server took exactly the request it then sat on or died with.
+        assert_eq!(n(server(name), "taken"), 1, "{body}");
+        assert_eq!(n(server(name), "responded"), 0, "{body}");
+    }
+
+    let journal = std::fs::read_to_string(play_log.join("health.jsonl")).expect("health.jsonl");
+    let opened = |key: &str| {
+        journal
+            .lines()
+            .any(|l| l.contains(r#""event":"open""#) && l.contains(key))
+    };
+    assert!(
+        opened("call_unanswered:/calls/silent_client:/calls/silent"),
+        "{journal}"
+    );
+    assert!(
+        opened("call_unanswered:/calls/dies_client:/calls/dies"),
+        "{journal}"
+    );
+    assert!(
+        !journal.contains("call_unanswered:/calls/answered_client"),
+        "{journal}"
+    );
+}

@@ -194,7 +194,7 @@ pub(crate) struct EndpointTracker {
     pub(super) live: HashMap<(usize, u64), Endpoint>,
     /// Endpoints whose handle was later reused by a new endpoint.
     pub(super) retired: Vec<Endpoint>,
-    pub(super) node_names: HashMap<u64, String>,
+    pub(crate) node_names: HashMap<u64, String>,
     pub(super) node_chunks: HashMap<u64, TopicNameAssembly>,
     /// `(child index, handle) -> QoS`, from `EndpointQos`, which also
     /// precedes the init event.
@@ -215,6 +215,8 @@ pub(crate) struct EndpointTracker {
     pub(super) lifecycle: HashMap<u64, (Option<u64>, Option<u64>)>,
     /// Stamps carried across nodes (`chains.rs`).
     pub(super) chains: super::chains::ChainBook,
+    /// Service calls (phase 95, `calls.rs`).
+    pub(crate) calls: super::calls::CallBook,
 }
 
 /// `/clock` as published: its value (the interceptor reads a
@@ -267,6 +269,12 @@ impl EndpointTracker {
                 }
             }
             EventKind::TfEdge => self.tf.observe_edge(child, event),
+            EventKind::ServiceClientInit
+            | EventKind::ServiceServerInit
+            | EventKind::ServiceRequestSent
+            | EventKind::ServiceRequestTaken
+            | EventKind::ServiceResponseSent
+            | EventKind::ServiceResponseTaken => self.calls.observe(child, member, event),
             EventKind::TfFramesDeclared => self.tf.observe_names(event),
             EventKind::EndpointOwner => {
                 self.owners.insert(key, event.topic_hash);

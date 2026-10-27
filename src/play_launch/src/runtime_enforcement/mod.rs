@@ -368,7 +368,16 @@ impl RuleEngine {
         // NODE hash in `topic_hash`, which must not create topic state below.
         if matches!(
             event.kind,
-            EventKind::EndpointOwner | EventKind::NodeNameDeclared
+            EventKind::EndpointOwner
+                | EventKind::NodeNameDeclared
+                // Phase 95: calls are keyed by service, not topic; the
+                // interception task pairs them (`interception::calls`).
+                | EventKind::ServiceClientInit
+                | EventKind::ServiceServerInit
+                | EventKind::ServiceRequestSent
+                | EventKind::ServiceRequestTaken
+                | EventKind::ServiceResponseSent
+                | EventKind::ServiceResponseTaken
         ) {
             return;
         }
@@ -603,7 +612,15 @@ impl RuleEngine {
                 // The live Entities view's QoS; `qos-match-runtime` reads the
                 // rmw-layer QosDeclared events and the DDS verdicts instead.
             }
-            EventKind::TfEdge | EventKind::TfFramesDeclared | EventKind::LifecycleTransition => {
+            EventKind::TfEdge
+            | EventKind::TfFramesDeclared
+            | EventKind::LifecycleTransition
+            | EventKind::ServiceClientInit
+            | EventKind::ServiceServerInit
+            | EventKind::ServiceRequestSent
+            | EventKind::ServiceRequestTaken
+            | EventKind::ServiceResponseSent
+            | EventKind::ServiceResponseTaken => {
                 // TF edges for the Health page; no contract rule reads them.
             }
             EventKind::RingOverflowReport => {

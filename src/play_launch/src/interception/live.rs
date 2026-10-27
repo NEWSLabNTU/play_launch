@@ -314,6 +314,9 @@ pub struct EntitySnapshot {
     /// `/api/chains` and read by Health, not sent with Entities.
     #[serde(skip)]
     pub(crate) chains: Option<super::chains::ChainSnapshot>,
+    /// Service calls (phase 95); read by Health, not sent with Entities.
+    #[serde(skip)]
+    pub(crate) calls: Option<super::calls::CallSnapshot>,
 }
 
 /// `/clock` as the Health page judges it.
@@ -356,6 +359,7 @@ impl EntitySnapshot {
             clock: self.clock.clone(),
             tf: self.tf.clone(),
             chains: self.chains.clone(),
+            calls: self.calls.clone(),
         }
     }
 }
@@ -669,6 +673,8 @@ impl EndpointTracker {
                 })
             }),
             chains: (!self.chains.is_empty()).then(|| self.chains_snapshot(now_ns, topic_names)),
+            calls: (!self.calls.is_empty())
+                .then(|| self.calls.snapshot(now_ns, topic_names, &self.node_names)),
             clock: (self.clock.messages > 0).then(|| {
                 let c = &self.clock;
                 let secs = |ns: u64| ns as f64 / 1e9;

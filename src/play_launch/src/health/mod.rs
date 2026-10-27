@@ -25,6 +25,7 @@ use tokio::sync::watch;
 
 use crate::{interception::EntitySnapshot, util::self_cost};
 
+pub mod calls;
 pub mod chains;
 pub mod dds_report;
 pub mod discovery;
@@ -1082,6 +1083,9 @@ pub async fn run_health_task(inputs: HealthInputs) {
             }
             if let Some(c) = snap.chains.as_ref() {
                 conditions.extend(chains::chain_conditions(c));
+            }
+            if let Some(c) = snap.calls.as_ref() {
+                conditions.extend(calls::call_conditions(c, &model));
             }
         }
         let mut host_read = false;

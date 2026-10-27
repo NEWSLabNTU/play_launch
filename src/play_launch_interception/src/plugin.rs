@@ -97,6 +97,32 @@ pub(crate) trait InterceptionPlugin: Send + Sync {
     /// Called when a lifecycle node publishes a `TransitionEvent`.
     fn on_lifecycle_transition(&self, _handle: usize, _start: u8, _goal: u8) {}
 
+    /// Phase 95: a service client (`is_client`) or server was created
+    /// (cold path). `node_hash` is 0 when the node's name is unknown.
+    fn on_call_endpoint_init(
+        &self,
+        _handle: usize,
+        _is_client: bool,
+        _service: &str,
+        _service_hash: u64,
+        _node_fqn: Option<&str>,
+        _node_hash: u64,
+    ) {
+    }
+
+    /// Phase 95: a request sent or taken, a response sent or taken. `kind`
+    /// is one of the four call kinds; see `InterceptionEvent::call`.
+    fn on_call(
+        &self,
+        _kind: crate::event::EventKind,
+        _handle: usize,
+        _service_hash: u64,
+        _seq: i64,
+        _guid_hash: u64,
+        _source_ns: i64,
+    ) {
+    }
+
     // -----------------------------------------------------------------
     // RMW-layer hooks (Phase 36.1). Default no-op so existing plugins
     // (FrontierPlugin, StatsPlugin) compile unchanged. New plugins

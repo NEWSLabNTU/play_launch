@@ -116,6 +116,23 @@ impl InterceptionPlugin for TopicNamesPlugin {
         crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
 
+    fn on_call_endpoint_init(
+        &self,
+        _handle: usize,
+        _is_client: bool,
+        service: &str,
+        service_hash: u64,
+        node_fqn: Option<&str>,
+        node_hash: u64,
+    ) {
+        self.announce_topic_name(service_hash, service);
+        if let Some(fqn) = node_fqn
+            && registry::mark_node_name_for_emission(node_hash)
+        {
+            self.emit_chunks(EventKind::NodeNameDeclared, node_hash, fqn.as_bytes());
+        }
+    }
+
     fn on_endpoint_owner(&self, handle: usize, node_fqn: &str, node_hash: u64) {
         if registry::mark_node_name_for_emission(node_hash) {
             self.emit_chunks(EventKind::NodeNameDeclared, node_hash, node_fqn.as_bytes());

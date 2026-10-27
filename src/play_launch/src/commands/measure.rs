@@ -34,17 +34,40 @@ pub struct MeasureArgs {
 }
 
 pub fn handle_measure(args: &MeasureArgs) -> eyre::Result<()> {
-    let events_path = resolve_events_path(&args.run_dir)?;
+    // Phase 95: the service calls the run made, from `calls.json`, which is
+    // written whenever interception ran (no `--record-events` needed).
+    let calls = find_calls(&args.run_dir);
+    let events_path = match resolve_events_path(&args.run_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            let Some((calls_path, snap)) = calls else {
+                return Err(e);
+            };
+            let model = read_model(&args.model)?;
+            print!(
+                "# play_launch measure\n#   run:   {}\n#   model: {}\n#   no events.jsonl: \
+                 only the service calls are measured\n",
+                calls_path.display(),
+                args.model.display()
+            );
+            print!("{}", render_calls(&snap, &model));
+            return Ok(());
+        }
+    };
     let body = std::fs::read_to_string(&events_path)
         .wrap_err_with(|| format!("reading {}", events_path.display()))?;
     let run = measure::parse_run(&body);
 
-    let model_text = std::fs::read_to_string(&args.model)
-        .wrap_err_with(|| format!("reading {}", args.model.display()))?;
-    let model = SystemModel::from_yaml_str(&model_text)
-        .wrap_err_with(|| format!("parsing {}", args.model.display()))?;
+    let model = read_model(&args.model)?;
 
     let specs = path_specs(&model);
+    if specs.is_empty()
+        && let Some((_, snap)) = &calls
+    {
+        print!("{}", header(&run, &events_path, &args.model));
+        print!("{}", render_calls(snap, &model));
+        return Ok(());
+    }
     if specs.is_empty() {
         bail!(
             "{} declares no node paths, so there is nothing to attribute measurements to.\n\
@@ -56,6 +79,9 @@ pub fn handle_measure(args: &MeasureArgs) -> eyre::Result<()> {
 
     let results = measure::measure(&run, &specs);
     print!("{}", render(&results, &run, &events_path, &args.model));
+    if let Some((_, snap)) = &calls {
+        print!("{}", render_calls(snap, &model));
+    }
 
     // Phase 71: hazards. Observed fault → reaction, against the declared
     // fault-tolerant time interval. Only printed when the model declares any.
@@ -199,6 +225,92 @@ fn render_hazards(specs: &[HazardSpec], observed: &[HazardObservation]) -> Strin
             for (sub, w) in &spec.within {
                 out.push_str(&format!("#     {sub} promised to react within {w:.2}ms\n"));
             }
+        }
+    }
+    out
+}
+
+fn read_model(path: &Path) -> eyre::Result<SystemModel> {
+    let text =
+        std::fs::read_to_string(path).wrap_err_with(|| format!("reading {}", path.display()))?;
+    SystemModel::from_yaml_str(&text).wrap_err_with(|| format!("parsing {}", path.display()))
+}
+
+/// `calls.json` beside `events.jsonl` (phase 95): under the run directory,
+/// its `interception/` subdirectory, or beside a file argument. `None` when
+/// absent or unreadable.
+fn find_calls(arg: &Path) -> Option<(PathBuf, crate::interception::CallSnapshot)> {
+    let mut candidates = vec![arg.join("calls.json"), arg.join("interception/calls.json")];
+    if let Some(dir) = arg.parent() {
+        candidates.push(dir.join("calls.json"));
+    }
+    candidates.into_iter().find_map(|c| {
+        let text = std::fs::read_to_string(&c).ok()?;
+        let snap = serde_json::from_str(&text).ok()?;
+        Some((c, snap))
+    })
+}
+
+/// The contract key of the client `node` -> `service` (`nodes.<node>.cli.
+/// <endpoint>`), from the service's wiring in the model; `None` when the
+/// model does not list such a client.
+fn client_key(model: &SystemModel, node: &str, service: &str) -> Option<String> {
+    let wiring = model.structure.services.get(service)?;
+    let prefix = format!("{}/", node.trim_end_matches('/'));
+    wiring.client.iter().find_map(|r| {
+        let ep = r.strip_prefix(&prefix)?;
+        (!ep.contains('/')).then(|| format!("nodes.{}.cli.{ep}", node.trim_start_matches('/')))
+    })
+}
+
+/// Phase 95: the request legs the run timed, as contract `max_transport`
+/// comments, maximum first as for `budget_us`; and whether the middleware
+/// filled each request's source timestamp (what `stale_after` needs).
+fn render_calls(snap: &crate::interception::CallSnapshot, model: &SystemModel) -> String {
+    let mut out = String::new();
+    if snap.clients.is_empty() && snap.servers.is_empty() {
+        return out;
+    }
+    out.push_str(
+        "\n# Measured request legs -- these belong in the CONTRACT (`cli.<e>.max_transport`,\n\
+         # charged on a reaction route's success branch through the call), not here. The\n\
+         # leg is the client's send to the server's take, on one host's monotonic clock, for\n\
+         # every request a server of this run was seen to take. The value is the observed\n\
+         # MAXIMUM; p50/p99 are for judgement. Like budget_us, this is what this machine did\n\
+         # on this run, not a bound:\n",
+    );
+    for c in &snap.clients {
+        let label = format!("{} -> {}", c.node, c.service);
+        let Some(leg) = &c.request_leg else {
+            out.push_str(&format!(
+                "#   {label}: not measured: {} sent, {} answered, and no server of this run \
+                 was seen to take one\n",
+                c.sent, c.answered,
+            ));
+            continue;
+        };
+        out.push_str(&format!(
+            "#   {label}: request leg min {:.3} p50 {:.3} p99 {:.3} max {:.3} ms  n={}\n",
+            leg.min_ms, leg.p50_ms, leg.p99_ms, leg.max_ms, leg.n
+        ));
+        match client_key(model, &c.node, &c.service) {
+            Some(key) => out.push_str(&format!("#   {key}.max_transport: {:.3}ms\n", leg.max_ms)),
+            None => out.push_str(
+                "#     (the model lists no such client, so there is no contract key to name)\n",
+            ),
+        }
+    }
+    let taken: Vec<_> = snap.servers.iter().filter(|s| s.taken > 0).collect();
+    if !taken.is_empty() {
+        out.push_str(
+            "#\n# Requests' source timestamps, as the middleware filled them (`srv.<e>.stale_after`\n\
+             # refuses a request by it, so it must be there):\n",
+        );
+        for s in taken {
+            out.push_str(&format!(
+                "#   {} ({}): {} taken, source timestamp on {}, absent on {}\n",
+                s.service, s.node, s.taken, s.source_timestamp_filled, s.source_timestamp_zero
+            ));
         }
     }
     out
@@ -682,6 +794,79 @@ mod tests {
         assert_eq!(
             split_path_key("/safety/detector/detect"),
             ("/safety/detector", "detect")
+        );
+    }
+
+    /// Phase 95: a timed request leg is printed as the client's contract
+    /// key with the maximum; a client nothing answered says so; a server
+    /// says whether the middleware filled the source timestamp.
+    #[test]
+    fn request_legs_are_offered_to_the_contract_as_max_transport() {
+        use crate::interception::{CallSnapshot, ClientRow, ServerRow, calls::Dist};
+        let mut model = SystemModel::default();
+        model.structure.services.insert(
+            "/comfort/operate".into(),
+            ros_launch_manifest_model::ServiceWiring {
+                srv_type: "std_srvs/srv/Trigger".into(),
+                server: vec!["/sys/comfort_op/operate".into()],
+                client: vec!["/sys/handler/operate".into()],
+            },
+        );
+        let client = |node: &str, leg: Option<Dist>| ClientRow {
+            node: node.into(),
+            node_known: true,
+            member: "m".into(),
+            service: "/comfort/operate".into(),
+            sent: 4,
+            answered: u64::from(leg.is_some()) * 4,
+            open: 0,
+            oldest_open_ms: None,
+            expired: 0,
+            request_leg: leg,
+            round_trip: None,
+        };
+        let snap = CallSnapshot {
+            clients: vec![
+                client(
+                    "/sys/handler",
+                    Some(Dist {
+                        n: 4,
+                        min_ms: 0.2,
+                        p50_ms: 0.3,
+                        p99_ms: 0.9,
+                        max_ms: 1.25,
+                    }),
+                ),
+                client("/sys/other", None),
+            ],
+            servers: vec![ServerRow {
+                node: "/sys/comfort_op".into(),
+                member: "m".into(),
+                service: "/comfort/operate".into(),
+                taken: 4,
+                responded: 4,
+                source_timestamp_filled: 4,
+                source_timestamp_zero: 0,
+            }],
+        };
+        let out = render_calls(&snap, &model);
+        assert!(
+            out.contains("#   nodes.sys/handler.cli.operate.max_transport: 1.250ms"),
+            "{out}"
+        );
+        assert!(
+            out.contains("p50 0.300 p99 0.900 max 1.250 ms  n=4"),
+            "{out}"
+        );
+        assert!(
+            out.contains("/sys/other -> /comfort/operate: not measured: 4 sent, 0 answered"),
+            "{out}"
+        );
+        assert!(out.contains("source timestamp on 4, absent on 0"), "{out}");
+        // Every line is a comment: stdout stays pasteable under `overrides:`.
+        assert!(
+            out.lines().all(|l| l.is_empty() || l.starts_with('#')),
+            "{out}"
         );
     }
 

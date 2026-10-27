@@ -8,11 +8,13 @@
 //! - Aggregating frontier state and message statistics
 //! - Writing summary files on shutdown
 
+pub(crate) mod calls;
 mod chains;
 pub(crate) mod endpoint_stats;
 mod latency;
 pub(crate) mod live;
 mod tf;
+pub use calls::{CallSnapshot, ClientRow, ServerRow};
 pub use chains::{CarriedEdge, Chain, ChainPath, ChainSnapshot, Hop, SampledEdge, TopicAge};
 pub(crate) use endpoint_stats::Direction;
 pub use endpoint_stats::{LifecycleMark, StartupMark};
@@ -114,6 +116,22 @@ pub enum EventKind {
     /// A lifecycle node's `TransitionEvent`: `_pad[0]` start state,
     /// `_pad[1]` goal state (2 inactive, 3 active).
     LifecycleTransition = 22,
+    /// Phase 95 (`play_launch_interception::event::EventKind`): a service
+    /// client was created. `handle` = client id, `topic_hash` = service
+    /// hash, `cpu_ns` = node hash.
+    ServiceClientInit = 23,
+    /// A service server was created; as `ServiceClientInit`.
+    ServiceServerInit = 24,
+    /// A request was sent: `cpu_ns` = sequence number.
+    ServiceRequestSent = 25,
+    /// A request was taken: `cpu_ns` = sequence number, `stamp_*` = source
+    /// timestamp (0/0 = none), `tid` << 32 | `payload_bytes` = writer GUID
+    /// hash.
+    ServiceRequestTaken = 26,
+    /// A response was sent; as `ServiceRequestTaken` without a stamp.
+    ServiceResponseSent = 27,
+    /// A response was taken; as `ServiceRequestTaken`.
+    ServiceResponseTaken = 28,
 }
 
 /// Interception event (56 bytes, matches play_launch_interception::event::InterceptionEvent).
@@ -720,6 +738,7 @@ pub async fn run_interception_task(
                     }
                 }
                 endpoints.settle(crate::runtime_enforcement::monotonic_now_ns());
+                endpoints.calls.expire(crate::runtime_enforcement::monotonic_now_ns());
                 drop(drain_cost);
                 // The Entities page: one snapshot a second, built only while
                 // the web server holds a receiver.
@@ -815,6 +834,17 @@ pub async fn run_interception_task(
             .and_then(|()| endpoint_stats::write(&interception_dir, &rows))
         {
             warn!("Interception: endpoint_stats.json not written: {e:#}");
+        }
+        // Service calls (phase 95), when the run made or served any.
+        if !endpoints.calls.is_empty() {
+            let snap = endpoints.calls.snapshot(
+                crate::runtime_enforcement::monotonic_now_ns(),
+                &names.names,
+                &endpoints.node_names,
+            );
+            if let Err(e) = calls::write(&interception_dir, &snap) {
+                warn!("Interception: calls.json not written: {e:#}");
+            }
         }
         // Carried edges and chains (`chains.rs`), when any stamp crossed a node.
         if !endpoints.chains.is_empty() {
@@ -932,6 +962,14 @@ fn process_event(
         | EventKind::TfFramesDeclared
         | EventKind::LifecycleTransition => {
             // Per-endpoint attribution and QoS, handled by `EndpointTracker`.
+        }
+        EventKind::ServiceClientInit
+        | EventKind::ServiceServerInit
+        | EventKind::ServiceRequestSent
+        | EventKind::ServiceRequestTaken
+        | EventKind::ServiceResponseSent
+        | EventKind::ServiceResponseTaken => {
+            // Phase 95: paired by `EndpointTracker`'s `CallBook`.
         }
         EventKind::RingOverflowReport => {
             // Phase 42.0: handled directly in `run_interception_task`'s

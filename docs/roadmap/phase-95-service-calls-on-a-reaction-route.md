@@ -110,15 +110,51 @@ and measures the request leg.
 
 ## Wave 3 - runtime companion (play_launch interception)
 
-- [ ] W3.1 Hook `rcl_send_request`, `rcl_take_request`, `rcl_send_response`,
+- [x] W3.1 Hook `rcl_send_request`, `rcl_take_request`, `rcl_send_response`,
       `rcl_take_response`; new event kinds (the consumer's `EventKind` must
-      list them). Pair by (client, sequence number).
-- [ ] W3.2 Health issue `call-unanswered`: a request still open past its
-      client's contract `timeout:` (10 s without one).
-- [ ] W3.3 `measure` prints `max_transport` per client from the timed
+      list them). Pair by (client, sequence number). *(2026-10-27. Also
+      `rcl_client_init`/`rcl_service_init` (the service's FQN through
+      `rcl_*_get_service_name`, the node through `rcl_node_get_*`) and the
+      `_with_info` takes. rclcpp on Humble calls `rcl_take_request`/
+      `rcl_take_response`, which librcl implements by calling the
+      `_with_info` form through its PLT (objdump), so the `_with_info` hook
+      sees rclcpp's takes and reads the source timestamp; a thread-local flag
+      keeps a take reported once (checked: `add_two_ints_server`, one take).
+      Event kinds 23-28 (`ServiceClientInit` .. `ServiceResponseTaken`), in
+      the `.so`, the consumer's `EventKind`, `process_event`, the rule
+      engine's early return and `EndpointTracker`. A request's response is
+      paired by (client, sequence number); a server's take with its send by
+      (service, sequence number), the take's source timestamp choosing
+      between two clients of one service: the writer GUID cannot, since
+      under Fast DDS a response's request id names another writer than the
+      request's (measured). `interception/calls.rs`, `calls.json` at
+      shutdown.)*
+- [x] W3.2 Health issue `call-unanswered`: a request still open past its
+      client's contract `timeout:` (10 s without one). *(2026-10-27,
+      `health/calls.rs`, kind `call_unanswered` (the Health page's
+      snake_case), keyed `call_unanswered:<node>:<service>`. The threshold is
+      the model's `cli_endpoints.<ref>.timeout_ms` of the client the
+      service's wiring lists under that node. A request open ten minutes
+      leaves the open set and is counted (`expired`), so the issue closes.)*
+- [x] W3.3 `measure` prints `max_transport` per client from the timed
       request legs (maximum, p50/p99 as comments, as for `budget_us`).
-- [ ] W3.4 Integration tests: a server that never answers, one that dies
+      *(2026-10-27, from `calls.json`, which needs no `--record-events`:
+      `#   nodes.<node>.cli.<ep>.max_transport: 1.148ms` after the
+      percentiles, every line a comment so stdout stays pasteable; a run
+      with calls and no `events.jsonl` measures the calls alone. Also prints,
+      per server, how many requests carried a source timestamp.)*
+- [x] W3.4 Integration tests: a server that never answers, one that dies
       mid-call, one that answers; overhead measured on the hot path.
+      *(2026-10-27, `test_calls_unanswered_reach_health_and_request_legs_are_timed`
+      on `simple_test/launch/call_probe.launch.xml` (rclpy, three pairs):
+      `call_unanswered` opens for the deaf and the dead server's clients and
+      never for the answered one; the answered client's legs are timed
+      (p50 0.27 ms, max 1.15 ms under Fast DDS; 0.22 / 1.04 under Cyclone).
+      Unit-level negative controls: the Health threshold forced off, and the
+      leg pairing dropped, each turn its test red. Overhead: a call hook adds
+      44 ns to the rcl call it wraps (endpoint lookup + event + ring push,
+      `plugins::calls::call_hook_cost`, release); the topic hot path is
+      untouched.)*
 
 ## Wave 4 - docs
 
@@ -134,6 +170,12 @@ it on real runs:
    Not confirmed for every RMW or for nano-ros. [Implemented as a declared
    fact the checker trusts; W3 records whether `rmw_service_info_t.
    source_timestamp` is filled on the RMWs we run.]
+   *Learned (2026-10-27):* filled on both RMWs installed here, on requests
+   and on responses: Fast DDS (the default, `rmw_fastrtps_cpp`) and Cyclone
+   (`rmw_cyclonedds_cpp`), rclpy and rclcpp alike; `call_probe.launch.xml`
+   took 26/26 and 27/27 requests with it set, `add_two_ints_server` 1/1.
+   `measure` now prints the count per server, so a run on another RMW says
+   whether it holds there. nano-ros is not checked.
 2. **`call-deadlock` severity.** [Warning. Evaluation: whether play_launch's
    view of the executor (a stock container's executable, `--container-mode`)
    justifies an error.]

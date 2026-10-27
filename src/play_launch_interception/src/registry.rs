@@ -254,6 +254,26 @@ pub fn mark_node_name_for_emission(node_hash: u64) -> bool {
     NODE_NAME_EMITTED.write().insert(node_hash)
 }
 
+// Service clients and servers (phase 95)
+// ---------------------------------------------------------------------------
+//
+// One map for both: an rcl client and an rcl service are distinct objects,
+// so their `impl` pointers never collide. Looked up once per request or
+// response, which is rare next to a message.
+
+static CALL_ENDPOINTS: LazyLock<RwLock<std::collections::HashMap<usize, u64>>> =
+    LazyLock::new(|| RwLock::new(std::collections::HashMap::new()));
+
+/// Remember which service the client or server `id` belongs to.
+pub fn register_call_endpoint(id: usize, service_hash: u64) {
+    CALL_ENDPOINTS.write().insert(id, service_hash);
+}
+
+/// The service hash of client or server `id`, when its init was seen.
+pub fn lookup_call_endpoint(id: usize) -> Option<u64> {
+    CALL_ENDPOINTS.read().get(&id).copied()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

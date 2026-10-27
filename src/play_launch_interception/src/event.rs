@@ -134,6 +134,37 @@ pub enum EventKind {
     /// `State`: 1 unconfigured, 2 inactive, 3 active, 4 finalized, 10+
     /// transitional).
     LifecycleTransition = 22,
+    /// Phase 95: a service CLIENT was created. Field overload: `handle` =
+    /// the rcl client id, `topic_hash` = FNV-1a hash of the service's FQN
+    /// (its string arrives as `TopicNameDeclared` chunks), `cpu_ns` = hash
+    /// of the owning node's FQN (`NodeNameDeclared`), 0 when unknown.
+    ServiceClientInit = 23,
+    /// Phase 95: a service SERVER was created. As `ServiceClientInit`.
+    ServiceServerInit = 24,
+    /// Phase 95: a client sent a request (`rcl_send_request`). Field
+    /// overload: `handle` = client id, `topic_hash` = service hash, `cpu_ns`
+    /// = the request's sequence number, `stamp_sec`/`stamp_nanosec` =
+    /// `CLOCK_REALTIME` at the send, the clock the server's take reports the
+    /// request's `source_timestamp` on.
+    ServiceRequestSent = 25,
+    /// Phase 95: a server took a request (`rcl_take_request[_with_info]`).
+    /// Field overload: `handle` = service id, `topic_hash` = service hash,
+    /// `cpu_ns` = sequence number, `stamp_sec`/`stamp_nanosec` = the
+    /// request's `source_timestamp` (0/0 when the middleware filled none,
+    /// or only the request id was available), `tid` << 32 | `payload_bytes`
+    /// = FNV-1a hash of the request's writer GUID. A take pairs with its
+    /// send by (service, sequence number), the source timestamp telling two
+    /// clients of one service apart: the GUID cannot pair them, since a
+    /// response's request id names another writer than the request's under
+    /// Fast DDS (measured, phase 95).
+    ServiceRequestTaken = 26,
+    /// Phase 95: a server sent a response (`rcl_send_response`). As
+    /// `ServiceRequestTaken`, with no stamp.
+    ServiceResponseSent = 27,
+    /// Phase 95: a client took a response (`rcl_take_response[_with_info]`).
+    /// As `ServiceRequestTaken`, with `handle` = client id and the stamp the
+    /// response's `source_timestamp`.
+    ServiceResponseTaken = 28,
 }
 
 /// A single interception event (56 bytes, `#[repr(C)]`).
@@ -470,6 +501,50 @@ impl InterceptionEvent {
     }
 }
 
+impl InterceptionEvent {
+    /// Build one of the phase 95 call events. `seq` is the request's
+    /// sequence number, `guid_hash` the hash of its writer GUID (0 when not
+    /// known, as on a send), `source_ns` the middleware's source timestamp
+    /// in nanoseconds (0 when none).
+    #[inline]
+    pub fn call(
+        kind: EventKind,
+        handle: u64,
+        service_hash: u64,
+        seq: i64,
+        guid_hash: u64,
+        source_ns: i64,
+    ) -> Self {
+        debug_assert!(matches!(
+            kind,
+            EventKind::ServiceRequestSent
+                | EventKind::ServiceRequestTaken
+                | EventKind::ServiceResponseSent
+                | EventKind::ServiceResponseTaken
+        ));
+        let (sec, nsec) = if source_ns > 0 {
+            (
+                (source_ns / 1_000_000_000) as i32,
+                (source_ns % 1_000_000_000) as u32,
+            )
+        } else {
+            (0, 0)
+        };
+        Self {
+            kind,
+            _pad: [0; 3],
+            topic_hash: service_hash,
+            stamp_sec: sec,
+            stamp_nanosec: nsec,
+            handle,
+            monotonic_ns: monotonic_ns(),
+            cpu_ns: seq as u64,
+            tid: (guid_hash >> 32) as u32,
+            payload_bytes: guid_hash as u32,
+        }
+    }
+}
+
 thread_local! {
     /// `gettid` is a syscall, and this sits on the per-message hot path —
     /// a thread's id never changes, so read it once per thread.
@@ -511,6 +586,19 @@ pub(crate) fn monotonic_ns() -> u64 {
     };
     unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
     ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+}
+
+/// `CLOCK_REALTIME` in nanoseconds (phase 95): the clock a DDS source
+/// timestamp is taken on, so a request's send can be found again from the
+/// `source_timestamp` its server's take reports.
+#[inline]
+pub(crate) fn realtime_ns() -> i64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts) };
+    ts.tv_sec * 1_000_000_000 + ts.tv_nsec
 }
 
 #[cfg(test)]

@@ -104,3 +104,63 @@ mod tests {
         assert_eq!(std::mem::size_of::<rcutils_uint8_array_t>(), 64);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Services (phase 95): clients, servers, requests and responses
+// ---------------------------------------------------------------------------
+//
+// From the Humble headers `rcl/client.h`, `rcl/service.h` and `rmw/types.h`
+// (unchanged in Jazzy). The handle and option types are only ever passed
+// through, so they stay opaque.
+
+/// `rmw_request_id_t`: the request's writer GUID and sequence number.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct rmw_request_id_t {
+    pub writer_guid: [i8; 16],
+    pub sequence_number: i64,
+}
+
+/// `rmw_service_info_t`: what a service-related take carries. Whether the
+/// middleware fills `source_timestamp` is one of the questions phase 95
+/// answers by observation (`srv.<e>.stale_after` relies on it).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct rmw_service_info_t {
+    pub source_timestamp: i64,
+    pub received_timestamp: i64,
+    pub request_id: rmw_request_id_t,
+}
+
+/// `rcl_client_init(client, node, type_support, service_name, options)`, and
+/// `rcl_service_init` with the same shape.
+pub type FnRclCallEndpointInit = unsafe extern "C" fn(
+    *mut c_void,
+    *const rcl_interception_sys::opaque::rcl_node_t,
+    *const c_void,
+    *const std::ffi::c_char,
+    *const c_void,
+) -> rcl_ret_t;
+
+/// `rcl_client_get_service_name(client)` / `rcl_service_get_service_name`:
+/// the fully-qualified, remapped name rcl itself resolved.
+pub type FnRclGetServiceName = unsafe extern "C" fn(*const c_void) -> *const std::ffi::c_char;
+
+/// `rcl_send_request(client, ros_request, sequence_number)`
+pub type FnRclSendRequest =
+    unsafe extern "C" fn(*const c_void, *const c_void, *mut i64) -> rcl_ret_t;
+
+/// `rcl_take_response_with_info(client, request_header, ros_response)` and
+/// `rcl_take_request_with_info(service, request_header, ros_request)`.
+pub type FnRclTakeWithInfo =
+    unsafe extern "C" fn(*const c_void, *mut rmw_service_info_t, *mut c_void) -> rcl_ret_t;
+
+/// `rcl_take_response(client, request_header, ros_response)` and
+/// `rcl_take_request(service, request_header, ros_request)`: the forms
+/// rclcpp calls, which in rcl call the `_with_info` ones.
+pub type FnRclTakeIdOnly =
+    unsafe extern "C" fn(*const c_void, *mut rmw_request_id_t, *mut c_void) -> rcl_ret_t;
+
+/// `rcl_send_response(service, request_header, ros_response)`
+pub type FnRclSendResponse =
+    unsafe extern "C" fn(*const c_void, *mut rmw_request_id_t, *mut c_void) -> rcl_ret_t;

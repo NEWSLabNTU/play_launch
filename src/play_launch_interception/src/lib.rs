@@ -100,6 +100,18 @@ struct Originals {
     /// The QoS each endpoint actually got, for the live QoS check.
     publisher_get_actual_qos: Option<ffi_ext::FnRclPublisherGetActualQos>,
     subscription_get_actual_qos: Option<ffi_ext::FnRclSubscriptionGetActualQos>,
+    /// Services (phase 95). Each optional on its own: a missing one fails
+    /// that call alone, never the interceptor.
+    client_init: Option<ffi_ext::FnRclCallEndpointInit>,
+    service_init: Option<ffi_ext::FnRclCallEndpointInit>,
+    client_get_service_name: Option<ffi_ext::FnRclGetServiceName>,
+    service_get_service_name: Option<ffi_ext::FnRclGetServiceName>,
+    send_request: Option<ffi_ext::FnRclSendRequest>,
+    take_request: Option<ffi_ext::FnRclTakeIdOnly>,
+    take_request_with_info: Option<ffi_ext::FnRclTakeWithInfo>,
+    send_response: Option<ffi_ext::FnRclSendResponse>,
+    take_response: Option<ffi_ext::FnRclTakeIdOnly>,
+    take_response_with_info: Option<ffi_ext::FnRclTakeWithInfo>,
     /// RMW-layer originals (Phase 36.1). Optional — resolved separately
     /// from rcl symbols because the rmw symbols live in
     /// `librmw_implementation.so`, which may not be loaded under
@@ -272,7 +284,37 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
         std::mem::transmute::<*mut c_void, ffi_ext::FnRclSubscriptionGetActualQos>(p)
     });
 
+    macro_rules! opt {
+        ($name:literal, $ty:ty) => {
+            sym($name).map(|p| unsafe { std::mem::transmute::<*mut c_void, $ty>(p) })
+        };
+    }
+    let client_init = opt!(c"rcl_client_init", ffi_ext::FnRclCallEndpointInit);
+    let service_init = opt!(c"rcl_service_init", ffi_ext::FnRclCallEndpointInit);
+    let client_get_service_name =
+        opt!(c"rcl_client_get_service_name", ffi_ext::FnRclGetServiceName);
+    let service_get_service_name = opt!(
+        c"rcl_service_get_service_name",
+        ffi_ext::FnRclGetServiceName
+    );
+    let send_request = opt!(c"rcl_send_request", ffi_ext::FnRclSendRequest);
+    let take_request = opt!(c"rcl_take_request", ffi_ext::FnRclTakeIdOnly);
+    let take_request_with_info = opt!(c"rcl_take_request_with_info", ffi_ext::FnRclTakeWithInfo);
+    let send_response = opt!(c"rcl_send_response", ffi_ext::FnRclSendResponse);
+    let take_response = opt!(c"rcl_take_response", ffi_ext::FnRclTakeIdOnly);
+    let take_response_with_info = opt!(c"rcl_take_response_with_info", ffi_ext::FnRclTakeWithInfo);
+
     Some(Originals {
+        client_init,
+        service_init,
+        client_get_service_name,
+        service_get_service_name,
+        send_request,
+        take_request,
+        take_request_with_info,
+        send_response,
+        take_response,
+        take_response_with_info,
         publisher_init: unsafe {
             std::mem::transmute::<*mut c_void, FnRclPublisherInit>(publisher_init)
         },
@@ -888,6 +930,12 @@ fn build_plugins() -> Vec<Box<dyn InterceptionPlugin>> {
         plugins.push(Box::new(
             plugins::qos_negotiation::QosNegotiationPlugin::new(prod.clone()),
         ));
+    }
+
+    // CallsPlugin (phase 95): service clients and servers, requests and
+    // responses.
+    if let Some(ref prod) = producer {
+        plugins.push(Box::new(plugins::calls::CallsPlugin::new(prod.clone())));
     }
 
     // TfPlugin (big-system-observability §H): TF edges read on publish.
@@ -1656,5 +1704,330 @@ pub unsafe extern "C" fn rmw_take_event(
         );
     }
 
+    ret
+}
+
+// ---------------------------------------------------------------------------
+// Services (phase 95)
+// ---------------------------------------------------------------------------
+//
+// rclcpp (Humble) calls `rcl_take_request` and `rcl_take_response`, and rcl
+// implements each by calling its `_with_info` form through the PLT, so the
+// `_with_info` hook sees rclcpp's takes too and is the one that can read the
+// source timestamp. Both forms are hooked: a direct caller of either is seen,
+// and a thread-local flag keeps a take reported once when the outer form
+// reaches the inner hook (an rcl built with `-Bsymbolic` would not, and the
+// outer hook then reports it with what the request id carries).
+
+thread_local! {
+    /// Set by a `_with_info` take hook that dispatched, read and cleared by
+    /// the id-only form around it.
+    static CALL_TAKE_REPORTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn guid_hash(id: &ffi_ext::rmw_request_id_t) -> u64 {
+    let bytes: [u8; 16] = id.writer_guid.map(|b| b as u8);
+    registry::fnv1a(&bytes)
+}
+
+fn dispatch_call(
+    rt: &Runtime,
+    kind: event::EventKind,
+    handle: usize,
+    seq: i64,
+    guid: u64,
+    source_ns: i64,
+) {
+    if let Some(service_hash) = registry::lookup_call_endpoint(handle) {
+        for p in &rt.plugins {
+            p.on_call(kind, handle, service_hash, seq, guid, source_ns);
+        }
+    }
+}
+
+/// Shared by the client and service init hooks.
+///
+/// # Safety
+///
+/// `endpoint` must be the handle the original init just initialized.
+unsafe fn after_call_endpoint_init(
+    rt: &Runtime,
+    endpoint: *const c_void,
+    node: *const rcl_node_t,
+    is_client: bool,
+) {
+    let get = if is_client {
+        rt.originals.client_get_service_name
+    } else {
+        rt.originals.service_get_service_name
+    };
+    let Some(get) = get else {
+        return;
+    };
+    let name_ptr = unsafe { get(endpoint) };
+    if name_ptr.is_null() {
+        return;
+    }
+    let name = unsafe { CStr::from_ptr(name_ptr) }
+        .to_string_lossy()
+        .into_owned();
+    let service_hash = registry::fnv1a(name.as_bytes());
+    let id = rcl_id(endpoint);
+    registry::register_call_endpoint(id, service_hash);
+    let fqn = node_fqn(&rt.originals, node);
+    let node_hash = fqn
+        .as_deref()
+        .map(|f| registry::fnv1a(f.as_bytes()))
+        .unwrap_or(0);
+    for p in &rt.plugins {
+        p.on_call_endpoint_init(
+            id,
+            is_client,
+            &name,
+            service_hash,
+            fqn.as_deref(),
+            node_hash,
+        );
+    }
+}
+
+/// # Safety
+///
+/// Called by the dynamic linker as an override for `rcl_client_init`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rcl_client_init(
+    client: *mut c_void,
+    node: *const rcl_node_t,
+    type_support: *const c_void,
+    service_name: *const c_char,
+    options: *const c_void,
+) -> rcl_ret_t {
+    let Some(rt) = runtime() else {
+        return RCL_RET_ERROR;
+    };
+    let Some(original) = rt.originals.client_init else {
+        return RCL_RET_ERROR;
+    };
+    let ret = unsafe { original(client, node, type_support, service_name, options) };
+    if ret == 0 && !rt.plugins.is_empty() {
+        unsafe { after_call_endpoint_init(rt, client, node, true) };
+    }
+    ret
+}
+
+/// # Safety
+///
+/// Called by the dynamic linker as an override for `rcl_service_init`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rcl_service_init(
+    service: *mut c_void,
+    node: *const rcl_node_t,
+    type_support: *const c_void,
+    service_name: *const c_char,
+    options: *const c_void,
+) -> rcl_ret_t {
+    let Some(rt) = runtime() else {
+        return RCL_RET_ERROR;
+    };
+    let Some(original) = rt.originals.service_init else {
+        return RCL_RET_ERROR;
+    };
+    let ret = unsafe { original(service, node, type_support, service_name, options) };
+    if ret == 0 && !rt.plugins.is_empty() {
+        unsafe { after_call_endpoint_init(rt, service, node, false) };
+    }
+    ret
+}
+
+/// # Safety
+///
+/// Called by the dynamic linker as an override for `rcl_send_request`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rcl_send_request(
+    client: *const c_void,
+    ros_request: *const c_void,
+    sequence_number: *mut i64,
+) -> rcl_ret_t {
+    let Some(rt) = runtime() else {
+        return RCL_RET_ERROR;
+    };
+    let Some(original) = rt.originals.send_request else {
+        return RCL_RET_ERROR;
+    };
+    let ret = unsafe { original(client, ros_request, sequence_number) };
+    if ret == 0 && !rt.plugins.is_empty() && !sequence_number.is_null() {
+        let seq = unsafe { *sequence_number };
+        dispatch_call(
+            rt,
+            event::EventKind::ServiceRequestSent,
+            rcl_id(client),
+            seq,
+            0,
+            event::realtime_ns(),
+        );
+    }
+    ret
+}
+
+/// # Safety
+///
+/// Called by the dynamic linker as an override for
+/// `rcl_take_request_with_info`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rcl_take_request_with_info(
+    service: *const c_void,
+    request_header: *mut ffi_ext::rmw_service_info_t,
+    ros_request: *mut c_void,
+) -> rcl_ret_t {
+    let Some(rt) = runtime() else {
+        return RCL_RET_ERROR;
+    };
+    let Some(original) = rt.originals.take_request_with_info else {
+        return RCL_RET_ERROR;
+    };
+    let ret = unsafe { original(service, request_header, ros_request) };
+    if ret == 0 && !rt.plugins.is_empty() && !request_header.is_null() {
+        let info = unsafe { *request_header };
+        CALL_TAKE_REPORTED.with(|c| c.set(true));
+        dispatch_call(
+            rt,
+            event::EventKind::ServiceRequestTaken,
+            rcl_id(service),
+            info.request_id.sequence_number,
+            guid_hash(&info.request_id),
+            info.source_timestamp,
+        );
+    }
+    ret
+}
+
+/// # Safety
+///
+/// Called by the dynamic linker as an override for `rcl_take_request`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rcl_take_request(
+    service: *const c_void,
+    request_header: *mut ffi_ext::rmw_request_id_t,
+    ros_request: *mut c_void,
+) -> rcl_ret_t {
+    let Some(rt) = runtime() else {
+        return RCL_RET_ERROR;
+    };
+    let Some(original) = rt.originals.take_request else {
+        return RCL_RET_ERROR;
+    };
+    CALL_TAKE_REPORTED.with(|c| c.set(false));
+    let ret = unsafe { original(service, request_header, ros_request) };
+    let reported = CALL_TAKE_REPORTED.with(|c| c.replace(false));
+    if ret == 0 && !reported && !rt.plugins.is_empty() && !request_header.is_null() {
+        let id = unsafe { *request_header };
+        dispatch_call(
+            rt,
+            event::EventKind::ServiceRequestTaken,
+            rcl_id(service),
+            id.sequence_number,
+            guid_hash(&id),
+            0,
+        );
+    }
+    ret
+}
+
+/// # Safety
+///
+/// Called by the dynamic linker as an override for `rcl_send_response`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rcl_send_response(
+    service: *const c_void,
+    request_header: *mut ffi_ext::rmw_request_id_t,
+    ros_response: *mut c_void,
+) -> rcl_ret_t {
+    let Some(rt) = runtime() else {
+        return RCL_RET_ERROR;
+    };
+    let Some(original) = rt.originals.send_response else {
+        return RCL_RET_ERROR;
+    };
+    // Read the id before the call: the header is the caller's, and nothing
+    // promises it is untouched afterwards.
+    let id = (!request_header.is_null()).then(|| unsafe { *request_header });
+    let ret = unsafe { original(service, request_header, ros_response) };
+    if ret == 0
+        && !rt.plugins.is_empty()
+        && let Some(id) = id
+    {
+        dispatch_call(
+            rt,
+            event::EventKind::ServiceResponseSent,
+            rcl_id(service),
+            id.sequence_number,
+            guid_hash(&id),
+            0,
+        );
+    }
+    ret
+}
+
+/// # Safety
+///
+/// Called by the dynamic linker as an override for
+/// `rcl_take_response_with_info`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rcl_take_response_with_info(
+    client: *const c_void,
+    request_header: *mut ffi_ext::rmw_service_info_t,
+    ros_response: *mut c_void,
+) -> rcl_ret_t {
+    let Some(rt) = runtime() else {
+        return RCL_RET_ERROR;
+    };
+    let Some(original) = rt.originals.take_response_with_info else {
+        return RCL_RET_ERROR;
+    };
+    let ret = unsafe { original(client, request_header, ros_response) };
+    if ret == 0 && !rt.plugins.is_empty() && !request_header.is_null() {
+        let info = unsafe { *request_header };
+        CALL_TAKE_REPORTED.with(|c| c.set(true));
+        dispatch_call(
+            rt,
+            event::EventKind::ServiceResponseTaken,
+            rcl_id(client),
+            info.request_id.sequence_number,
+            guid_hash(&info.request_id),
+            info.source_timestamp,
+        );
+    }
+    ret
+}
+
+/// # Safety
+///
+/// Called by the dynamic linker as an override for `rcl_take_response`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rcl_take_response(
+    client: *const c_void,
+    request_header: *mut ffi_ext::rmw_request_id_t,
+    ros_response: *mut c_void,
+) -> rcl_ret_t {
+    let Some(rt) = runtime() else {
+        return RCL_RET_ERROR;
+    };
+    let Some(original) = rt.originals.take_response else {
+        return RCL_RET_ERROR;
+    };
+    CALL_TAKE_REPORTED.with(|c| c.set(false));
+    let ret = unsafe { original(client, request_header, ros_response) };
+    let reported = CALL_TAKE_REPORTED.with(|c| c.replace(false));
+    if ret == 0 && !reported && !rt.plugins.is_empty() && !request_header.is_null() {
+        let id = unsafe { *request_header };
+        dispatch_call(
+            rt,
+            event::EventKind::ServiceResponseTaken,
+            rcl_id(client),
+            id.sequence_number,
+            guid_hash(&id),
+            0,
+        );
+    }
     ret
 }
