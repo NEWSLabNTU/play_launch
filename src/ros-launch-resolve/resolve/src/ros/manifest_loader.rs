@@ -217,6 +217,9 @@ pub struct ResolvedService {
     /// Actions only (rlm v0.1.69): the declaring scope's `call:`, per client
     /// endpoint FQN it lists. A client whose scope stated none has no entry.
     pub client_calls: BTreeMap<String, ros_launch_manifest_types::CallMode>,
+    /// Services only (rlm v0.2.5, phase 95): `services.<s>.max_transport`,
+    /// the request leg for every client that states none of its own.
+    pub max_transport_ms: Option<f64>,
 }
 
 /// Resolved node path entry.
@@ -6081,6 +6084,28 @@ fn resolve_services(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifes
             if !existing.scope_ids.contains(&scope.id) {
                 existing.scope_ids.push(scope.id);
             }
+            // Phase 95: one request leg per service, as one transport per
+            // topic; two scopes stating different ones disagree.
+            match (existing.max_transport_ms, service_decl.max_transport.ms()) {
+                (Some(a), Some(b)) if (a - b).abs() > 1e-9 => {
+                    index.merge_diagnostics.push(Diagnostic {
+                        rule_id: "consistency".to_string(),
+                        severity: Severity::Error,
+                        message: format!(
+                            "service '{}' max_transport mismatch: {a}ms vs {b}ms in scope {} \
+                             ({}/{})",
+                            existing.fqn,
+                            scope.id,
+                            scope.pkg().unwrap_or("?"),
+                            scope.file().unwrap_or("?"),
+                        ),
+                        path: format!("services.{service_name}.max_transport"),
+                        span: None,
+                    });
+                }
+                (None, Some(b)) => existing.max_transport_ms = Some(b),
+                _ => {}
+            }
         } else {
             index.services.insert(
                 fqn.clone(),
@@ -6091,6 +6116,7 @@ fn resolve_services(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifes
                     clients,
                     scope_ids: vec![scope.id],
                     client_calls: BTreeMap::new(),
+                    max_transport_ms: service_decl.max_transport.ms(),
                 },
             );
         }
@@ -6171,6 +6197,7 @@ fn resolve_actions(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifest
                     clients,
                     scope_ids: vec![scope.id],
                     client_calls,
+                    max_transport_ms: None,
                 },
             );
         }

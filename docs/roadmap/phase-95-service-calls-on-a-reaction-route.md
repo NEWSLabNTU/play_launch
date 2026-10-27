@@ -23,15 +23,26 @@ and measures the request leg.
 
 ## Wave 1 - grammar and model (rlm)
 
-- [ ] W1.1 `cli.<ep>`: `timeout` (duration, `$(param)`-capable),
+- [x] W1.1 `cli.<ep>`: `timeout` (duration, `$(param)`-capable),
       `on_timeout` (`{ reaction }` or `{ retry: { attempts, backoff }, then:
       { reaction } }`), `on_rejected` (`{ reaction }`), `max_transport`.
       `services.<s>.max_transport`. Field-table rows, generated reference,
-      `GRAMMAR_VERSION`, parse tests for every refusal.
-- [ ] W1.2 `srv.<ep>`: `idempotent` (bool), `stale_after` (duration).
-- [ ] W1.3 Model: the client and server facts reach the model (additive,
+      `GRAMMAR_VERSION`, parse tests for every refusal. *(2026-10-27, rlm
+      v0.2.5: contexts `OnTimeout`, `Retry`, `CallReaction`; a `$(param)`
+      timeout with no value keeps the key's presence (`CallTimeout.read`), so
+      "gives up, how soon unknown" never reads as "waits forever"; a retry
+      with no `attempts` or no `then:` parses, for the checker to judge.
+      `a_clients_wait_and_fallback_parse` (19 refusals),
+      `a_clients_timeout_reads_a_parameter`.)*
+- [x] W1.2 `srv.<ep>`: `idempotent` (bool), `stale_after` (duration).
+      *(2026-10-27, v0.2.5.)*
+- [x] W1.3 Model: the client and server facts reach the model (additive,
       serde-defaulted), so a consumer other than play_launch can read them.
-      Release.
+      Release. *(2026-10-27: `CliContract.{timeout_ms, on_timeout, on_rejected,
+      max_transport_ms (client's, else the service's), sources}`,
+      `SrvContract.{idempotent, stale_after_ms}`; lowered by
+      `model_builder::cli_contract`. v0.2.6 followed the same day:
+      `Manifest::bounds` had left out `services.<s>.max_transport`.)*
 
 ## Wave 2 - the checker (play_launch resolver)
 

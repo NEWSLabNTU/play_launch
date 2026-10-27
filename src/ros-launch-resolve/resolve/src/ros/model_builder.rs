@@ -401,9 +401,40 @@ fn srv_contract(p: &ros_launch_manifest_types::SrvEndpointProps) -> Option<model
         min_interarrival_ms: p.min_interarrival.map(|d| d.as_millis_f64()),
         budget_ms: p.budget.map(|d| d.as_millis_f64()),
         budget_period_ms: p.budget_period.map(|d| d.as_millis_f64()),
+        // rlm v0.2.5 (phase 95): what licenses a retry, and the staleness
+        // bound that keeps a request the client gave up on from acting.
+        idempotent: p.idempotent,
+        stale_after_ms: p.stale_after.map(|d| d.as_millis_f64()),
         sources: BTreeMap::new(),
     };
     (c != model::SrvContract::default()).then_some(c)
+}
+
+/// A service client's contract (rlm v0.1.69 `call`, v0.2.5 the wait and
+/// its fallbacks). `service_transport` is the request leg its service
+/// states, taken when the client states none. `None` when nothing is
+/// stated.
+fn cli_contract(
+    p: &ros_launch_manifest_types::EndpointProps,
+    service_transport: Option<f64>,
+) -> Option<model::CliContract> {
+    let c = model::CliContract {
+        call: p.call.map(call_mode),
+        timeout_ms: p.timeout.as_ref().and_then(|t| t.ms()),
+        on_timeout: p.on_timeout.as_ref().map(|o| model::OnTimeoutContract {
+            reaction: o.reaction.clone(),
+            attempts: o.attempts(),
+            backoff_ms: o
+                .retry
+                .as_ref()
+                .and_then(|r| r.backoff)
+                .map(|d| d.as_millis_f64()),
+        }),
+        on_rejected: p.on_rejected.clone(),
+        max_transport_ms: p.max_transport.ms().or(service_transport),
+        sources: BTreeMap::new(),
+    };
+    (c != model::CliContract::default()).then_some(c)
 }
 
 /// rlm v0.1.69: a client's call mode, grammar to model.
@@ -457,6 +488,7 @@ fn model_field(rest: &str) -> String {
         "max_interval",
         "timeout",
         "response",
+        "stale_after",
     ];
     let rest = rest
         .strip_suffix(".duration")
@@ -467,6 +499,7 @@ fn model_field(rest: &str) -> String {
         "trigger.timer.jitter" => return "timer_jitter_ms".to_string(),
         "window" => return "window.duration_ms".to_string(),
         "safe_state.settle" => return "safe_state.settle_ms".to_string(),
+        "on_timeout.retry.backoff" => return "on_timeout.backoff_ms".to_string(),
         _ => {}
     }
     let (head, last) = rest.rsplit_once('.').unwrap_or(("", rest));
@@ -1294,6 +1327,7 @@ pub fn build_system_model(
                 resolve_endpoint_ref(&structure.nodes, client),
                 model::CliContract {
                     call: Some(call_mode(*call)),
+                    ..Default::default()
                 },
             );
         }
@@ -1360,14 +1394,18 @@ pub fn build_system_model(
                 }
             }
             for (ep, props) in &decl.cli {
-                // rlm v0.1.69 (nano-ros RFC-0108 D8.3): how the client waits.
-                if let Some(call) = props.call {
-                    contracts.cli_endpoints.insert(
-                        format!("{node_fqn}/{ep}"),
-                        model::CliContract {
-                            call: Some(call_mode(call)),
-                        },
-                    );
+                // rlm v0.1.69 (nano-ros RFC-0108 D8.3): how the client waits;
+                // v0.2.5 (phase 95): for how long, and what it does then.
+                let ep_ref = format!("{node_fqn}/{ep}");
+                let raw_ref = format!("{}/{ep}", fqn(&m.ns, name));
+                let service_transport = index
+                    .services
+                    .values()
+                    .find(|s| s.clients.contains(&ep_ref) || s.clients.contains(&raw_ref))
+                    .and_then(|s| s.max_transport_ms);
+                if let Some(mut c) = cli_contract(props, service_transport) {
+                    c.sources = value_sources(&m.manifest, &format!("nodes.{name}.cli.{ep}"));
+                    contracts.cli_endpoints.insert(ep_ref, c);
                 }
             }
             for (ep, props) in &decl.srv {
@@ -1923,6 +1961,50 @@ mod tests {
     use ros_launch_manifest_sched::Criticality;
     use ros_launch_manifest_types::{Manifest, duration::Duration};
 
+    /// Phase 95 (rlm v0.2.5): a client's wait and fallbacks reach the model,
+    /// with the service's request leg taken where the client states none;
+    /// a server's `idempotent` and `stale_after` too; and a client stating
+    /// nothing still has no entry.
+    #[test]
+    fn a_clients_wait_and_a_servers_idempotence_reach_the_model() {
+        let m = ros_launch_manifest_types::parse_manifest_str(
+            "nodes:\n  n:\n    cli:\n\
+             \x20     a: { call: blocking, timeout: 10ms, on_timeout: { retry: { attempts: 3, \
+             backoff: 5ms }, then: { reaction: stop } }, on_rejected: { reaction: stop } }\n\
+             \x20     b: {}\n\
+             \x20     c: { max_transport: 2ms }\n\
+             \x20 s:\n    srv:\n      op: { idempotent: true, stale_after: 50ms }\n",
+        )
+        .unwrap();
+        let cli = &m.nodes["n"].cli;
+        let a = cli_contract(&cli["a"], Some(1.5)).unwrap();
+        assert_eq!(a.call, Some(model::CallMode::Blocking));
+        assert_eq!(a.timeout_ms, Some(10.0));
+        assert_eq!(
+            a.on_timeout,
+            Some(model::OnTimeoutContract {
+                reaction: Some("stop".into()),
+                attempts: Some(3),
+                backoff_ms: Some(5.0),
+            })
+        );
+        assert_eq!(a.on_rejected.as_deref(), Some("stop"));
+        assert_eq!(a.max_transport_ms, Some(1.5), "the service's leg");
+        assert_eq!(cli_contract(&cli["b"], None), None);
+        assert_eq!(
+            cli_contract(&cli["c"], Some(1.5)).unwrap().max_transport_ms,
+            Some(2.0),
+            "the client's own leg wins"
+        );
+        let s = srv_contract(&m.nodes["s"].srv["op"]).unwrap();
+        assert_eq!((s.idempotent, s.stale_after_ms), (Some(true), Some(50.0)));
+        assert_eq!(
+            model_field("on_timeout.retry.backoff"),
+            "on_timeout.backoff_ms"
+        );
+        assert_eq!(model_field("timeout"), "timeout_ms");
+    }
+
     /// rlm v0.1.64 (nano-ros RFC-0074) -- a subscriber's `ingress` reaches the
     /// model, and on its own is enough to give the endpoint a contract entry:
     /// before the empty-check named it, a subscriber stating only `ingress`
@@ -2030,6 +2112,7 @@ mod tests {
                     "/s/asker/go".to_string(),
                     ros_launch_manifest_types::CallMode::Async,
                 )]),
+                max_transport_ms: None,
             },
         );
         let model =
