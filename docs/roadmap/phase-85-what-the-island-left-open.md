@@ -551,9 +551,11 @@ rlm commits on its `main`: D3 `356383c`, D1 `957075d`, D5 `7936317`, D7
 
 ## Design decisions (no code)
 
-- **D2 (with nano-ros 474 D4): a service edge's cost.** Decided
-  2026-10-27: this shape (an edge cost, topic precedence), pending nano-ros's
-  agreement below. Key:
+- **D2 (with nano-ros 474 D4): a service edge's cost.** Superseded
+  2026-10-27 by rlm `docs/design/service-contracts.md`: an edge cost bounds
+  only the case where the call succeeds; the design adds the client's
+  `timeout:`/`on_timeout:` (or a supervised rung) and `call-unbounded`.
+  Original shape, kept as the success-case term:
   `services.<s>.max_transport` (every client) and `cli.<ep>.max_transport`
   (one client), the same precedence as a topic's and a subscriber's, for
   the hop from the client's call to the server's dispatch (the
@@ -630,8 +632,9 @@ rlm commits on its `main`: D3 `356383c`, D1 `957075d`, D5 `7936317`, D7
   The derivation would stay the max over hazards and print the bound as
   a justification. No work until the WG rules on decomposition.
 
-Still open: the provenance field (D7, D9), and the
-island's own move (phase 9 W5: call_mrm 206 -> 149, and the link re-sized
+Still open (2026-10-27): D2 (service-contracts design, unscheduled), D4
+(waits on nano-ros 474 D3), D10 (waits on the WG). D7's provenance and D9
+are phase 94. And the island's own move (phase 9 W5: call_mrm 206 -> 149, and the link re-sized
 from 57 to about 81 ms).
 
 ## After 0.15.1: D1's two missing charges (branch `fix/timer-jitter-detection`)
