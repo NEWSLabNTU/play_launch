@@ -2217,8 +2217,12 @@ fn a_measured_budget_its_observations_do_not_give_is_budget_rule() {
          -> 106, work 5 x 1.2 (n=12) = 6.00 -> 6;",
         "error[budget-rule]: bringup.contract.yaml:158: `nodes.planner.paths.follow.max_latency: \
          300ms` is measured, but its observations give 288ms (240 x 1.2 (n=5) = 288.00 -> 288;",
-        // Phase 93: the two measured budgets nothing supervises warn.
-        "(2 errors, 4 warnings)",
+        // Phase 93: the two measured budgets nothing supervises warn. Phase
+        // 95: so do its three crossings of a call with no stated wait
+        // (`call-unbounded`: the comfortable call on `odd_exit`, the
+        // emergency one on both hazards).
+        "(2 errors, 7 warnings)",
+        "warning[call-unbounded]",
         "warning[measured-unsupervised]",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
@@ -4227,4 +4231,53 @@ fn the_python_dumper_reads_the_same_configurations() {
     // Exactly the two refusals: every `@<node>` read and the included
     // file's `<let>` resolved.
     assert_eq!(text.matches("error: [var-").count(), 2, "{text}");
+}
+
+/// Phase 95, end to end through the user's binary: the simulated workflows
+/// of rlm `docs/design/service-contracts.md`, as `play_launch check` prints
+/// them. The full verdict table (every phase 95 rule, per fixture) is the
+/// resolver's unit test `every_call_fixture_reports_its_design_verdict`;
+/// this pins the lines a user reads and the exit status.
+#[test]
+fn a_call_on_a_reaction_route_is_bounded_or_reported() {
+    // S1: the island's shape, async and supervised: clean.
+    let s1 = check_fixture("contract_call_supervised");
+    assert!(!s1.contains("[call-"), "{s1}");
+    assert!(s1.contains("1 clean, 0 with errors"), "{s1}");
+    // S2: blocking and nothing else is unbounded, and may deadlock.
+    let s2 = check_fixture("contract_call_unbounded");
+    for needle in [
+        "warning[call-unbounded]",
+        "crosses /comfort/operate (handler.cli.operate) with no `timeout:` and no \
+         `on_timeout:`, and no supervised rung",
+        "warning[call-deadlock]",
+    ] {
+        assert!(s2.contains(needle), "expected `{needle}`:\n{s2}");
+    }
+    // A warning by default (phase 95 Deviations 1), an error under
+    // `--strict`.
+    let (code, _) = check_takeover("contract_call_unbounded", &[]);
+    assert_eq!(code, 0, "{s2}");
+    let (code, strict) = check_takeover("contract_call_unbounded", &["--strict"]);
+    assert_eq!(code, 1, "{strict}");
+    assert!(strict.contains("error[call-unbounded]"), "{strict}");
+    // S2's retry, which upstream runs forever.
+    let s2b = check_fixture("contract_call_retry_forever");
+    assert!(s2b.contains("error[call-retry-unbounded]"), "{s2b}");
+    assert!(
+        !s2b.contains("call-unbounded]"),
+        "the timeout is read: {s2b}"
+    );
+    // S3: a start-up call on no route: nothing.
+    assert!(!check_fixture("contract_call_startup").contains("[call-"));
+    // S4, S5, S6.
+    assert!(check_fixture("contract_call_retry").contains("error[call-retry-not-idempotent]"));
+    let s5 = check_fixture("contract_call_timeout_budget");
+    assert!(
+        s5.contains("2000.00 ms timeout (cli.operate) + 10.00 ms emergency_stop route"),
+        "{s5}"
+    );
+    assert!(s5.contains("error[ladder-rung-budget]"), "{s5}");
+    assert!(!s5.contains("[call-"), "{s5}");
+    assert!(check_fixture("contract_call_late_effect").contains("warning[call-late-effect]"));
 }

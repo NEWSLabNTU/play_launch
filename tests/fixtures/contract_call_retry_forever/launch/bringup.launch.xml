@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<!-- Phase 95 fixture: see bringup.contract.yaml. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="listener" name="gate" namespace="/sys"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="watchdog" namespace="/sys"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="handler" namespace="/sys">
+    <param name="timeout_call_mrm_behavior" value="0.01"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="listener" name="comfort_op" namespace="/sys"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="estop_op" namespace="/sys"/>
+</launch>

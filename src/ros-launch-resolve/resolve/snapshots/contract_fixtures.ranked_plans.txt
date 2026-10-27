@@ -188,6 +188,454 @@ RankedPlan {
     ],
     warnings: [],
 }
+== contract_call_late_effect/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/sys/watchdog",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/handler",
+            path: "call_mrm",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
+        },
+        RankItem {
+            node: "/sys/gate",
+            path: "report",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/horn_op",
+            path: "honk",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/comfort_op",
+            path: "operate",
+            fine_group: 4,
+            coarse_group: None,
+            tie_group: Some(
+                4,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
+        },
+    ],
+    warnings: [],
+}
+== contract_call_rejected/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/sys/watchdog",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/handler",
+            path: "call_mrm",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
+        },
+        RankItem {
+            node: "/sys/gate",
+            path: "report",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
+        },
+    ],
+    warnings: [],
+}
+== contract_call_retry/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/sys/watchdog",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/handler",
+            path: "call_mrm",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
+        },
+        RankItem {
+            node: "/sys/gate",
+            path: "report",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/comfort_op",
+            path: "operate",
+            fine_group: 4,
+            coarse_group: None,
+            tie_group: Some(
+                4,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
+        },
+    ],
+    warnings: [],
+}
+== contract_call_retry_forever/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/sys/watchdog",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/handler",
+            path: "call_mrm",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
+        },
+        RankItem {
+            node: "/sys/gate",
+            path: "report",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/comfort_op",
+            path: "operate",
+            fine_group: 4,
+            coarse_group: None,
+            tie_group: Some(
+                4,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
+        },
+    ],
+    warnings: [],
+}
+== contract_call_startup/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/sys/watchdog",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/handler",
+            path: "call_mrm",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
+        },
+        RankItem {
+            node: "/sys/gate",
+            path: "report",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/comfort_op",
+            path: "operate",
+            fine_group: 4,
+            coarse_group: None,
+            tie_group: Some(
+                4,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
+        },
+    ],
+    warnings: [],
+}
+== contract_call_supervised/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/sys/watchdog",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/handler",
+            path: "call_mrm",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
+        },
+        RankItem {
+            node: "/sys/gate",
+            path: "report",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/comfort_op",
+            path: "operate",
+            fine_group: 4,
+            coarse_group: None,
+            tie_group: Some(
+                4,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
+        },
+    ],
+    warnings: [],
+}
+== contract_call_timeout_budget/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/sys/watchdog",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/handler",
+            path: "call_mrm",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
+        },
+        RankItem {
+            node: "/sys/gate",
+            path: "report",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/comfort_op",
+            path: "operate",
+            fine_group: 4,
+            coarse_group: None,
+            tie_group: Some(
+                4,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
+        },
+    ],
+    warnings: [],
+}
+== contract_call_unbounded/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/sys/watchdog",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/handler",
+            path: "call_mrm",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
+        },
+        RankItem {
+            node: "/sys/gate",
+            path: "report",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/comfort_op",
+            path: "operate",
+            fine_group: 4,
+            coarse_group: None,
+            tie_group: Some(
+                4,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
+        },
+    ],
+    warnings: [],
+}
 == contract_concurrency/launch/bringup.launch.xml
 RankedPlan {
     items: [

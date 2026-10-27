@@ -684,7 +684,9 @@ pub struct CheckArgs {
 
     /// Phase 91 E5: a worst-case claim Z3 could not decide (a timeout, a
     /// construct beyond the encoding, a build without `smt`) is an error
-    /// instead of a warning. A refuted claim is an error either way.
+    /// instead of a warning. A refuted claim is an error either way. Phase
+    /// 95: so is a reaction route through a service call with no stated wait
+    /// and no supervised effect (`call-unbounded`).
     #[arg(long)]
     pub strict: bool,
 

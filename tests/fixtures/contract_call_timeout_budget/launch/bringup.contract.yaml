@@ -1,0 +1,132 @@
+# Phase 95, S5: a blocking call with `timeout: 2s` on the comfortable rung
+# of a hazard with `ftti: 1.5s`. No new rule fires: the failure branch
+# (2 s + the emergency stop's route) is the rung's route, so the existing
+# `ladder-rung-budget` refuses it and names the term. The fallback is a
+# lower rung of the call's own ladder, so `call-late-effect` stays silent.
+#
+# Success alone fits: 500 (lease) + 20 (route) + 500 (settle) = 1020 ms.
+# The failure branch: 500 + 2000 + 10 (emergency_stop route) + 500 = 3010.
+version: 1
+use:
+  iso26262: "^1"
+
+functions:
+  hpc_alive: [/availability]
+
+hazards:
+  hpc_loss:
+    severity: ASIL_B
+    description: the planner's availability stops arriving
+    guards: [/availability]
+    on: omission
+    ftti: 1500ms
+    enters: engaged
+
+modes:
+  engaged:
+    requires: [hpc_alive]
+    fallback: [comfortable, emergency_stop]
+  comfortable:
+    requires: []
+    reaction: sys.comfortable
+  emergency_stop:
+    requires: []
+    reaction: sys.emergency_stop
+
+paths:
+  sys.comfortable:
+    trigger: { input: [/availability] }
+    output: [/comfort_cmd]
+  sys.emergency_stop:
+    trigger: { input: [/availability] }
+    output: [/estop_cmd]
+
+nodes:
+  gate:
+    pub:
+      availability: {}
+    paths:
+      report:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [availability]
+        max_latency: 20ms
+
+  # The floor's own detector: it reaches the emergency stop over a TOPIC, so
+  # the floor crosses no call and every verdict below is the comfortable
+  # rung's.
+  watchdog:
+    sub:
+      availability:
+        qos: { liveliness: manual_by_topic, lease_duration: 500ms }
+        on_violation: { on: [omission], reaction: brake }
+    pub:
+      estop_request: {}
+    paths:
+      brake:
+        trigger: { input: [availability] }
+        output: [estop_request]
+        max_latency: 5ms
+
+  estop_op:
+    sub:
+      request: {}
+    pub:
+      cmd: {}
+    paths:
+      brake:
+        trigger: { input: [request] }
+        output: [cmd]
+        max_latency: 5ms
+        safe_state: { emits: cmd, settle: 500ms }
+
+  handler:
+    concurrency: { exclusive: [] }
+    sub:
+      availability:
+        qos: { liveliness: manual_by_topic, lease_duration: 500ms }
+        on_violation: { on: [omission], reaction: call_mrm }
+    cli:
+      operate: { call: blocking, timeout: 2s, on_timeout: { reaction: emergency_stop } }
+    paths:
+      call_mrm:
+        trigger: { input: [availability] }
+        output: [operate]
+        max_latency: 10ms
+
+  comfort_op:
+    srv:
+      operate: {}
+    pub:
+      cmd: {}
+    paths:
+      operate:
+        trigger: { input: [operate] }
+        output: [cmd]
+        max_latency: 10ms
+        safe_state:
+          emits: cmd
+          settle: 500ms
+
+topics:
+  /availability:
+    type: std_msgs/msg/Header
+    pub: [gate/availability]
+    sub: [handler/availability, watchdog/availability]
+  /estop_request:
+    type: std_msgs/msg/Empty
+    pub: [watchdog/estop_request]
+    sub: [estop_op/request]
+  /comfort_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [comfort_op/cmd]
+  /estop_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [estop_op/cmd]
+
+services:
+  /comfort/operate:
+    type: std_srvs/srv/Trigger
+    server: [comfort_op/operate]
+    client: [handler/operate]

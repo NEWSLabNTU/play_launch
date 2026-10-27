@@ -391,6 +391,19 @@ fn topic_transport_term(index: &ManifestIndex, topic_fqn: &str) -> Option<TermKe
     })
 }
 
+/// `services.<s>.max_transport` of the manifest that states the request leg
+/// of `service_fqn` (phase 95).
+fn service_transport_term(index: &ManifestIndex, service_fqn: &str) -> Option<TermKey> {
+    let mut ms: Vec<&ResolvedManifest> = index.manifests.values().collect();
+    ms.sort_by_key(|m| m.scope_id);
+    ms.into_iter().find_map(|m| {
+        m.manifest.services.iter().find_map(|(s, d)| {
+            (d.max_transport.is_some() && qualify_name(&m.ns, s) == service_fqn)
+                .then(|| (m.scope_id, format!("services.{s}.max_transport")))
+        })
+    })
+}
+
 /// The stated budgets a reaction walk charges (phase 10 B7), in the order
 /// charged and with the value each is charged (phase 93): the guard edge's
 /// `max_transport` unless a window's deadline starts the route, each hop's
@@ -410,6 +423,21 @@ pub(crate) fn walk_terms(
             topic_transport_term(index, &l.topic)
         };
         out.extend(key.map(|k| (k, l.ms)));
+    }
+    // Phase 95: the request leg of each call on the route (twice on a
+    // blocking call's branch that continues at the client: there and back).
+    for c in w
+        .calls
+        .iter()
+        .filter(|c| c.on_route && c.transport_ms > 0.0)
+    {
+        let key = match c.transport_from {
+            "cli" => node_term(index, &c.node, &format!("cli.{}.max_transport", c.ep)),
+            "service" => service_transport_term(index, &c.service),
+            _ => None,
+        };
+        let legs = if c.continues { 2.0 } else { 1.0 };
+        out.extend(key.map(|k| (k, c.transport_ms * legs)));
     }
     for hop in &w.hops {
         if let Some(j) = hop.jitter_ms {
@@ -1343,6 +1371,60 @@ fn note_declared_not_charged(index: &mut ManifestIndex) {
             format!("; it is checked by {}", by.join(", "))
         }
     };
+    // Phase 95: a request leg is charged on a reaction route's success
+    // branch through the call, and nowhere else in the fault arithmetic.
+    let call_tail = "is not charged by the fault-reaction arithmetic: no hazard's reaction route \
+                     crosses this call (a request leg is charged on the success branch of a \
+                     call a reaction route crosses), so the `--explain` budgets do not include \
+                     it";
+    for m in &manifests {
+        for (node, decl) in &m.manifest.nodes {
+            for (ep, props) in &decl.cli {
+                let Some(t) = props.max_transport.duration() else {
+                    continue;
+                };
+                let key = format!("nodes.{node}.cli.{ep}.max_transport");
+                let fqn = format!("{}/{ep}", resolve_node_fqn(index, m.scope_id, &m.ns, node));
+                if index.charged_transport.contains(&format!("cli:{fqn}")) {
+                    continue;
+                }
+                out.push(Diagnostic {
+                    rule_id: "declared-not-charged".to_string(),
+                    severity: Severity::Info,
+                    message: format!(
+                        "{}: `{key}: {}ms` on '{fqn}' {call_tail}{}",
+                        super::value_rules::site(index, m.scope_id, &key),
+                        fmt_ms(t.as_millis_f64()),
+                        others(m.scope_id, &key)
+                    ),
+                    path: key,
+                    span: None,
+                });
+            }
+        }
+        for (service, decl) in &m.manifest.services {
+            let Some(t) = decl.max_transport.duration() else {
+                continue;
+            };
+            let key = format!("services.{service}.max_transport");
+            let fqn = qualify_name(&m.ns, service);
+            if index.charged_transport.contains(&format!("service:{fqn}")) {
+                continue;
+            }
+            out.push(Diagnostic {
+                rule_id: "declared-not-charged".to_string(),
+                severity: Severity::Info,
+                message: format!(
+                    "{}: `{key}: {}ms` on service '{fqn}' {call_tail}{}",
+                    super::value_rules::site(index, m.scope_id, &key),
+                    fmt_ms(t.as_millis_f64()),
+                    others(m.scope_id, &key)
+                ),
+                path: key,
+                span: None,
+            });
+        }
+    }
     for m in manifests {
         for (node, decl) in &m.manifest.nodes {
             for (side, eps) in [("sub", &decl.subscribers), ("pub", &decl.publishers)] {
@@ -1976,6 +2058,81 @@ pub(crate) struct ReactionWalk {
     pub(crate) hops: Vec<ReactionHop>,
     /// The guard edge's link, already included in `route_ms` (phase 85 I1).
     pub(crate) link: Option<GuardLink>,
+    /// Every service call the route crosses, on any branch that reaches the
+    /// sink (phase 95). The success branch is already in `route_ms`; the
+    /// failure branch and the rules are the rung's (`judge_calls`).
+    pub(crate) calls: Vec<CallCross>,
+}
+
+/// A service call a reaction route crosses (phase 95): the client path whose
+/// output names a `cli:` endpoint, the service it calls, and what the
+/// success branch was charged for it.
+#[derive(Clone, Debug)]
+pub(crate) struct CallCross {
+    /// The client's node FQN, its endpoint, and the path that sends.
+    pub(crate) node: String,
+    pub(crate) ep: String,
+    pub(crate) path: String,
+    /// The service's FQN.
+    pub(crate) service: String,
+    /// The request leg charged on the success branch, and where it is stated
+    /// (`cli`, `service`, or `none`).
+    pub(crate) transport_ms: f64,
+    pub(crate) transport_from: &'static str,
+    /// `call: blocking`.
+    pub(crate) blocking: bool,
+    /// The route continues AT THE CLIENT after the response: a blocking
+    /// call's path publishes onward only once the response is taken. The
+    /// branch was charged `wait_ms` (request leg + the server's response +
+    /// the response leg).
+    pub(crate) continues: bool,
+    pub(crate) wait_ms: f64,
+    /// On the longest branch, whose number `route_ms` is. A call kept from
+    /// a shorter branch is judged, but its charges are not in the route.
+    pub(crate) on_route: bool,
+}
+
+impl CallCross {
+    pub(crate) fn client_ref(&self) -> String {
+        format!("{}/{}", self.node, self.ep)
+    }
+}
+
+/// Keep the longer of `best` and `cand` (fork-join: the worst branch), and
+/// the calls of both: every branch that reaches the sink runs, so a call on
+/// the shorter one is still crossed (phase 95).
+fn keep_longest(best: &mut Option<ReactionWalk>, mut cand: ReactionWalk) {
+    match best {
+        None => *best = Some(cand),
+        Some(b) => {
+            let (mut winner, loser) = if cand.route_ms > b.route_ms {
+                (
+                    std::mem::take(&mut cand.calls),
+                    std::mem::take(&mut b.calls),
+                )
+            } else {
+                (
+                    std::mem::take(&mut b.calls),
+                    std::mem::take(&mut cand.calls),
+                )
+            };
+            for mut c in loser {
+                c.on_route = false;
+                if !winner
+                    .iter()
+                    .any(|w| w.client_ref() == c.client_ref() && w.continues == c.continues)
+                {
+                    winner.push(c);
+                }
+            }
+            if cand.route_ms > b.route_ms {
+                cand.calls = winner;
+                *best = Some(cand);
+            } else {
+                b.calls = winner;
+            }
+        }
+    }
 }
 
 /// The transport a reaction route is charged on its GUARD EDGE: the hop from
@@ -2230,13 +2387,42 @@ pub(crate) fn walk_reaction_at(
                 _ if path.path.output.iter().any(|o| publishes_sink(o)) => Some(None),
                 _ => None,
             };
+            // Phase 95: the calls this path makes. A blocking one holds the
+            // path's other outputs until its response is taken, so a branch
+            // that continues at the client is charged the wait.
+            let calls: Vec<CallCross> = path
+                .path
+                .output
+                .iter()
+                .flat_map(|out_ep| {
+                    let out_ref = format!("{node_fqn}/{out_ep}");
+                    services
+                        .iter()
+                        .filter(move |(_, s)| s.clients.contains(&out_ref))
+                        .map(|(s_fqn, s)| {
+                            call_cross(node_fqn, &path.path_name, out_ep, s_fqn, s, graph)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            let continuing = |w: &mut ReactionWalk| {
+                for c in calls.iter().filter(|c| c.blocking) {
+                    let mut c = c.clone();
+                    c.continues = true;
+                    w.route_ms += c.wait_ms;
+                    w.calls.insert(0, c);
+                }
+            };
             let candidate = if let Some(settle) = emits_sink {
-                ReactionWalk {
+                let mut w = ReactionWalk {
                     route_ms: hop_ms,
                     settle,
                     hops: vec![hop],
                     link: None,
-                }
+                    calls: Vec::new(),
+                };
+                continuing(&mut w);
+                w
             } else {
                 // Continue from every topic this reaction publishes onto and
                 // every service it calls.
@@ -2249,15 +2435,16 @@ pub(crate) fn walk_reaction_at(
                         }
                         if let Some(mut w) =
                             from_topic(t_fqn, depth + 1, sinks, topics, services, node_paths, graph)
-                            && longest.as_ref().is_none_or(|l| w.route_ms > l.route_ms)
                         {
+                            continuing(&mut w);
                             w.route_ms += hop_ms;
                             w.hops.insert(0, hop.clone());
-                            longest = Some(w);
+                            keep_longest(&mut longest, w);
                         }
                     }
                     // A request is a message too: the client endpoint on this
-                    // path's output hands the reaction to the server.
+                    // path's output hands the reaction to the server. Phase
+                    // 95: the success branch is charged the request leg.
                     for (s_fqn, s) in services {
                         if !s.clients.contains(&out_ref) {
                             continue;
@@ -2270,11 +2457,12 @@ pub(crate) fn walk_reaction_at(
                             services,
                             node_paths,
                             graph,
-                        ) && longest.as_ref().is_none_or(|l| w.route_ms > l.route_ms)
-                        {
-                            w.route_ms += hop_ms;
+                        ) {
+                            let c = call_cross(node_fqn, &path.path_name, out_ep, s_fqn, s, graph);
+                            w.route_ms += hop_ms + c.transport_ms;
+                            w.calls.insert(0, c);
                             w.hops.insert(0, hop.clone());
-                            longest = Some(w);
+                            keep_longest(&mut longest, w);
                         }
                     }
                 }
@@ -2292,14 +2480,76 @@ pub(crate) fn walk_reaction_at(
                 };
                 w
             };
-            if best
-                .as_ref()
-                .is_none_or(|b| candidate.route_ms > b.route_ms)
-            {
-                best = Some(candidate);
-            }
+            keep_longest(&mut best, candidate);
         }
         best
+    }
+
+    /// What crossing the call `node_fqn/ep -> service` charges on the
+    /// success branch (phase 95): the request leg, the client's own
+    /// `max_transport` else the service's; and, for a blocking call, the
+    /// wait a branch continuing at the client pays: request leg + the
+    /// server's response (its `max_response`, else its request-triggered
+    /// path's `max_latency`) + the response leg.
+    fn call_cross(
+        node_fqn: &str,
+        path_name: &str,
+        ep: &str,
+        service_fqn: &str,
+        service: &ResolvedService,
+        graph: &super::manifest_graph::GlobalDataflowGraph,
+    ) -> CallCross {
+        let props = graph.nodes.get(node_fqn).and_then(|n| n.clients.get(ep));
+        let (transport_ms, transport_from) = match (
+            props.and_then(|p| p.max_transport.ms()),
+            service.max_transport_ms,
+        ) {
+            (Some(ms), _) => (ms, "cli"),
+            (None, Some(ms)) => (ms, "service"),
+            (None, None) => (0.0, "none"),
+        };
+        let blocking =
+            props.and_then(|p| p.call) == Some(ros_launch_manifest_types::CallMode::Blocking);
+        let response_ms = service
+            .servers
+            .iter()
+            .filter_map(|r| {
+                let (n, e) = split_endpoint_ref_for_check(r)?;
+                let node = graph.nodes.get(&n)?;
+                node.servers
+                    .get(&e)
+                    .and_then(|p| p.max_response.ms())
+                    .or_else(|| {
+                        node.paths
+                            .values()
+                            .filter(|p| {
+                                matches!(
+                                    p.effective_trigger(),
+                                    ros_launch_manifest_types::EffectiveTrigger::Input(ref eps)
+                                        if eps.contains(&e)
+                                )
+                            })
+                            .filter_map(|p| p.max_latency.ms())
+                            .reduce(f64::max)
+                    })
+            })
+            .fold(0.0_f64, f64::max);
+        CallCross {
+            node: node_fqn.to_string(),
+            ep: ep.to_string(),
+            path: path_name.to_string(),
+            service: service_fqn.to_string(),
+            transport_ms,
+            transport_from,
+            blocking,
+            continues: false,
+            on_route: true,
+            wait_ms: if blocking {
+                2.0 * transport_ms + response_ms
+            } else {
+                0.0
+            },
+        }
     }
 
     /// The paths of `node_fqn` that run on its own clock: where a reaction
@@ -2397,12 +2647,7 @@ pub(crate) fn walk_reaction_at(
                     });
                 }
             }
-            if best
-                .as_ref()
-                .is_none_or(|b| candidate.route_ms > b.route_ms)
-            {
-                best = Some(candidate);
-            }
+            keep_longest(&mut best, candidate);
         }
         best
     }
@@ -2453,11 +2698,8 @@ pub(crate) fn walk_reaction_at(
             };
             if let Some(candidate) = advance(
                 &node_fqn, hop_paths, sampled, depth, sinks, topics, services, node_paths, graph,
-            ) && best
-                .as_ref()
-                .is_none_or(|b| candidate.route_ms > b.route_ms)
-            {
-                best = Some(candidate);
+            ) {
+                keep_longest(&mut best, candidate);
             }
         }
         best
@@ -2478,13 +2720,439 @@ pub(crate) fn walk_reaction_at(
     };
     let mut best: Option<ReactionWalk> = None;
     for g in starts {
-        if let Some(w) = from_topic(g, depth, sinks, topics, services, node_paths, graph)
-            && best.as_ref().is_none_or(|b| w.route_ms > b.route_ms)
-        {
-            best = Some(w);
+        if let Some(w) = from_topic(g, depth, sinks, topics, services, node_paths, graph) {
+            keep_longest(&mut best, w);
         }
     }
     best
+}
+
+/// What the calls a rung's route crosses make of its route (phase 95).
+pub(crate) struct CallVerdict {
+    /// The route: the success branch (the walk's) or the worst failure
+    /// branch, whichever is longer.
+    pub(crate) route_ms: f64,
+    /// How the calls were charged, for `--explain`; empty when the route
+    /// crosses none.
+    pub(crate) note: String,
+    /// The stated budgets the failure branch that governs contains.
+    pub(crate) terms: Vec<TermKey>,
+    /// The failure branch, when it governs: `2000.00 ms timeout
+    /// (cli.operate) + 188.33 ms emergency_stop route`.
+    pub(crate) governing: Option<String>,
+}
+
+/// The rung a call's route is judged on, for [`judge_calls`].
+pub(crate) struct CallRung<'a> {
+    pub(crate) h: &'a ResolvedHazard,
+    pub(crate) rung: &'a str,
+    /// The hazard's ladder, top first, and this rung's place in it.
+    pub(crate) rungs: &'a [(String, String)],
+    pub(crate) idx: usize,
+    pub(crate) after_deadline: bool,
+}
+
+/// The rung of a hazard's route that a call's failure falls to (phase 95):
+/// a mode of the hazard's scope (its `reaction:` scope path), or a scope
+/// path. Its route is walked from the guards, as the rung's own is, so the
+/// failure branch is `wait + that route` and the prefix to the client is
+/// counted once.
+fn fallback_route(
+    index: &ManifestIndex,
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+    h: &ResolvedHazard,
+    target: &str,
+    after_deadline: bool,
+) -> Option<(f64, Vec<TermKey>)> {
+    let path_name = index
+        .modes
+        .iter()
+        .find(|m| m.scope_id == h.scope_id && m.name == target)
+        .map_or(Some(target.to_string()), |m| m.decl.reaction.clone())?;
+    let sp = index
+        .scope_paths
+        .iter()
+        .find(|p| p.scope_id == h.scope_id && p.path_name == path_name)?;
+    let guards: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
+    let sinks: HashSet<&str> = sp.output_topics.iter().map(String::as_str).collect();
+    match walk_reaction(
+        &guards,
+        &sinks,
+        &index.topics,
+        &index.services,
+        &index.node_paths,
+        graph,
+    ) {
+        Some(w) => Some((
+            w.charged(after_deadline).0,
+            walk_keys(index, &w, after_deadline),
+        )),
+        None => sp.path.max_latency.ms().map(|ms| {
+            (
+                ms,
+                vec![(h.scope_id, format!("paths.{path_name}.max_latency"))],
+            )
+        }),
+    }
+}
+
+/// The supervised budget on `w` that bounds the effect of `call` (phase
+/// 95), when there is one: the settle of the safe state the route reaches,
+/// or a node path's `max_latency` at or after the client's hop. A
+/// supervised budget BEFORE the call watches the request go out, not its
+/// effect.
+fn supervised_effect(index: &ManifestIndex, w: &ReactionWalk, call: &CallCross) -> Option<String> {
+    if let Some(at) = &w.settle
+        && at.ss.settle_supervise.is_some()
+    {
+        return Some(format!("{}/{} safe_state.settle", at.node, at.path));
+    }
+    let start = w
+        .hops
+        .iter()
+        .position(|hop| hop.node == call.node && hop.path == call.path)?;
+    let from = if call.continues { start } else { start + 1 };
+    w.hops.iter().skip(from).find_map(|hop| {
+        index
+            .node_paths
+            .iter()
+            .find(|p| p.node_fqn == hop.node && p.path_name == hop.path)
+            .filter(|p| p.path.max_latency.supervise().is_some())
+            .map(|_| format!("{}/{} max_latency", hop.node, hop.path))
+    })
+}
+
+/// Phase 95: judge every call a rung's route crosses, and charge the route
+/// the worse of each call's success and failure branches.
+///
+/// - success: the walk's own number (the request leg, and for a blocking
+///   call whose route continues at the client the wait);
+/// - failure: `timeout x attempts + backoff x (attempts - 1)` + the route of
+///   the rung `on_timeout` falls to, walked from the guards;
+/// - a rung whose effect is supervised takes no failure branch at the call:
+///   its failure case is the supervisor's, which `supervised-fit` computes.
+///
+/// The rules (`call-unbounded`, `call-retry-not-idempotent`,
+/// `call-retry-unbounded`, `call-late-effect`, `call-rejected-unhandled`,
+/// `call-deadlock`) judge only calls on a reaction route: a startup call, a
+/// parameter client or a map loader is never walked, so never judged.
+pub(crate) fn judge_calls(
+    index: &ManifestIndex,
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+    r: &CallRung<'_>,
+    w: &ReactionWalk,
+    success_ms: f64,
+    diags: &mut Vec<Diagnostic>,
+    charged: &mut BTreeSet<String>,
+) -> CallVerdict {
+    let mut verdict = CallVerdict {
+        route_ms: success_ms,
+        note: String::new(),
+        terms: Vec::new(),
+        governing: None,
+    };
+    if w.calls.is_empty() {
+        return verdict;
+    }
+    // One judgement per client: a blocking call reached on both its service
+    // branch and a branch continuing at the client is one call.
+    let mut calls: Vec<CallCross> = Vec::new();
+    for c in &w.calls {
+        match calls.iter_mut().find(|x| x.client_ref() == c.client_ref()) {
+            Some(x) => {
+                x.continues |= c.continues;
+                x.on_route |= c.on_route;
+            }
+            None => calls.push(c.clone()),
+        }
+    }
+    let h = r.h;
+    let mut notes: Vec<String> = Vec::new();
+    let mut worst_failure: Option<(f64, Vec<TermKey>, String)> = None;
+    for c in &calls {
+        if c.on_route {
+            match c.transport_from {
+                "cli" => {
+                    charged.insert(format!("cli:{}", c.client_ref()));
+                }
+                "service" => {
+                    charged.insert(format!("service:{}", c.service));
+                }
+                _ => {}
+            }
+        }
+        let cnode = super::value_rules::contract_node(index, &c.node);
+        let (key, site_) = match cnode {
+            Some((scope, name, _)) => {
+                let k = format!("nodes.{name}.cli.{}", c.ep);
+                let s = super::value_rules::site(index, scope, &k);
+                (k, s)
+            }
+            None => (
+                format!("services.{}", c.service),
+                super::value_rules::site(index, h.scope_id, &format!("hazards.{}", h.name)),
+            ),
+        };
+        let label = match cnode {
+            Some((_, name, _)) => format!("{name}.cli.{}", c.ep),
+            None => c.client_ref(),
+        };
+        let props = graph.nodes.get(&c.node).and_then(|n| n.clients.get(&c.ep));
+        let timeout = props.and_then(|p| p.timeout.as_ref());
+        let on_timeout = props.and_then(|p| p.on_timeout.as_ref());
+        let on_rejected = props.and_then(|p| p.on_rejected.as_deref());
+        let servers: Vec<(String, Option<&ros_launch_manifest_types::SrvEndpointProps>)> = index
+            .services
+            .get(&c.service)
+            .map(|s| {
+                s.servers
+                    .iter()
+                    .map(|sr| {
+                        let p = split_endpoint_ref_for_check(sr).and_then(|(n, e)| {
+                            graph.nodes.get(&n).and_then(|nn| nn.servers.get(&e))
+                        });
+                        (sr.clone(), p)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let supervised = supervised_effect(index, w, c);
+        let head = format!(
+            "{site_}: hazard '{}', rung '{}': the reaction route crosses {} ({label})",
+            h.name, r.rung, c.service
+        );
+        let mut push = |rule: &str, severity: Severity, message: String| {
+            diags.push(Diagnostic {
+                rule_id: rule.to_string(),
+                severity,
+                message,
+                path: key.clone(),
+                span: None,
+            });
+        };
+        // The retry is judged wherever the call is walked: a retry that is
+        // unsound stays unsound under a supervisor.
+        let mut retry_bounded = true;
+        if let Some(ot) = on_timeout
+            && let Some(retry) = &ot.retry
+        {
+            if retry.attempts.is_none() || ot.reaction.is_none() {
+                retry_bounded = false;
+                let missing = match (retry.attempts.is_none(), ot.reaction.is_none()) {
+                    (true, true) => "no `attempts` and no `then:`",
+                    (true, false) => "no `attempts`",
+                    _ => "no `then:`",
+                };
+                push(
+                    "call-retry-unbounded",
+                    Severity::Error,
+                    format!(
+                        "{head}, whose `on_timeout.retry` states {missing}: the client may ask \
+                         again forever, so the failure branch never ends. State the tries in \
+                         all (`attempts`) and what the code does after the last one (`then: {{ \
+                         reaction }}`)"
+                    ),
+                );
+            }
+            let unlicensed: Vec<&str> = servers
+                .iter()
+                .filter(|(_, p)| p.and_then(|p| p.idempotent) != Some(true))
+                .map(|(r, _)| r.as_str())
+                .collect();
+            if servers.is_empty() || !unlicensed.is_empty() {
+                let who = if servers.is_empty() {
+                    "no server of it is declared".to_string()
+                } else {
+                    format!(
+                        "its server {} does not declare `idempotent: true`",
+                        unlicensed.join(", ")
+                    )
+                };
+                push(
+                    "call-retry-not-idempotent",
+                    Severity::Error,
+                    format!(
+                        "{head}, and its `on_timeout` retries, but {who}: a retry after a lost \
+                         RESPONSE runs the operation twice. Declare the server `idempotent: \
+                         true` if a repeated request has the effect of one, or do not retry"
+                    ),
+                );
+            }
+        }
+        if let Some(ot) = on_timeout
+            && let Some(target) = ot.reaction.as_deref()
+        {
+            let lower = r
+                .rungs
+                .iter()
+                .skip(r.idx + 1)
+                .any(|(m, p)| m == target || p == target);
+            let stale = servers
+                .iter()
+                .any(|(_, p)| p.is_some_and(|p| p.stale_after.is_some()));
+            if !lower && !stale {
+                push(
+                    "call-late-effect",
+                    Severity::Warning,
+                    format!(
+                        "{head}, whose `on_timeout` falls to '{target}', which is not a lower \
+                         rung of this hazard's ladder, and no server declares `stale_after:`: a \
+                         request the client gave up on may still act after the fallback has \
+                         started, and two reactions then act at once. Fall to a rung below \
+                         this one (a stronger reaction supersedes a late weaker one), or have \
+                         the server refuse stale requests (`srv.<e>.stale_after`)"
+                    ),
+                );
+            }
+        }
+        if c.blocking
+            && graph
+                .nodes
+                .get(&c.node)
+                .is_some_and(|n| n.concurrency.is_none())
+        {
+            push(
+                "call-deadlock",
+                Severity::Warning,
+                format!(
+                    "{head}, a blocking call from {}/{} on a node that declares no \
+                     `concurrency:`: every callback of the node then serialises, so the \
+                     response can only be taken by the callback that is waiting for it -- a \
+                     deadlock, unless the wait spins an executor of its own, which the contract \
+                     cannot see. Declare `concurrency:` putting the client's callback in a \
+                     group of its own, or make the call `async`",
+                    c.node, c.path
+                ),
+            );
+        }
+        if let Some(sv) = &supervised {
+            notes.push(format!(
+                "call {} -> {}: no failure branch, the rung's effect is supervised ({sv})",
+                c.client_ref(),
+                c.service
+            ));
+            continue;
+        }
+        if c.blocking && c.continues && on_rejected.is_none() {
+            push(
+                "call-rejected-unhandled",
+                Severity::Warning,
+                format!(
+                    "{head}, a blocking call after which the route continues at the client, \
+                     and no `on_rejected:`: a server that answers `success: false` leaves the \
+                     client carrying on with no effect behind it. State what the code does on \
+                     a refusal (`on_rejected: {{ reaction }}`), or supervise the rung's effect"
+                ),
+            );
+        }
+        let (Some(t), Some(ot)) = (timeout, on_timeout) else {
+            let missing = match (timeout.is_none(), on_timeout.is_none()) {
+                (true, true) => "no `timeout:` and no `on_timeout:`",
+                (true, false) => "no `timeout:`",
+                _ => "no `on_timeout:`",
+            };
+            // A warning, not the design's error (phase 95 Deviations): the
+            // route is reported the way every other incomplete-evidence
+            // route is (`reaction-unbudgeted`), and an error here refused
+            // the model of 19 existing fixtures and of the safety island,
+            // whose floors cross unbounded async calls. `check --strict`
+            // makes it an error.
+            push(
+                "call-unbounded",
+                Severity::Warning,
+                format!(
+                    "{head} with {missing}, and no supervised rung: a call in stock ROS 2 can \
+                     wait forever (no server, a server that dies, a lost request or response), \
+                     so this route is a number the system may never meet. State how long the \
+                     client waits and what it does then (`timeout:` + `on_timeout:`), or \
+                     supervise the rung's effect (`safe_state.settle: {{ ..., supervise }}`)"
+                ),
+            );
+            notes.push(format!(
+                "call {} -> {}: UNBOUNDED ({missing}, not supervised)",
+                c.client_ref(),
+                c.service
+            ));
+            continue;
+        };
+        let Some(timeout_ms) = t.ms() else {
+            notes.push(format!(
+                "call {} -> {}: failure branch unknown (`timeout: {}` has no value)",
+                c.client_ref(),
+                c.service,
+                t.read.as_deref().unwrap_or("?")
+            ));
+            continue;
+        };
+        let (Some(attempts), Some(target), true) =
+            (ot.attempts(), ot.reaction.as_deref(), retry_bounded)
+        else {
+            notes.push(format!(
+                "call {} -> {}: failure branch unbounded (the retry has no bound)",
+                c.client_ref(),
+                c.service
+            ));
+            continue;
+        };
+        let backoff = ot
+            .retry
+            .as_ref()
+            .and_then(|r| r.backoff)
+            .map_or(0.0, |d| d.as_millis_f64());
+        let wait = timeout_ms * f64::from(attempts) + backoff * f64::from(attempts - 1);
+        let Some((fallback_ms, fallback_terms)) =
+            fallback_route(index, graph, h, target, r.after_deadline)
+        else {
+            push(
+                "reaction-unreachable",
+                Severity::Error,
+                format!(
+                    "{head}, whose `on_timeout` falls to '{target}', which is neither a mode \
+                     nor a scope path of the hazard's scope with a route: the failure branch \
+                     reaches no safe state"
+                ),
+            );
+            continue;
+        };
+        let failure = wait + fallback_ms;
+        let retries = if attempts > 1 {
+            format!(
+                " x {attempts} attempts{}",
+                if backoff > 0.0 {
+                    format!(" + {:.2} ms backoff x {}", backoff, attempts - 1)
+                } else {
+                    String::new()
+                }
+            )
+        } else {
+            String::new()
+        };
+        let terms_text = format!(
+            "{timeout_ms:.2} ms timeout (cli.{}){retries} + {fallback_ms:.2} ms {target} route",
+            c.ep
+        );
+        notes.push(format!(
+            "call {} -> {}: failure = {terms_text} = {failure:.2} ms",
+            c.client_ref(),
+            c.service,
+        ));
+        if worst_failure.as_ref().is_none_or(|(f, _, _)| failure > *f) {
+            worst_failure = Some((failure, fallback_terms, terms_text));
+        }
+    }
+    if let Some((failure, terms, text)) = worst_failure
+        && failure > verdict.route_ms
+    {
+        verdict.governing = Some(text);
+        notes.push(format!(
+            "route = the failure branch {failure:.2} ms (success {:.2} ms)",
+            verdict.route_ms
+        ));
+        verdict.route_ms = failure;
+        verdict.terms = terms;
+    }
+    verdict.note = notes.join("; ");
+    verdict
 }
 
 /// Resolve a hazard's `reaction:` to the ladder of `(mode, scope path)`
@@ -3229,7 +3897,9 @@ fn check_fault_reaction(
                 ..Default::default()
             },
         };
-        for (rung_name, rung_path) in rungs.iter().take(rungs.len().saturating_sub(1)) {
+        for (rung_idx, (rung_name, rung_path)) in
+            rungs.iter().take(rungs.len().saturating_sub(1)).enumerate()
+        {
             let mode = mode_of(rung_name);
             if let Some(m) = mode {
                 let lost: Vec<&str> = m
@@ -3280,7 +3950,7 @@ fn check_fault_reaction(
                 None => (rp.path.max_latency.ms(), String::new()),
             };
             // Phase 10 B7: the stated budgets ROUTE (and SETTLE) contain.
-            let route_terms: Vec<TermKey> = match &walk {
+            let mut route_terms: Vec<TermKey> = match &walk {
                 Some(w) => walk_keys(index, w, after_deadline),
                 None => rp
                     .path
@@ -3289,6 +3959,39 @@ fn check_fault_reaction(
                     .map(|_| (h.scope_id, format!("paths.{rung_path}.max_latency")))
                     .into_iter()
                     .collect(),
+            };
+            // Phase 95: the calls the route crosses, and the failure branch
+            // when it is the longer.
+            let mut governing: Option<String> = None;
+            let (route_ms, route_note) = match (&walk, route_ms) {
+                (Some(w), Some(ms)) => {
+                    let v = judge_calls(
+                        index,
+                        graph,
+                        &CallRung {
+                            h,
+                            rung: rung_name,
+                            rungs: &rungs,
+                            idx: rung_idx,
+                            after_deadline,
+                        },
+                        w,
+                        ms,
+                        &mut diags,
+                        &mut charged_links,
+                    );
+                    if v.governing.is_some() {
+                        route_terms = v.terms.clone();
+                    }
+                    governing = v.governing;
+                    let note = match (route_note.is_empty(), v.note.is_empty()) {
+                        (_, true) => route_note,
+                        (true, false) => v.note,
+                        (false, false) => format!("{route_note}; {}", v.note),
+                    };
+                    (Some(v.route_ms), note)
+                }
+                _ => (route_ms, route_note),
             };
             let waited_terms: Vec<TermKey> = windows
                 .iter()
@@ -3447,12 +4150,15 @@ fn check_fault_reaction(
                     message: format!(
                         "{}: hazard '{}': fallback rung '{rung_name}' cannot make the \
                          fault-tolerant time interval — detection {fdti:.2}ms{} + reaction \
-                         {route_ms:.2}ms + settle {settle_ms:.2}ms = {total:.2}ms against \
+                         {route_ms:.2}ms{} + settle {settle_ms:.2}ms = {total:.2}ms against \
                          {ftti:.2}ms. A graded reaction is a promise in its own right, not only \
                          a step on the way to the floor",
                         rung_site(rung_name),
                         h.name,
                         windows_note(&windows),
+                        governing.as_ref().map_or(String::new(), |g| format!(
+                            " (the call's failure branch: {g})"
+                        )),
                     ),
                     path: format!("{at}.{rk}"),
                     span: None,
@@ -3595,6 +4301,41 @@ fn check_fault_reaction(
                 span: None,
             });
         }
+        // Phase 95: the calls the floor's route crosses.
+        let mut floor_call_terms: Option<Vec<TermKey>> = None;
+        let (frti_route, route_note, floor_split) = match &walk {
+            Some(w) => {
+                let v = judge_calls(
+                    index,
+                    graph,
+                    &CallRung {
+                        h,
+                        rung: &floor_name,
+                        rungs: &rungs,
+                        idx: rungs.len().saturating_sub(1),
+                        after_deadline: floor_after_deadline,
+                    },
+                    w,
+                    frti_route,
+                    &mut diags,
+                    &mut charged_links,
+                );
+                if v.governing.is_some() {
+                    floor_call_terms = Some(v.terms.clone());
+                }
+                let route_note = match &v.governing {
+                    Some(g) => format!("{route_note}; the call's failure branch governs: {g}"),
+                    None => route_note,
+                };
+                let floor_split = match (floor_split.is_empty(), v.note.is_empty()) {
+                    (_, true) => floor_split,
+                    (true, false) => v.note,
+                    (false, false) => format!("{floor_split}; {}", v.note),
+                };
+                (v.route_ms, route_note, floor_split)
+            }
+            None => (frti_route, route_note, floor_split),
+        };
         let frti = frti_route + settle_ms.unwrap_or(0.0);
 
         // Who watches the watcher: the reaction's output should itself be
@@ -3636,6 +4377,7 @@ fn check_fault_reaction(
                 .flat_map(|w| w.terms.iter().cloned())
                 .collect(),
             match &walk {
+                Some(_) if floor_call_terms.is_some() => floor_call_terms.clone().unwrap(),
                 Some(w) => walk_keys(index, w, floor_after_deadline),
                 None if declared_ms.is_some() => {
                     vec![(h.scope_id, format!("paths.{terminal}.max_latency"))]

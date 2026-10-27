@@ -33,6 +33,12 @@ pub struct GlobalNode {
     pub subscribers: BTreeMap<String, ros_launch_manifest_types::EndpointProps>,
     /// Publisher endpoint properties.
     pub publishers: BTreeMap<String, ros_launch_manifest_types::EndpointProps>,
+    /// Service client endpoint properties (phase 95: the wait and its
+    /// fallbacks a reaction route through a call is charged).
+    pub clients: BTreeMap<String, ros_launch_manifest_types::EndpointProps>,
+    /// Service server endpoint properties (phase 95: `idempotent`,
+    /// `stale_after`, `max_response`).
+    pub servers: BTreeMap<String, ros_launch_manifest_types::SrvEndpointProps>,
     /// Declared exclusion between this node's paths (phase 67). `None` means
     /// the conservative default — see [`GlobalNode::exclusion_groups`].
     pub concurrency: Option<ros_launch_manifest_types::ConcurrencyDecl>,
@@ -273,6 +279,8 @@ pub fn build_global_graph(index: &ManifestIndex) -> GlobalDataflowGraph {
                     paths: node_decl.paths.clone(),
                     subscribers: node_decl.subscribers.clone(),
                     publishers: node_decl.publishers.clone(),
+                    clients: node_decl.cli.clone(),
+                    servers: node_decl.srv.clone(),
                     concurrency: node_decl.concurrency.clone(),
                 },
             );
@@ -302,6 +310,8 @@ pub fn build_global_graph(index: &ManifestIndex) -> GlobalDataflowGraph {
                 paths: Default::default(),
                 subscribers: Default::default(),
                 publishers: Default::default(),
+                clients: Default::default(),
+                servers: Default::default(),
                 concurrency: None,
             });
     }
@@ -1044,6 +1054,8 @@ mod tests {
                 .collect(),
             subscribers: BTreeMap::new(),
             publishers: BTreeMap::new(),
+            clients: BTreeMap::new(),
+            servers: BTreeMap::new(),
             concurrency: None,
         }
     }

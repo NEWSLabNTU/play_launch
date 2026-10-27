@@ -1,0 +1,141 @@
+# Phase 95, S3: a lifecycle manager calls `change_state` on a managed node
+# at start-up, blocking, with no timeout. No hazard's reaction crosses the
+# call (the comfortable rung reaches its operator over a topic), so no
+# phase 95 rule applies and the checker prints nothing new.
+version: 1
+use:
+  iso26262: "^1"
+
+functions:
+  hpc_alive: [/availability]
+
+hazards:
+  hpc_loss:
+    severity: ASIL_B
+    description: the planner's availability stops arriving
+    guards: [/availability]
+    on: omission
+    ftti: 5s
+    enters: engaged
+
+modes:
+  engaged:
+    requires: [hpc_alive]
+    fallback: [comfortable, emergency_stop]
+  comfortable:
+    requires: []
+    reaction: sys.comfortable
+  emergency_stop:
+    requires: []
+    reaction: sys.emergency_stop
+
+paths:
+  sys.comfortable:
+    trigger: { input: [/availability] }
+    output: [/comfort_cmd]
+  sys.emergency_stop:
+    trigger: { input: [/availability] }
+    output: [/estop_cmd]
+
+nodes:
+  gate:
+    pub:
+      availability: {}
+    paths:
+      report:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [availability]
+        max_latency: 20ms
+
+  # The floor's own detector: it reaches the emergency stop over a TOPIC, so
+  # the floor crosses no call and every verdict below is the comfortable
+  # rung's.
+  watchdog:
+    sub:
+      availability:
+        qos: { liveliness: manual_by_topic, lease_duration: 500ms }
+        on_violation: { on: [omission], reaction: brake }
+    pub:
+      estop_request: {}
+    paths:
+      brake:
+        trigger: { input: [availability] }
+        output: [estop_request]
+        max_latency: 5ms
+
+  estop_op:
+    sub:
+      request: {}
+    pub:
+      cmd: {}
+    paths:
+      brake:
+        trigger: { input: [request] }
+        output: [cmd]
+        max_latency: 5ms
+        safe_state: { emits: cmd, settle: 500ms }
+
+  handler:
+    sub:
+      availability:
+        qos: { liveliness: manual_by_topic, lease_duration: 500ms }
+        on_violation: { on: [omission], reaction: call_mrm }
+    pub:
+      comfort_request: {}
+    paths:
+      call_mrm:
+        trigger: { input: [availability] }
+        output: [comfort_request]
+        max_latency: 10ms
+
+  comfort_op:
+    sub:
+      request: {}
+    pub:
+      cmd: {}
+    paths:
+      operate:
+        trigger: { input: [request] }
+        output: [cmd]
+        max_latency: 10ms
+        safe_state: { emits: cmd, settle: 1000ms }
+
+  manager:
+    cli:
+      change_state: { call: blocking }
+    paths:
+      bring_up:
+        trigger: once
+        output: [change_state]
+
+  managed:
+    srv:
+      change_state: {}
+
+topics:
+  /availability:
+    type: std_msgs/msg/Header
+    pub: [gate/availability]
+    sub: [handler/availability, watchdog/availability]
+  /estop_request:
+    type: std_msgs/msg/Empty
+    pub: [watchdog/estop_request]
+    sub: [estop_op/request]
+  /comfort_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [comfort_op/cmd]
+  /estop_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [estop_op/cmd]
+  /comfort_request:
+    type: std_msgs/msg/Empty
+    pub: [handler/comfort_request]
+    sub: [comfort_op/request]
+
+services:
+  /managed/change_state:
+    type: lifecycle_msgs/srv/ChangeState
+    server: [managed/change_state]
+    client: [manager/change_state]

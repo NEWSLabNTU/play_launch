@@ -1110,6 +1110,136 @@ mod tests {
     /// errors and nothing else. That is what keeps a rule from reading a
     /// vehicle key by name instead of through the extension: the implicit
     /// load and the named one must compute the same.
+    /// Phase 95 W2.3: each simulated workflow of rlm
+    /// `docs/design/service-contracts.md` is a fixture, and each reports the
+    /// verdict the design states and no other phase 95 rule. A rule that
+    /// stops firing, or fires where the design says it must not, turns this
+    /// red (the negative controls of the phase doc were taken against it).
+    #[test]
+    fn every_call_fixture_reports_its_design_verdict() {
+        const RULES: [&str; 6] = [
+            "call-unbounded",
+            "call-retry-not-idempotent",
+            "call-retry-unbounded",
+            "call-late-effect",
+            "call-rejected-unhandled",
+            "call-deadlock",
+        ];
+        #[allow(clippy::type_complexity)]
+        let table: [(&str, &[&str], &[&str]); 8] = [
+            // S1: async, supervised effect: nothing.
+            ("contract_call_supervised", &[], &[]),
+            // S2, first step: blocking and nothing else.
+            (
+                "contract_call_unbounded",
+                &["call-unbounded", "call-deadlock"],
+                &["with no `timeout:` and no `on_timeout:`, and no supervised rung"],
+            ),
+            // S2, second step: the retry upstream runs forever.
+            (
+                "contract_call_retry_forever",
+                &["call-retry-unbounded"],
+                &[],
+            ),
+            // S3: a start-up call on no reaction route.
+            ("contract_call_startup", &[], &[]),
+            // S4: a non-idempotent retry.
+            (
+                "contract_call_retry",
+                &["call-retry-not-idempotent"],
+                &[
+                    "/brake_test/trigger",
+                    "/sys/comfort_op/operate does not declare",
+                ],
+            ),
+            // S5: no new rule; the rung budget names the timeout.
+            (
+                "contract_call_timeout_budget",
+                &[],
+                &["2000.00 ms timeout (cli.operate) + 10.00 ms emergency_stop route"],
+            ),
+            // S6: a fallback that is not a lower rung.
+            (
+                "contract_call_late_effect",
+                &["call-late-effect"],
+                &["'sys.horn'"],
+            ),
+            // A blocking call whose route continues at the client.
+            ("contract_call_rejected", &["call-rejected-unhandled"], &[]),
+        ];
+        for (fixture, want, needles) in table {
+            let launch = repo_root()
+                .join("tests/fixtures")
+                .join(fixture)
+                .join("launch/bringup.launch.xml");
+            let index = index_of(&dump_of(&launch), fixture);
+            assert!(
+                index.load_diagnostics.is_empty(),
+                "{fixture}: {:?}",
+                index.load_diagnostics
+            );
+            let fired: BTreeSet<&str> = index
+                .merge_diagnostics
+                .iter()
+                .map(|d| d.rule_id.as_str())
+                .filter(|r| RULES.contains(r))
+                .collect();
+            let want: BTreeSet<&str> = want.iter().copied().collect();
+            assert_eq!(fired, want, "{fixture}: phase 95 rules");
+            let text: String = index
+                .merge_diagnostics
+                .iter()
+                .map(|d| format!("{}\n", d.message))
+                .collect();
+            for n in needles {
+                assert!(text.contains(n), "{fixture}: expected `{n}` in:\n{text}");
+            }
+        }
+        // S5's verdict is the existing rung budget, and S1's route grows by
+        // the request leg alone.
+        let budgets = |fixture: &str| {
+            let launch = repo_root()
+                .join("tests/fixtures")
+                .join(fixture)
+                .join("launch/bringup.launch.xml");
+            index_of(&dump_of(&launch), fixture)
+        };
+        let s5 = budgets("contract_call_timeout_budget");
+        assert!(
+            s5.merge_diagnostics
+                .iter()
+                .any(|d| d.rule_id == "ladder-rung-budget"),
+            "S5 must be refused by ladder-rung-budget"
+        );
+        let s1 = budgets("contract_call_supervised");
+        let row = s1
+            .budgets
+            .iter()
+            .find(|b| b.rung == "comfortable" && b.route_ms.is_some())
+            .expect("S1 comfortable row");
+        assert_eq!(row.route_ms, Some(21.5));
+        assert!(
+            row.route_note.contains("the rung's effect is supervised"),
+            "{}",
+            row.route_note
+        );
+        // The failure branch governs where it is the longer, and is named.
+        let s6 = budgets("contract_call_late_effect");
+        let row = s6.budgets.iter().find(|b| b.rung == "comfortable").unwrap();
+        assert_eq!(row.route_ms, Some(110.0));
+        let rej = budgets("contract_call_rejected");
+        let row = rej
+            .budgets
+            .iter()
+            .find(|b| b.rung == "comfortable")
+            .unwrap();
+        assert!(
+            row.route_note.contains("(success 32.00 ms)"),
+            "{}",
+            row.route_note
+        );
+    }
+
     #[test]
     fn every_fixture_checks_the_same_without_its_use_lines() {
         use ros_launch_manifest_check::Severity;
