@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.20.2 - 2026-10-27
 
 - **Fixed (`resolve`):** an acknowledged finding keeps its place in the
   model's `meta.diagnostics`. It was appended at the end, so acknowledging
