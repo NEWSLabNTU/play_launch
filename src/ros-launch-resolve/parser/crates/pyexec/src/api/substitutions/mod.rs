@@ -40,29 +40,54 @@ use crate::api::utils as sub_utils;
 /// expr = PythonExpression(["'true' if '", LaunchConfiguration('mode'), "' == 'realtime' else 'false'"])
 /// ```
 ///
-/// Note: Limited support - we concatenate and return the expression as-is
+/// The parts are kept and performed when the expression is, as in `launch`
+/// (#0078): `generate_launch_description()` builds
+/// `PythonExpression(['not ', LaunchConfiguration('use_composition')])`
+/// (nav2_bringup) before the argument is declared, and joining the parts
+/// then gave `not $(var use_composition)`, which `eval` refused.
 #[pyclass(module = "launch.substitutions", from_py_object)]
-#[derive(Clone)]
 pub struct PythonExpression {
-    expression: String,
+    parts: Vec<Py<PyAny>>,
+}
+
+impl Clone for PythonExpression {
+    fn clone(&self) -> Self {
+        Python::attach(|py| Self {
+            parts: self.parts.iter().map(|p| p.clone_ref(py)).collect(),
+        })
+    }
+}
+
+impl PythonExpression {
+    /// The parts, performed now and joined.
+    fn expression(&self, py: Python) -> PyResult<String> {
+        let mut result = String::new();
+        for part in &self.parts {
+            result.push_str(&sub_utils::pyobject_to_string(py, part)?);
+        }
+        Ok(result)
+    }
 }
 
 #[pymethods]
 impl PythonExpression {
     #[new]
-    fn new(py: Python, expression: Vec<Py<PyAny>>) -> PyResult<Self> {
-        // Convert each element to string and concatenate
-        let mut result = String::new();
-        for obj in expression {
-            let s = sub_utils::pyobject_to_string(py, &obj)?;
-            result.push_str(&s);
-        }
-        Ok(Self { expression: result })
+    #[pyo3(signature = (expression, python_modules=None))]
+    fn new(expression: &Bound<'_, PyAny>, python_modules: Option<&Bound<'_, PyAny>>) -> Self {
+        let _ = python_modules;
+        // One substitution, a string, or a list or tuple of them.
+        let parts = match expression.cast::<pyo3::types::PyList>() {
+            Ok(list) => list.iter().map(|p| p.unbind()).collect(),
+            Err(_) => match expression.cast::<pyo3::types::PyTuple>() {
+                Ok(tuple) => tuple.iter().map(|p| p.unbind()).collect(),
+                Err(_) => vec![expression.clone().unbind()],
+            },
+        };
+        Self { parts }
     }
 
-    fn __str__(&self) -> String {
-        // Return the concatenated expression
-        self.expression.clone()
+    fn __str__(&self, py: Python) -> PyResult<String> {
+        self.expression(py)
     }
 
     fn __repr__(&self) -> String {
@@ -74,7 +99,8 @@ impl PythonExpression {
         // Evaluate the Python expression
         // Safety: This evaluates arbitrary Python code, but it comes from the launch file
         // which is already trusted (user-provided configuration)
-        let code = std::ffi::CString::new(self.expression.as_str()).map_err(|e| {
+        let expression = self.expression(py)?;
+        let code = std::ffi::CString::new(expression.as_str()).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid expression: {}", e))
         })?;
         let result = py.eval(&code, None, None)?;

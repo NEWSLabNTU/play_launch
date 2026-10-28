@@ -284,3 +284,46 @@ fn a_substitution_the_launch_file_defines_is_performed() {
         "kept: {content}"
     );
 }
+
+/// Issue #0078: a description built empty and filled with `add_action` and
+/// `add_entity`, as `nav2_bringup`'s launch files do, and built from any
+/// iterable or with stock's keywords. Stock (Jazzy, `stock_oracle.py`):
+/// these six nodes, `b_unless` skipped by its condition.
+///
+/// Before the fix the file failed to load with
+/// `TypeError: LaunchDescription.__new__() missing 1 required positional
+/// argument: 'actions'`.
+#[test]
+fn a_description_filled_with_add_action_executes() {
+    let _guard = python_test_guard();
+    assert_eq!(
+        fqns(&resolve("add_action")),
+        [
+            "/a",
+            "/b_if",
+            "/c_entity",
+            "/d_tuple",
+            "/e_generator",
+            "/f_keyword",
+        ]
+    );
+}
+
+/// Issue #0078: a `PythonExpression` performs its parts when it is
+/// performed, not when it is built. `generate_launch_description()` builds
+/// `PythonExpression(['not ', LaunchConfiguration('use_composition')])`
+/// (nav2_bringup) before the argument is declared. Stock (Jazzy,
+/// `stock_oracle.py`): these three nodes.
+///
+/// Before the fix the parts were joined at construction, into
+/// `not $(var use_composition)`; `eval` refused it and the condition read the
+/// spelled-out text, `invalid condition expression: Unexpected value 'not
+/// False'`.
+#[test]
+fn a_python_expression_is_performed_when_its_condition_is() {
+    let _guard = python_test_guard();
+    assert_eq!(
+        fqns(&resolve("python_expression")),
+        ["/literal", "/not_composed", "/sim_mode"]
+    );
+}

@@ -8,6 +8,15 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fixed (Rust parser, #0078):** `nav2_bringup`'s launch files on Jazzy
+  load. `LaunchDescription()` takes no arguments and has `add_action`,
+  `add_entity` and `entities`, as in stock `launch` (`initial_entities` any
+  iterable, keyword `deprecated_reason`); the mock required an `actions`
+  list. A `PythonExpression` performs its parts when it is performed, not
+  when it is built: `PythonExpression(['not ', LaunchConfiguration(...)])`
+  built before the argument was declared became `not $(var ...)`, which
+  `eval` refused, and its condition read the spelled-out text.
+
 - **Fixed (`--parser python`, #0077):** a `<set_env>`
   (`SetEnvironmentVariable`) now reaches the processes in its scope, the
   included files' too, with a process's own `<env>` over it, as in `ros2

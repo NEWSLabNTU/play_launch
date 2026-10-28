@@ -17,14 +17,18 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0078** -- the Rust parser refuses `LaunchDescription()` with no arguments
-and has no `add_action`, so `nav2_bringup`'s launch files (Jazzy) stop it.
-See `0078-*`.
+None.
 
 `just check-issue-index` fails if this section and the per-file `status:`
 frontmatter disagree.
 
 ## Resolved
+
+**#0078** -- the Rust parser could not load `nav2_bringup`'s launch files on
+Jazzy: the mock `LaunchDescription` required an `actions` list and had no
+`add_action`, and a `PythonExpression` joined its parts when built, so one
+made before its argument was declared read `not $(var ...)`. Both now match
+stock `launch`. See `archived/0078-*`.
 
 **#0077** -- the Python dumper dropped `<set_env>` (`SetEnvironmentVariable`):
 a node got only its own `<env>`, so under `--parser python` a `<set_env>`
