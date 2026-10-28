@@ -17,7 +17,9 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-None.
+**#0078** -- the Rust parser refuses `LaunchDescription()` with no arguments
+and has no `add_action`, so `nav2_bringup`'s launch files (Jazzy) stop it.
+See `0078-*`.
 
 `just check-issue-index` fails if this section and the per-file `status:`
 frontmatter disagree.
