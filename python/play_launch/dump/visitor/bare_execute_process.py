@@ -58,6 +58,12 @@ def visit_bare_execute_process(
                 )
             )
 
+    # The `<set_env>`s in scope, the process's own `<env>` over them, as
+    # launch builds a process's environment (#0077).
+    env = dump.set_env_in_scope(context)
+    env.update(env_vars)
+    env_vars = list(env.items())
+
     on_exit_shutdown = None
     if hasattr(process, "_ExecuteLocal__on_exit"):
         shutdown_handler, unsupported = _classify_on_exit(process._ExecuteLocal__on_exit)

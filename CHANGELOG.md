@@ -8,6 +8,14 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fixed (`--parser python`, #0077):** a `<set_env>`
+  (`SetEnvironmentVariable`) now reaches the processes in its scope, the
+  included files' too, with a process's own `<env>` over it, as in `ros2
+  launch` and the Rust parser. The Python dumper recorded only a process's
+  own `<env>`, so an SROS2 enclave set around an include never reached its
+  nodes. Fixture: `tests/fixtures/simple_test/launch/set_env.launch.xml`
+  (`just compare-dumps`).
+
 - **Added (`check`, `resolve`; rlm v0.2.6):** service calls on a reaction
   route (phase 95). A client states how long it waits and what it does then
   (`cli.<e>.timeout`, `on_timeout`, `on_rejected`, `max_transport`), a

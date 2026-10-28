@@ -1,7 +1,7 @@
 ---
 id: 77
 title: "The Python dumper drops <set_env> / SetEnvironmentVariable: a node gets only its own <env>"
-status: open
+status: resolved
 type: defect
 severity: high
 ---
@@ -77,14 +77,29 @@ The Rust parser does what launch does: `record/generator.rs` starts from
 `context.environment()` (the `<set_env>`s in scope) and lays the node's own
 environment over it.
 
-## Fix direction
+## Fix
 
-In each visitor that records a process, start `env` from the entries of
-`context.environment` that differ from (or are absent in) the environment the
-dumper started with, then lay `additional_env` over it; an `<unset_env>` of a
-variable the dumper's own environment has needs the same treatment as the
-Rust side gives it. Add the table above as a parity fixture
-(`just compare-dumps`), with an `<unset_env>` case.
+`LaunchDump` keeps the dumper's environment from before the launch ran;
+`set_env_in_scope(context)` returns what differs from it in
+`context.environment` (on Jazzy `os.environ` itself, which `<set_env>` writes
+and a scoped group restores). The node, container and bare-process visitors
+start from that and lay the process's own `<env>` over it, as launch's
+`Executable.prepare` does. A variable the dumper already had with the same
+value is not recorded: the replayed process inherits it anyway, and the Rust
+parser records only its `<set_env>`s too. An `<unset_env>` of an inherited
+variable still cannot be represented (the `setscope` stock-parity case).
+
+Checked on Jazzy:
+
+- the table above with `--parser python`: every node got its value in
+  `/proc/<pid>/environ`;
+- `tests/fixtures/simple_test/launch/set_env.launch.xml` (seven processes:
+  the group, both include kinds, an own `<env>` winning, after the group, an
+  `<executable>`): the values match stock `ros2 launch`, both parsers' models
+  give them (`scripts/expect_set_env.py`) and `compare_models.py` passes;
+  the dumper before the fix: 0 of 7, 7 env differences;
+- `tests/stock_parity/cases/setscope` through both parsers: the same env on
+  every member.
 
 ## Workaround
 

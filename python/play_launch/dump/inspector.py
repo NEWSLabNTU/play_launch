@@ -465,6 +465,7 @@ class LaunchInspector:
         dump = dataclasses.asdict(self.__launch_dump)
         # Remove internal fields not meant for serialization
         dump.pop("_scope_stack", None)
+        dump.pop("_base_env", None)
         return dump
 
     @property

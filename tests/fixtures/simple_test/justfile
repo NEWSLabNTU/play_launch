@@ -94,6 +94,16 @@ compare-dumps:
     echo "Comparing Rust and Python SystemModels..."
     echo ""
     python3 "$REPO_ROOT/scripts/compare_models.py" model_rust.yaml model_python.yaml
+
+    # Issue #0077: a <set_env> reaches the processes in its scope, under
+    # both parsers, with the values stock `ros2 launch` gives.
+    echo ""
+    echo "Resolving launch/set_env.launch.xml with both parsers..."
+    {{resolve_bin}} resolve --parser rust -o model_rust_set_env.yaml launch/set_env.launch.xml
+    {{resolve_bin}} resolve --parser python -o model_python_set_env.yaml launch/set_env.launch.xml
+    python3 scripts/expect_set_env.py model_rust_set_env.yaml
+    python3 scripts/expect_set_env.py model_python_set_env.yaml
+    python3 "$REPO_ROOT/scripts/compare_models.py" model_rust_set_env.yaml model_python_set_env.yaml
     echo ""
     echo "Comparison complete."
 
@@ -102,5 +112,5 @@ clean:
     #!/usr/bin/env bash
     set -e
     echo "Cleaning up..."
-    rm -rf play_log record*.json model_rust.yaml model_python.yaml
+    rm -rf play_log record*.json model_rust*.yaml model_python*.yaml
     echo "Cleanup complete"

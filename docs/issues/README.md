@@ -17,15 +17,18 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0077** -- the Python dumper drops `<set_env>` (`SetEnvironmentVariable`):
-a node gets only its own `<env>`, so under `--parser python` a `<set_env>`
-around an include (an SROS2 enclave, for one) never reaches its processes.
-The Rust parser and `ros2 launch` pass it. See `0077-*`.
+None.
 
 `just check-issue-index` fails if this section and the per-file `status:`
 frontmatter disagree.
 
 ## Resolved
+
+**#0077** -- the Python dumper dropped `<set_env>` (`SetEnvironmentVariable`):
+a node got only its own `<env>`, so under `--parser python` a `<set_env>`
+around an include (an SROS2 enclave, for one) never reached its processes.
+Each process now starts from the `<set_env>`s in scope, its own `<env>` over
+them, as in launch and the Rust parser. See `archived/0077-*`.
 
 **#0073** -- the Rust parser could not load a launch file that defines its
 own `launch.Substitution` (`nav2_common`'s `RewrittenYaml`, so every

@@ -156,6 +156,12 @@ def visit_composable_node_container(
                     value_str = substitute(value) if not isinstance(value, str) else value
                     env_vars.append((key_str, value_str))
 
+    # The `<set_env>`s in scope, the process's own `<env>` over them, as
+    # launch builds a process's environment (#0077).
+    env = dump.set_env_in_scope(context)
+    env.update(env_vars)
+    env_vars = list(env.items())
+
     # Extract respawn configuration
     # Only set respawn if explicitly True - treat False/unset as None for consistency with Rust parser
     respawn = None

@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<!-- Issue #0077: a <set_env> reaches the processes in its scope, the
+     included files' too; a node's own <env> wins. Expected values (stock
+     `ros2 launch`) are checked by `just compare-dumps`. -->
+<launch>
+  <set_env name="PL_SET_ENV_TOP" value="top"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="own_env">
+    <env name="PL_SET_ENV_GROUP" value="own"/>
+  </node>
+  <group>
+    <set_env name="PL_SET_ENV_GROUP" value="group"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="in_group"/>
+    <include file="$(dirname)/set_env_inner.launch.xml"/>
+    <include file="$(dirname)/set_env_inner.launch.py"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="own_wins">
+      <env name="PL_SET_ENV_GROUP" value="own"/>
+    </node>
+  </group>
+  <node pkg="demo_nodes_cpp" exec="talker" name="after_group"/>
+  <executable cmd="cat" name="exec_in_scope"/>
+</launch>

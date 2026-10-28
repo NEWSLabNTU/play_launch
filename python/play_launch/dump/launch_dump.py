@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass, field
 
 
@@ -135,6 +136,21 @@ class LaunchDump:
     # Phase 94: every change to the launch configurations, in order.
     config_log: list[dict] = field(default_factory=list)
     _scope_stack: list[int] = field(default_factory=list, repr=False)
+    # The dumper's own environment, before any `<set_env>` ran (#0077).
+    _base_env: dict[str, str] = field(default_factory=lambda: dict(os.environ), repr=False)
+
+    def set_env_in_scope(self, context) -> dict[str, str]:
+        """The variables `<set_env>` (`SetEnvironmentVariable`) set in scope (#0077).
+
+        launch starts a process with `context.environment` (on Jazzy
+        `os.environ` itself, which `<set_env>` writes and a scoped group
+        restores) and lays its `additional_env` over it. A process inherits the
+        dumper's own environment at replay anyway, so only what differs from
+        it is recorded, as the Rust parser records its `<set_env>`s. An
+        `<unset_env>` of an inherited variable cannot be represented.
+        """
+        env = getattr(context, "environment", os.environ)
+        return {k: v for k, v in env.items() if self._base_env.get(k) != v}
 
     def log_config(
         self,
