@@ -17,7 +17,10 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-None.
+**#0077** -- the Python dumper drops `<set_env>` (`SetEnvironmentVariable`):
+a node gets only its own `<env>`, so under `--parser python` a `<set_env>`
+around an include (an SROS2 enclave, for one) never reaches its processes.
+The Rust parser and `ros2 launch` pass it. See `0077-*`.
 
 `just check-issue-index` fails if this section and the per-file `status:`
 frontmatter disagree.
