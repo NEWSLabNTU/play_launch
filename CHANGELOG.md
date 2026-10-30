@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.21.0 - 2026-10-30
 
 - **Fixed (Rust parser, #0078):** `nav2_bringup`'s launch files on Jazzy
   load. `LaunchDescription()` takes no arguments and has `add_action`,
