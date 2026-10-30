@@ -34,14 +34,18 @@ allowance heavily.
   worse of its success branch (the request leg, the server's route, the
   wait for a blocking call's response) and its failure branch (`timeout x
   attempts + backoff x (attempts - 1)` + the route `on_timeout` falls to);
-  a supervised rung takes no failure branch. Six rules judge calls on a
-  reaction route: `call-unbounded` (warning, an error under `--strict`),
-  `call-retry-not-idempotent`, `call-retry-unbounded` (errors),
+  a supervised rung takes no failure branch. Seven rules judge calls on a
+  reaction route: `call-unbounded`, `call-retry-not-idempotent`,
+  `call-retry-unbounded` (errors), `call-unbounded-floor`,
   `call-late-effect`, `call-rejected-unhandled`, `call-deadlock`
   (warnings). The facts reach the model (`cli_endpoints`, `srv_endpoints`).
-  **Contracts that cross a call with no stated wait gain
-  `warning[call-unbounded]`**: the safety island's emergency floor
-  (`mrm_handler.cli.emergency_stop_operate`) on both hazards.
+  **A contract whose rung crosses a call with no stated wait, unsupervised,
+  now fails `check`** (`error[call-unbounded]`) when a lower rung exists
+  for `on_timeout:` to fall to. On a ladder's floor no timeout can bound
+  the call, so the same finding is `warning[call-unbounded-floor]`, which
+  `--strict` leaves a warning so a contract can acknowledge it: the safety
+  island's emergency floor (`mrm_handler.cli.emergency_stop_operate`) on
+  both hazards.
 
 - **Added (interception, Health, `measure`):** the interceptor hooks
   service clients and servers and every request and response, and the

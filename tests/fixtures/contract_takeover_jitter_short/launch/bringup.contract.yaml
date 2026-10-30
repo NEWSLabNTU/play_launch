@@ -78,7 +78,7 @@ nodes:
     pub:
       tor_state: {}
     cli:
-      comfort_operate: {}
+      comfort_operate: { timeout: 10ms, on_timeout: { reaction: estop } }
       estop_operate: {}
     paths:
       on_timer:

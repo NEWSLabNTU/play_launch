@@ -333,10 +333,14 @@ and a rung budget that the failure branch breaks says so:
 (cli.operate) + 10.00 ms emergency_stop route)`. Only calls a reaction
 route crosses are judged; a start-up call or a parameter client is not:
 
-- `call-unbounded` (warning; an error under `--strict`): no `timeout:` and
-  `on_timeout:`, and no supervised rung. On a ladder's FLOOR a timeout
-  cannot help (there is no lower rung to fall to): supervise the floor's
-  effect, or guard its output (`reaction-unguarded`).
+- `call-unbounded` (error): no `timeout:` and `on_timeout:`, and no
+  supervised rung, on a rung that has a lower rung for `on_timeout:` to
+  fall to.
+- `call-unbounded-floor` (warning, also under `--strict`): the same on a
+  ladder's FLOOR. A timeout cannot help there, since there is no lower rung
+  to fall to: supervise the floor's effect, or guard its output
+  (`reaction-unguarded`). A contract whose floor really does fire and
+  forget can acknowledge it (`acknowledged:`, above).
 - `call-retry-not-idempotent` (error): a retry, and a server that does not
   declare `idempotent: true`: a retry after a lost response runs the
   operation twice.
@@ -349,7 +353,12 @@ route crosses are judged; a start-up call or a parameter client is not:
   route continues at the client, and no `on_rejected:`.
 - `call-deadlock` (warning): a blocking call from a node with no
   `concurrency:` declaration, so every callback serialises and the
-  response can only be taken by the callback that waits for it.
+  response can only be taken by the callback that waits for it. A
+  multi-threaded executor does not prevent it, because the default
+  callback group is mutually exclusive. It stays a warning because code
+  that spins an executor of its own for the wait is safe, and a contract
+  cannot show that; a deadlock that does happen shows on the Health page
+  as `call_unanswered`.
 
 At run time, with interception on, the Health page reports
 `call_unanswered` for a request still open past its client's `timeout:`
@@ -357,7 +366,9 @@ At run time, with interception on, the Health page reports
 counts each client's requests and answers and times the request leg.
 `play_launch measure <run-dir> --model <m.yaml>` offers the leg's observed
 maximum as the client's `max_transport`, and says whether the middleware
-filled each request's source timestamp, which `stale_after` relies on.
+filled each request's source timestamp. `stale_after` relies on that
+timestamp, and the checker trusts it: Fast DDS and Cyclone fill it; on
+another middleware, run `measure` once to confirm.
 
 ## Extensions: names, locks and deprecations
 

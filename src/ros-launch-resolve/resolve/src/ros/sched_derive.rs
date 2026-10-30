@@ -1117,8 +1117,9 @@ mod tests {
     /// red (the negative controls of the phase doc were taken against it).
     #[test]
     fn every_call_fixture_reports_its_design_verdict() {
-        const RULES: [&str; 6] = [
+        const RULES: [&str; 7] = [
             "call-unbounded",
+            "call-unbounded-floor",
             "call-retry-not-idempotent",
             "call-retry-unbounded",
             "call-late-effect",

@@ -734,10 +734,11 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   server `idempotent`/`stale_after`; the walk records every call on every
   branch that reaches the sink (`ReactionWalk.calls`) and `judge_calls`
   charges each rung the worse of success and failure. Three things a later
-  change must keep: `call-unbounded` is a WARNING because as an error it
-  refused 11 fixture models and turned the island red (its floor crosses an
-  unbounded async call the design never looked at; a floor has no lower
-  rung, so no timeout can bound it); rclcpp on Humble reaches the
+  change must keep: `call-unbounded` is an error only where the rung has a
+  lower rung for `on_timeout:` to fall to; on a floor no timeout can bound
+  the call, so it is `call-unbounded-floor`, a warning that `--strict`
+  leaves a warning so `acknowledged:` can take it (the island's floor
+  crosses an unbounded async call; decision 5 at evaluation); rclcpp on Humble reaches the
   `_with_info` take hooks only through librcl's own PLT call, and a
   thread-local flag keeps the outer id-only hook from reporting a take
   twice; and a server take pairs with its send by (service, sequence

@@ -165,7 +165,12 @@ and measures the request leg.
       CLAUDE.md's log layout (`calls.json`) and one Key Recent Changes
       entry for the lessons that are not obvious from the code.)*
 
-## Open decisions (decide at evaluation)
+## Open decisions (decided at evaluation, 2026-10-30)
+
+Decided: 1 keep (a trusted fact, documented in the guide), 2 keep the
+warning, 3 deferred, 4 holds on our side (the question to nano-ros is
+unsent), 5 split by whether a timeout can help. Each item below keeps the
+provisional choice and what was learned, then the decision.
 
 Implemented with the PROVISIONAL choice in brackets, so evaluation can judge
 it on real runs:
@@ -180,6 +185,9 @@ it on real runs:
    took 26/26 and 27/27 requests with it set, `add_two_ints_server` 1/1.
    `measure` now prints the count per server, so a run on another RMW says
    whether it holds there. nano-ros is not checked.
+   *Decided:* keep the trusted fact. A `check` warning on an unknown RMW
+   would always fire, since `check` never sees the RMW. The guide says
+   which middlewares fill the timestamp and that `measure` confirms it.
 2. **`call-deadlock` severity.** [Warning. Evaluation: whether play_launch's
    view of the executor (a stock container's executable, `--container-mode`)
    justifies an error.]
@@ -190,8 +198,19 @@ it on real runs:
    `component_container` vs `_mt`), but not for a plain node, whose
    executor is in its code; and `--container-mode` is a runtime choice
    `check` never sees. Only S2's fixture fires it.
+   *Decided:* a warning. The evaluation's premise was wrong: the executor
+   does not decide a deadlock, the callback group does. rclcpp's default
+   group is mutually exclusive, so `component_container_mt` deadlocks too,
+   and the safe pattern (a wait that spins its own executor) is invisible
+   to a contract, so an error would push authors to declare a
+   `concurrency:` that is not true. The message says the executor does not
+   prevent it; a deadlock that happens shows as Health's `call_unanswered`.
 3. **Actions** (goal, cancel, result). [Out of this phase; evaluation decides
    whether they get the same keys under `act:`.]
+   *Decided:* deferred until a contract has an action on a reaction route
+   (neither the island nor Autoware's MRM chain does; nav2's `follow_path`
+   would be first). The likely shape is recorded in rlm's
+   `service-contracts.md`.
 4. **nano-ros's agreement** that `timeout:`/`on_timeout:` derive no deadline
    or monitor beyond a subscriber's `on_violation`. [The model carries the
    facts; nothing in play_launch derives a deadline from them.]
@@ -199,6 +218,10 @@ it on real runs:
    the fault-reaction arithmetic (a term of the failure branch) and, in W3,
    by Health's `call-unanswered` threshold, which observes and derives
    nothing.
+   *Decided:* holds on our side. The question to nano-ros goes with
+   phase 85 D4's (the `on_violation` timestamp) and whether nano-ros fills
+   `source_timestamp`; it is unsent until we know which nano-ros session
+   owns their phase 474.
 5. **`call-unbounded` as an error.** [Error. Evaluation: how many real
    contracts it turns red (the island must stay clean through its
    supervised rung).]
@@ -212,10 +235,21 @@ it on real runs:
    FLOOR, `timeout:` + `on_timeout:` cannot bound the call (there is no
    lower rung to fall to); only a supervised effect, or a guard on the
    floor's own output (`reaction-unguarded` already asks for one), can.
+   *Decided:* split by whether a timeout can help. `call-unbounded` is an
+   error on a rung with a lower rung for `on_timeout:` to fall to;
+   `call-unbounded-floor` is a warning on a floor, naming the two fixes
+   that can bound it, and `--strict` leaves it a warning so a contract can
+   acknowledge it (an error cannot be acknowledged). An error everywhere
+   would leave the island red with no fix it could write. Sixteen
+   island-shaped fixtures crossed an unsupervised comfortable call; each
+   now states `timeout: 10ms, on_timeout: { reaction: estop }`, which
+   moved no route total (the failure branch is shorter than the success
+   branch). The island gets two floor warnings to acknowledge.
 
 ## Deviations
 
-1. **`call-unbounded` is a warning, not an error** (2026-10-27). Checked as
+1. **`call-unbounded` is a warning, not an error** (2026-10-27;
+   superseded 2026-10-30 by decision 5's split). Checked as
    the design's error, it refused the model of 11 existing fixtures and
    failed 22 integration tests, and it turned the safety island red: the
    island's comfortable rung is supervised, as the design says, but its

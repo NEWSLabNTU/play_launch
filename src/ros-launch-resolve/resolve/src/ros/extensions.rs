@@ -1834,16 +1834,15 @@ fn worst_case(
     }
 }
 
-/// `check --strict`: an undecided worst case is an error, and so is a
-/// reaction route through a call with no stated wait (phase 95).
+/// `check --strict`: an undecided worst case is an error.
 pub fn strict(index: &mut ManifestIndex) {
-    // Phase 95: a route through a call with no stated wait is incomplete
-    // evidence, a warning by default (the phase doc's Deviations 1), and
-    // an error under `--strict`.
+    // Phase 95: `call-unbounded` is an error already, and
+    // `call-unbounded-floor` stays a warning so a contract can acknowledge
+    // it (no timeout can bound a floor's call).
     for d in index
         .merge_diagnostics
         .iter_mut()
-        .filter(|d| d.rule_id == WORST_CASE_UNKNOWN || d.rule_id == "call-unbounded")
+        .filter(|d| d.rule_id == WORST_CASE_UNKNOWN)
     {
         d.severity = Severity::Error;
     }

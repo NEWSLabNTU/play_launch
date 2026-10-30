@@ -1798,7 +1798,7 @@ fn takeover_link_is_charged_on_the_guard_edge() {
     for needle in [
         "hpc_loss  estop        floor    500.00      0.00  239.33    4165.33 derived   4904.67  10000.00   5095.33",
         "odd_exit  takeover     window   100.00      0.00  206.00  window >=10000.00         -  30000.00         -",
-        "odd_exit  comfortable  rung     100.00  10206.00  149.00    9996.67 derived  20451.67  30000.00   9548.33",
+        "odd_exit  comfortable  rung     100.00  10206.00  192.33    9996.67 derived  20495.00  30000.00   9505.00",
         "odd_exit  estop        floor    100.00  10206.00  182.33    4165.33 derived  14653.67  30000.00  15346.33",
         "hpc_loss/estop: route = link 57.00ms (max_transport into '/handler/availability', \
          sub-level) + path 182.33ms",
@@ -2218,11 +2218,11 @@ fn a_measured_budget_its_observations_do_not_give_is_budget_rule() {
         "error[budget-rule]: bringup.contract.yaml:158: `nodes.planner.paths.follow.max_latency: \
          300ms` is measured, but its observations give 288ms (240 x 1.2 (n=5) = 288.00 -> 288;",
         // Phase 93: the two measured budgets nothing supervises warn. Phase
-        // 95: so do its three crossings of a call with no stated wait
-        // (`call-unbounded`: the comfortable call on `odd_exit`, the
-        // emergency one on both hazards).
-        "(2 errors, 7 warnings)",
-        "warning[call-unbounded]",
+        // 95: so do the floor's crossings of a call with no stated wait
+        // (`call-unbounded-floor`: the emergency call on both hazards; the
+        // comfortable call states its timeout).
+        "(2 errors, 6 warnings)",
+        "warning[call-unbounded-floor]",
         "warning[measured-unsupervised]",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
@@ -4247,20 +4247,24 @@ fn a_call_on_a_reaction_route_is_bounded_or_reported() {
     // S2: blocking and nothing else is unbounded, and may deadlock.
     let s2 = check_fixture("contract_call_unbounded");
     for needle in [
-        "warning[call-unbounded]",
+        "error[call-unbounded]",
         "crosses /comfort/operate (handler.cli.operate) with no `timeout:` and no \
          `on_timeout:`, and no supervised rung",
         "warning[call-deadlock]",
     ] {
         assert!(s2.contains(needle), "expected `{needle}`:\n{s2}");
     }
-    // A warning by default (phase 95 Deviations 1), an error under
-    // `--strict`.
+    // An error where a lower rung exists for `on_timeout:` to fall to
+    // (phase 95 decision 5).
     let (code, _) = check_takeover("contract_call_unbounded", &[]);
-    assert_eq!(code, 0, "{s2}");
-    let (code, strict) = check_takeover("contract_call_unbounded", &["--strict"]);
-    assert_eq!(code, 1, "{strict}");
-    assert!(strict.contains("error[call-unbounded]"), "{strict}");
+    assert_eq!(code, 1, "{s2}");
+    // On a floor no timeout can bound the call: a warning, kept a warning
+    // under `--strict` so a contract can acknowledge it.
+    let latch = check_fixture("contract_fault_latch");
+    assert!(latch.contains("warning[call-unbounded-floor]"), "{latch}");
+    assert!(!latch.contains("error[call-unbounded"), "{latch}");
+    let (_, strict) = check_takeover("contract_fault_latch", &["--strict"]);
+    assert!(strict.contains("warning[call-unbounded-floor]"), "{strict}");
     // S2's retry, which upstream runs forever.
     let s2b = check_fixture("contract_call_retry_forever");
     assert!(s2b.contains("error[call-retry-unbounded]"), "{s2b}");

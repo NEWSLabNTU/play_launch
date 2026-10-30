@@ -2832,7 +2832,7 @@ fn supervised_effect(index: &ManifestIndex, w: &ReactionWalk, call: &CallCross) 
 /// - a rung whose effect is supervised takes no failure branch at the call:
 ///   its failure case is the supervisor's, which `supervised-fit` computes.
 ///
-/// The rules (`call-unbounded`, `call-retry-not-idempotent`,
+/// The rules (`call-unbounded`, `call-unbounded-floor`, `call-retry-not-idempotent`,
 /// `call-retry-unbounded`, `call-late-effect`, `call-rejected-unhandled`,
 /// `call-deadlock`) judge only calls on a reaction route: a startup call, a
 /// parameter client or a map loader is never walked, so never judged.
@@ -3019,8 +3019,9 @@ pub(crate) fn judge_calls(
                      `concurrency:`: every callback of the node then serialises, so the \
                      response can only be taken by the callback that is waiting for it -- a \
                      deadlock, unless the wait spins an executor of its own, which the contract \
-                     cannot see. Declare `concurrency:` putting the client's callback in a \
-                     group of its own, or make the call `async`",
+                     cannot see. A multi-threaded executor does not prevent it: the default \
+                     callback group is mutually exclusive. Declare `concurrency:` putting the \
+                     client's callback in a group of its own, or make the call `async`",
                     c.node, c.path
                 ),
             );
@@ -3051,23 +3052,40 @@ pub(crate) fn judge_calls(
                 (true, false) => "no `timeout:`",
                 _ => "no `on_timeout:`",
             };
-            // A warning, not the design's error (phase 95 Deviations): the
-            // route is reported the way every other incomplete-evidence
-            // route is (`reaction-unbudgeted`), and an error here refused
-            // the model of 19 existing fixtures and of the safety island,
-            // whose floors cross unbounded async calls. `check --strict`
-            // makes it an error.
-            push(
-                "call-unbounded",
-                Severity::Warning,
-                format!(
-                    "{head} with {missing}, and no supervised rung: a call in stock ROS 2 can \
-                     wait forever (no server, a server that dies, a lost request or response), \
-                     so this route is a number the system may never meet. State how long the \
-                     client waits and what it does then (`timeout:` + `on_timeout:`), or \
-                     supervise the rung's effect (`safe_state.settle: {{ ..., supervise }}`)"
-                ),
-            );
+            // Phase 95 decision 5: an error where a stated wait can bound
+            // the call, because the rung has a lower rung for `on_timeout:`
+            // to fall to. On the floor nothing lower exists, so no timeout
+            // bounds it: a warning that names the two fixes that can
+            // (a supervised effect, a guard on the floor's output), which a
+            // contract may acknowledge. `--strict` leaves the floor's a
+            // warning for that reason.
+            let floor = r.idx + 1 >= r.rungs.len();
+            if floor {
+                push(
+                    "call-unbounded-floor",
+                    Severity::Warning,
+                    format!(
+                        "{head} with {missing}, and no supervised effect. This is the floor: \
+                         it has no lower rung, so `on_timeout:` has nothing to fall to and no \
+                         timeout can bound the call. Supervise its effect \
+                         (`safe_state.settle: {{ ..., supervise }}`), or guard the floor's \
+                         output so a stalled call is detected"
+                    ),
+                );
+            } else {
+                push(
+                    "call-unbounded",
+                    Severity::Error,
+                    format!(
+                        "{head} with {missing}, and no supervised rung: a call in stock ROS 2 \
+                         can wait forever (no server, a server that dies, a lost request or \
+                         response), so this route is a number the system may never meet. \
+                         State how long the client waits and what it does then (`timeout:` + \
+                         `on_timeout:` falling to a lower rung), or supervise the rung's \
+                         effect (`safe_state.settle: {{ ..., supervise }}`)"
+                    ),
+                );
+            }
             notes.push(format!(
                 "call {} -> {}: UNBOUNDED ({missing}, not supervised)",
                 c.client_ref(),
