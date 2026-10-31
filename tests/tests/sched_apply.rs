@@ -4,13 +4,13 @@
 //! the syscall layer and FQN resolution in isolation. This test is the
 //! end-to-end smoke: run `play_launch launch` against the lightest CI-runnable
 //! fixture (`simple_test/pure_nodes.launch.xml`, same as
-//! `simple_workspace::test_launch_pure_nodes`) with a `--sched` spec that
-//! assigns every node (via `scope = "/"`, so it's robust to the fixture's
-//! exact node names) to a real-time tier, and assert the apply-layer engages.
+//! `simple_workspace::test_launch_pure_nodes`) with a `--sched` platform file
+//! that overrides every node (by bare name, so it's robust to the fixture's
+//! namespaces) to SCHED_FIFO 20, and assert the apply-layer engages.
 //!
 //! "Engages" is asserted tolerant of host privilege:
 //! - On a host with `CAP_SYS_NICE`/root, `play_launch` actually applies the
-//!   tier and logs `applied tier 'rt'` (debug-level — hence `RUST_LOG=play_launch=debug`
+//!   tier and logs `applied tier '<node>'` (debug-level — hence `RUST_LOG=play_launch=debug`
 //!   in the test env).
 //! - On an unprivileged host (the common CI case), the preflight hint
 //!   containing `cap_sys_nice` is logged instead (warn-level, always visible).
@@ -21,28 +21,26 @@ use std::{process::Stdio, time::Duration};
 
 use play_launch_tests::{fixtures, process::ManagedProcess};
 
-/// Write a scheduling spec TOML assigning every node in the launch tree to a
-/// single `rt` real-time tier via a root scope selector. Using `scope = "/"`
-/// instead of explicit node names keeps this test robust to the fixture's
-/// exact FQNs.
+/// Write a `manual` platform file placing every node of the two fixtures
+/// these tests launch (`simple_test`'s talker and listener,
+/// `container_events`' container and its two composables) at SCHED_FIFO 20.
+/// Bare names match whatever namespace a fixture gives them. Until rlm
+/// v0.3.0 this was a legacy `system.toml` with `[[assign]] scope = "/"`; the
+/// `.toml` schema is gone (phase 41.6), and an override names nodes.
 fn write_sched_toml(dir: &std::path::Path) -> std::path::PathBuf {
-    let path = dir.join("system.toml");
+    let path = dir.join("bringup.system.posix.yaml");
     std::fs::write(
         &path,
         r#"
-[tiers.rt]
-class = "real_time"
-
-[tiers.rt.posix]
-priority = 20
-sched_class = "SCHED_FIFO"
-
-[[assign]]
-tier = "rt"
-scope = "/"
+target: posix
+mapper: manual
+overrides:
+  talker: { priority: 20, sched_class: SCHED_FIFO }
+  listener: { priority: 20, sched_class: SCHED_FIFO }
+  event_container: { priority: 20, sched_class: SCHED_FIFO }
 "#,
     )
-    .expect("failed to write system.toml");
+    .expect("failed to write the platform file");
     path
 }
 
@@ -159,8 +157,8 @@ fn wait_for_pattern(
 /// `--sched-apply warn`: the run must reach steady state (same process count
 /// as a plain `simple_workspace` launch — the apply-layer never blocks or
 /// crashes node startup), and stderr/stdout together must contain evidence
-/// the apply-layer engaged: either the resolved tier name (`applied tier
-/// 'rt'`, privileged host) or the `cap_sys_nice` preflight hint (unprivileged
+/// the apply-layer engaged: either the resolved tier (`applied tier
+/// '<node>'`, privileged host) or the `cap_sys_nice` preflight hint (unprivileged
 /// host).
 #[test]
 fn sched_apply_warn_engages_and_launch_succeeds() {
@@ -197,12 +195,11 @@ fn sched_apply_warn_engages_and_launch_succeeds() {
     let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
     let combined = format!("{stdout}\n{stderr}").to_lowercase();
 
-    let engaged = (combined.contains("applied tier") && combined.contains("'rt'"))
-        || combined.contains("cap_sys_nice");
+    let engaged = combined.contains("applied tier") || combined.contains("cap_sys_nice");
     assert!(
         engaged,
         "expected evidence the sched apply-layer engaged (either \
-         \"applied tier 'rt'\" on a privileged host, or a cap_sys_nice \
+         \"applied tier\" on a privileged host, or a cap_sys_nice \
          preflight hint on an unprivileged host) in combined output:\n{combined}"
     );
 
@@ -265,7 +262,7 @@ fn sched_apply_strict_aborts_before_spawn_when_unprivileged() {
 /// Asserting on either line (tolerant of host privilege, same pattern as
 /// `sched_apply_warn_engages_and_launch_succeeds` above) proves a
 /// per-composable pid was delivered, a tier was resolved for it via
-/// `scope = "/"`, and `apply_tier` was actually invoked for that composable
+/// its override, and `apply_tier` was actually invoked for that composable
 /// — the thing that is new in 38.9, as opposed to the pre-38.9 behavior of
 /// only scheduling the container process itself.
 #[test]
@@ -342,8 +339,8 @@ fn composable_scheduling_engages_on_isolated_container() {
 // that `ps -eLo tid,cls,rtprio` would never show.
 //
 // The fixture is `container_events` (1 container, 2 composables: talker,
-// listener) with the same root-scope `system.toml` the tests above use, so
-// every node — composables included — is bound to the `rt` tier.
+// listener) with the same `manual` platform file the tests above use, so
+// every node — composables included — carries a SCHED_FIFO 20 override.
 
 /// The composable FQNs the `container_events` fixture resolves to. Both
 /// declare `namespace=""`, so they sit at the root.
@@ -402,8 +399,12 @@ fn composable_tier_unapplied_under_stock_is_named() {
         );
         let line = named.unwrap();
         // The message has to carry the three things a user needs: the tier it
-        // was given, the mode that dropped it, and the mode that would not.
-        assert!(line.contains("'rt'"), "tier not named: {line}");
+        // was given (an override's tier is named after the node), the mode
+        // that dropped it, and the mode that would not.
+        assert!(
+            line.contains(&format!("tier '{fqn}'")),
+            "tier not named: {line}"
+        );
         assert!(
             line.contains("--container-mode stock"),
             "mode not named: {line}"
@@ -669,13 +670,13 @@ fn composable_tier_check_explain_names_the_modes_that_cannot_apply_it() {
         "{text}"
     );
     assert!(
-        text.contains("  /talker: rt SCHED_FIFO 20 in /event_container"),
+        text.contains("  /talker: /talker SCHED_FIFO 20 in /event_container"),
         "{text}"
     );
     assert!(
-        text.contains("  /listener: rt SCHED_FIFO 20 in /event_container"),
+        text.contains("  /listener: /listener SCHED_FIFO 20 in /event_container"),
         "{text}"
     );
     // The container is a process of its own; its tier is applied in every mode.
-    assert!(!text.contains("  /event_container: rt"), "{text}");
+    assert!(!text.contains("  /event_container: "), "{text}");
 }

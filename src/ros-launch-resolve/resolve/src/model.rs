@@ -156,20 +156,13 @@ pub fn build_checked_model(
             for w in &derived.warnings {
                 tracing::warn!("{w}");
             }
-            let declared_tiers = ros_launch_manifest_sched::parse_platform_file(&resolved.path)
-                .ok()
-                .and_then(|f| f.legacy)
-                .map(|l| l.tiers);
-            Some((derived, declared_tiers))
+            Some(derived)
         }
         None => None,
     };
     let sched_inputs = derived
         .as_ref()
-        .map(|(d, tiers)| model_builder::SchedInputs {
-            derived: d,
-            declared_tiers: tiers.clone(),
-        });
+        .map(|d| model_builder::SchedInputs { derived: d });
 
     // Issue 0293 — `meta.inputs` paths are recorded relative to the bringup
     // package so a COMMITTED model is portable. The consumer resolves them
@@ -348,7 +341,7 @@ pub fn build_checked_model(
     // byte-identical for the same inputs.
     if explain {
         match (&derived, &resolved_platform) {
-            (Some((d, _)), Some(platform)) => {
+            (Some(d), Some(platform)) => {
                 sched_loader::print_explain(d, platform, Some(&index));
             }
             _ => {

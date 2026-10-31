@@ -81,8 +81,8 @@ compare-dumps:
     echo "Comparison complete."
 
 # Validate contracts + scheduling: v2 channel resolution/--explain/overlay,
-# the vocabulary-v2 `points_to_cmd` chain, and the legacy system.toml bridge
-# (kept as the living bridge test).
+# the vocabulary-v2 `points_to_cmd` chain, and an explicit `manual` platform
+# file (the v2 form of the legacy system.toml, removed in rlm v0.3.0).
 #
 # `check` is a pure diagnostics/provenance harness here — nothing in this
 # recipe launches anything — so it belongs entirely on `ros-launch-resolve
@@ -113,10 +113,10 @@ check:
         | grep -F "derived(chain_aware: points_to_cmd" \
         || { echo "ERROR: expected chain_aware provenance for points_to_cmd in --explain output"; exit 1; }
 
-    echo "== legacy bridge: system.toml (manual mapper) + sched =="
-    {{resolve_bin}} check --sched system.toml rt_demo bringup.launch.xml
-    echo "== legacy bridge: system.toml overridden by user overlay CONTRACT (not platform file — system.toml is passed explicitly) =="
-    {{resolve_bin}} check --contracts contracts --sched system.toml rt_demo bringup.launch.xml
+    echo "== manual mapper: explicit manual.system.posix.yaml, placement by overrides =="
+    {{resolve_bin}} check --sched manual.system.posix.yaml rt_demo bringup.launch.xml
+    echo "== manual mapper + user overlay CONTRACT (the platform file is passed explicitly) =="
+    {{resolve_bin}} check --contracts contracts --sched manual.system.posix.yaml rt_demo bringup.launch.xml
 
 # Schema-coexistence demo: a Zephyr platform file resolves and parses via the
 # same --target channel mechanism, but play_launch's built-in mappers only
@@ -133,7 +133,7 @@ check-zephyr-stub:
         echo "expected failure: deadline_monotonic requires posix facts (file parsed fine; derive is posix-only today)"
 
 # Launch with RT scheduling applied (warn mode: no root/setcap required) —
-# explicit legacy system.toml (kept as the living bridge test).
+# explicit `manual` platform file.
 run:
     #!/usr/bin/env bash
     set -e
@@ -141,7 +141,7 @@ run:
     . ../../../install/setup.bash
     . install/setup.bash
     {{play_launch}} launch rt_demo bringup.launch.xml \
-        --sched system.toml --sched-apply warn
+        --sched manual.system.posix.yaml --sched-apply warn
 
 # Launch with RT scheduling applied via v2 channel resolution — no --sched
 # flag at all: play_launch discovers launch/bringup.system.posix.yaml (the

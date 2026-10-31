@@ -17,7 +17,7 @@ resources:
 
 overrides:
   # A declared cost is the only legitimate source for a reservation runtime.
-  guard: { budget_us: 4000 }
-  rt:    { budget_us: 3000 }
+  guard: { budget: 4000us }
+  rt:    { budget: 3000us }
   # `slow` is deliberately left best-effort so its max_jitter contradicts.
   slow:  { sched_class: SCHED_OTHER, nice: 5 }

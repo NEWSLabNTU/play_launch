@@ -212,7 +212,7 @@ info above the table.
   over its timers (a container's composable nodes share one; any other node
   is its own). A timer's work is the measured work beside its tick in a
   measured budget (the terms other than `tick`), else its own measured or
-  analysed `max_latency`, else the platform file's `budget_us` for the node.
+  analysed `max_latency`, else the platform file's `budget` for the node.
   `unknown` when a timer on the executor states none.
 
 A timer whose `rate_hz` states `source: allocated` must lie inside the range:

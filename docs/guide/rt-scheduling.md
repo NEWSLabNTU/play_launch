@@ -141,7 +141,7 @@ Built-in mappers:
 | `rate_monotonic` | the node's fastest timer trigger (`trigger: { timer: { rate_hz } }` on one of its paths); a topic's `rate_hz` or a publisher's `min_rate_hz` is a promise the runtime monitors read, never a rate the mapper ranks by (Phase 78) | higher rate → higher priority |
 | `deadline_monotonic` | the node's tightest declared path `max_latency` | tighter deadline → higher priority |
 | `chain_aware` (Phase 44, routes derived since Phase 68) | the routes **derived** for each scope `paths:` entry (§1.7) plus the same rate/deadline facts as a fallback for everything not on a route | route members ranked by criticality + drain-toward-sink; everything else falls back to criticality-bucketed RM/DM |
-| `manual` | nothing — requires the legacy `system.toml` bridge (§4) | hand-written tiers |
+| `manual` | nothing: every node starts in the default tier | `overrides:` alone place nodes (§4) |
 
 `rate_monotonic`/`deadline_monotonic` rank each node from **its own**
 declared facts in isolation — a good fit when nodes don't need end-to-end
@@ -223,8 +223,7 @@ overrides:                        # explicit pins — always beat derived values
   consumed by nano-ros through the identical shipping channels (§1.4) — no
   shared file, no section-level merging, so a Linux integrator and a board
   integrator never fight over one file.
-- **Overrides selector**: full FQN or bare node name, same vocabulary as the
-  legacy `[[assign]].nodes` selector. An override naming a node with no
+- **Overrides selector**: full FQN or bare node name. An override naming a node with no
   timing facts **promotes** it into RT scheduling (a pin is an explicit
   statement — `SCHED_FIFO` unless the override itself says otherwise). An
   override matching nothing warns, never errors.
@@ -235,15 +234,16 @@ overrides:                        # explicit pins — always beat derived values
   pinned above a faster one) is always a warning, citing both the contract
   and the platform file.
 
-### 1.2.1 `budget_us` — and where the number comes from
+### 1.2.1 `budget` — and where the number comes from
 
-An override may declare `budget_us`, the node's execution cost per invocation.
+An override may declare `budget`, the node's execution cost per invocation,
+written with a unit (`8081us`, `8ms`).
 It is what a `SCHED_DEADLINE` reservation's runtime is built from, so it is CPU
 time, not elapsed time — and it is the one field you should never guess:
 
 ```yaml
 overrides:
-  obstacle_detector: { budget_us: 8081 }
+  obstacle_detector: { budget: 8081us }
 ```
 
 `play_launch measure` produces it from a run:
@@ -261,7 +261,7 @@ overrides:
   /safety/obstacle_detector:
     # detect: cost p50 8.00 p99 8.02 max 8.08 ms   n=1202
     #   response p50 8.01 p99 8.02 max 8.08 ms (cost + preemption + wakeup)
-    budget_us: 8081
+    budget: 8081us
 
 # Not measured — these carry real cost, it just wasn't observable:
 #   /safety/lidar_driver/sample: timer-triggered — no input take to measure from.
@@ -270,12 +270,12 @@ overrides:
 It prints to stdout and never edits your platform file. Three things to know
 before pasting:
 
-- **It reports two numbers.** `cost` is CPU time — what `budget_us` takes.
+- **It reports two numbers.** `cost` is CPU time — what `budget` takes.
   `response` is wall clock over the same interval, so the gap between them is
   preemption and DDS wakeup. Seeing 3 ms of cost against 40 ms of response is
   normal on a loaded machine, and declaring the 40 would waste eight times the
   bandwidth the node actually needs.
-- **`budget_us` is the observed MAXIMUM**, not p99. Under CBS an invocation
+- **`budget` is the observed MAXIMUM**, not p99. Under CBS an invocation
   that overruns its runtime is throttled until the next replenishment, so a p99
   budget turns the slowest 1% of invocations into a full-period stall.
 - **Measure quiet, apply busy.** This is what your machine did on that run — it
@@ -298,14 +298,14 @@ reservations: required          # default: off
 resources:
   rt_priority_band: { min: 10, max: 40 }
 overrides:
-  obstacle_detector: { budget_us: 8081 }     # the runtime — measured, §1.2.1
+  obstacle_detector: { budget: 8081us }     # the runtime — measured, §1.2.1
 ```
 
 The three parameters are derived, not written:
 
 | parameter | derived from |
 |---|---|
-| `runtime` | the node's declared `budget_us` — the **only** legitimate source. A deadline is not a cost |
+| `runtime` | the node's declared `budget` — the **only** legitimate source. A deadline is not a cost |
 | `period` | `1/rate_hz`, propagated along the node's chain from that chain's source |
 | `deadline` | the declared deadline, else the period |
 
@@ -314,7 +314,7 @@ The three parameters are derived, not written:
 all-or-nothing within a band: a reserved thread preempts every fixed-priority
 thread regardless of priority, so a band holding both loses the ordering the
 mapper just computed. A node in the RT band that carries a timing fact but no
-`budget_us` is therefore an error under `required`, naming the nodes — not a
+`budget` is therefore an error under `required`, naming the nodes — not a
 silent fallback.
 
 Two exemptions and one refusal, all deliberate:
@@ -492,7 +492,7 @@ play_launch launch <pkg> <file> --sched <path> [--sched-apply off|warn|strict]
 play_launch launch <pkg> <file> --check                                        # pass/fail gate
 play_launch check <pkg> <file> [--sched <path>] [--target <t>] [--explain]
 play_launch contract eject <pkg> <file> [--target <t>] [--into <dir>] [--force]
-play_launch measure <run-dir> --model <model.yaml>              # observed cost -> budget_us
+play_launch measure <run-dir> --model <model.yaml>              # observed cost -> budget
 ```
 
 | `--sched-apply` | behavior |
@@ -650,7 +650,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
      not a statement about what it costs; supply a WCET to make the verdict mean what it says.
    ```
 
-   The WCET it asks for is `budget_us` (§1.2.1) — measured, never guessed.
+   The WCET it asks for is `budget` (§1.2.1) — measured, never guessed.
 
    The rules that grade a scope path, all cross-scope, all reported under
    `── Cross-scope diagnostics ──` (severities in the [manifest format
@@ -724,8 +724,9 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    ```
 
    This is `rt_workspace`'s own real output — `control_node` is pinned to
-   20 by the platform file's `overrides:` (matching the legacy
-   `system.toml` outcome, see §4), which sits below its route-derived 40.
+   20 by the platform file's `overrides:` (the same placement the fixture's
+   `manual.system.posix.yaml` states, see §4), which sits below its
+   route-derived 40.
    The warning is informational (the override still wins, deliberately —
    "overrides win" is the same rule as everywhere else in this guide);
    it exists so an override that quietly inverts a route's ordering isn't
@@ -758,8 +759,7 @@ measured result behind it (`just ab`, Phase 57).
 ### 2.1 Launch entities → OS processes
 
 Everything `play_launch` launches is an OS process, and the process is the
-unit a platform-file `overrides` selector (or a legacy `[[assign]]` rule)
-targets:
+unit a platform-file `overrides` selector targets:
 
 | launch entity | OS process | scheduled? |
 |---|---|---|
@@ -959,41 +959,33 @@ for t in /proc/$pid/task/*; do chrt -p ${t##*/}; done   # per-thread policy
 taskset -cp $pid                                        # affinity
 ```
 
-## 4. Legacy `system.toml` — deprecated, still supported
+## 4. Hand-placed schedules: `mapper: manual`
 
-The original hand-written schema (tiers with real priority numbers,
-`[[assign]]` bindings) keeps working via a **bridge**: it parses to the same
-internal plan as the `manual` mapper, target implied `posix`. File extension
-selects the parser — `.yaml` is always the new schema, `.toml` is always the
-legacy one:
+`manual` derives nothing: every node starts in the default (non-RT) tier,
+and the platform file's `overrides:` place the nodes you name. It is the
+form for a schedule you want to state by hand:
 
-```toml
-[tiers.control]
-class = "real_time"
-
-[tiers.control.posix]
-priority    = 20
-sched_class = "SCHED_FIFO"
-core        = 0
-
-[[assign]]
-tier  = "control"
-nodes = ["control_node"]
+```yaml
+target: posix
+mapper: manual
+overrides:
+  control_node: { priority: 20, sched_class: SCHED_FIFO, core: 0 }
+  sensor_node:  { priority: 10, sched_class: SCHED_FIFO }
 ```
 
 ```bash
-play_launch launch rt_demo bringup.launch.xml --sched system.toml --check
-play_launch launch rt_demo bringup.launch.xml --sched system.toml --sched-apply warn
+play_launch launch rt_demo bringup.launch.xml --sched manual.system.posix.yaml --sched-apply warn
 ```
 
-Full schema reference (tiers, placement, binding selectors, validation
-rules): [`ros-launch-manifest/docs/scheduling.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/scheduling.md#legacy-v1-schema-systemtoml).
-
-**This path is deprecated but fully supported** — it is not going away until
-`nano-ros` migrates to the v2 schema (Phase 41.6, not yet scheduled). New
-configuration should use the v2 platform-file model (§1). `--sched <path>`
-with a `.toml` file always works identically to how it always has; nothing
-here changes existing behavior.
+**The legacy `system.toml` scheduling schema is gone** (0.22, phase 41.6).
+Hand-written tiers with `[[assign]]` bindings used to reach the `manual`
+mapper through a `.toml` bridge; a `.toml` platform file is now refused with
+a message naming this form. To migrate one, write an override per node with
+the priority, `sched_class` and core its tier gave it. An `[[assign]] scope =
+"/ns"` rule becomes one override per node in that namespace (resolve the
+model to list them: `play_launch resolve <pkg> <file> -o model.yaml`, then
+`structure.nodes`). Every duration is written with a unit: `budget: 8ms`,
+never `budget_us: 8000`.
 
 ## 5. Troubleshooting
 
@@ -1008,8 +1000,7 @@ here changes existing behavior.
 | warning: `priority N outside band [min, max], clamping to ...` | derived or overridden priority exceeds the platform file's band | widen `rt_priority_band`, or fix the override |
 | warning citing both a contract and a platform file | a pinned priority order contradicts the contract's declared rate/deadline order | re-check the override, or accept the warning if intentional |
 | `--explain` prints a no-op note | no platform file resolved (no `--sched`, nothing on the overlay/provider channels) | pass `--sched <path>`, or ship one via the overlay/provider channels |
-| `tier 'X': RT priority N out of range 1..=99` at startup (legacy `.toml`) | bad placement value | fix the spec — this is deliberate fail-fast |
-| assign rule error: selector matches nothing (legacy `.toml`) | typo in node name / scope path | check FQNs by resolving the model (`play_launch resolve <pkg> <file> -o model.yaml`) and reading its `structure.nodes` keys — they're the canonical FQNs |
+| `the legacy system.toml scheduling schema ... was removed` | a `.toml` platform file | rewrite it as `mapper: manual` with `overrides:` (§4) |
 | composable skipped: `pid no longer matches its start_time` | the composable died right after loading; its PID may have been recycled | benign — nothing to schedule |
 | `chrt -p <pid>` shows `SCHED_OTHER` but the node "should" be RT | `chrt -p` reads only the main thread — or the node is in the default tier (no fact, no override) | check all TIDs; check contract facts / overrides coverage |
 | EPERM with caps correct, inside a container/slice | cgroup `rt_runtime = 0` gate (`CONFIG_RT_GROUP_SCHED`) | provision RT bandwidth for the cgroup |

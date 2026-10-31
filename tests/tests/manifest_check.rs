@@ -391,10 +391,8 @@ topics:
 // `rt_workspace.rs`) > overlay `<root>/<pkg>/launch/<stem>.system.<target>.yaml`
 // > provider sidecar `<launch-file-dir>/<stem>.system.<target>.yaml`.
 
-/// Minimal valid v2 platform file: `rate_monotonic` (the `manual` mapper is
-/// reachable only via the legacy `.toml` bridge, not raw v2 `.yaml` — see
-/// `sched_loader::derive_sched_plan`'s "requires a legacy tiers+assign spec"
-/// error) with the `rt_priority_band` its posix resources require.
+/// Minimal valid v2 platform file: `rate_monotonic` with the
+/// `rt_priority_band` its posix resources require.
 fn minimal_platform_file(target: &str) -> String {
     format!(
         "target: {target}\nmapper: rate_monotonic\nresources:\n  rt_priority_band: {{ min: 10, max: 40 }}\n"
@@ -591,12 +589,13 @@ fn check_sched_no_platform_file_leaves_scheduling_disabled() {
     );
 }
 
-// ── W2 carry-forward #3 (Phase 41.4): legacy `.toml` platform file + a live
-// contract index whose rate facts contradict the manually-assigned priority
-// order → warning only, `check` still succeeds. ──
+// ── W2 carry-forward #3 (Phase 41.4): a `manual` platform file + a live
+// contract index whose rate facts contradict the hand-placed priority order
+// → warning only, `check` still succeeds. (It used a legacy `.toml` file
+// until rlm v0.3.0 removed that schema, phase 41.6.) ──
 
 #[test]
-fn check_legacy_toml_with_contradicting_contract_facts_warns_but_succeeds() {
+fn check_manual_platform_file_with_contradicting_contract_facts_warns_but_succeeds() {
     let launch = simple_launch_dir().join("pure_nodes.launch.xml");
     if !launch.exists() {
         eprintln!("Skipping: simple_test fixture not available");
@@ -637,35 +636,21 @@ topics:
     )
     .expect("failed to write overlay contract");
 
-    // Legacy manual-mapper platform file (explicit-path only): pins talker
-    // (the FASTER node) to a LOWER priority than listener — contradicts the
+    // A `manual` platform file (explicit path): pins talker (the FASTER
+    // node) to a LOWER priority than listener, which contradicts the
     // contract's rate order.
-    let system_toml = launch_tmp.path().join("system.toml");
+    let system_toml = launch_tmp.path().join("pure_nodes.system.posix.yaml");
     std::fs::write(
         &system_toml,
         "\
-[tiers.low]
-class = \"real_time\"
-[tiers.low.posix]
-priority = 10
-sched_class = \"SCHED_FIFO\"
-
-[tiers.high]
-class = \"real_time\"
-[tiers.high.posix]
-priority = 40
-sched_class = \"SCHED_FIFO\"
-
-[[assign]]
-tier = \"low\"
-nodes = [\"talker\"]
-
-[[assign]]
-tier = \"high\"
-nodes = [\"listener\"]
+target: posix
+mapper: manual
+overrides:
+  talker: { priority: 10, sched_class: SCHED_FIFO }
+  listener: { priority: 40, sched_class: SCHED_FIFO }
 ",
     )
-    .expect("failed to write legacy system.toml");
+    .expect("failed to write the manual platform file");
 
     let Some(bin) = ros_launch_resolve_bin() else {
         return;
@@ -694,6 +679,37 @@ nodes = [\"listener\"]
         stderr.contains("contract:") && stderr.contains("platform file:"),
         "expected the warning to cite both source files, got: {stderr}"
     );
+}
+
+/// Phase 41.6 (rlm v0.3.0): the legacy `system.toml` scheduling schema is
+/// refused, and the refusal names its v2 replacement.
+#[test]
+fn check_refuses_a_legacy_toml_platform_file_naming_the_v2_form() {
+    let launch = simple_launch_dir().join("pure_nodes.launch.xml");
+    if !launch.exists() {
+        eprintln!("Skipping: simple_test fixture not available");
+        return;
+    }
+    let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let system_toml = tmp.path().join("system.toml");
+    std::fs::write(&system_toml, "[tiers.rt]\n[[assign]]\ntier = \"rt\"\n")
+        .expect("failed to write system.toml");
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let output = resolve_cmd(&bin)
+        .args(["check", "--sched"])
+        .arg(&system_toml)
+        .arg(&launch)
+        .output()
+        .expect("failed to run ros-launch-resolve");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a .toml platform file must fail: {stderr}"
+    );
+    assert!(stderr.contains("removed in rlm v0.3.0"), "{stderr}");
+    assert!(stderr.contains("mapper: manual"), "{stderr}");
 }
 
 // ── Issue #0056: the contradiction scan reads the DECLARED facts, and phase
@@ -745,30 +761,16 @@ fn overlay_with_contract(contract: &str) -> tempfile::TempDir {
     overlay_root
 }
 
-/// A legacy manual-mapper platform file assigning `high_node` priority 40 and
-/// `low_node` priority 10.
-fn legacy_toml_pinning(high_node: &str, low_node: &str) -> String {
+/// A `manual` platform file placing `high_node` at priority 40 and
+/// `low_node` at priority 10 (a legacy `.toml` file until rlm v0.3.0).
+fn manual_pinning(high_node: &str, low_node: &str) -> String {
     format!(
         "\
-[tiers.low]
-class = \"real_time\"
-[tiers.low.posix]
-priority = 10
-sched_class = \"SCHED_FIFO\"
-
-[tiers.high]
-class = \"real_time\"
-[tiers.high.posix]
-priority = 40
-sched_class = \"SCHED_FIFO\"
-
-[[assign]]
-tier = \"high\"
-nodes = [\"{high_node}\"]
-
-[[assign]]
-tier = \"low\"
-nodes = [\"{low_node}\"]
+target: posix
+mapper: manual
+overrides:
+  {high_node}: {{ priority: 40, sched_class: SCHED_FIFO }}
+  {low_node}: {{ priority: 10, sched_class: SCHED_FIFO }}
 "
     )
 }
@@ -791,11 +793,11 @@ fn check_promise_rates_agreeing_with_the_priority_table_stay_silent() {
     std::fs::copy(&launch, &launch_copy).expect("failed to copy launch file");
 
     let overlay_root = overlay_with_contract(promise_only_rate_contract());
-    let system_toml = launch_tmp.path().join("system.toml");
+    let system_toml = launch_tmp.path().join("pure_nodes.system.posix.yaml");
     // talker promises 100 Hz, listener 10 Hz — so talker high is the order the
     // contract implies.
-    std::fs::write(&system_toml, legacy_toml_pinning("talker", "listener"))
-        .expect("failed to write legacy system.toml");
+    std::fs::write(&system_toml, manual_pinning("talker", "listener"))
+        .expect("failed to write the manual platform file");
 
     let Some(bin) = ros_launch_resolve_bin() else {
         return;
@@ -887,7 +889,7 @@ fn check_promise_rates_are_not_ranked_by_rate_monotonic() {
 /// `max_latency` instead of rates. talker's 5 ms budget is tighter than
 /// listener's 50 ms, and the hand-written table inverts them.
 #[test]
-fn check_legacy_toml_with_contradicting_deadline_facts_warns_but_succeeds() {
+fn check_manual_platform_file_with_contradicting_deadline_facts_warns_but_succeeds() {
     let launch = simple_launch_dir().join("pure_nodes.launch.xml");
     if !launch.exists() {
         eprintln!("Skipping: simple_test fixture not available");
@@ -925,10 +927,10 @@ topics:
     pub: [listener/status]
 ",
     );
-    let system_toml = launch_tmp.path().join("system.toml");
+    let system_toml = launch_tmp.path().join("pure_nodes.system.posix.yaml");
     // listener (the LOOSER deadline) high, talker (5 ms) low — inverted.
-    std::fs::write(&system_toml, legacy_toml_pinning("listener", "talker"))
-        .expect("failed to write legacy system.toml");
+    std::fs::write(&system_toml, manual_pinning("listener", "talker"))
+        .expect("failed to write the manual platform file");
 
     let Some(bin) = ros_launch_resolve_bin() else {
         return;
@@ -1586,6 +1588,89 @@ fn resolve_fixture_model(dir: &str) -> Option<ros_launch_manifest_model::SystemM
     );
     let yaml = std::fs::read_to_string(&model_path).expect("model written");
     Some(ros_launch_manifest_model::SystemModel::from_yaml_str(&yaml).expect("model parses"))
+}
+
+/// Phase 85 D4 (rlm v0.3.0): the model carries, per rung, the route the
+/// checker charged (detection fire to the rung's first output), with the
+/// node that starts it and the topics it ends on, so an image's route
+/// monitor judges the same quantity. The numbers are `--explain`'s ROUTE
+/// column for this fixture (`takeover_link_is_charged_on_the_guard_edge`).
+#[test]
+fn the_model_carries_each_rungs_route() {
+    use ros_launch_manifest_model::RungRole;
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let root = fixtures::repo_root().join("tests/fixtures");
+    let ament = root.join("contract_takeover/ament");
+    let prefix = match std::env::var("AMENT_PREFIX_PATH") {
+        Ok(p) if !p.is_empty() => format!("{}:{p}", ament.display()),
+        _ => ament.display().to_string(),
+    };
+    let out_dir = tempfile::TempDir::new().expect("temp dir");
+    let model_path = out_dir.path().join("system_model.yaml");
+    let out = resolve_cmd(&bin)
+        .arg("resolve")
+        .arg(root.join("contract_takeover_link/launch/bringup.launch.xml"))
+        .arg("-o")
+        .arg(&model_path)
+        .env("AMENT_PREFIX_PATH", prefix)
+        .output()
+        .expect("ros-launch-resolve resolve runs");
+    assert!(
+        out.status.success(),
+        "resolve failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let yaml = std::fs::read_to_string(&model_path).expect("model written");
+    let model = ros_launch_manifest_model::SystemModel::from_yaml_str(&yaml).expect("model parses");
+    let rungs = |h: &str| {
+        model
+            .contracts
+            .hazards
+            .iter()
+            .find(|(k, _)| k.ends_with(h))
+            .unwrap_or_else(|| panic!("hazard {h}:\n{yaml}"))
+            .1
+            .rungs
+            .iter()
+            .map(|r| {
+                (
+                    r.rung.clone(),
+                    r.role,
+                    r.route_ms.map(|v| (v * 100.0).round() / 100.0),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        rungs("odd_exit"),
+        vec![
+            ("takeover".to_string(), RungRole::Window, Some(206.0)),
+            ("comfortable".to_string(), RungRole::Rung, Some(192.33)),
+            ("estop".to_string(), RungRole::Floor, Some(182.33)),
+        ],
+        "{yaml}"
+    );
+    let hpc = rungs("hpc_loss");
+    assert_eq!(
+        hpc.last(),
+        Some(&("estop".to_string(), RungRole::Floor, Some(239.33))),
+        "{yaml}"
+    );
+    let floor = model
+        .contracts
+        .hazards
+        .iter()
+        .find(|(k, _)| k.ends_with("odd_exit"))
+        .unwrap()
+        .1
+        .rungs
+        .last()
+        .unwrap()
+        .clone();
+    assert!(floor.starts_at.is_some(), "{floor:?}");
+    assert!(!floor.output.is_empty(), "{floor:?}");
 }
 
 /// rlm v0.1.63: a mode override's target reaches the model RESOLVED to the

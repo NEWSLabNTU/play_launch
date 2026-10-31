@@ -816,7 +816,7 @@ pub fn derive_sched_plan(
     // could not say; on a model this resolver built in-process every path
     // carries a trigger, and a scope path without a budget is skipped by
     // design, so neither is a warning here.
-    let (input, report) = mapper_input_via_model(dump, index, file.legacy.clone(), &budgets);
+    let (input, report) = mapper_input_via_model(dump, index, &budgets);
     debug!(
         "sched: derived {} node(s), {} chain(s) from the model; {} path(s) without a trigger, \
          {} scope path(s) without a chain",
@@ -3270,35 +3270,29 @@ overrides:
         ));
     }
 
+    /// Phase 41.6 (rlm v0.3.0): `manual` is reachable from a v2 file and
+    /// derives nothing, so `overrides:` are the only placement; the legacy
+    /// `.toml` schema is refused, naming the v2 form.
     #[test]
-    fn derive_legacy_toml_manual_mapper_matches_v1_resolution() {
+    fn derive_manual_yaml_places_nodes_by_override_only() {
         let dump = dump_two_plain_nodes();
-        let toml = r#"
-[tiers.rt]
-class = "real_time"
-
-[tiers.rt.posix]
-priority = 20
-sched_class = "SCHED_FIFO"
-
-[[assign]]
-tier = "rt"
-nodes = ["fast_node"]
-"#;
-        with_temp_file("toml", toml, |path| {
+        let yaml = "target: posix\nmapper: manual\noverrides:\n  fast_node: { priority: 20, sched_class: SCHED_FIFO }\n";
+        with_temp_file("yaml", yaml, |path| {
             let derived = derive_sched_plan(&dump, None, path, "posix", SchedApplyMode::Warn)
-                .expect("legacy toml derives via bridge + manual mapper");
+                .expect("a manual v2 file derives");
             assert_eq!(derived.mapper, "manual");
-            assert_eq!(derived.target, "posix");
-            let rt = derived
+            let fast = derived
                 .plan
                 .tiers
                 .iter()
                 .find(|t| t.members.contains(&"/fast_node".to_string()))
-                .expect("fast_node assigned");
-            assert_eq!(rt.name, "rt", "tier identity preserved for diagnostics");
-            assert_eq!(rt.priority, 20);
-            assert_eq!(rt.sched_class.as_deref(), Some("SCHED_FIFO"));
+                .expect("fast_node placed");
+            assert_eq!(fast.priority, 20);
+            assert_eq!(fast.sched_class.as_deref(), Some("SCHED_FIFO"));
+            assert!(matches!(
+                derived.provenance.get("/fast_node"),
+                Some(Provenance::Override { .. })
+            ));
             let default_tier = derived
                 .plan
                 .tiers
@@ -3306,6 +3300,13 @@ nodes = ["fast_node"]
                 .find(|t| t.name == ros_launch_manifest_sched::DEFAULT_TIER)
                 .expect("default tier");
             assert_eq!(default_tier.members, vec!["/slow_node".to_string()]);
+        });
+        with_temp_file("toml", "[tiers.rt]\n", |path| {
+            let err = derive_sched_plan(&dump, None, path, "posix", SchedApplyMode::Warn)
+                .expect_err("the legacy schema is refused");
+            let msg = format!("{err:#}");
+            assert!(msg.contains("removed in rlm v0.3.0"), "{msg}");
+            assert!(msg.contains("mapper: manual"), "{msg}");
         });
     }
 
@@ -3394,7 +3395,6 @@ nodes = ["fast_node"]
             reservations,
             resources: ros_launch_manifest_sched::PlatformResources::default(),
             overrides: Default::default(),
-            legacy: None,
         }
     }
 
@@ -3897,7 +3897,6 @@ nodes = ["fast_node"]
         let (reaching, _) = crate::ros::sched_derive::mapper_input_via_model(
             &dump,
             Some(&index),
-            None,
             &std::collections::BTreeMap::new(),
         );
         assert_eq!(
@@ -3983,52 +3982,6 @@ resources:
     }
 
     // ── Phase 41.4: provenance + `--explain` ──
-
-    #[test]
-    fn render_explain_manual_mapper_cites_tier_not_mapper_twice() {
-        // W4 review Cosmetic #2: the manual mapper's provenance must not
-        // read `derived(manual: assigned by `manual` ...)` — it cites the
-        // tier that placed the node instead.
-        let dump = dump_two_plain_nodes();
-        let toml = r#"
-[tiers.rt]
-class = "real_time"
-
-[tiers.rt.posix]
-priority = 20
-sched_class = "SCHED_FIFO"
-
-[[assign]]
-tier = "rt"
-nodes = ["fast_node"]
-"#;
-        with_temp_file("toml", toml, |path| {
-            let derived = derive_sched_plan(&dump, None, path, "posix", SchedApplyMode::Warn)
-                .expect("legacy toml derives via bridge + manual mapper");
-
-            match derived.provenance.get("/fast_node").expect("fast_node") {
-                Provenance::Derived { mapper, fact } => {
-                    assert_eq!(mapper, "manual");
-                    assert_eq!(fact, "tier 'rt' → prio 20");
-                }
-                other => panic!("expected Derived, got {other:?}"),
-            }
-
-            let resolved = ResolvedPlatformFile {
-                path: path.to_path_buf(),
-                channel: PlatformFileChannel::Explicit,
-            };
-            let text = render_explain(&derived, &resolved, None);
-            assert!(
-                text.contains("derived(manual: tier 'rt' → prio 20)"),
-                "{text}"
-            );
-            assert!(
-                !text.contains("assigned by"),
-                "redundant mapper-name wording must be gone: {text}"
-            );
-        });
-    }
 
     #[test]
     fn provenance_marks_override_derived_and_default() {

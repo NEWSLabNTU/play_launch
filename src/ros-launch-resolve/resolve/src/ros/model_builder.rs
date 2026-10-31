@@ -26,12 +26,10 @@ use crate::ros::{
 
 /// Scheduling inputs for the execution layer.
 pub struct SchedInputs<'a> {
-    /// The derived, override-applied, flattened plan.
+    /// The derived, override-applied, flattened plan. Tier definitions are
+    /// synthesized from it (the legacy bridge that declared them is gone,
+    /// rlm v0.3.0).
     pub derived: &'a DerivedSchedPlan,
-    /// Declared tier table when the platform file carried one (legacy
-    /// `system.toml` bridge); `None` for mapper-derived plans, where tier
-    /// definitions are synthesized from the resolved table.
-    pub declared_tiers: Option<BTreeMap<String, TierDef>>,
 }
 
 /// rlm v0.1.63 -- a mode override's target in the model's own keys, keyed
@@ -1728,6 +1726,31 @@ pub fn build_system_model(
                     .get(&h.scope_id)
                     .map(|r| value_sources(&r.manifest, &format!("hazards.{}", h.name)))
                     .unwrap_or_default(),
+                // Phase 85 D4: the route the checker charged per rung, in
+                // ladder order, so an image's route monitor judges the same
+                // quantity. Skipped rungs (the fault removes them) and the
+                // supervised-overrun rows are not rungs the hazard runs.
+                rungs: index
+                    .budgets
+                    .iter()
+                    .filter(|b| b.scope_id == h.scope_id && b.hazard == h.name)
+                    .filter_map(|b| {
+                        let role = match b.role {
+                            super::manifest_loader::RungRole::Rung => model::RungRole::Rung,
+                            super::manifest_loader::RungRole::Window => model::RungRole::Window,
+                            super::manifest_loader::RungRole::Floor => model::RungRole::Floor,
+                            super::manifest_loader::RungRole::Skipped
+                            | super::manifest_loader::RungRole::Overrun => return None,
+                        };
+                        Some(model::RungRoute {
+                            rung: b.rung.clone(),
+                            role,
+                            route_ms: b.route_ms,
+                            starts_at: b.route_from.clone(),
+                            output: b.route_output.clone(),
+                        })
+                    })
+                    .collect(),
             },
         );
     }
@@ -1844,10 +1867,7 @@ pub fn build_system_model(
     // --- execution ---------------------------------------------------------
     let mut execution = model::Execution::default();
     if let Some(s) = sched {
-        execution.tiers = s
-            .declared_tiers
-            .clone()
-            .unwrap_or_else(|| synthesize_tiers(s.derived));
+        execution.tiers = synthesize_tiers(s.derived);
         for t in &s.derived.plan.tiers {
             if t.name == DEFAULT_TIER {
                 continue;

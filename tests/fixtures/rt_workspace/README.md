@@ -30,13 +30,13 @@ rt_workspace/
 ├── contracts/rt_demo/launch/
 │   ├── bringup.contract.yaml                 # user overlay: tightens control_node's max_age_ms
 │   └── bringup.system.posix.yaml             # user overlay: tweaks the provider's band + control_node's pin
-└── system.toml                                # legacy bridge: hand-written tiers (kept as the living bridge test)
+└── manual.system.posix.yaml                   # explicit `manual` platform file: placement by overrides only
 ```
 
 `/perception` namespace: `sensor_node` + `perception_container` (loading
 `filter_component`). `/control` namespace: `control_node` — pinned by an
-explicit `overrides:` entry (mirrors the legacy `system.toml`'s hand-written
-FIFO 20 / core 0 outcome, reached a different way).
+explicit `overrides:` entry (the same FIFO 20 / core 0 placement
+`manual.system.posix.yaml` states, reached a different way).
 
 ## The `points_to_cmd` chain (Phase 44.5)
 
@@ -121,7 +121,7 @@ way.
 
 ```bash
 just run-derived   # v2: no --sched — channel resolution finds the provider platform file
-just run           # legacy bridge: explicit --sched system.toml
+just run           # explicit --sched manual.system.posix.yaml
 ```
 
 Both launch in warn mode (no root or `setcap` required — the
@@ -162,11 +162,12 @@ Five cases, all expected to exit 0:
    overlay's `bringup.system.posix.yaml` (wider band, different
    `control_node` pin) wins over the provider sidecar for the same
    `(stem, target)`.
-4. **Legacy bridge**: `--sched system.toml` (the `manual` mapper via the
-   `.toml` extension dispatch) — kept passing as the living bridge test.
-5. **Legacy bridge + contract overlay**: same `system.toml`, but
-   `--contracts contracts` layers the user's *contract* (not platform file —
-   `system.toml` is passed explicitly and always wins its own channel)
+4. **`manual` mapper**: `--sched manual.system.posix.yaml`, which derives
+   nothing; its `overrides:` are the whole schedule. It replaced the legacy
+   `system.toml`, whose schema and `.toml` bridge were removed in rlm v0.3.0.
+5. **`manual` + contract overlay**: the same file, with
+   `--contracts contracts` layering the user's *contract* (not platform file
+   — the platform file is passed explicitly and always wins its own channel)
    on top.
 
 ```bash

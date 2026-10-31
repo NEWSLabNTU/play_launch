@@ -20,7 +20,7 @@ resources:
   isolated_cpus: [0]
 
 overrides:
-  # Mirrors system.toml's [[assign]] tier="control" outcome (FIFO 20, core 0)
+  # Mirrors manual.system.posix.yaml's control_node placement (FIFO 20, core 0)
   # as an explicit pin — overrides always beat the derived value (design
   # doc §3.1, §6).
   control_node: { priority: 20, core: 0 }

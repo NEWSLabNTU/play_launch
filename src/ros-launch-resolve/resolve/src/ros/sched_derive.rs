@@ -18,7 +18,7 @@ use ros_launch_manifest_types::OptBound;
 use std::collections::{BTreeMap, BTreeSet};
 
 use ros_launch_manifest_derive::{DeriveFacts, DeriveReport, mapper_input_from_model};
-use ros_launch_manifest_sched::{Criticality, MapperInput, SystemSched};
+use ros_launch_manifest_sched::{Criticality, MapperInput};
 
 use crate::ros::{launch_dump::LaunchDump, manifest_loader::ManifestIndex};
 
@@ -28,25 +28,13 @@ use crate::ros::{launch_dump::LaunchDump, manifest_loader::ManifestIndex};
 /// platform file's per-node budgets as [`DeriveFacts`]. This is the one
 /// entry `derive_sched_plan` calls; the [`DeriveReport`] names what the
 /// model could not say.
-///
-/// `legacy` is set afterwards, as the crate documents: only the `.toml`
-/// bridge's `manual` mapper reads it.
 pub fn mapper_input_via_model(
     dump: &LaunchDump,
     index: Option<&ManifestIndex>,
-    legacy: Option<SystemSched>,
     budgets: &BTreeMap<String, u64>,
 ) -> (MapperInput, DeriveReport) {
     let model = pre_sched_model(dump, index);
-    let (mut input, report) = mapper_input_from_model(&model, &derive_facts_from_budgets(budgets));
-    input.legacy = legacy;
-    // `MapperNode::scope` carries the node's NAMESPACE, which is what the
-    // `manual` mapper's `[[assign]] scope = "/perception"` selector matches
-    // (`ros_launch_manifest_sched::resolve::scope_selector_matches`). It used
-    // to be the model's FILE-SCOPE key, and this function patched it back on
-    // the way out; rlm v0.1.40 (issue 52 R5) derives it in the crate, so the
-    // patch is gone and the derivation is read through unchanged.
-    (input, report)
+    mapper_input_from_model(&model, &derive_facts_from_budgets(budgets))
 }
 
 /// The model the derivation reads: structure and contracts of `dump` under
@@ -201,7 +189,7 @@ mod tests {
     #[test]
     fn no_index_gives_bare_records() {
         let dump = dump_with_two_nodes();
-        let (input, _) = mapper_input_via_model(&dump, None, None, &BTreeMap::new());
+        let (input, _) = mapper_input_via_model(&dump, None, &BTreeMap::new());
         assert_eq!(input.nodes.len(), 2);
         for n in &input.nodes {
             assert_eq!(n.rate_hz, None);
@@ -209,7 +197,6 @@ mod tests {
             assert_eq!(n.criticality, None);
             assert_eq!(n.path_budget_ms, None);
         }
-        assert!(input.legacy.is_none());
     }
 
     /// Phase 78: a node's rate is its fastest timer trigger. The topic's
@@ -366,7 +353,7 @@ mod tests {
             scope_id: 0,
         });
 
-        let (input, _) = mapper_input_via_model(&dump, Some(&index), None, &BTreeMap::new());
+        let (input, _) = mapper_input_via_model(&dump, Some(&index), &BTreeMap::new());
         let talker = input.nodes.iter().find(|n| n.name == "/talker").unwrap();
         assert_eq!(talker.path_budget_ms, Some(10.0));
         assert_eq!(talker.deadline_us, Some(10_000));
@@ -406,7 +393,7 @@ mod tests {
             .manifests
             .insert(0, empty_resolved_manifest(0, manifest));
 
-        let (input, _) = mapper_input_via_model(&dump, Some(&index), None, &BTreeMap::new());
+        let (input, _) = mapper_input_via_model(&dump, Some(&index), &BTreeMap::new());
         let talker = input.nodes.iter().find(|n| n.name == "/talker").unwrap();
         assert_eq!(talker.criticality, Some(Criticality::High));
 
@@ -465,7 +452,7 @@ mod tests {
             });
         }
 
-        let (input, _) = mapper_input_via_model(&dump, Some(&index), None, &budgets);
+        let (input, _) = mapper_input_via_model(&dump, Some(&index), &budgets);
 
         let talker = input.nodes.iter().find(|n| n.name == "/talker").unwrap();
         assert_eq!(
@@ -522,7 +509,7 @@ mod tests {
             scope_id: 0,
         });
 
-        let (input, _) = mapper_input_via_model(&dump, Some(&index), None, &BTreeMap::new());
+        let (input, _) = mapper_input_via_model(&dump, Some(&index), &BTreeMap::new());
         let talker = input.nodes.iter().find(|n| n.name == "/talker").unwrap();
         assert_eq!(talker.paths.len(), 2);
 
@@ -683,7 +670,7 @@ mod tests {
     /// The chains the crate resolves over this file's two-node dump under
     /// `index`, as `derive_sched_plan` sees them.
     fn chains_of(index: &ManifestIndex, budgets: &BTreeMap<String, u64>) -> Vec<ResolvedChain> {
-        mapper_input_via_model(&dump_with_two_nodes(), Some(index), None, budgets)
+        mapper_input_via_model(&dump_with_two_nodes(), Some(index), budgets)
             .0
             .chains
     }
@@ -903,7 +890,7 @@ mod tests {
         index: &ManifestIndex,
         budgets: &BTreeMap<String, u64>,
     ) -> (MapperInput, String) {
-        let (input, report) = mapper_input_via_model(dump, Some(index), None, budgets);
+        let (input, report) = mapper_input_via_model(dump, Some(index), budgets);
         assert!(
             report.paths_without_trigger.is_empty(),
             "{name}: the model built in-process carries a trigger on every path: {:?}",

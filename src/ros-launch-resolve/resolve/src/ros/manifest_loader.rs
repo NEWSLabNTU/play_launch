@@ -362,6 +362,14 @@ pub struct RungBudget {
     /// How ROUTE divides into the guard edge's link and the path hops, when
     /// a link is charged (phase 85 I1). Empty when none is.
     pub route_note: String,
+    /// The node whose detection starts ROUTE (the walk's first hop), and the
+    /// topics it ends on (the rung's reaction scope path's outputs), so the
+    /// model can say what a runtime route monitor stamps (phase 85 D4).
+    pub route_from: Option<String>,
+    pub route_output: Vec<String>,
+    /// The hazard's scope, so the model files the row under the right
+    /// hazard when two contracts name one alike.
+    pub scope_id: usize,
 }
 
 /// A stated budget in a contract (phase 10 B7): the scope whose manifest
@@ -4058,6 +4066,12 @@ fn check_fault_reaction(
                 rung_terms.push((h.scope_id, format!("modes.{rung_name}.window")));
                 let row = budgets.len();
                 budgets.push(RungBudget {
+                    route_from: walk
+                        .as_ref()
+                        .and_then(|w| w.hops.first())
+                        .map(|hop| hop.node.clone()),
+                    route_output: rp.output_topics.clone(),
+                    scope_id: h.scope_id,
                     hazard: h.name.clone(),
                     rung: rung_name.clone(),
                     role: RungRole::Window,
@@ -4122,6 +4136,12 @@ fn check_fault_reaction(
             let waited = windows_ms(&windows);
             let total = fdti + waited + route_ms + settle_ms;
             budgets.push(RungBudget {
+                route_from: walk
+                    .as_ref()
+                    .and_then(|w| w.hops.first())
+                    .map(|hop| hop.node.clone()),
+                route_output: rp.output_topics.clone(),
+                scope_id: h.scope_id,
                 hazard: h.name.clone(),
                 rung: rung_name.clone(),
                 role: RungRole::Rung,
@@ -4405,6 +4425,12 @@ fn check_fault_reaction(
         ]
         .concat();
         budgets.push(RungBudget {
+            route_from: walk
+                .as_ref()
+                .and_then(|w| w.hops.first())
+                .map(|hop| hop.node.clone()),
+            route_output: reaction.output_topics.clone(),
+            scope_id: h.scope_id,
             hazard: h.name.clone(),
             rung: floor_name.clone(),
             role: RungRole::Floor,
@@ -8018,7 +8044,6 @@ mod tests {
         let (input, _) = crate::ros::sched_derive::mapper_input_via_model(
             &dump,
             Some(&index),
-            None,
             &std::collections::BTreeMap::new(),
         );
         let node = input
@@ -8127,7 +8152,6 @@ mod tests {
         let (input, _) = crate::ros::sched_derive::mapper_input_via_model(
             &dump,
             Some(&index),
-            None,
             &std::collections::BTreeMap::new(),
         );
         let node = input

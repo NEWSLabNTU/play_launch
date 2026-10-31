@@ -6,6 +6,25 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Removed (scheduling; rlm v0.3.0):** the legacy `system.toml`
+  scheduling schema (`[tiers.*]` with `[[assign]]` rules) and its `.toml`
+  bridge (phase 41.6, deprecated since phase 41). **A `.toml` platform file
+  is refused** with a message naming the v2 form: `mapper: manual`, which
+  now derives nothing, so its `overrides:` are the whole schedule. An
+  override places a node in a tier of its own name.
+- **Removed (scheduling; rlm v0.3.0):** the duration aliases
+  (`budget_us`, `deadline_us`, `period_us`, `spin_period_us`,
+  `time_slice_us`, `rr_timeslice_us`) and the bare-number leniency
+  (phase 63 W6). **A platform file must write `budget: 8ms`**, not
+  `budget_us: 8000`. A model saved by an older play_launch still loads.
+- **Added (`resolve`; rlm v0.3.0):** each hazard in the model carries its
+  rungs: per rung the route the checker charged (`route_ms`), the node
+  that starts it and the topics it ends on (phase 85 D4), the same numbers
+  as `check --explain`'s ROUTE column. An image can monitor the route
+  instead of one dispatch.
+
 ## 0.21.0 - 2026-10-30
 
 - **Fixed (Rust parser, #0078):** `nav2_bringup`'s launch files on Jazzy

@@ -1,0 +1,14 @@
+# Explicit platform file for the rt_workspace fixture, passed with
+# `--sched manual.system.posix.yaml`. `mapper: manual` derives nothing, so
+# the overrides below are the whole schedule: the hand-placed tiers the
+# legacy `system.toml` used to state (control at FIFO 20 on cpu 0, the
+# /perception namespace at FIFO 10). The `.toml` schema and its bridge were
+# removed in rlm v0.3.0 (play_launch phase 41.6); this file is its v2 form.
+target: posix
+mapper: manual
+
+overrides:
+  control_node: { priority: 20, sched_class: SCHED_FIFO, core: 0 }
+  sensor_node: { priority: 10, sched_class: SCHED_FIFO }
+  perception_container: { priority: 10, sched_class: SCHED_FIFO }
+  filter_component: { priority: 10, sched_class: SCHED_FIFO }

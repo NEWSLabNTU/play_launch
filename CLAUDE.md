@@ -126,7 +126,7 @@ The parser includes an optional IR layer (`--features ir` on the parser crate) t
 
 ### Scheduling Spec
 
-- **Scheduling spec** (the `ros-launch-manifest` repo's `sched/` crate, a git dependency — see Repository Layout): portable scheduling schema shared with nano-ros. **Phase 41 v2 model (current default)**: a `<stem>.system.<target>.yaml` platform file names a `SchedMapper` (`rate_monotonic`, `deadline_monotonic`, or `manual`) that **derives** per-node priorities from launch+contract facts (rates/deadlines/`criticality`); `resources` supplies platform facts (e.g. `rt_priority_band`), `overrides` pins specific nodes (always beats derived). Platform files ship through the same provider-sidecar + user-overlay **channels** as contracts (Phase 40): `--sched <path>` explicit > overlay (`--contracts`/`$PLAY_LAUNCH_CONTRACTS`/XDG/`/etc`) > provider sidecar next to the launch file — auto-applied at `launch`/`run`/`up` when `--sched` is absent. `play_launch check --sched --explain` prints the merged plan with per-node provenance (override/derived/default); `play_launch contract eject <pkg> <file>` copies the resolved provider contract+platform file into the overlay tree for editing, and `play_launch contract capture <run-dir> --model <m.yaml>` writes a first contract's STRUCTURE from a recorded run for a system that has none (issue #0044) — both print or copy, neither invents a requirement (both verbs also exist on the developer-only `ros-launch-resolve` binary — same `ros_launch_resolve::verbs::*` implementation, two thin CLI wrappers). **Legacy bridge**: `system.toml` (hand-written `[tiers.X.<target>]` + `[[assign]]`) still parses via `.toml`-extension dispatch to the `manual` mapper — deprecated but supported until nano-ros migrates (Phase 41.6, not yet scheduled); `--sched-apply off|warn|strict` unchanged (Phase 38: the apply sweep covers every TID, delegated to the CAP_SYS_NICE `play_launch_rt_helper` so `play_launch` itself stays unprivileged). User guide: `docs/guide/rt-scheduling.md`; schema (v1+v2): the manifest repo's `docs/scheduling.md`; design of record: `docs/superpowers/specs/2026-07-16-rt-config-v2-design.md`.
+- **Scheduling spec** (the `ros-launch-manifest` repo's `sched/` crate, a git dependency — see Repository Layout): portable scheduling schema shared with nano-ros. **Phase 41 v2 model (current default)**: a `<stem>.system.<target>.yaml` platform file names a `SchedMapper` (`rate_monotonic`, `deadline_monotonic`, or `manual`) that **derives** per-node priorities from launch+contract facts (rates/deadlines/`criticality`); `resources` supplies platform facts (e.g. `rt_priority_band`), `overrides` pins specific nodes (always beats derived). Platform files ship through the same provider-sidecar + user-overlay **channels** as contracts (Phase 40): `--sched <path>` explicit > overlay (`--contracts`/`$PLAY_LAUNCH_CONTRACTS`/XDG/`/etc`) > provider sidecar next to the launch file — auto-applied at `launch`/`run`/`up` when `--sched` is absent. `play_launch check --sched --explain` prints the merged plan with per-node provenance (override/derived/default); `play_launch contract eject <pkg> <file>` copies the resolved provider contract+platform file into the overlay tree for editing, and `play_launch contract capture <run-dir> --model <m.yaml>` writes a first contract's STRUCTURE from a recorded run for a system that has none (issue #0044) — both print or copy, neither invents a requirement (both verbs also exist on the developer-only `ros-launch-resolve` binary — same `ros_launch_resolve::verbs::*` implementation, two thin CLI wrappers). **The legacy `system.toml` scheduling schema is gone** (phase 41.6, rlm v0.3.0): a `.toml` platform file is refused naming the v2 form, and `mapper: manual` derives nothing, so a v2 file's `overrides:` are the whole schedule (nano-ros's own `system.toml` is a different format; its `[tiers.*]` still reach rlm through `--system` as `sched::TierDef`); `--sched-apply off|warn|strict` unchanged (Phase 38: the apply sweep covers every TID, delegated to the CAP_SYS_NICE `play_launch_rt_helper` so `play_launch` itself stays unprivileged). User guide: `docs/guide/rt-scheduling.md`; schema: the manifest repo's `docs/scheduling.md`; design of record: `docs/superpowers/specs/2026-07-16-rt-config-v2-design.md`.
 - **Phase 60 — the full Linux policy surface.** The apply layer is
   `sched_setattr(2)`, not `sched_setscheduler(2)`: the latter cannot express
   `SCHED_DEADLINE`, uclamp, or any `sched_flags` value. `libc` has neither the
@@ -140,10 +140,10 @@ The parser includes an optional IR layer (`--features ir` on the parser crate) t
     `core` remain for one release. An unknown `sched_class` is now an **error**
     — it used to become `SCHED_OTHER` silently.
   - **Override vocabulary**: `cpus`, `nice`, `uclamp_min`/`uclamp_max`,
-    `budget_us`. `reservations: off|required` sits beside `mapper:` (policy,
+    `budget` (with a unit). `reservations: off|required` sits beside `mapper:` (policy,
     not a platform fact); `resources.rr_timeslice_us` is the host's global
     `SCHED_RR` slice.
-  - **Cost is authorable, and a deadline is never a cost.** `budget_us` is the
+  - **Cost is authorable, and a deadline is never a cost.** `budget` is the
     only source for a reservation's runtime. `resolve_chains` used to fill a
     boundary's `exec_ms` with the path's `max_latency_ms` — its *deadline* —
     which is why no execution time existed anywhere in the model. Absent a
@@ -152,7 +152,7 @@ The parser includes an optional IR layer (`--features ir` on the parser crate) t
     regression test fails if a deadline is ever read as a cost again.
   - **`SCHED_DEADLINE`** is derived in `ros-launch-resolve`'s `sched_loader`
     (it needs the reservations mode, the budgets, and which nodes are
-    containers — none visible to the mapper): runtime from `budget_us`, period
+    containers — none visible to the mapper): runtime from `budget`, period
     from `1/rate_hz` propagated along a chain from its source, deadline
     declared-else-period. All-or-nothing within the RT band, scoped to nodes
     carrying a timing fact, **containers exempt** — every launch with
@@ -555,7 +555,7 @@ add `src/ros-launch-resolve` to `members`. `just check-layer2-isolation`
 boundary breaks: no ROS crates in the graph, no ROS shared libraries linked,
 and both launch frontends resolve with no ROS installed.
 
-**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.2.2`), not a
+**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.3.0`), not a
 submodule — phase-55 W2. Layer 2 now has no submodules at all. **Three**
 manifests name the tag and must move together:
 `src/play_launch/Cargo.toml`, `src/ros-launch-resolve/Cargo.toml` and
@@ -696,6 +696,20 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-10-31**: **The nano-ros seams close** (phase 96, rlm v0.3.0).
+  The legacy `system.toml` scheduling schema and its `.toml` bridge are
+  removed (phase 41.6), and with them every `_us`/`_ms` duration alias and
+  the bare-number leniency (phase 63 W6): a duration is written with a
+  unit everywhere (`budget: 8ms`), and a bare number asks for one. The
+  model carries each hazard's rungs (phase 85 D4: `rungs[]` with the route
+  the checker charged, its first node and output topics), so an image can
+  monitor the same quantity. Three things a later change must keep: an
+  authored file is refused, but a MODEL is read backward-compatibly
+  (`SystemModel::from_yaml_str` rewrites legacy `execution.tiers` keys
+  before the typed read); `manual` is now overrides-only, and an override
+  places a node in a tier of its own name; and nano-ros mirrors rlm's tier
+  types, so a change to them is a nano-ros change too.
 
 - **2026-10-27**: **A contract reads its numbers from the launch tree**
   (phase 94, rlm v0.2.4; `ros/contract_values.rs`). `$(param …) <unit>`,

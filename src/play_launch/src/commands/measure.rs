@@ -454,7 +454,7 @@ fn render(results: &[PathResult], run: &Run, events_path: &Path, model_path: &Pa
             .count();
         if measured_paths > 1 {
             body.push_str(
-                "    # budget_us is the SUM of the per-path maxima: this node has more than one\n\
+                "    # budget is the SUM of the per-path maxima: this node has more than one\n\
                  \x20   # measurable path and a trace cannot say whether they fire in the same\n\
                  \x20   # period. Conservative; split it if you know better.\n",
             );

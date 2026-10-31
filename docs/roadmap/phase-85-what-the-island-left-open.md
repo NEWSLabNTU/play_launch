@@ -632,9 +632,9 @@ rlm commits on its `main`: D3 `356383c`, D1 `957075d`, D5 `7936317`, D7
   The derivation would stay the max over hazards and print the bound as
   a justification. No work until the WG rules on decomposition.
 
-Still open (2026-10-27): D2 (service-contracts design, unscheduled), D4
-(waits on nano-ros 474 D3), D10 (waits on the WG). D7's provenance and D9
-are phase 94. And the island's own move (phase 9 W5: call_mrm 206 -> 149, and the link re-sized
+Still open (2026-10-31): D4 (route versus callback), D10 (waits on the
+WG). D2 is phase 95 (released in 0.21.0), D7's provenance and D9 are
+phase 94. And the island's own move (phase 9 W5: call_mrm 206 -> 149, and the link re-sized
 from 57 to about 81 ms).
 
 ## After 0.15.1: D1's two missing charges (branch `fix/timer-jitter-detection`)

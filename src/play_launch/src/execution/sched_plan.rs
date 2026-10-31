@@ -128,8 +128,8 @@ fn applied_from_tier(
 }
 
 impl SchedPlan {
-    /// Parse the scheduling platform file at `sched_path` (v2 `.yaml` or
-    /// legacy `.toml`, dispatched by extension), run the full
+    /// Parse the scheduling platform file at `sched_path` (v2 `.yaml`; a
+    /// legacy `.toml` is refused since rlm v0.3.0), run the full
     /// derive→override→validate pipeline
     /// (`ros_launch_resolve::ros::sched_loader::derive_sched_plan`) for `target`, and invert the
     /// resulting tier membership into a per-FQN lookup.
@@ -619,9 +619,9 @@ mod tests {
     /// (e.g. an `assert!`/`expect` failure partway through a test body) —
     /// unlike a manual `remove_file` call after `f(&path)`, which is skipped
     /// entirely if `f` unwinds.
-    struct TempTomlGuard(std::path::PathBuf);
+    struct TempFileGuard(std::path::PathBuf);
 
-    impl Drop for TempTomlGuard {
+    impl Drop for TempFileGuard {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);
         }
@@ -629,36 +629,31 @@ mod tests {
 
     /// Write `contents` to a unique temp file, run `f` with its path, then remove it
     /// (even if `f` panics).
-    fn with_temp_toml<F: FnOnce(&Path)>(contents: &str, f: F) {
+    fn with_temp_yaml<F: FnOnce(&Path)>(contents: &str, f: F) {
         let path = std::env::temp_dir().join(format!(
-            "play_launch_sched_plan_test_{}_{}.toml",
+            "play_launch_sched_plan_test_{}_{}.system.posix.yaml",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
-        std::fs::write(&path, contents).expect("write temp toml");
-        let guard = TempTomlGuard(path);
+        std::fs::write(&path, contents).expect("write temp platform file");
+        let guard = TempFileGuard(path);
         f(&guard.0);
     }
 
     #[test]
     fn resolves_regular_node_and_composable_into_applied_tier_with_no_warning() {
         let dump = dump_with_node_and_composable();
-        let toml = r#"
-[tiers.control]
-class = "real_time"
-
-[tiers.control.posix]
-priority = 80
-sched_class = "SCHED_FIFO"
-
-[[assign]]
-tier = "control"
-nodes = ["/control/ndt_localizer", "/control/my_node"]
+        let yaml = r#"
+target: posix
+mapper: manual
+overrides:
+  "/control/ndt_localizer": { priority: 80, sched_class: SCHED_FIFO }
+  "/control/my_node": { priority: 80, sched_class: SCHED_FIFO }
 "#;
-        with_temp_toml(toml, |path| {
+        with_temp_yaml(yaml, |path| {
             let plan = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Warn)
                 .expect("build plan");
 
@@ -667,7 +662,8 @@ nodes = ["/control/ndt_localizer", "/control/my_node"]
                 .expect("regular node should be in plan");
             assert_eq!(applied.policy, SchedPolicy::Fifo);
             assert_eq!(applied.priority, 80);
-            assert_eq!(applied.tier_name, "control");
+            // An override places the node in a tier of its own name.
+            assert_eq!(applied.tier_name, "/control/ndt_localizer");
 
             // Composables are now scheduled like any other member (phase
             // 38.9): present in the plan, no "not applied" warning.
@@ -688,9 +684,9 @@ nodes = ["/control/ndt_localizer", "/control/my_node"]
     #[test]
     fn unassigned_node_in_default_tier_has_no_applied_entry() {
         let dump = dump_with_node_and_composable();
-        // No [[assign]] rules at all: everything lands in the synthesized default tier.
-        let toml = "";
-        with_temp_toml(toml, |path| {
+        // No overrides: `manual` derives nothing, so everything lands in the default tier.
+        let yaml = "target: posix\nmapper: manual\n";
+        with_temp_yaml(yaml, |path| {
             let plan = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Off)
                 .expect("build plan");
             assert!(plan.for_fqn("/control/ndt_localizer").is_none());
@@ -701,19 +697,13 @@ nodes = ["/control/ndt_localizer", "/control/my_node"]
     #[test]
     fn rejects_rt_priority_zero_at_build_time() {
         let dump = dump_with_node_and_composable();
-        let toml = r#"
-[tiers.control]
-class = "real_time"
-
-[tiers.control.posix]
-priority = 0
-sched_class = "SCHED_FIFO"
-
-[[assign]]
-tier = "control"
-nodes = ["/control/ndt_localizer"]
+        let yaml = r#"
+target: posix
+mapper: manual
+overrides:
+  "/control/ndt_localizer": { priority: 0, sched_class: SCHED_FIFO }
 "#;
-        with_temp_toml(toml, |path| {
+        with_temp_yaml(yaml, |path| {
             // Strict/Warn/Off all validate the same: a malformed spec is a
             // spec bug, not a runtime condition, so `build` errors uniformly
             // regardless of mode. Using `Warn` here is representative.
@@ -733,19 +723,13 @@ nodes = ["/control/ndt_localizer"]
         // nonsensical and must be rejected — guards against validating the
         // narrowed value instead of the authored one.
         let dump = dump_with_node_and_composable();
-        let toml = r#"
-[tiers.control]
-class = "real_time"
-
-[tiers.control.posix]
-priority = 4294967316
-sched_class = "SCHED_FIFO"
-
-[[assign]]
-tier = "control"
-nodes = ["/control/ndt_localizer"]
+        let yaml = r#"
+target: posix
+mapper: manual
+overrides:
+  "/control/ndt_localizer": { priority: 4294967316, sched_class: SCHED_FIFO }
 "#;
-        with_temp_toml(toml, |path| {
+        with_temp_yaml(yaml, |path| {
             let _ = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Warn)
                 .expect_err("i64 priority 2^32+20 must be rejected, not truncated to 20");
         });
@@ -754,19 +738,13 @@ nodes = ["/control/ndt_localizer"]
     #[test]
     fn rejects_rt_priority_above_range_at_build_time() {
         let dump = dump_with_node_and_composable();
-        let toml = r#"
-[tiers.control]
-class = "real_time"
-
-[tiers.control.posix]
-priority = 100
-sched_class = "SCHED_FIFO"
-
-[[assign]]
-tier = "control"
-nodes = ["/control/ndt_localizer"]
+        let yaml = r#"
+target: posix
+mapper: manual
+overrides:
+  "/control/ndt_localizer": { priority: 100, sched_class: SCHED_FIFO }
 "#;
-        with_temp_toml(toml, |path| {
+        with_temp_yaml(yaml, |path| {
             let err = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Strict)
                 .expect_err("priority 100 should be rejected at build time");
             let msg = err.to_string();
@@ -781,19 +759,13 @@ nodes = ["/control/ndt_localizer"]
     fn rejects_core_beyond_available_cpus_at_build_time() {
         let dump = dump_with_node_and_composable();
         // 999 is far beyond any real machine's CPU count.
-        let toml = r#"
-[tiers.control]
-class = "real_time"
-
-[tiers.control.posix]
-priority = 20
-core = 999
-
-[[assign]]
-tier = "control"
-nodes = ["/control/ndt_localizer"]
+        let yaml = r#"
+target: posix
+mapper: manual
+overrides:
+  "/control/ndt_localizer": { priority: 20, core: 999 }
 "#;
-        with_temp_toml(toml, |path| {
+        with_temp_yaml(yaml, |path| {
             // Off mode also errors — validation is unconditional on mode,
             // since a bad core is a spec bug regardless of whether apply is
             // even attempted.
@@ -810,20 +782,13 @@ nodes = ["/control/ndt_localizer"]
     #[test]
     fn valid_tier_builds_successfully() {
         let dump = dump_with_node_and_composable();
-        let toml = r#"
-[tiers.control]
-class = "real_time"
-
-[tiers.control.posix]
-priority = 20
-sched_class = "SCHED_FIFO"
-core = 0
-
-[[assign]]
-tier = "control"
-nodes = ["/control/ndt_localizer"]
+        let yaml = r#"
+target: posix
+mapper: manual
+overrides:
+  "/control/ndt_localizer": { priority: 20, sched_class: SCHED_FIFO, core: 0 }
 "#;
-        with_temp_toml(toml, |path| {
+        with_temp_yaml(yaml, |path| {
             let plan = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Strict)
                 .expect("valid tier (prio 20, core 0) should build fine");
             let applied = plan
@@ -831,34 +796,6 @@ nodes = ["/control/ndt_localizer"]
                 .expect("node should be in plan");
             assert_eq!(applied.priority, 20);
             assert_eq!(applied.cpus, Some(CpuSet::single(0)));
-        });
-    }
-
-    #[test]
-    fn time_triggered_tier_warns() {
-        let dump = dump_with_node_and_composable();
-        let toml = r#"
-[tiers.periodic]
-class = "time_triggered"
-period_us = 10000
-
-[tiers.periodic.posix]
-priority = 50
-
-[[assign]]
-tier = "periodic"
-nodes = ["/control/ndt_localizer"]
-"#;
-        with_temp_toml(toml, |path| {
-            let plan = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Warn)
-                .expect("build plan");
-            assert!(
-                plan.warnings
-                    .iter()
-                    .any(|w| w.contains("time_triggered") && w.contains("periodic")),
-                "expected a time_triggered warning, got: {:?}",
-                plan.warnings
-            );
         });
     }
 }
@@ -902,6 +839,23 @@ mod model_tests {
         assert_eq!(t.cpus, Some(CpuSet::single(0)));
         assert_eq!(t.tier_name, "ctrl");
         assert!(matches!(t.policy, SchedPolicy::Fifo));
+    }
+
+    /// A `time_triggered` tier reaches the plan only through a model's
+    /// `execution.tiers` since the legacy `.toml` bridge is gone (rlm
+    /// v0.3.0); it is applied as its placement says and warned about.
+    #[test]
+    fn from_model_time_triggered_tier_warns() {
+        let mut m = model_with_binding(true);
+        m.execution.tiers.get_mut("ctrl").unwrap().class = Some("time_triggered".to_string());
+        let plan = SchedPlan::from_model(&m, "posix", SchedApplyMode::Warn).expect("plan");
+        assert!(
+            plan.warnings
+                .iter()
+                .any(|w| w.contains("time_triggered") && w.contains("ctrl")),
+            "expected a time_triggered warning, got: {:?}",
+            plan.warnings
+        );
     }
 
     #[test]

@@ -127,7 +127,7 @@ fn dump_parity_bringup() {
 
 // ---- `check` (contracts + --sched) ----
 
-/// `ros-launch-resolve check --sched system.toml rt_demo bringup.launch.xml`
+/// `ros-launch-resolve check --sched manual.system.posix.yaml rt_demo bringup.launch.xml`
 /// (provider-sidecar-only channel) must exit 0 and report the provider
 /// sidecar was loaded (`[0 overlay, 1 provider]`).
 #[test]
@@ -136,10 +136,10 @@ fn check_provider_sidecar_passes() {
         return;
     }
     let env = fixtures::rt_workspace_env();
-    let sched = fixture_dir().join("system.toml");
+    let sched = fixture_dir().join("manual.system.posix.yaml");
     assert!(
         sched.is_file(),
-        "system.toml not found: {}",
+        "manual.system.posix.yaml not found: {}",
         sched.display()
     );
 
@@ -172,7 +172,7 @@ fn check_provider_sidecar_passes() {
     );
 }
 
-/// `ros-launch-resolve check --contracts contracts --sched system.toml rt_demo
+/// `ros-launch-resolve check --contracts contracts --sched manual.system.posix.yaml rt_demo
 /// bringup.launch.xml` must exit 0 and report the overlay overrode the
 /// provider sidecar (`[1 overlay, 0 provider]`) — the actual proof the
 /// overlay resolution engaged (the `max_age_ms` diff itself isn't visible in
@@ -184,7 +184,7 @@ fn check_overlay_overrides_provider_sidecar() {
         return;
     }
     let env = fixtures::rt_workspace_env();
-    let sched = fixture_dir().join("system.toml");
+    let sched = fixture_dir().join("manual.system.posix.yaml");
     let contracts = fixture_dir().join("contracts");
     assert!(
         contracts.is_dir(),
@@ -230,7 +230,8 @@ fn check_overlay_overrides_provider_sidecar() {
 /// provider-sidecar channel (Phase 41.3) and print its provenance line, and
 /// derive with the v2 `chain_aware` mapper (Phase 44.5: switched from
 /// `rate_monotonic` as the showcase for the fixture's `points_to_cmd` chain)
-/// — not `manual`, proving the v2 file, not `system.toml`, was picked. Also
+/// — not `manual`, proving the provider sidecar, not the explicit `manual` file,
+/// was picked. Also
 /// asserts 0 manifest errors (deliverable 4a: the chain fixture must check
 /// clean).
 #[test]
@@ -610,7 +611,7 @@ fn check_target_zephyr_platform_file_parses_but_derive_is_posix_only() {
 
 // ---- sched-apply smoke ----
 
-/// Spawn `play_launch launch rt_demo bringup.launch.xml --sched system.toml
+/// Spawn `play_launch launch rt_demo bringup.launch.xml --sched manual.system.posix.yaml
 /// --sched-apply warn` and assert the apply path engages for the standalone
 /// nodes, the container, and the composable — tolerant of host privilege
 /// (reused pattern from `sched_apply.rs`): either the resolved-tier debug
@@ -622,7 +623,7 @@ fn sched_apply_warn_smoke_launch() {
         return;
     }
     let env = fixtures::rt_workspace_env();
-    let sched = fixture_dir().join("system.toml");
+    let sched = fixture_dir().join("manual.system.posix.yaml");
 
     let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let stdout_path = work_tmp.path().join("stdout.log");
@@ -722,7 +723,7 @@ fn sched_apply_warn_smoke_launch() {
 
 /// On a host with `CAP_SYS_NICE`/root, every thread of `control_node` must
 /// show `SCHED_FIFO` policy, priority 20, and cpu affinity `{0}` — the exact
-/// tier `system.toml` assigns it. Auto-skips on unprivileged hosts (the
+/// placement `manual.system.posix.yaml` overrides it to. Auto-skips on unprivileged hosts (the
 /// expected case here — no root/sudo steps are executed by this suite; see
 /// `justfile`'s `verify-sched-rt` recipe for the manual privileged-host
 /// version of this same check against `setcap`-granted `play_launch_rt_helper`).
@@ -740,7 +741,7 @@ fn per_tid_sched_fifo_launch_privileged_only() {
     }
 
     let env = fixtures::rt_workspace_env();
-    let sched = fixture_dir().join("system.toml");
+    let sched = fixture_dir().join("manual.system.posix.yaml");
 
     let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let mut cmd = fixtures::play_launch_cmd(&env);
@@ -833,7 +834,7 @@ fn per_tid_sched_fifo_launch_privileged_only() {
         .trim();
     assert_eq!(
         cpus_allowed_list, "0",
-        "expected control_node pinned to cpu 0 (system.toml core=0), got Cpus_allowed_list={cpus_allowed_list}"
+        "expected control_node pinned to cpu 0 (manual.system.posix.yaml core: 0), got Cpus_allowed_list={cpus_allowed_list}"
     );
 
     // _proc dropped here — ManagedProcess::drop kills the process group.
@@ -841,7 +842,7 @@ fn per_tid_sched_fifo_launch_privileged_only() {
 
 // ---- `resolve` (SystemModel emission, RFC-0050) ----
 
-/// `ros-launch-resolve resolve rt_demo bringup.launch.xml --sched system.toml`
+/// `ros-launch-resolve resolve rt_demo bringup.launch.xml --sched manual.system.posix.yaml`
 /// must emit a SystemModel whose three layers join on launch-side node
 /// FQNs: the contract endpoint keys and the sched bindings must reference
 /// nodes that exist in `structure.nodes`.
@@ -851,7 +852,7 @@ fn resolve_emits_joined_system_model() {
         return;
     }
     let env = fixtures::rt_workspace_env();
-    let sched = fixture_dir().join("system.toml");
+    let sched = fixture_dir().join("manual.system.posix.yaml");
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let out = tmp.path().join("system_model.yaml");
 

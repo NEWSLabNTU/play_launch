@@ -102,7 +102,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 92 | [One PyPI package](./phase-92-one-pypi-package.md) | ✅ Complete | — |
 | 93 | [Supervised budgets](./phase-93-supervised-budgets.md) | ✅ toolchain (0.18.0/0.18.1) | 2026-10-16 |
 | 94 | [Contract values read from the launch tree](./phase-94-contract-values.md) | ✅ (rlm v0.2.4) | 2026-10-27 |
-| 95 | [Service calls on a reaction route](./phase-95-service-calls-on-a-reaction-route.md) | ✅ (rlm v0.2.6; open decisions for evaluation) | 2026-10-27 |
+| 95 | [Service calls on a reaction route](./phase-95-service-calls-on-a-reaction-route.md) | ✅ (rlm v0.2.6; decisions taken 2026-10-30, released 0.21.0) | 2026-10-30 |
 
 ---
 
@@ -349,9 +349,12 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     `on_timeout`, `on_rejected`), a server `idempotent`/`stale_after`; the
     walk charges a call the worse of its success and failure branches, six
     `call-*` rules judge calls on a route, and the Health page reports
-    `call_unanswered` from new interception hooks. `call-unbounded` ships as
-    a warning (the island's floor crosses an unbounded call); five open
-    decisions stay for evaluation, with what the runs showed.
+    `call_unanswered` from new interception hooks. Decided at evaluation
+    (2026-10-30, released in 0.21.0): `call-unbounded` is an error where a
+    lower rung exists for `on_timeout:` to fall to, and
+    `call-unbounded-floor` a warning on a floor, where no timeout can bound
+    the call (the island's emergency stop); `call-deadlock` stays a
+    warning, `stale_after` a trusted fact, actions are deferred.
     [phase-95-service-calls-on-a-reaction-route.md](./phase-95-service-calls-on-a-reaction-route.md).
   - **Phase 94** - ✅ (rlm v0.2.4, 2026-10-27): contract values read
     from the launch tree. `$(param …) <unit>`, `$(var …) <unit>` and `$(let …)`
@@ -458,7 +461,8 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     charged on the guard edge), D1 (`jitter:`), D3 (`on_demand:`), D5
     (`rlm:` header), I6 (export v2), D7 (text); D2, D4, D8-D10 decided,
     not built; D6 (`check --against`) and I11 done 2026-10-26; D8
-    (`acknowledged:`, rlm v0.2.3) done 2026-10-26.
+    (`acknowledged:`, rlm v0.2.3) done 2026-10-26; D9 is phase 94 and D2
+    phase 95 (both done 2026-10-27).
     [phase-85-what-the-island-left-open.md](./phase-85-what-the-island-left-open.md).
   - **Phase 84** - complete: a window is a least time, and its notice is
     charged once (2026-09-29, rlm **v0.1.47**, text only). rlm said a

@@ -104,3 +104,7 @@ ftti_derived       # HazardContract (rlm v0.2.0, phase 91 E10): as
                    # `settle_derived`, for a derived `ftti_ms`.
 detection_derived  # HazardContract (rlm v0.2.0, phase 91 E10): as
                    # `settle_derived`, for a derived `detection_ms`.
+starts_at          # RungRoute (rlm v0.3.0, phase 85 D4): the node whose
+                   # detection starts a rung's route. Written for nano-ros's
+                   # route monitor (phase 96 W4.2), which stamps the fire
+                   # there; drop this line when that PR lands.
