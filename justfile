@@ -1424,7 +1424,29 @@ check-rt-docs:
 #
 # The baseline is a list of accepted debts, not an exemption list. An empty
 # file is the right end state.
+#
+# nano-ros is graded as it is on its `main`, the tree CI checks out, never a
+# sibling working tree: `../nano-ros` may be on a feature branch, behind, or
+# someone else's checkout, and a field it reads only on `main` then grades as
+# write-only. So unless PLAY_LAUNCH_FIELD_CENSUS_NANO_ROS names a tree, this
+# keeps its own shallow clone in external/nano-ros and moves it to the tip of
+# `main` first. Offline, it grades what that clone already holds and says so.
 check-field-census:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -z "${PLAY_LAUNCH_FIELD_CENSUS_NANO_ROS:-}" ]; then
+        dir=external/nano-ros
+        url=https://github.com/NEWSLabNTU/nano-ros.git
+        if [ ! -d "$dir/.git" ]; then
+            git clone -q --depth 1 --branch main "$url" "$dir" \
+                || { echo "check-field-census: cannot clone nano-ros" >&2; exit 2; }
+        elif git -C "$dir" fetch -q --depth 1 origin main; then
+            git -C "$dir" checkout -q --detach FETCH_HEAD
+        else
+            echo "check-field-census: offline; grading nano-ros at $(git -C "$dir" rev-parse --short HEAD)" >&2
+        fi
+        export PLAY_LAUNCH_FIELD_CENSUS_NANO_ROS="$dir"
+    fi
     ./scripts/field_census.py --check
 
 # RFC-0060 layer-2 isolation gate: prove ros-launch-resolve still builds and

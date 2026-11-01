@@ -39,8 +39,11 @@ Where the sources come from:
                         `--manifest-repo` overrides, for grading an unreleased
                         manifest before it is tagged.
   nano-ros              A consumer, not a dependency, so nothing pins it: the
-                        census measures the consumer as it IS. Sibling
-                        checkout by default, `--nano-ros` to name another.
+                        census measures the consumer as it IS on its
+                        `main`. `just check-field-census` keeps a shallow
+                        clone of that in external/nano-ros (the tree CI
+                        checks out); run bare, the script falls back to a
+                        sibling checkout, `--nano-ros` to name another.
                         A location that was NAMED and is absent is an error;
                         an unnamed sibling that is absent is a SKIP locally
                         and an error under CI, where a skip is a green tick
