@@ -6,8 +6,26 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.22.0 - 2026-11-02
 
+- **Added (`check`; rlm v0.3.1):** a supervised settle's response check,
+  `supervise: { ..., early: { within, drop } }`. At command + `within` +
+  the observation the vehicle must have shed at least `drop` or be at
+  standstill, else the supervision's reaction starts then instead of at
+  the end of the whole settle. Its own overrun row (`<rung> (<settle>.
+  supervise.early)`) charges the rung up to the command + `within` + the
+  observation + the detection + the reaction's route and settle; the
+  settle's row stays. `supervised-early` refuses a `within` inside the
+  settle's response or at or past its end, and a `drop` above the speed
+  the nominal profile sheds by `within` (the extension's `derive
+  settle.speed_lost`, bundled `vehicle.braking` 1.1.0); a written settle
+  leaves `drop` unchecked (warning). The model carries it as
+  `safe_state.supervise.early: { within_ms, drop_mps }`. Island phase 16
+  (the floor's response check).
+- **Changed (bundled extension):** `vehicle.braking` 1.1.0 (rlm v0.3.1)
+  adds `settle.speed_lost`; its `settle.duration` is unchanged. Its sha256
+  changes, so a contract that pins the old one with `--locked` is refused
+  until `--update-lock`.
 - **Removed (scheduling; rlm v0.3.0):** the legacy `system.toml`
   scheduling schema (`[tiers.*]` with `[[assign]]` rules) and its `.toml`
   bridge (phase 41.6, deprecated since phase 41). **A `.toml` platform file
