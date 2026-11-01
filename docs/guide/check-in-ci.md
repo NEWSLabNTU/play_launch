@@ -288,7 +288,7 @@ The rules that read it:
   `nodes.<op>.paths.on_timer.safe_state.settle.supervise.early`, before it 744.33ms
   + response check at 1319.00ms (shed 0.25 m/s by then, else a miss)
   + observation 136.00ms (...) + detection 2.00ms + reaction scope path 'island.floor_override'
-  39.33ms + settle 4484.33ms = 6724.99ms
+  39.33ms + settle 4484.33ms = 6725.00ms
   ```
 
   `supervised-early` checks the check itself: an error when `within` lies
