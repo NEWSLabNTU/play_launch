@@ -1468,7 +1468,7 @@ pub fn build_system_model(
         // rlm v0.1.62: a supervised settle, lowered to the standstill
         // deadline the realizer arms where the safe state is commanded.
         if let Some(ss) = contract.safe_state.as_mut()
-            && let Some((reaction, mechanism, obs)) =
+            && let Some((reaction, mechanism, obs, early)) =
                 super::supervision::lowered_settle(index, &p.node_fqn, &p.path_name)
         {
             ss.supervise = Some(model::SettleSuperviseContract {
@@ -1481,6 +1481,11 @@ pub fn build_system_model(
                 ),
                 reaction: reaction_key(&structure.nodes, reaction, &scope_key),
                 mechanism: model_mechanism(mechanism),
+                // rlm v0.3.1: the response check, a second due over it.
+                early: early.map(|e| model::EarlyCheckContract {
+                    within_ms: e.within.as_millis_f64(),
+                    drop_mps: e.drop_mps,
+                }),
             });
         }
         // Phase 91 E10: a settle an extension derives is a plain number on

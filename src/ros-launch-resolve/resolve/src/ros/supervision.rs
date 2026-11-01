@@ -304,16 +304,22 @@ fn observation(
 }
 
 /// The lowering of the supervised settle on path `(node, path)`, when it
-/// lowers: the reaction, the mechanism and the observation.
+/// lowers: the reaction, the mechanism, the observation and the response
+/// check (rlm v0.3.1), if any.
 pub(crate) fn lowered_settle(
     index: &ManifestIndex,
     node: &str,
     path: &str,
-) -> Option<(ReactionTarget, SuperviseMechanism, Observation)> {
+) -> Option<(
+    ReactionTarget,
+    SuperviseMechanism,
+    Observation,
+    Option<ros_launch_manifest_types::EarlyCheck>,
+)> {
     supervised(index).into_iter().find_map(|s| {
         let here = s.settle && s.node.as_deref() == Some(node) && s.path.as_deref() == Some(path);
         match (here, s.lowered, s.reaction, s.observe) {
-            (true, Ok(()), Ok(r), Some(Ok(o))) => Some((r, s.sv.mechanism, o)),
+            (true, Ok(()), Ok(r), Some(Ok(o))) => Some((r, s.sv.mechanism, o, s.sv.early)),
             _ => None,
         }
     })
@@ -543,6 +549,8 @@ struct Charged<'a> {
     deadline_how: String,
     /// The stated budgets up to and including this one.
     terms: Vec<TermKey>,
+    /// A settle's response check (rlm v0.3.1): its own, earlier due.
+    early: bool,
 }
 
 /// The `RungRole::Overrun` rows of one rung or floor row (phase 93), and
@@ -593,6 +601,7 @@ pub(crate) fn overrun_rows(
                 deadline_ms: s.budget_ms,
                 deadline_how: format!("budget {:.2}ms", s.budget_ms),
                 terms: upto(&s.term),
+                early: false,
             });
         }
         elapsed += hop.ms;
@@ -639,12 +648,32 @@ pub(crate) fn overrun_rows(
         match settle.ms {
             Some(ms) => {
                 settle_rung_total = Some(start + route + ms);
+                // rlm v0.3.1: the response check, an earlier due over the
+                // same settle. Its row comes first: it is what catches a
+                // command that never took effect.
+                if let Some(e) = &s.sv.early {
+                    let within = e.within.as_millis_f64();
+                    early_fit(index, ctx, s, at, within, ms, settle.response_ms, diags);
+                    charged.push(Charged {
+                        s,
+                        before_ms: start + route,
+                        deadline_ms: within + obs_ms,
+                        deadline_how: format!(
+                            "response check at {within:.2}ms (shed {} by then, else a miss) + \
+                             {obs_how}",
+                            e.drop_text
+                        ),
+                        terms: terms.clone(),
+                        early: true,
+                    });
+                }
                 charged.push(Charged {
                     s,
                     before_ms: start + route,
                     deadline_ms: ms + obs_ms,
                     deadline_how: format!("{settle_how} + {obs_how}"),
                     terms,
+                    early: false,
                 });
             }
             None => {
@@ -679,9 +708,22 @@ pub(crate) fn overrun_rows(
     for c in charged {
         let s = c.s;
         let key = &s.term.1;
-        let path = format!("{key}.supervise");
+        let path = if c.early {
+            format!("{key}.supervise.early")
+        } else {
+            format!("{key}.supervise")
+        };
         let where_ = site(index, s.term.0, key);
-        let row_name = format!("{} ({key})", ctx.rung);
+        let row_name = if c.early {
+            format!("{} ({key}.supervise.early)", ctx.rung)
+        } else {
+            format!("{} ({key})", ctx.rung)
+        };
+        let what = if c.early {
+            format!("the vehicle has not responded by `{key}.supervise.early`")
+        } else {
+            format!("`{key}` overruns")
+        };
         let fail = |why: String, budgets: &mut Vec<RungBudget>, diags: &mut Vec<Diagnostic>| {
             budgets.push(RungBudget {
                 hazard: ctx.h.name.clone(),
@@ -827,7 +869,11 @@ pub(crate) fn overrun_rows(
             settle_response_ms: settle.response_ms,
             total_ms: Some(total),
             ftti_ms: ctx.ftti_ms,
-            note: format!("overrun of {key}: {arith}{hang_note}"),
+            note: if c.early {
+                format!("response check of {key}: {arith}{hang_note}")
+            } else {
+                format!("overrun of {key}: {arith}{hang_note}")
+            },
             terms: [ctx.prior_terms.clone(), c.terms.clone(), rterms].concat(),
             ..Default::default()
         });
@@ -866,12 +912,113 @@ pub(crate) fn overrun_rows(
             rule_id: "supervised-fit".to_string(),
             severity,
             message: format!(
-                "{where_}: hazard '{}', rung '{}': if `{key}` overruns, {arith} {verdict}{hang_note}",
+                "{where_}: hazard '{}', rung '{}': if {what}, {arith} {verdict}{hang_note}",
                 ctx.h.name, ctx.rung
             ),
             path,
             span: None,
         });
+    }
+}
+
+/// `supervised-early` (rlm v0.3.1): a settle's response check is sound
+/// only between the vehicle's response and the settle's end, and only with
+/// a `drop` the nominal profile sheds by `within`; a larger one calls a
+/// nominal stop a fault. The nominal speed is the settle's extension's
+/// `derive settle.speed_lost`; without one the `drop` is unchecked.
+#[allow(clippy::too_many_arguments)]
+fn early_fit(
+    index: &ManifestIndex,
+    ctx: &RowCtx<'_>,
+    s: &Supervised,
+    at: &super::manifest_loader::SettleAt,
+    within: f64,
+    settle_ms: f64,
+    response_ms: Option<f64>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let Some(e) = &s.sv.early else {
+        return;
+    };
+    let key = &s.term.1;
+    let path = format!("{key}.supervise.early");
+    let where_ = site(index, s.term.0, key);
+    let head = format!(
+        "{where_}: hazard '{}', rung '{}': the response check of `{key}` (shed {} by \
+         {within:.2}ms after the command)",
+        ctx.h.name, ctx.rung, e.drop_text
+    );
+    let mut push = |severity: Severity, msg: String| {
+        diags.push(Diagnostic {
+            rule_id: "supervised-early".to_string(),
+            severity,
+            message: msg,
+            path: path.clone(),
+            span: None,
+        });
+    };
+    if let Some(r) = response_ms
+        && within <= r
+    {
+        push(
+            Severity::Error,
+            format!(
+                "{head} runs within the vehicle's response {r:.2}ms, before the plant is \
+                 required to slow at all: a nominal stop would be called a fault. Check later \
+                 than the response"
+            ),
+        );
+        return;
+    }
+    if within >= settle_ms {
+        push(
+            Severity::Error,
+            format!(
+                "{head} is not earlier than the settle's own end {settle_ms:.2}ms: it detects \
+                 nothing the settle's due does not. Check before the settle ends, or drop \
+                 `early:`"
+            ),
+        );
+        return;
+    }
+    let scope_id = super::value_rules::contract_node(index, &at.node).map(|(sc, _, _)| sc);
+    let nominal = match scope_id {
+        Some(sc) => {
+            super::extensions::derived_speed_lost(index, ctx.h, sc, &at.node, &at.ss, within)
+        }
+        None => Ok(None),
+    };
+    match nominal {
+        Ok(Some((v, by, trace))) if e.drop_mps > v + 1e-9 => push(
+            Severity::Error,
+            format!(
+                "{head} asks more than the nominal profile sheds by then, {v:.4} m/s ({by}): a \
+                 nominal stop would be called a fault. Lower `drop` or check later\n{trace}"
+            ),
+        ),
+        Ok(Some((v, by, trace))) => push(
+            Severity::Info,
+            format!(
+                "{head} fits: the nominal profile sheds {v:.4} m/s by then ({by}), {:.4} m/s \
+                 above `drop`; a vehicle slower than that has stopped, which the check counts \
+                 as met\n{trace}",
+                v - e.drop_mps
+            ),
+        ),
+        Ok(None) => push(
+            Severity::Warning,
+            format!(
+                "{head}: `drop` is unchecked: the settle's extension derives no \
+                 `settle.speed_lost` (a written settle, or an extension older than it, as \
+                 vehicle.braking before 1.1.0), so nothing shows a nominal stop sheds {} by \
+                 then",
+                e.drop_text
+            ),
+        ),
+        Err(why) => push(
+            Severity::Error,
+            format!("{head}: the nominal speed shed cannot be derived: {why}"),
+        ),
     }
 }
 

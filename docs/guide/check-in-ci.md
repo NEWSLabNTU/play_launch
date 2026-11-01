@@ -269,6 +269,38 @@ The rules that read it:
   error and the overrun row says so as `info`, not a second error. The
   model carries the lowering on the safe state (`safe_state.supervise:
   { response_ms, observe_ms, observes, reaction, mechanism }`).
+- A settle's response check (rlm v0.3.1, play_launch 0.22.0):
+  `supervise: { ..., early: { within, drop } }` on a supervised settle.
+  The settle's own due cannot tell a command that never took effect until
+  the whole settle has passed; the response check asks the weaker
+  question earlier: at command + `within` + the observation the vehicle
+  must have shed at least `drop` (a speed, against the one the platform
+  saw when it armed) or be at standstill, else the same reaction starts
+  then. It gets its own overrun row, named `<rung> (<settle>.supervise.
+  early)`: the time before the settle + `within` + the observation + the
+  detection + the reaction's route and settle, so a vehicle that does not
+  respond is charged at `within`, not at the settle's end; the settle's
+  own row stays (a vehicle that slows, then fails to stop). For example
+  (the island's floor, phase 16):
+
+  ```
+  hazard 'hpc_loss', rung 'emergency_stop': if the vehicle has not responded by
+  `nodes.<op>.paths.on_timer.safe_state.settle.supervise.early`, before it 744.33ms
+  + response check at 1319.00ms (shed 0.25 m/s by then, else a miss)
+  + observation 136.00ms (...) + detection 2.00ms + reaction scope path 'island.floor_override'
+  39.33ms + settle 4484.33ms = 6724.99ms
+  ```
+
+  `supervised-early` checks the check itself: an error when `within` lies
+  inside the settle's `response` (the plant is not required to slow yet:
+  a nominal stop would be a miss) or at or past the settle's end (it
+  detects nothing earlier), and when `drop` exceeds the speed the nominal
+  profile sheds by `within`, which the settle's extension derives
+  (`derive settle.speed_lost`, `vehicle.braking` 1.1.0: nothing during the
+  response, then the jerk ramp, then the held deceleration); `info` with
+  the margin when it fits. A written settle derives no shed speed: the
+  `drop` is unchecked (a warning). The model carries it on the lowering:
+  `safe_state.supervise.early: { within_ms, drop_mps }`.
 - `supervised-executor-long-callback`: a `mechanism: executor` supervision
   whose detection a callback can delay. The executor checks the deadline in
   its spin loop, between callbacks, so detection is the tick + the longest

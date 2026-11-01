@@ -1824,7 +1824,7 @@ fn takeover_ladder_fits_and_explains_itself() {
         // The emergency profile at the island's assumed 3.0 m/s: the island
         // contract's own hand arithmetic, now the checker's.
         // Phase 91 E8: the bundled vehicle.braking's, named in `use:`.
-        "hazard 'hpc_loss', rung 'estop': settle = 2033.33ms derived by vehicle.braking 1.0.0",
+        "hazard 'hpc_loss', rung 'estop': settle = 2033.33ms derived by vehicle.braking 1.1.0",
         "if v0 > v_r: 3 m/s > 2.0833 m/s, true: take `then`",
         // F1: charged, the comfortable rung would have failed a 3 s interval.
         "hazard 'hpc_loss': detection 500.00ms",
@@ -2125,7 +2125,7 @@ fn takeover_budget_rules_fire_on_their_fixture() {
         "fallback rung 'comfortable' cannot make the fault-tolerant time interval",
         "detection 120.00ms + 'takeover' reaction 110.00ms + window 10000.00ms + reaction 410.00ms + settle 9996.67ms = 20636.67ms against 20000.00ms",
         "warning[settle-conflict]",
-        "the literal settle 5000.00ms and vehicle.braking 1.0.0's 9996.67ms differ by 50.0%",
+        "the literal settle 5000.00ms and vehicle.braking 1.1.0's 9996.67ms differ by 50.0%",
         "warning[settle-entry-missing]",
         "hazard 'odd_exit_unbounded' reaches rung 'comfortable'",
         "falling back to the literal settle 5000.00ms",
@@ -2241,9 +2241,9 @@ fn a_settles_written_response_is_added_to_the_profile() {
     assert_eq!(code, 0, "{out}");
     for needle in [
         // Phase 91 E8: vehicle.braking reads the response itself.
-        "hazard 'hpc_loss', rung 'estop': settle = 2333.33ms derived by vehicle.braking 1.0.0",
+        "hazard 'hpc_loss', rung 'estop': settle = 2333.33ms derived by vehicle.braking 1.1.0",
         "response = 300 ms   (300ms)",
-        "settle = 10496.67ms derived by vehicle.braking 1.0.0",
+        "settle = 10496.67ms derived by vehicle.braking 1.1.0",
         "= 2976.67ms fits the fault-tolerant time interval 3000.00ms with 23.33ms of slack",
         "odd_exit  comfortable  rung     120.00  10110.00  410.00   10496.67 derived  21136.67",
         "hpc_loss/estop: settle = profile 2033.33ms + response 300.00ms",
@@ -2781,7 +2781,7 @@ fn e1_two_derivations_and_no_requirement_are_errors() {
         (
             "contract_derive_conflict",
             "error[derive-conflict]: bringup.contract.yaml:74: the settle is derived twice: by \
-             vehicle.braking 1.0.0 and as a written duration derived by vehicle.braking 1.0.0 \
+             vehicle.braking 1.1.0 and as a written duration derived by vehicle.braking 1.0.0 \
              -- keep one",
         ),
         (
@@ -3742,6 +3742,131 @@ fn a_lowered_settle_supervision_reaches_the_model() {
     assert!(paths["/estop_op/on_timer"]["safe_state"]["supervise"].is_null());
 }
 
+/// `supervised_settle` with a response check on the comfortable settle (rlm
+/// v0.3.1): `early: { within, drop }` added to its `supervise:`.
+fn supervised_early(c: String, early: &str) -> String {
+    supervised_settle(c, |c| {
+        c.replacen(
+            "observes: handler/kinematic_state }",
+            &format!("observes: handler/kinematic_state, early: {early} }}"),
+            1,
+        )
+    })
+}
+
+/// rlm v0.3.1: a settle's response check charges its own overrun row (the
+/// rung up to the command + `within` + the observation + the detection +
+/// the reaction's route and settle), which comes in under the settle's own;
+/// `supervised-early` derives the nominal shed speed from vehicle.braking's
+/// `settle.speed_lost` (comfortable profile 1.0 m/s^2, 0.3 m/s^3, response
+/// 943 ms: 1 s into the ramp, 0.15 m/s) and finds `drop` under it; the
+/// lowering reaches the model.
+#[test]
+fn a_settle_response_check_charges_its_own_row() {
+    let early = "{ within: 1943ms, drop: 0.1 m/s }";
+    let Some((code, out)) = check_supervised_edited(|c| supervised_early(c, early)) else {
+        eprintln!("Skipping: ros-launch-resolve not built");
+        return;
+    };
+    assert_eq!(code, 0, "{out}");
+    for needle in [
+        "info[supervised-early]",
+        "the response check of `nodes.comfort_op.paths.operate.safe_state.settle` (shed 0.1 \
+         m/s by 1943.00ms after the command) fits: the nominal profile sheds 0.1500 m/s by then \
+         (vehicle.braking 1.1.0), 0.0500 m/s above `drop`",
+        "hazard 'odd_exit', rung 'comfortable': if the vehicle has not responded by \
+         `nodes.comfort_op.paths.operate.safe_state.settle.supervise.early`, before it \
+         10640.00ms + response check at 1943.00ms (shed 0.1 m/s by then, else a miss) + \
+         observation 156.00ms (/handler/kinematic_state: period 100.00ms (/kinematic_state \
+         rate_hz 10) + max_transport 56.00ms) + detection 1.05ms (tick 1.00ms + switch 0.05ms \
+         (timer)) + reaction scope path 'sys.estop' 143.33ms + settle 4165.33ms = 17048.72ms \
+         fits the fault-tolerant time interval 30000.00ms with 12951.28ms of slack",
+        // The whole settle's row stays.
+        "if `nodes.comfort_op.paths.operate.safe_state.settle` overruns, before it 10640.00ms \
+         + settle 10939.67ms",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    // The model carries it, beside the settle's own deadline.
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let root = fixtures::repo_root().join("tests/fixtures");
+    let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_dir = tmp.path().join("launch");
+    std::fs::create_dir_all(&launch_dir).unwrap();
+    let src = root.join("contract_supervised/launch");
+    std::fs::copy(
+        src.join("bringup.launch.xml"),
+        launch_dir.join("bringup.launch.xml"),
+    )
+    .unwrap();
+    let contract = std::fs::read_to_string(src.join("bringup.contract.yaml")).unwrap();
+    std::fs::write(
+        launch_dir.join("bringup.contract.yaml"),
+        supervised_early(contract, early),
+    )
+    .unwrap();
+    let out_path = tmp.path().join("model.yaml");
+    let status = resolve_cmd(&bin)
+        .arg("resolve")
+        .arg(launch_dir.join("bringup.launch.xml"))
+        .arg("-o")
+        .arg(&out_path)
+        .env("AMENT_PREFIX_PATH", root.join("contract_takeover/ament"))
+        .status()
+        .expect("resolve runs");
+    assert!(status.success(), "resolve failed");
+    let model: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&out_path).unwrap()).unwrap();
+    let sv = &model["contracts"]["node_paths"]["/comfort_op/operate"]["safe_state"]["supervise"];
+    assert_eq!(sv["early"]["within_ms"].as_f64(), Some(1943.0), "{sv:?}");
+    assert_eq!(sv["early"]["drop_mps"].as_f64(), Some(0.1), "{sv:?}");
+    assert_eq!(sv["observe_ms"].as_f64(), Some(156.0), "{sv:?}");
+}
+
+/// rlm v0.3.1: `supervised-early` refuses a response check that would call a
+/// nominal stop a fault (a `drop` above what the profile sheds by `within`,
+/// or a `within` inside the response) or that detects nothing earlier (at or
+/// past the settle's end); on a written settle, which derives no shed speed,
+/// the `drop` is unchecked (a warning).
+#[test]
+fn a_settle_response_check_outside_the_profile_is_refused() {
+    for (early, needle) in [
+        (
+            "{ within: 1943ms, drop: 0.2 m/s }",
+            "asks more than the nominal profile sheds by then, 0.1500 m/s (vehicle.braking 1.1.0)",
+        ),
+        (
+            "{ within: 900ms, drop: 0.01 m/s }",
+            "runs within the vehicle's response 943.00ms",
+        ),
+        (
+            "{ within: 11s, drop: 0.1 m/s }",
+            "is not earlier than the settle's own end 10939.67ms",
+        ),
+    ] {
+        let Some((code, out)) = check_supervised_edited(|c| supervised_early(c, early)) else {
+            eprintln!("Skipping: ros-launch-resolve not built");
+            return;
+        };
+        assert_eq!(code, 1, "{early}: {out}");
+        assert!(out.contains("error[supervised-early]"), "{early}: {out}");
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    let Some((code, out)) = check_supervised_edited(|c| {
+        supervised_early(c, "{ within: 1943ms, drop: 0.1 m/s }").replacen(
+            "            decel: min_acceleration\n            jerk: min_jerk\n",
+            "            duration: 10s\n",
+            1,
+        )
+    }) else {
+        return;
+    };
+    assert!(out.contains("warning[supervised-early]"), "{code}: {out}");
+    assert!(out.contains("`drop` is unchecked"), "{out}");
+}
+
 /// Phase 91 E9's gate, play_launch half: each reference extension's fixture
 /// (`contract_ext_<domain>`, the examples document's section on
 /// contract_fault's chain) prints what its `expected_explain.txt` records:
@@ -3855,7 +3980,7 @@ fn e10_a_derived_settle_reaches_the_model_as_a_written_one_would() {
     let src = ss.settle_derived.clone().expect("the settle's source");
     assert_eq!(
         (src.by.as_str(), src.version.as_str()),
-        ("vehicle.braking", "1.0.0")
+        ("vehicle.braking", "1.1.0")
     );
     assert_eq!(src.hazard.as_deref(), Some("drive_blind"));
     assert_eq!(src.inputs["hazard.entry_speed"], "30 km/h");
@@ -3918,9 +4043,9 @@ fn contract_values_island_reads_the_launch_tree_and_keeps_its_verdicts() {
     let (tcode, takeover) = check_takeover("contract_takeover", &["--explain"]);
     assert_eq!(tcode, 0, "{takeover}");
     for needle in [
-        "hazard 'hpc_loss', rung 'estop': settle = 2033.33ms derived by vehicle.braking 1.0.0",
-        "hazard 'odd_exit', rung 'comfortable': settle = 9996.67ms derived by vehicle.braking 1.0.0",
-        "hazard 'odd_exit', rung 'estop': settle = 4165.33ms derived by vehicle.braking 1.0.0",
+        "hazard 'hpc_loss', rung 'estop': settle = 2033.33ms derived by vehicle.braking 1.1.0",
+        "hazard 'odd_exit', rung 'comfortable': settle = 9996.67ms derived by vehicle.braking 1.1.0",
+        "hazard 'odd_exit', rung 'estop': settle = 4165.33ms derived by vehicle.braking 1.1.0",
         "= 2676.67ms fits the fault-tolerant time interval 3000.00ms with 323.33ms of slack",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");

@@ -2191,6 +2191,71 @@ pub(crate) fn derived_settle(
     None
 }
 
+/// The speed the nominal settle of the safe state `ss` (on `node_fqn`'s
+/// path, for hazard `h`) sheds by `elapsed_ms` after its command, m/s, and
+/// the derivation's trace (rlm v0.3.1): the `derive settle.speed_lost` of
+/// the used extension that derives the settle, evaluated with the core
+/// input `elapsed` bound. `Ok(None)` when no used extension derives it (a
+/// written settle, or an extension older than the derive); `Err` when it
+/// cannot be evaluated.
+pub(crate) fn derived_speed_lost(
+    index: &ManifestIndex,
+    h: &ResolvedHazard,
+    scope_id: usize,
+    node_fqn: &str,
+    ss: &SafeState,
+    elapsed_ms: f64,
+) -> Result<Option<(f64, String, String)>, String> {
+    const TARGET: &str = "settle.speed_lost";
+    if ss.settle_ext.is_empty() {
+        return Ok(None);
+    }
+    for ext in exts_of(index, scope_id) {
+        let checked = ext.checked();
+        let Some(needs) = checked.env.reads(&ItemRef::Derive(TARGET.to_string())) else {
+            continue;
+        };
+        if !writes_any(&ext.name, &needs, h, Some(ss)) {
+            continue;
+        }
+        let (mut inputs, _) = gather(
+            index,
+            &ext.name,
+            &checked,
+            &needs,
+            h,
+            Some((node_fqn, ss)),
+            None,
+        )
+        .map_err(String::from)?;
+        if let Some(need) = needs
+            .iter()
+            .find(|n| n.path == "elapsed" && n.kind == KeyKind::Core)
+        {
+            let text = format!("{elapsed_ms}ms");
+            let rlx::value::ContractValue::Quantity(q) = checked
+                .env
+                .parse_value(&text, &need.ty)
+                .map_err(|d| d.message)?
+            else {
+                unreachable!("a core input is a quantity")
+            };
+            inputs.insert(need.path.clone(), Value::from_quantity(q, Some(&text)));
+        }
+        let ev = rlx::eval::eval_derive(&checked, TARGET, &inputs).map_err(|d| {
+            d.render(&ext.path.display().to_string(), ext.source.as_bytes())
+                .trim_end()
+                .to_string()
+        })?;
+        return Ok(Some((
+            ev.si,
+            ext.label(),
+            ev.trace.render().trim_end().to_string(),
+        )));
+    }
+    Ok(None)
+}
+
 /// Whether hazard `h`'s `deadline_by` names a check a used extension
 /// declares, so [`run_checks`] evaluates it.
 pub(crate) fn resolves_deadline(index: &ManifestIndex, h: &ResolvedHazard) -> Result<(), String> {
