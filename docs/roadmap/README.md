@@ -103,6 +103,7 @@ few lines of the doc) is what the table and entries below are kept in step with.
 | 93 | [Supervised budgets](./phase-93-supervised-budgets.md) | ✅ toolchain (0.18.0/0.18.1) | 2026-10-16 |
 | 94 | [Contract values read from the launch tree](./phase-94-contract-values.md) | ✅ (rlm v0.2.4) | 2026-10-27 |
 | 95 | [Service calls on a reaction route](./phase-95-service-calls-on-a-reaction-route.md) | ✅ (rlm v0.2.6; decisions taken 2026-10-30, released 0.21.0) | 2026-10-30 |
+| 96 | [Closing the nano-ros seams](./phase-96-closing-the-nano-ros-seams.md) | ✅ (rlm v0.3.0; nano-ros #2889, #2892, #2893) | 2026-11-01 |
 
 ---
 

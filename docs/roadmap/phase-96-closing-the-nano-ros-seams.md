@@ -1,6 +1,6 @@
 # Phase 96 - closing the nano-ros seams
 
-**Status: 🔄 in progress (2026-10-31).** Spans rlm (one breaking tag,
+**Status: ✅ complete (2026-11-01).** Spans rlm (one breaking tag,
 v0.3.0), play_launch, and nano-ros (pull requests; we own the repository).
 
 ## Why
@@ -94,18 +94,37 @@ What the nano-ros survey found (origin/main de7de3d0bc, 2026-10-30):
 
 ## W4 - nano-ros pull requests
 
-- [ ] W4.1 Bump rlm to v0.3.0 and the play_launch submodule; rename the
+- [x] W4.1 Bump rlm to v0.3.0 and the play_launch submodule; rename the
       `TierDef` mirror's fields to the canonical keys with a strict,
       unit-required parser; rewrite the two-spelling test as a refusal test;
       migrate the 21 test lines.
-- [ ] W4.2 (D4) A route monitor per rung: stamp the fire where
+      *(nano-ros #2889, 6e607dadf7. 14 test lines, not 21. Three readers
+      that parsed the model with serde directly now go through
+      `SystemModel::from_yaml_str`, so an old saved model still loads.)*
+- [x] W4.2 (D4) A route monitor per rung: stamp the fire where
       `hazard-detected` fires (`now_us`), stamp the first publish on the
       rung's output, judge against `rungs[].route_ms`, report
       `hazard-route-runtime`; `ReactionEvent` gains the fire timestamp.
-- [ ] W4.3 (95 decision 4) Record the agreement where nano-ros documents
+      *(nano-ros #2892, 03f844e063 and 676bc974f5. The monitor judges the
+      rung actually running, not the top one: at detection, the rung whose
+      mode the executor is in; while the hazard holds, a fall to a lower
+      rung's mode makes that rung active. A rung's clock starts at its
+      `starts_at` node's detection when that node is a detector on this
+      executor, else when the rung becomes active (the rung below a window,
+      whose `starts_at` is the window owner). `starts_at` left the census
+      baseline. Covered by unit tests only: no image has run a ladder, and
+      a rung change made without `request_mode` is not seen.)*
+- [x] W4.3 (95 decision 4) Record the agreement where nano-ros documents
       what it derives from the model (the client facts derive nothing), and
       refuse or warn on `stale_after:` for a server on a backend that fills
       no source timestamp (XRCE-DDS).
+      *(nano-ros #2893, e4b7d8547e and 595ee79513. A warning, not a
+      refusal: the backend descriptor `nros-rmw.toml` gains
+      `[rmw.facts] request_source_timestamp` (XRCE `false`, zenoh and
+      Cyclone `true`, absent unknown), and nros-cli-core warns for a server
+      declaring `stale_after` on a backend that states `false`, without
+      naming a backend in core (RFC-0071). Not wired into `nros::main!`,
+      whose macros do not depend on cargo-nano-ros.)*
 
 ## Decisions
 
