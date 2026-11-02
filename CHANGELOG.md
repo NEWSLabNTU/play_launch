@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.23.0 - 2026-11-02
 
 - **Added (`check`; rlm v0.3.2):** a supervision whose reaction hands its
   output back and resumes it, `supervise: { ..., resume: { after } }`.
