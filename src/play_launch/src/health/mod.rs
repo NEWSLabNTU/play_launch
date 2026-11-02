@@ -879,7 +879,7 @@ pub async fn run_health_task(inputs: HealthInputs) {
         .map(|(fqn, _)| fqn.clone())
         .collect();
     // Parameters against the launch (J) and the time base (I): a probe once
-    // startup completes, then every PROBE_PERIOD.
+    // startup completes, then every probe_period().
     let mut params_job: Option<tokio::task::JoinHandle<params::ParamsReport>> = None;
     let mut params_report: Option<params::ParamsReport> = None;
     let mut next_probe: Option<std::time::Instant> = None;
@@ -1033,7 +1033,7 @@ pub async fn run_health_task(inputs: HealthInputs) {
                 && next_probe.is_some_and(|t| now_i >= t)
                 && let Some(node) = handle.ros_node()
             {
-                next_probe = Some(now_i + params::PROBE_PERIOD);
+                next_probe = Some(now_i + params::probe_period());
                 // Only members whose ROS name the run knows: an unnamed node's
                 // key (`aggregator_node-1`, #0017) is not a name a service has.
                 // Not containers: a component manager starts no parameter

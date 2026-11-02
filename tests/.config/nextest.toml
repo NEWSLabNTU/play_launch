@@ -37,6 +37,14 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 filter = "binary(rt_workspace)"
 slow-timeout = { period = "60s", terminate-after = 2 }
 
+# Each interception test polls for its condition up to `POLL_DEADLINE` (90 s)
+# and waits up to 30 s for a graceful exit, because under the full suite's
+# load discovery alone can take tens of seconds. A pass is ~10-30 s; the
+# bound only decides how a slow run is reported.
+[[profile.default.overrides]]
+filter = "binary(interception)"
+slow-timeout = { period = "60s", terminate-after = 3 }
+
 # Phase 64: these suites wait out REAL constructors on purpose — 20 s to see a
 # liveness report, 60 s to see a stall declared and a bounded restart cycle
 # finish. The durations are the thing under test, so they cannot be shortened

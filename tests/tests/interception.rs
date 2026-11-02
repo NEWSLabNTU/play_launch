@@ -60,6 +60,33 @@ fn run_launch_with_config(
     config_yaml: &str,
     run_duration: Duration,
 ) -> tempfile::TempDir {
+    run_launch_until(launch_rel, config_yaml, run_duration, |_| true)
+}
+
+/// How long play_launch may take to exit after SIGTERM before the test
+/// gives up on it. Normally well under a second; generous because the
+/// summary files are written on the way out and a loaded host (the full
+/// suite runs ~16 launches at once) can stretch that past `Drop`'s 2 s.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(30);
+
+/// How long a test polls for a condition before giving up. Every poll loop
+/// here breaks as soon as its condition holds, so this costs nothing on a
+/// pass; it is long because discovery, parameter services and the first
+/// messages can take tens of seconds when the full suite runs ~16 launches
+/// at once, and a short bound reads that as a missing feature.
+const POLL_DEADLINE: Duration = Duration::from_secs(90);
+
+/// Launch, run for at least `min_run`, then keep running until `ready`
+/// holds for the bundle directory (bounded at `min_run` + `POLL_DEADLINE`), and stop
+/// with a graceful SIGTERM. A test whose assertion depends on time the
+/// system spent running states it as `ready` instead of guessing a sleep
+/// long enough on a loaded host.
+fn run_launch_until(
+    launch_rel: &str,
+    config_yaml: &str,
+    min_run: Duration,
+    ready: impl Fn(&Path) -> bool,
+) -> tempfile::TempDir {
     let env = fixtures::install_env();
     let launch = fixtures::test_workspace_path("simple_test").join(launch_rel);
 
@@ -85,24 +112,32 @@ fn run_launch_with_config(
         launch.to_str().unwrap(),
     ]);
     cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", &so_path);
-    cmd.env("RUST_LOG", "play_launch=debug");
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
+    // Not piped: nothing reads the pipe, and a full one blocks play_launch's
+    // own logging (and with it the shutdown this helper now waits for). The
+    // bundle's play_launch.log holds the same lines at debug.
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
 
-    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+    let mut proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
     // Wait for processes to start
     let play_log = work_dir.path().join("play_log/latest");
     fixtures::wait_for_processes(&play_log, 2, Duration::from_secs(15));
 
     // Let the talker run for a bit to generate events
-    std::thread::sleep(run_duration);
+    std::thread::sleep(min_run);
+    let deadline = std::time::Instant::now() + POLL_DEADLINE;
+    while !ready(&play_log) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(500));
+    }
 
-    // Graceful shutdown — ManagedProcess sends SIGTERM, waits 2s
-    drop(proc);
-
-    // Give a moment for async shutdown to complete (summary file writing)
-    std::thread::sleep(Duration::from_millis(500));
+    // Graceful shutdown: the summary files are written on the way out, so
+    // wait for play_launch to exit rather than SIGKILLing it after 2 s.
+    assert!(
+        proc.terminate(SHUTDOWN_GRACE).is_some(),
+        "play_launch did not exit within {}s of SIGTERM",
+        SHUTDOWN_GRACE.as_secs()
+    );
 
     work_dir
 }
@@ -798,7 +833,7 @@ fn test_event_recording_switches_at_runtime() {
     cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", interception_so_path());
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::null());
-    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+    let mut proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
     let play_log = work_dir.path().join("play_log/latest");
     fixtures::wait_for_processes(&play_log, 2, Duration::from_secs(15));
@@ -858,8 +893,11 @@ fn test_event_recording_switches_at_runtime() {
         Some(r#"{"enabled":true}"#),
     );
     std::thread::sleep(Duration::from_secs(3));
-    drop(proc);
-    std::thread::sleep(Duration::from_millis(500));
+    assert!(
+        proc.terminate(SHUTDOWN_GRACE).is_some(),
+        "play_launch did not exit within {}s of SIGTERM",
+        SHUTDOWN_GRACE.as_secs()
+    );
     let all = event_lines(&events);
     assert!(
         all.len() > first.len(),
@@ -909,12 +947,12 @@ fn test_health_reports_one_issue_per_incompatible_topic() {
     cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", interception_so_path());
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::null());
-    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+    let mut proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
     let play_log = work_dir.path().join("play_log/latest");
     fixtures::wait_for_processes(&play_log, 2, Duration::from_secs(15));
 
     // The pair is judged once both endpoints and their QoS are known.
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + POLL_DEADLINE;
     let issues = loop {
         let (status, body) = http(port, "GET", "/api/health/issues", None);
         assert_eq!(status, 200, "{body}");
@@ -931,8 +969,11 @@ fn test_health_reports_one_issue_per_incompatible_topic() {
         }
         std::thread::sleep(Duration::from_millis(500));
     };
-    drop(proc);
-    std::thread::sleep(Duration::from_millis(500));
+    assert!(
+        proc.terminate(SHUTDOWN_GRACE).is_some(),
+        "play_launch did not exit within {}s of SIGTERM",
+        SHUTDOWN_GRACE.as_secs()
+    );
 
     assert_eq!(issues.len(), 1, "one issue per topic: {issues:?}");
     let issue = &issues[0];
@@ -975,7 +1016,7 @@ fn test_health_reports_crash_loops_and_members_that_stay_down() {
     cmd.stderr(Stdio::null());
     let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + POLL_DEADLINE;
     let (kinds, issues) = loop {
         std::thread::sleep(Duration::from_millis(500));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
@@ -1056,7 +1097,7 @@ fn test_health_reports_an_error_burst_with_its_signature() {
     cmd.stderr(Stdio::null());
     let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(25);
+    let deadline = std::time::Instant::now() + POLL_DEADLINE;
     let snap = loop {
         std::thread::sleep(Duration::from_millis(500));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
@@ -1147,7 +1188,7 @@ fn test_delivery_latency_separates_a_slow_subscriber_from_a_fast_one() {
             })
             .cloned()
     };
-    let deadline = std::time::Instant::now() + Duration::from_secs(40);
+    let deadline = std::time::Instant::now() + POLL_DEADLINE;
     let (rows, issues) = loop {
         std::thread::sleep(Duration::from_millis(1000));
         let (s1, entities) = http(port, "GET", "/api/entities", None);
@@ -1245,7 +1286,7 @@ fn test_carried_edges_form_a_chain_and_an_old_stamp_is_reported() {
     cmd.stderr(Stdio::null());
     let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(40);
+    let deadline = std::time::Instant::now() + POLL_DEADLINE;
     let (chains, issues, answer) = loop {
         std::thread::sleep(Duration::from_millis(1000));
         let (s1, chains) = http(port, "GET", "/api/chains", None);
@@ -1473,7 +1514,7 @@ fn graph_probe_issues(interception: bool) -> Vec<serde_json::Value> {
     stranger.stderr(Stdio::null());
     let stranger = ManagedProcess::spawn(&mut stranger).expect("failed to spawn stranger");
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(50);
+    let deadline = std::time::Instant::now() + POLL_DEADLINE;
     let issues = loop {
         std::thread::sleep(Duration::from_millis(1000));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
@@ -1574,7 +1615,7 @@ fn test_startup_timeline_names_the_slow_constructor() {
     cmd.stderr(Stdio::null());
     let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(40);
+    let deadline = std::time::Instant::now() + POLL_DEADLINE;
     let t = loop {
         std::thread::sleep(Duration::from_millis(1000));
         let (status, body) = http(port, "GET", "/api/startup", None);
@@ -1652,7 +1693,7 @@ fn test_health_reports_a_dds_config_the_rmw_does_not_read() {
     cmd.stderr(Stdio::null());
     let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + POLL_DEADLINE;
     let snap = loop {
         std::thread::sleep(Duration::from_millis(500));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
@@ -1713,7 +1754,7 @@ fn test_health_reports_a_member_that_keeps_growing() {
     cmd.stderr(Stdio::null());
     let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(45);
+    let deadline = std::time::Instant::now() + POLL_DEADLINE;
     let snap = loop {
         std::thread::sleep(Duration::from_millis(1000));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
@@ -1780,6 +1821,10 @@ fn test_health_compares_running_parameters_with_the_launch() {
         launch.to_str().unwrap(),
     ]);
     cmd.env("PLAY_LAUNCH_PARAM_PROBE_DELAY_S", "4");
+    // And again every 3 s: on a loaded host the parameter service can answer
+    // the set below only after the first probe has run, and the drift would
+    // then wait 10 min for the next one.
+    cmd.env("PLAY_LAUNCH_PARAM_PROBE_PERIOD_S", "3");
     // The discovery limit asserted below is Fast DDS's; a caller's
     // RMW_IMPLEMENTATION (Cyclone has no limit by default) must not leak in
     // (#0076).
@@ -1790,7 +1835,7 @@ fn test_health_compares_running_parameters_with_the_launch() {
 
     // Flip the talker's use_sim_time through play_launch's own API, once its
     // parameter service answers.
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + POLL_DEADLINE;
     let body = r#"{"name":"use_sim_time","value":{"type":"Bool","value":true}}"#;
     loop {
         std::thread::sleep(Duration::from_millis(500));
@@ -1809,7 +1854,7 @@ fn test_health_compares_running_parameters_with_the_launch() {
         );
     }
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(40);
+    let deadline = std::time::Instant::now() + POLL_DEADLINE;
     let snap = loop {
         std::thread::sleep(Duration::from_millis(1000));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
@@ -1897,11 +1942,15 @@ fn test_health_reports_a_clock_that_goes_back_and_stops() {
     ]);
     cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", interception_so_path());
     cmd.env("PLAY_LAUNCH_PARAM_PROBE_DELAY_S", "1");
+    // `clock_stalled` needs a node known to be on sim time, which only a
+    // probe that reached it says; on a loaded host the first probe can find
+    // the parameter service not up yet, so ask again every 3 s.
+    cmd.env("PLAY_LAUNCH_PARAM_PROBE_PERIOD_S", "3");
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::null());
     let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(40);
+    let deadline = std::time::Instant::now() + POLL_DEADLINE;
     let snap = loop {
         std::thread::sleep(Duration::from_millis(1000));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
@@ -1972,7 +2021,7 @@ fn test_health_reads_the_tf_tree_as_published() {
     let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
     let want = ["tf_two_parents", "tf_disconnected", "tf_stale"];
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + POLL_DEADLINE;
     let snap = loop {
         std::thread::sleep(Duration::from_millis(1000));
         let (status, body) = http(port, "GET", "/api/health/issues", None);
@@ -2046,7 +2095,7 @@ fn test_startup_timeline_shows_lifecycle_activation() {
     cmd.stderr(Stdio::null());
     let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + POLL_DEADLINE;
     let row = loop {
         std::thread::sleep(Duration::from_millis(1000));
         let (status, body) = http(port, "GET", "/api/startup", None);
@@ -2100,10 +2149,22 @@ interception:
   enabled: true
   stats: true
 "#;
-    let work_dir = run_launch_with_config(
+    // Health judges a call unanswered 10 s after it was sent, counted from
+    // when the clients came up, which on a loaded host is late; so run until
+    // both issues are open rather than for a fixed time.
+    let work_dir = run_launch_until(
         "launch/call_probe.launch.xml",
         config,
         Duration::from_secs(15),
+        |log| {
+            let journal = std::fs::read_to_string(log.join("health.jsonl")).unwrap_or_default();
+            ["silent", "dies"].iter().all(|n| {
+                journal.lines().any(|l| {
+                    l.contains(r#""event":"open""#)
+                        && l.contains(&format!("call_unanswered:/calls/{n}_client"))
+                })
+            })
+        },
     );
     let play_log = work_dir.path().join("play_log/latest");
     let path = play_log.join("interception/calls.json");

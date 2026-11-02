@@ -51,6 +51,31 @@ impl ManagedProcess {
         self.child.try_wait().expect("error polling child")
     }
 
+    /// SIGTERM the process group and wait up to `grace` for the child to
+    /// exit by itself, returning its status; `None` if it was still running
+    /// when `grace` ran out (then `Drop` escalates as usual).
+    ///
+    /// For a test that reads what the child writes on its way out. `Drop`
+    /// allows two seconds before SIGKILL, which on a loaded host can land
+    /// before the shutdown has written its files, and the test then reads
+    /// a missing file as a missing feature.
+    pub fn terminate(&mut self, grace: Duration) -> Option<ExitStatus> {
+        if let Some(status) = self.try_wait() {
+            return Some(status);
+        }
+        unsafe {
+            libc::kill(-self.pgid, libc::SIGTERM);
+        }
+        let start = Instant::now();
+        while start.elapsed() < grace {
+            if let Some(status) = self.try_wait() {
+                return Some(status);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        None
+    }
+
     /// Block until the child exits or `timeout` elapses.
     ///
     /// On timeout the process group is killed and a panic is raised (which

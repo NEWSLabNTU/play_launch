@@ -7,7 +7,7 @@
 //! (`/**`, `/ns/*`, a bare name meaning the root namespace). Actual values
 //! come from asking each node, one `get_parameters` client at a time, for
 //! exactly the names its launch sets plus `use_sim_time` — once startup
-//! completes, then every [`PROBE_PERIOD`]. Not `/parameter_events`: it is
+//! completes, then every [`probe_period`]. Not `/parameter_events`: it is
 //! volatile, and play_launch subscribes after the nodes start, so the
 //! declarations a node makes in its constructor are gone before the match.
 //!
@@ -31,8 +31,15 @@ use serde::Serialize;
 use super::{Condition, Link, Severity, Subject};
 use crate::ros::parameter_types::ParamValue as RosValue;
 
-/// How often the nodes are asked again after the first probe.
-pub const PROBE_PERIOD: Duration = Duration::from_secs(600);
+/// How often the nodes are asked again after the first probe: 10 min.
+/// `PLAY_LAUNCH_PARAM_PROBE_PERIOD_S` overrides it, so a test that changes a
+/// parameter does not race the single probe a short run would get.
+pub fn probe_period() -> Duration {
+    std::env::var("PLAY_LAUNCH_PARAM_PROBE_PERIOD_S")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .map_or(Duration::from_secs(600), Duration::from_secs)
+}
 /// The first probe waits this long after startup completes, for late
 /// declarations (a node that declares on its first timer).
 /// `PLAY_LAUNCH_PARAM_PROBE_DELAY_S` overrides it (tests use seconds).

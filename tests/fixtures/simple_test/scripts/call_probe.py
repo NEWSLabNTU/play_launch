@@ -7,7 +7,9 @@ blocks, so the executor never sends the response): a server that is alive
 and deaf.
 `server <name> die`: takes the first request and exits holding it: a server
 that dies mid-call. Nothing restarts it, so later requests find no server.
-`client <name>`: waits for the service, then sends a request every 0.5 s
+`client <name>`: waits for the service (for as long as it takes: on a loaded
+host discovery can take longer than any fixed bound, and a request sent
+before the server is matched is lost), then sends a request every 0.5 s
 without waiting for the response (`call_async`), as a send-and-poll client
 does, and takes whatever responses arrive.
 """
@@ -40,7 +42,8 @@ def main():
         node.create_service(Trigger, name, handle)
     else:
         client = node.create_client(Trigger, name)
-        client.wait_for_service(timeout_sec=10.0)
+        while not client.wait_for_service(timeout_sec=1.0):
+            pass
         node.create_timer(0.5, lambda: client.call_async(Trigger.Request()))
     try:
         rclpy.spin(node)
