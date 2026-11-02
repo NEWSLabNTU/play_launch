@@ -833,8 +833,19 @@ pub(crate) fn overrun_rows(
                 continue;
             }
         };
+        // rlm v0.3.2: a reaction that hands its output back and resumes it
+        // leaves the output silent for up to `after` + the detection, once.
+        let settle_at = rwalk.as_ref().and_then(|w| w.settle.as_ref());
+        let (gap_ms, gap_how) = match resume_gap(index, s, settle_at, det, &det_why) {
+            Ok(Some((g, how))) => (g, format!(" + resume gap {g:.2}ms ({how})")),
+            Ok(None) => (0.0, String::new()),
+            Err(why) => {
+                fail(why, budgets, diags);
+                continue;
+            }
+        };
         let settle_ms = settle.ms.unwrap_or(0.0);
-        let total = c.before_ms + c.deadline_ms + det + route_ms + settle_ms;
+        let total = c.before_ms + c.deadline_ms + det + route_ms + gap_ms + settle_ms;
         let hang = s.sv.mechanism == SuperviseMechanism::Executor
             && first_node.is_some()
             && first_node == s.node;
@@ -854,7 +865,7 @@ pub(crate) fn overrun_rows(
         };
         let arith = format!(
             "before it {:.2}ms + {} + detection {det:.2}ms ({det_why}) + reaction {target} \
-             {route_ms:.2}ms + settle {settle_ms:.2}ms{settle_note} = {total:.2}ms",
+             {route_ms:.2}ms{gap_how} + settle {settle_ms:.2}ms{settle_note} = {total:.2}ms",
             c.before_ms, c.deadline_how
         );
         budgets.push(RungBudget {
@@ -863,7 +874,7 @@ pub(crate) fn overrun_rows(
             role: RungRole::Overrun,
             fdti_ms: Some(fdti),
             windows_ms: ctx.waited_ms,
-            route_ms: Some(c.before_ms - start + c.deadline_ms + det + route_ms),
+            route_ms: Some(c.before_ms - start + c.deadline_ms + det + route_ms + gap_ms),
             settle_ms: settle.ms,
             settle_how: settle.how,
             settle_response_ms: settle.response_ms,
@@ -919,6 +930,68 @@ pub(crate) fn overrun_rows(
             span: None,
         });
     }
+}
+
+/// rlm v0.3.2: the gap a supervision's `resume: { after }` leaves on its
+/// reaction's output, ms, and how it divides; `None` without `resume`.
+/// Once the reaction has run, the path that normally publishes its output
+/// takes it over again; silent for `after`, the reaction resumes it, at
+/// the supervision's own detection delay. `after` in periods counts the
+/// periods of the path whose safe state the reaction's walk ends at (it
+/// publishes the reaction's output in the normal case), read from its
+/// timer.
+fn resume_gap(
+    index: &ManifestIndex,
+    s: &Supervised,
+    settle_at: Option<&super::manifest_loader::SettleAt>,
+    det: f64,
+    det_why: &str,
+) -> Result<Option<(f64, String)>, String> {
+    use ros_launch_manifest_types::{EffectiveTrigger, ResumeAfter};
+    let Some(r) = &s.sv.resume else {
+        return Ok(None);
+    };
+    let (after, after_how) = match r.after {
+        ResumeAfter::Duration(d) => {
+            let ms = d.as_millis_f64();
+            (ms, format!("after {ms:.2}ms"))
+        }
+        ResumeAfter::Periods(n) => {
+            let Some(at) = settle_at else {
+                return Err(format!(
+                    "`{}.supervise.resume` counts periods of the path that publishes the \
+                     reaction's output, and the reaction's walk ends at no safe state: state a \
+                     duration (`resume: {{ after: <duration> }}`)",
+                    s.term.1
+                ));
+            };
+            let rate = index
+                .node_paths
+                .iter()
+                .find(|p| p.node_fqn == at.node && p.path_name == at.path)
+                .and_then(|p| match p.path.effective_trigger() {
+                    EffectiveTrigger::Timer { rate_hz } if rate_hz > 0.0 => Some(rate_hz),
+                    _ => None,
+                });
+            let Some(rate) = rate else {
+                return Err(format!(
+                    "`{}.supervise.resume` counts periods of {}/{}, which publishes the \
+                     reaction's output but is not timer-driven, so it has no period: state a \
+                     duration (`resume: {{ after: <duration> }}`)",
+                    s.term.1, at.node, at.path
+                ));
+            };
+            let period = 1000.0 / rate;
+            (
+                f64::from(n) * period,
+                format!("{n} periods of {}/{} {period:.2}ms", at.node, at.path),
+            )
+        }
+    };
+    Ok(Some((
+        after + det,
+        format!("{after_how} + detection {det:.2}ms ({det_why})"),
+    )))
 }
 
 /// `supervised-early` (rlm v0.3.1): a settle's response check is sound

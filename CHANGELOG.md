@@ -6,6 +6,20 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Added (`check`; rlm v0.3.2):** a supervision whose reaction hands its
+  output back and resumes it, `supervise: { ..., resume: { after } }`.
+  Once the reaction has run, the path that normally publishes its output
+  takes it over again; silent for `after`, the reaction resumes it, once.
+  Every overrun row whose fallback is this reaction is charged the gap
+  once, `after` + the supervision's detection, in its ROUTE column and in
+  the arithmetic (`+ resume gap 102.00ms (3 periods of <node>/<path>
+  33.33ms + detection 2.00ms (...))`). `after` is `<n> periods` of the
+  path whose safe state the reaction's walk ends at, read from its timer,
+  or a duration; a periods count on a path with no timer is
+  `supervised-fit`. The model is unchanged.
+
 ## 0.22.1 - 2026-11-02
 
 - **Fixed (container, rolling):** play_launch_container builds against

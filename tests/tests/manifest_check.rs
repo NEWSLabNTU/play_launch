@@ -3557,6 +3557,55 @@ fn a_supervised_settle_charges_the_whole_settle() {
     );
 }
 
+/// rlm v0.3.2: a supervision whose reaction hands its output back and
+/// resumes it (`resume: { after }`) is charged the gap once on its overrun
+/// row: `after` (periods of the path that publishes the reaction's output,
+/// estop_op's 30 Hz tick, or a duration) + the supervision's detection.
+#[test]
+fn a_resuming_supervision_charges_the_gap_once() {
+    let with = |after: &'static str| {
+        move |c: String| {
+            supervised_settle(c, |c| {
+                c.replacen(
+                    "observes: handler/kinematic_state }",
+                    &format!("observes: handler/kinematic_state, resume: {{ after: {after} }} }}"),
+                    1,
+                )
+            })
+        }
+    };
+    let Some((code, out)) = check_supervised_edited(with("3 periods")) else {
+        eprintln!("Skipping: ros-launch-resolve not built");
+        return;
+    };
+    assert_eq!(code, 0, "{out}");
+    let needle = "hazard 'odd_exit', rung 'comfortable': if \
+                  `nodes.comfort_op.paths.operate.safe_state.settle` overruns, before it \
+                  10640.00ms + settle 10939.67ms (profile 9996.67ms + response 943.00ms) + \
+                  observation 156.00ms (/handler/kinematic_state: period 100.00ms \
+                  (/kinematic_state rate_hz 10) + max_transport 56.00ms) + detection 1.05ms \
+                  (tick 1.00ms + switch 0.05ms (timer)) + reaction scope path 'sys.estop' \
+                  143.33ms + resume gap 101.05ms (3 periods of /estop_op/on_timer 33.33ms + \
+                  detection 1.05ms (tick 1.00ms + switch 0.05ms (timer))) + settle 4165.33ms = \
+                  26146.43ms fits the fault-tolerant time interval 30000.00ms with 3853.57ms of \
+                  slack";
+    assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    let Some((code, out)) = check_supervised_edited(with("50ms")) else {
+        return;
+    };
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("143.33ms + resume gap 51.05ms (after 50.00ms + detection 1.05ms")
+            && out.contains("= 26096.43ms"),
+        "{out}"
+    );
+    // Without `resume:` the row is as before: no gap.
+    let Some((_, out)) = check_supervised_edited(|c| supervised_settle(c, |c| c)) else {
+        return;
+    };
+    assert!(!out.contains("resume gap"), "{out}");
+}
+
 /// `check --explain` on an edited copy of `contract_supervised`.
 fn check_resolve_edited_explain(edit: impl Fn(String) -> String) -> Option<(i32, String)> {
     let bin = ros_launch_resolve_bin()?;

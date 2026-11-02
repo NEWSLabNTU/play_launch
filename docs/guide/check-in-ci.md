@@ -301,6 +301,26 @@ The rules that read it:
   the margin when it fits. A written settle derives no shed speed: the
   `drop` is unchecked (a warning). The model carries it on the lowering:
   `safe_state.supervise.early: { within_ms, drop_mps }`.
+- A reaction that hands its output back and resumes it (rlm v0.3.2,
+  play_launch 0.23.0): `supervise: { ..., resume: { after } }` on any
+  supervision. Once the reaction has run, the path that normally publishes
+  its output takes it over again when it next runs; if that path then
+  stays silent for `after`, the reaction resumes the output, once and for
+  good. Every overrun row whose fallback is this reaction is charged the
+  gap once, `after` + the supervision's detection; `after` is `<n>
+  periods` of the path whose safe state the reaction's walk ends at (read
+  from its timer) or a duration. A periods count on a path with no timer
+  is `supervised-fit` (state a duration). For example (the island's floor,
+  whose direct path hands the braking command back to the emergency
+  operator, 30 Hz):
+
+  ```
+  ... + reaction scope path 'island.floor_override' 39.33ms + resume gap 102.00ms
+  (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms
+  (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 9992.33ms
+  ```
+
+  The gap is added to the row's ROUTE column. The model does not carry it.
 - `supervised-executor-long-callback`: a `mechanism: executor` supervision
   whose detection a callback can delay. The executor checks the deadline in
   its spin loop, between callbacks, so detection is the tick + the longest
