@@ -6,7 +6,16 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## 0.22.0 - 2026-11-02
+## 0.22.1 - 2026-11-02
+
+- **Fixed (container, rolling):** play_launch_container builds against
+  rclcpp on rolling, whose `rclcpp_components/component_manager.hpp` no
+  longer includes `rclcpp/rclcpp.hpp`: the clone-VM manager names the
+  single-threaded executor's header itself. 0.22.0 was tagged but never
+  published (its rolling wheels failed to build); 0.22.1 is 0.22.0 plus
+  this fix.
+
+## 0.22.0 - 2026-11-02 (not published)
 
 - **Added (`check`; rlm v0.3.1):** a supervised settle's response check,
   `supervise: { ..., early: { within, drop } }`. At command + `within` +
