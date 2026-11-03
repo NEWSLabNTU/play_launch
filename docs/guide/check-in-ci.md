@@ -49,7 +49,7 @@ exit status with 1, and a refusal also exited 1, so a checker too old for the
 grammar passed every negative test. State the expected verdict instead:
 
 ```bash
-play_launch check stage2-rungBudget.launch.xml --expect ladder-rung-budget
+play_launch check stage2-rungBudget.launch.xml --expect degradation-level-budget
 ```
 
 `--expect` is repeatable. The exit is 0 only when every Error-severity
@@ -58,8 +58,8 @@ least once, nothing was refused and no launch action was dropped. Otherwise
 one line says what differed, and the exit is 1 (3 for a refusal):
 
 ```
-expect: ok -- the errors are exactly [error[ladder-rung-budget] x1]
-expect: FAILED -- expected error[ladder-rung-budget] did not fire; unexpected error[rate-hierarchy] x4
+expect: ok -- the errors are exactly [error[degradation-level-budget] x1]
+expect: FAILED -- expected error[degradation-level-budget] did not fire; unexpected error[rate-hierarchy] x4
 expect: FAILED -- 1 contract file(s) were refused (error[manifest-parse]), so the expected rule(s) [rate-hierarchy] were never checked
 ```
 
@@ -85,7 +85,7 @@ Each element:
 | field | type | meaning |
 |---|---|---|
 | `file` | string | the group: `<load>`, `<cross-scope>`, or the scope label |
-| `rule` | string | rule id, e.g. `ladder-rung-budget`, `manifest-parse` |
+| `rule` | string | rule id, e.g. `degradation-level-budget`, `manifest-parse` |
 | `severity` | string | `error`, `warning` or `info` |
 | `message` | string | the diagnostic text (may contain a newline: a refusal's checker line) |
 | `path` | string | the dotted contract path the finding is about |
@@ -174,18 +174,18 @@ both. The list sits at the contract's root; all three keys are required.
 ## The `--explain` fault-reaction table
 
 When the contract declares hazards, `--explain` prints one row per (hazard,
-rung), in milliseconds:
+degradation level), in milliseconds:
 
 | column | meaning |
 |---|---|
 | HAZARD | the hazard |
-| RUNG | the mode of its ladder this row is for |
-| ROLE | `rung`, `window` (a rung the system waits in), `floor` (the last rung), or `skipped` (removed by the fault; the reason is in the notes under the table) |
+| DEGRADATION | the degradation level of its fallback sequence this row is for: a mode, or the event chain of a one-level reaction |
+| ROLE | `level`, `dwell` (a level the system waits in for its `min_dwell`), `mrc` (the minimal risk condition, the last level), `overrun` (a supervised budget overrunning, below), or `skipped` (removed by the fault; the reason is in the notes under the table) |
 | DETECT | how long until the fault is detected |
-| WINDOWS | the route and window of every windowed rung passed on the way to this one, up to its deadline |
-| ROUTE | this rung's reaction route: ONE number, the sum of its hops (path latencies and sampling waits) |
-| SETTLE | time for the system to settle in the rung, and how it was obtained (`derived` from parameters, or `literal` as stated); `unknown` when neither; `window >=N` for a window |
-| TOTAL | DETECT + WINDOWS + ROUTE + SETTLE |
+| DWELLS | the route and dwell of every degradation level with a `min_dwell` passed on the way to this one, up to its deadline |
+| ROUTE | this degradation level's reaction route: ONE number, the sum of its hops (path latencies and sampling waits) |
+| SETTLE | time for the system to settle in the degradation level, and how it was obtained (`derived` from parameters, or `literal` as stated); `unknown` when neither; `dwell >=N` for a dwell |
+| TOTAL | DETECT + DWELLS + ROUTE + SETTLE |
 | FTTI | the hazard's fault-tolerant time interval |
 | SLACK | FTTI - TOTAL |
 
@@ -198,12 +198,12 @@ info above the table.
 (phase 93 S5), with every limit named in the notes under the table:
 
 - MAX: how far the period may grow. Each row above that charges the period
-  (a sampling hop, a `reported` detection, a window owner's tick, a measured
+  (a sampling hop, a `reported` detection, a dwell owner's tick, a measured
   `tick: { period }` term) allows `period + SLACK / count`, where count is how
   many periods the row charges (read off the rows by re-running the
   arithmetic one millisecond longer). The checks a period reaches are then
   re-run with longer periods, and a rule that fires first (a publisher's or
-  subscriber's `min_rate_hz`, a window's expiry) is a limit of its own; so is
+  subscriber's `min_rate_hz`, a dwell's expiry) is a limit of its own; so is
   a `max_age` the node evaluates on that tick (`mechanism: application` or
   `diagnostics`). A finding about a `source: derived` budget is not a limit:
   the budget is recomputed with the period, and the notes name it. `none`
@@ -225,7 +225,7 @@ A budget with `supervise: { reaction | enters, mechanism }` (rlm v0.1.61) is
 a claim that the runtime catches its miss and starts a fallback (phase 93).
 The rules that read it:
 
-- `supervised-fit`: per supervised budget a rung or floor row charges, an
+- `supervised-fit`: per supervised budget a degradation level or minimal risk condition row charges, an
   OVERRUN row (time before it + the budget + the detection delay + the
   reaction's route and settle) against the hazard's FTTI. `error` when it
   does not fit or cannot be computed, `info` with the arithmetic when it
@@ -249,7 +249,7 @@ The rules that read it:
   supervision: that input's period (the slowest of its topic's `rate_hz`
   and its `min_rate_hz`) + its `max_transport` (the subscriber's, else the
   topic's). No `observes`, no period or no transport: `supervised-unlowered`
-  says which. The overrun row for the rung charges the time before the
+  says which. The overrun row for the degradation level charges the time before the
   settle + the settle at the hazard's entry speed + the observation + the
   detection + the reaction's route and settle:
 
@@ -257,15 +257,15 @@ The rules that read it:
   odd_exit  comfortable_stop (nodes.<op>.paths.operate.safe_state.settle)  overrun ...
   before it 10454.00ms + settle 10939.67ms (profile 9996.67ms + response 943.00ms)
   + observation 156.00ms (/mrm_handler/kinematic_state: period 100.00ms + max_transport 56.00ms)
-  + detection 2.00ms + reaction scope path 'island.emergency_stop' 188.33ms + settle 4484.33ms
+  + detection 2.00ms + reaction event chain 'island.emergency_stop' 188.33ms + settle 4484.33ms
   = 26224.33ms
   ```
 
   The settle's terms (its response, a written duration) take the level
   `supervised`, so `measured-unsupervised` does not fire for them; CHECKED
   BY reads `runtime monitor (settle-deadline: reaction ..., <mechanism>,
-  standstill seen on <subscriber>)`. The overrun case contains the rung's
-  own total: when the rung itself does not fit, the rung's own row is the
+  standstill seen on <subscriber>)`. The overrun case contains the degradation level's
+  own total: when the degradation level itself does not fit, the degradation level's own row is the
   error and the overrun row says so as `info`, not a second error. The
   model carries the lowering on the safe state (`safe_state.supervise:
   { response_ms, observe_ms, observes, reaction, mechanism }`).
@@ -276,18 +276,18 @@ The rules that read it:
   question earlier: at command + `within` + the observation the vehicle
   must have shed at least `drop` (a speed, against the one the platform
   saw when it armed) or be at standstill, else the same reaction starts
-  then. It gets its own overrun row, named `<rung> (<settle>.supervise.
+  then. It gets its own overrun row, named `<level> (<settle>.supervise.
   early)`: the time before the settle + `within` + the observation + the
   detection + the reaction's route and settle, so a vehicle that does not
   respond is charged at `within`, not at the settle's end; the settle's
   own row stays (a vehicle that slows, then fails to stop). For example
-  (the island's floor, phase 16):
+  (the island's minimal risk condition, phase 16):
 
   ```
-  hazard 'hpc_loss', rung 'emergency_stop': if the vehicle has not responded by
+  hazard 'hpc_loss', degradation level 'emergency_stop': if the vehicle has not responded by
   `nodes.<op>.paths.on_timer.safe_state.settle.supervise.early`, before it 744.33ms
   + response check at 1319.00ms (shed 0.25 m/s by then, else a miss)
-  + observation 136.00ms (...) + detection 2.00ms + reaction scope path 'island.floor_override'
+  + observation 136.00ms (...) + detection 2.00ms + reaction event chain 'island.floor_override'
   39.33ms + settle 4484.33ms = 6725.00ms
   ```
 
@@ -310,12 +310,12 @@ The rules that read it:
   gap once, `after` + the supervision's detection; `after` is `<n>
   periods` of the path whose safe state the reaction's walk ends at (read
   from its timer) or a duration. A periods count on a path with no timer
-  is `supervised-fit` (state a duration). For example (the island's floor,
+  is `supervised-fit` (state a duration). For example (the island's minimal risk condition,
   whose direct path hands the braking command back to the emergency
   operator, 30 Hz):
 
   ```
-  ... + reaction scope path 'island.floor_override' 39.33ms + resume gap 102.00ms
+  ... + reaction event chain 'island.floor_override' 39.33ms + resume gap 102.00ms
   (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms
   (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 9992.33ms
   ```
@@ -354,7 +354,7 @@ nodes:
       operate:
         call: blocking
         timeout: $(param timeout_call_mrm_behavior) s
-        on_timeout: { reaction: emergency_stop }       # a mode, or a scope path
+        on_timeout: { reaction: emergency_stop }       # a mode, or an event chain
         on_rejected: { reaction: emergency_stop }      # what it does on success: false
         max_transport: 1.5ms                           # the request leg
   operator:
@@ -370,8 +370,8 @@ reaction: emergency_stop } }`, `attempts` counting every try. The route
 through the call is charged the WORSE of two branches: success (the request
 leg, the server's route, and for a blocking call whose route continues at
 the client, the wait for the response) and failure (`timeout x attempts +
-backoff x (attempts - 1)` + the route of the rung `on_timeout` falls to).
-A rung whose effect is supervised (`safe_state.settle: { ..., supervise }`,
+backoff x (attempts - 1)` + the route of the degradation level `on_timeout` falls to).
+A degradation level whose effect is supervised (`safe_state.settle: { ..., supervise }`,
 above) takes no failure branch at the call: the supervisor bounds it. The
 `--explain` route note names each call:
 
@@ -380,25 +380,25 @@ call /sys/handler/operate -> /comfort/operate: failure = 100.00 ms timeout (cli.
   + 10.00 ms emergency_stop route = 110.00 ms; route = the failure branch 110.00 ms (success 20.00 ms)
 ```
 
-and a rung budget that the failure branch breaks says so:
+and a degradation level budget that the failure branch breaks says so:
 `reaction 2010.00ms (the call's failure branch: 2000.00 ms timeout
 (cli.operate) + 10.00 ms emergency_stop route)`. Only calls a reaction
 route crosses are judged; a start-up call or a parameter client is not:
 
 - `call-unbounded` (error): no `timeout:` and `on_timeout:`, and no
-  supervised rung, on a rung that has a lower rung for `on_timeout:` to
+  supervised degradation level, on a degradation level that has a lower degradation level for `on_timeout:` to
   fall to.
-- `call-unbounded-floor` (warning, also under `--strict`): the same on a
-  ladder's FLOOR. A timeout cannot help there, since there is no lower rung
-  to fall to: supervise the floor's effect, or guard its output
-  (`reaction-unguarded`). A contract whose floor really does fire and
+- `call-unbounded-mrc` (warning, also under `--strict`): the same on a
+  fallback sequence's minimal risk condition (MRC), its last level. A timeout cannot help there, since there is no lower degradation level
+  to fall to: supervise the minimal risk condition's effect, or guard its output
+  (`reaction-unguarded`). A contract whose minimal risk condition really does fire and
   forget can acknowledge it (`acknowledged:`, above).
 - `call-retry-not-idempotent` (error): a retry, and a server that does not
   declare `idempotent: true`: a retry after a lost response runs the
   operation twice.
 - `call-retry-unbounded` (error): a retry with no `attempts` or no `then:`.
 - `call-late-effect` (warning): `on_timeout` falls to something that is not
-  a lower rung of the call's own ladder, and no server declares
+  a lower degradation level of the call's own fallback sequence, and no server declares
   `stale_after:`: a request the client gave up on may still act, and two
   reactions then act at once.
 - `call-rejected-unhandled` (warning): a blocking call after which the
@@ -424,7 +424,8 @@ another middleware, run `measure` once to confirm.
 
 ## Extensions: names, locks and deprecations
 
-A contract names the extensions and the severity profile it uses:
+A contract names the extensions and the integrity profile it uses (the
+scale its hazards' `integrity:` levels come from):
 `use: { vehicle.braking: "^1", iso26262: "^1" }`. `vehicle.braking` (the
 braking profile: `entry_speed` on a hazard, `settle: { decel, jerk }` on a
 safe state) and the seven reference profiles ship with the checker; any
@@ -440,8 +441,8 @@ things belong in CI:
   without the flag (`lock-drift`). `--explain` lists every resolution with
   its full sha256.
 - **Implicit extensions are refused.** A contract that writes the braking
-  keys without `use: { vehicle.braking: "^1" }`, or hazard severities with
-  no profile and no `severity_levels:`, fails with
+  keys without `use: { vehicle.braking: "^1" }`, or hazard integrity levels with
+  no profile and no `integrity_levels:`, fails with
   `error[deprecated-implicit-extension]` (play_launch 0.19 warned; 0.20
   refuses). `play_launch migrate <dir> --write` adds the `use:` lines (and gives a
   plain-number `entry_speed` its unit, `m/s`); `play_launch migrate <dir>

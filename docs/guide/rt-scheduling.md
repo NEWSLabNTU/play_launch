@@ -14,7 +14,7 @@ band, isolated CPUs) and explicit per-node pins. You stop hand-writing every
 priority number — you write the mapper and the exceptions.
 
 Since Phase 78 the mapper's input - each node's timer rate, deadline,
-effective criticality, paths and the routes of the scope paths - is derived
+effective criticality, paths and the routes of the event chains - is derived
 from the resolved model by ros-launch-manifest's `derive` crate
 (`ros_launch_manifest_derive::mapper_input_from_model`), the same function
 nano-ros hands its RTOS realizer. `play_launch` adds only what the model does
@@ -150,8 +150,8 @@ multi-node causal pipeline with a budget that matters end-to-end (a
 sensor→filter→control path, a perception→planning→control corridor): it
 ranks the members of a derived route by their position in the pipeline
 (drain-toward-sink) instead of their local rate/deadline alone, and the
-end-to-end budget you state gets `scope-budget` /
-`scope-sampling-feasibility` checking for free. With no scope `paths:`
+end-to-end budget you state gets `chain-latency` /
+`chain-sampling-feasibility` checking for free. With no scope `paths:`
 declared, `chain_aware` degrades to exactly the criticality-RM/DM fallback
 (§1.7) — it's a safe default even before you've stated a budget.
 
@@ -403,8 +403,8 @@ Every row's `PROVENANCE` column is one of:
 |---|---|
 | `override(<key>)` | an explicit `overrides:` entry pinned this node |
 | `derived(<mapper>: <fact> → prio N)` | the mapper computed this from a declared rate/deadline |
-| `derived(chain_aware: <scope path> segment drain N/M) -> prio N` | `chain_aware` (§1.7) ranked this node as position N of M in an event segment of the route derived for that scope path, drain-toward-sink |
-| `derived(chain_aware: <scope path> boundary RM period=Xms) -> prio N` | `chain_aware` ranked this node as a clock boundary on that route, by its own period (RM among boundaries) |
+| `derived(chain_aware: <event chain> segment drain N/M) -> prio N` | `chain_aware` (§1.7) ranked this node as position N of M in an event segment of the route derived for that event chain, drain-toward-sink |
+| `derived(chain_aware: <event chain> boundary RM period=Xms) -> prio N` | `chain_aware` ranked this node as a clock boundary on that route, by its own period (RM among boundaries) |
 | `default (no timing facts)` | no override, no fact — `SCHED_OTHER`, unscheduled |
 
 The footer lines show exactly which channel (§1.4) supplied the platform
@@ -501,18 +501,18 @@ play_launch measure <run-dir> --model <model.yaml>              # observed cost 
 | `warn` *(default)* | apply; on failure log a warning, node keeps default scheduling |
 | `strict` | any privilege or apply failure **aborts the run** — all-or-nothing RT |
 
-### 1.7 End-to-end budgets — a scope path, with the route derived
+### 1.7 End-to-end budgets — an event chain, with the route derived
 
 A single node's declared rate or deadline (§1.1) only tells the mapper
 about that node in isolation. An **end-to-end requirement** is stated as a
-**scope path**: a top-level `paths:` entry (root contract or overlay)
+**event chain**: a top-level `paths:` entry (root contract or overlay)
 naming where the requirement starts, where it ends, and a budget. The
 route between those two ends — which nodes, in which order, through which
 topics — is **derived** from the `trigger:`/`output:` facts the nodes
 already declare, joined through the topic graph. You never write it. Since
 Phase 78 the route the mapper consumes comes from ros-launch-manifest's
 `derive` crate (`resolve_chains`), so nano-ros derives the identical one; the
-`scope-budget` check keeps its own walk in `manifest_graph`. The
+`chain-latency` check keeps its own walk in `manifest_graph`. The
 `chain_aware` mapper (§1.1) consumes the derived route: it ranks the
 route's member nodes by their position in the pipeline instead of their
 local facts alone.
@@ -620,7 +620,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    about it). The full key list is the manifest crate's generated
    [format reference](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/format-reference.md).
 
-3. **`check`.** The same command validates the scope path alongside
+3. **`check`.** The same command validates the event chain alongside
    everything else — no path-specific flag:
 
    ```bash
@@ -652,14 +652,14 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
 
    The WCET it asks for is `budget` (§1.2.1) — measured, never guessed.
 
-   The rules that grade a scope path, all cross-scope, all reported under
+   The rules that grade an event chain, all cross-scope, all reported under
    `── Cross-scope diagnostics ──` (severities in the [manifest format
    reference](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/launch-manifest.md#static-validation)):
 
    | rule | severity | fires when |
    |---|---|---|
-   | `scope-sampling-feasibility` | warning | sampling cost **alone** meets or exceeds the budget — structurally infeasible; no priority assignment can fix it, only a period or architecture change can. Emitted first, so the structural verdict reads before the budget one |
-   | `scope-budget` | warning | the derived route's total (event segments + sampling cost) exceeds `max_latency` |
+   | `chain-sampling-feasibility` | warning | sampling cost **alone** meets or exceeds the budget — structurally infeasible; no priority assignment can fix it, only a period or architecture change can. Emitted first, so the structural verdict reads before the budget one |
+   | `chain-latency` | warning | the derived route's total (event segments + sampling cost) exceeds `max_latency` |
    | `budget-overflow` | error | a child scope's path over the same two ends declares a larger budget than its parent's |
    | `jitter-feasibility` | warning | a declared `max_jitter` is below the sampling jitter the route's boundaries already carry |
    | `jitter-range` | error / info | `max_latency − min_latency` exceeds `max_jitter` when both bounds are declared (error); with no `min_latency` the requirement is reported unverifiable (info) — an absent floor is unknown, not zero |
@@ -668,7 +668,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    the real warning names every term:
 
    ```
-   warning[scope-budget]: scope path 'points_to_cmd' (scope 0) max_latency_ms (20) is less than
+   warning[chain-latency]: event chain 'points_to_cmd' (scope 0) max_latency_ms (20) is less than
      critical path: /perception/sensor_node → /perception/filter_component → /control/control_node
      = 25.00ms (15.00ms event-segment + 10.00ms sampling_cost)
    ```
@@ -703,7 +703,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
 
    `filter_component` and `sensor_node` show `derived(chain_aware: ...)`
    provenance — a segment drain position or a boundary's period, named
-   after the scope path (`points_to_cmd`) whose derived route placed them
+   after the event chain (`points_to_cmd`) whose derived route placed them
    there. `control_node` is overridden (next step). **Read the provenance,
    not just the priorities**: on this three-node fixture, plain budget
    ranking with no route at all happens to produce the same 39/38, and
@@ -743,7 +743,7 @@ the same reason: put `max_jitter:` on the path whose end-to-end variation
 you actually care about.
 
 **Runnable example**: [`tests/fixtures/rt_workspace/`](../../tests/fixtures/rt_workspace/)'s
-`points_to_cmd` scope path (three nodes, one boundary, one two-node
+`points_to_cmd` event chain (three nodes, one boundary, one two-node
 segment) is exactly the example above — its
 [`launch/bringup.contract.yaml`](../../tests/fixtures/rt_workspace/launch/bringup.contract.yaml)
 carries the by-hand derivation in its comments, and `just check` in that
@@ -1019,6 +1019,6 @@ never `budget_us: 8000`.
   design, kept as a record of what was decided then; its status line says what
   reversed it): [`docs/superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md`](../superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md)
 - Design of record (RT helper, per-TID, capabilities): [`docs/superpowers/specs/2026-07-14-rt-helper-design.md`](../superpowers/specs/2026-07-14-rt-helper-design.md)
-- Design of record (scope paths and derived routes, §1.7): [contract primitives — facts and requirements, never consequences](../design/contract-primitives.md) · [chain-aware mapper](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md) (the clock-segmented ranking; its authored-`chains:` input was superseded by the derived route) · Roadmap: [phase 67](../roadmap/phase-67-contract-primitives.md), [phase 68 §W4](../roadmap/phase-68-contract-consequences.md)
+- Design of record (event chains and derived routes, §1.7): [contract primitives — facts and requirements, never consequences](../design/contract-primitives.md) · [chain-aware mapper](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md) (the clock-segmented ranking; its authored-`chains:` input was superseded by the derived route) · Roadmap: [phase 67](../roadmap/phase-67-contract-primitives.md), [phase 68 §W4](../roadmap/phase-68-contract-consequences.md)
 - Manifest format reference (triggers, scope `paths:`, rule severities): [`ros-launch-manifest/docs/launch-manifest.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/launch-manifest.md#cross-scope-end-to-end-budgets-scope-paths) · every accepted key, generated from the parser's own table: [`docs/format-reference.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/format-reference.md)
 - Roadmap and implementation history: [`docs/roadmap/phase-38-linux_rt_scheduling.md`](../roadmap/phase-38-linux_rt_scheduling.md), [`docs/roadmap/phase-41-rt_config_v2.md`](../roadmap/phase-41-rt_config_v2.md), [`docs/roadmap/phase-44-vocab_v2_chain_mapper.md`](../roadmap/phase-44-vocab_v2_chain_mapper.md)

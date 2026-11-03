@@ -269,13 +269,13 @@ a rule with none is comparing the running system against itself.
 | `rate-hierarchy-runtime` | error | `nodes.<n>.pub.<e>.min_rate_hz` | the measured publish rate falls below the declared floor. Needs ≥0.5 s of publishing; re-checked every 1024 publishes and at least every 5 s, so a 1 Hz topic cannot escape its contract by never reaching a count |
 | `max-age-runtime` | error | `nodes.<n>.sub.<e>.max_age` | `now − header.stamp` at a take exceeds the declared age. Read on the consumer's poll, so it can overstate age by up to the 10 ms poll interval |
 | `drop-rate-runtime` | error / warning | `topics.<t>.drop.max_count` | error: the worst subscriber's measured `(published − taken) / published` exceeds the declared budget, checked every 256 takes. warning: a DDS `MESSAGE_LOST` event |
-| `max-latency-runtime` | error | `paths.<p>.max_latency` (scope path) | the same `header.stamp` reaches the path's output topic later than the budget allows after its publish on the input topic |
+| `max-latency-runtime` | error | `paths.<p>.max_latency` (event chain) | the same `header.stamp` reaches the path's output topic later than the budget allows after its publish on the input topic |
 | `deadline-runtime` | warning | `qos.deadline` (applied to the node as a `qos_overrides.*` parameter — phase 74) | DDS reports a missed deadline on either side |
 | `liveliness-runtime` | error / warning | `qos.liveliness`, `qos.lease_duration` | error: DDS `LIVELINESS_LOST` on a publisher. warning: `LIVELINESS_CHANGED` on a subscription — the topic's publisher set changed shape |
-| `hazard-detected` | error | `hazards.<h>.guards`; threshold from the reacting subscriber's `sub.<e>.max_age` or `qos.lease_duration` | a guard topic goes silent past the threshold — or DDS reports it lost liveliness or missed its deadline first. Absent a declared detector the threshold is 10× the guard's own median period, floor 50 ms. Silence produces no event, so it is judged on the consumer's 10 ms tick |
+| `hazard-detected` | error | `hazards.<h>.guards`; threshold from the reacting subscriber's `sub.<e>.max_age` or `qos.lease_duration` | a guard topic goes silent past the threshold — or DDS reports it lost liveliness or missed its deadline first. Absent a declared detector the threshold is 10× the guard's own median period, minimal risk condition 50 ms. Silence produces no event, so it is judged on the consumer's 10 ms tick |
 | `hazard-reaction` | warning / error | `hazards.<h>.ftti`, `paths.<p>.safe_state.settle` | the first publish on the reaction path's output topic that carries no provenance from the dead guard. Warning when `reaction + settle` fits the FTTI (with the slack named), **error** when it exceeds it. The message also reports when the observer itself noticed, which is usually later than the node's own watchdog |
 | `hazard-recovered` | warning | — | the guard resumes publishing, with how long it was out |
-| `mode-availability` | warning / error | `modes.<m>.requires` / `fallback`, `functions.<f>` | a mode becomes unavailable because a function it requires has a silent guard. Warning naming the rung it falls to, **error** when no rung of the ladder is available either. Reported once per transition, not once per event |
+| `mode-availability` | warning / error | `modes.<m>.requires` / `fallback`, `functions.<f>` | a mode becomes unavailable because a function it requires has a silent guard. Warning naming the degradation level it falls to, **error** when no degradation level of the fallback sequence is available either. Reported once per transition, not once per event |
 
 Three things about the table worth knowing before you read output against it.
 
@@ -379,7 +379,7 @@ refuse every endpoint in the system.
   `on_violation:` and `safe_state:` come from, and the FDTI/FRTI arithmetic
   the `hazard-*` rules check live
 - `docs/design/operational-modes.md` — `functions:`, `modes:` and the
-  fallback ladder `mode-availability` walks
+  fallback sequence `mode-availability` walks
 - `docs/roadmap/phase-36-runtime_enforcement.md` — the rule engine's origin
 - `docs/roadmap/phase-79-runtime-enforcement-is-a-gate.md` — why the
   precondition, the severity threshold and the teardown are as described here

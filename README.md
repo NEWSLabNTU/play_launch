@@ -103,7 +103,7 @@ either way, since the model is the only thing `up` spawns from.
 
 ```bash
 play_launch check my_pkg bringup.launch.xml               # 0 clean, 1 errors, 3 a contract refused
-play_launch check bringup.launch.xml --expect ladder-rung-budget   # a negative test
+play_launch check bringup.launch.xml --expect degradation-level-budget   # a negative test
 play_launch check bringup.launch.xml --explain --width 100         # the fault-reaction table, wrapped
 play_launch --version   # play_launch 0.13.0 (v0.13.0-9-gabc1234, rlm v0.1.47)
 ```

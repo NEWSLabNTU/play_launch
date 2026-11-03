@@ -242,10 +242,10 @@ Three rules keep the read honest:
   exception: it has no unit. Values combine with `+ - * /` and parentheses,
   and a value of the wrong dimension for its key is an error that suggests the
   inverse when it is one (`1 / $(param update_rate) Hz` for a Time).
-- **Read configuration, write requirements.** A takeover window that came out
+- **Read configuration, write requirements.** A takeover dwell time that came out
   of a hazard analysis is a requirement; reading it from the parameter would
   let a parameter edit change the requirement unseen. Keep it written and bind
-  the parameter to check it: `window: { duration: 10s, param:
+  the parameter to check it: `min_dwell: { duration: 10s, param:
   mrm_handler.takeover_request_timeout, source: requirement }`. A `source:`
   beside a reference is refused: the reference is the source, and the model
   records it (`sources:` beside the number).
