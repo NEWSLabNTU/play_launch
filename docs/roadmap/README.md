@@ -350,7 +350,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     transport reader (#0042), P2 `links:`, P3 `measure` proposals, P4
     `check --against` transport, P5 a runtime link monitor (nano-ros).
     [phase-97-links.md](./phase-97-links.md).
-  - **Phase 98** - planned (2026-11-03): standard names (rlm
+  - **Phase 98** - in progress (2026-11-03; N0-N2 done, rlm v0.3.3): standard names (rlm
     `docs/design/standard-names.md`, design issue 57). The vocabulary takes
     the standards' words: `severity` holding an ASIL becomes `integrity`;
     rung/ladder/floor/window/scope path become degradation level, degradation

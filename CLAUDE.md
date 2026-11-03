@@ -697,6 +697,29 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-11-03**: **The contract vocabulary takes the standards' words**
+  (phase 98, rlm v0.3.3, design issue 57, rlm
+  `docs/design/standard-names.md`). `hazards.<h>.severity` is `integrity`
+  (an ASIL is an integrity level; ISO 26262's severity is the S0-S3 class
+  it comes from), `severity_levels` is `integrity_levels`, a profile's
+  `severity_scale` is `integrity_scale`; rung/ladder/floor are degradation
+  level/fallback sequence/minimal risk condition (the model's `rungs` is
+  `degradation_levels` of `LevelRoute`, roles `level`/`dwell`/`mrc`); a
+  mode's `window:` is `min_dwell:`; a manifest-level path is an event
+  chain. Nine rule ids moved (`degradation-level-budget`,
+  `fallback-without-mrc`, `dwell-at-mrc`, `call-unbounded-mrc`,
+  `dwell-expiry`, `dwell-param`, `dwell-unbound`, `chain-latency`,
+  `chain-sampling-feasibility`, plus the two `integrity-*`). Three things a
+  later change must keep: an old spelling reads for ONE release with a
+  `deprecated-spelling` warning and is then refused naming the new one
+  (the schedule is the design doc's section 6; the model rewrite, the
+  `removed` rows and `migrate` stay for good); a renamed rule id goes in
+  rlm's `types::rule_names` (`RENAMED_RULES`, and `RENAMED_KEYS` for a
+  path through a renamed key), because `acknowledged:` names ids and paths
+  and would otherwise turn every acknowledged finding into `ack-stale`; and
+  a "floor" that is a rate's or `min_latency`'s keeps its name, only the
+  fallback sense became the minimal risk condition. Model schema 3.
+
 - **2026-10-31**: **The nano-ros seams close** (phase 96, rlm v0.3.0).
   The legacy `system.toml` scheduling schema and its `.toml` bridge are
   removed (phase 41.6), and with them every `_us`/`_ms` duration alias and

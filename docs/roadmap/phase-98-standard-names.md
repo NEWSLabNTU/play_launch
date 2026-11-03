@@ -1,6 +1,8 @@
 # Phase 98 - standard names: the vocabulary in the terms its readers know
 
-**Status (2026-11-03): planned.** Design of record: rlm
+**Status (2026-11-03): in progress -- N0 decided, N1 + N2 done (rlm
+v0.3.3, play_launch on main); N3 waits on a play_launch release.** Design
+of record: rlm
 `docs/design/standard-names.md` (design issue 57). Spans rlm, play_launch,
 the safety island's contracts and nano-ros (pull requests from
 `~/repos/nano-ros-pl`).
@@ -58,6 +60,37 @@ is gone by R+2.
 R+1 is a separate release on purpose: phase 68's deprecation window was
 never tagged, so no user saw it and 0.9 to the next release was a hard cut.
 Here R+1 waits until R has been published and nano-ros has followed.
+
+## Progress
+
+- **N0** (2026-11-03): the table in the design doc's section 2.6. One
+  change from the first proposal: the ordered list is the *fallback
+  sequence*, not a "degradation chain", because S5 gives "chain" to the
+  event chain. In the `--explain` hazard table the level column is
+  DEGRADATION (LEVEL already heads the budget's evidence level).
+- **N1** (rlm `c11aadb`, `a02feb3`, `ac2786c`, `527dd14`; v0.3.3): every
+  S1-S5 key, type, model field and rule id renamed, the old spellings read
+  for one release; model schema 3 reads schema 1 and 2. New in rlm:
+  `types::rule_names` (renamed rule ids and keys, `current`,
+  `current_path`), so an `acknowledged:` entry written with an old id or
+  through an old key still matches, and the `rule-id-renamed`,
+  `severity-integrity` and `window-min-dwell` rewrites. The bundled
+  profiles are 1.1.0 (their bytes changed with `integrity_scale:`).
+- **N2** (play_launch `c2928054`, `879c8e78`, `eb1e0dd2`, `55ba4aef`):
+  resolver messages, `--explain`, the runtime's mode message, every
+  fixture, the guides. `contract_spelling_deprecated_n1` and `_s4` prove an
+  old spelling checks to the same verdict and table and migrates; the
+  ranked plans are unchanged (the two new fixtures were added).
+  Code-internal identifiers that never reach a user (`LevelBudget.rung`,
+  local variables) were left; the R+2 gate reads user-facing text only.
+- **N3**: the safety island's CI checks with the play_launch it pins from
+  PyPI (0.20.1), so its contracts and its `check-contracts.sh` rule ids
+  (`ladder-rung-budget`, `ladder-unterminated`) move when it bumps that pin
+  to the release carrying R; until then the old keys keep working. Run
+  against the R build its verdicts are unchanged apart from the renamed ids
+  (and `l3_takeover`'s `call-unbounded`, which is phase 95's, not this
+  phase's). nano-ros: the pull request bumping the rlm tag and the mirrored
+  `rungs`/`RungRole` reads is still to open.
 
 ## Order
 
