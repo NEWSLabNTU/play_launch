@@ -881,7 +881,7 @@ fn resolve_emits_joined_system_model() {
     let model: serde_json::Value = serde_yaml_value(&yaml);
 
     // meta: schema version + provenance hashes present
-    assert_eq!(model["meta"]["version"], 2, "SystemModel schema 2 (#0067)");
+    assert_eq!(model["meta"]["version"], 3, "SystemModel schema 3 (phase 98)");
     assert!(
         model["meta"]["inputs"]
             .as_array()
