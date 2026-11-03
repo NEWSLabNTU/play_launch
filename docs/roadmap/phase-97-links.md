@@ -1,6 +1,6 @@
-# Phase 97 - links: transport measured, sourced and monitored
+# Phase 97 - links: transport measured, sourced and checked against runs
 
-**Status (2026-11-03): P1-P4 done (rlm v0.3.4, play_launch 0.24.0); P5 not adopted (user decision, below); P6 deferred.** Design of record: rlm
+**Status (2026-11-04): P1-P4 done (rlm v0.3.4, play_launch 0.24.0); P5 not adopted (user decision, below); P6 deferred. Follow-up in rlm v0.3.5 / play_launch 0.24.1: no message or doc says a monitor holds a link, and a reaction chain's budget is judged on its walked route.** Design of record: rlm
 `docs/design/links.md` (refines design issue 55). Spans rlm, play_launch and
 nano-ros (pull requests). First consumer: the safety island (RTSS demo phase
 10, tier 3 as revised).
@@ -10,8 +10,8 @@ nano-ros (pull requests). First consumer: the safety island (RTSS demo phase
 A contract's `max_transport` today is a number per subscriber with no
 evidence behind it, read three ways by three readers (issue 55, play_launch
 #0042), and never checked at run time. For a best-effort link (serial, TCP,
-DDS) the number cannot be derived; it can only be measured and then held by a
-monitor. The safety island writes `max_transport` eleven times as
+DDS) the number cannot be derived; it can only be measured, stated with its
+source, and checked against later runs (`check --against`). The safety island writes `max_transport` eleven times as
 per-subscriber overrides, exactly the case the three readers total
 differently.
 
@@ -73,4 +73,16 @@ then P5 with nano-ros. P6 waits.
   holds the bound (`transport-exceeded`; gate: the fixture run
   `contract_takeover_named_link/run_over`, 73.5 ms against 57). The walk's
   link-monitor charge and `link-unmonitored` are not built; `monitor:`
-  stays in the grammar, read by nothing yet.
+  stays in the grammar, parsed and not read.
+- **Follow-up (rlm v0.3.5, play_launch 0.24.1).** `transport-inline` said
+  a link is "held by a monitor"; it now says `check --against` holds it,
+  and rlm's field table and docs mark `monitor:` reserved. The island's
+  `island.emergency_stop` (210 ms) drew a `chain-latency` warning from
+  rlm's per-manifest flat sum once that sum read the per-subscriber links
+  (149 + 56 + 36 + 143 = 384): the chain crosses the handler's call to
+  the stop operator's latched `operate` service, which the nominal graph
+  does not walk, so no route superseded the sum. `check` now judges such a
+  chain on the reaction walk from its inputs (the route the hazard rows
+  charge, 188.33 ms) and drops the sum; a chain neither walk reaches keeps
+  it. Gate: `contract_takeover_chain_budget` (210 fits, 180 is
+  `chain-latency` naming the route).

@@ -5383,6 +5383,49 @@ fn check_scope_path_critical_path(
         );
 
         let Some(cp) = critical_path(&subgraph) else {
+            // No route in the nominal dataflow graph: the chain crosses what
+            // that graph does not walk (a service call, a request the server
+            // latches for its next tick). The reaction walk the hazard rows
+            // charge for such a chain (`WalkStart::Topics`, the same inputs
+            // and outputs) is its route. Judge the budget on that route and
+            // drop the per-manifest sum, which charges every node and every
+            // subscriber hop of the manifest whether or not the chain crosses
+            // them. A chain neither walk reaches keeps the sum, the only
+            // estimate there is.
+            let sinks: HashSet<&str> = scope_path
+                .output_topics
+                .iter()
+                .map(String::as_str)
+                .collect();
+            let Some(w) = walk_reaction_at(
+                WalkStart::Topics(&scope_path.input_topics),
+                &sinks,
+                &index.topics,
+                &index.services,
+                &index.node_paths,
+                graph,
+            ) else {
+                continue;
+            };
+            superseded.push((scope_path.scope_id, scope_path.path_name.clone()));
+            if w.route_ms > declared {
+                let route: Vec<String> = w.hops.iter().map(ToString::to_string).collect();
+                index.merge_diagnostics.push(Diagnostic {
+                    rule_id: "chain-latency".to_string(),
+                    severity: Severity::Warning,
+                    message: format!(
+                        "event chain '{}' (scope {}) max_latency_ms ({}) is less than its \
+                         reaction route: {} = {:.2}ms",
+                        scope_path.path_name,
+                        scope_path.scope_id,
+                        declared,
+                        route.join(" -> "),
+                        w.route_ms,
+                    ),
+                    path: format!("paths.{}", scope_path.path_name),
+                    span: None,
+                });
+            }
             continue;
         };
 

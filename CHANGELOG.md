@@ -6,6 +6,22 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## 0.24.1 - 2026-11-04
+
+- **Fixed (`check`):** an event chain whose route the nominal dataflow
+  graph does not walk (it crosses a service call, or a request the server
+  latches for its next tick, as the safety island's `island.emergency_stop`
+  does) is judged on the reaction walk from its inputs, the route the
+  hazard rows charge. Before, only rlm's per-manifest flat sum judged it,
+  charging every node and every subscriber hop of the manifest whether or
+  not the chain crosses them (the island: 149 + 56 + 36 + 143 = 384 against
+  210, a false `chain-latency`; the walked route is 188.33). A chain over
+  its budget on that route is `chain-latency` naming the route; a chain
+  neither walk reaches keeps the flat sum.
+- **Changed (rlm v0.3.5):** no message or doc says a monitor holds a link
+  (phase 97 P5 is not adopted): `transport-inline` says `check --against`
+  holds the bound; `monitor:` stays in the grammar, parsed and not read.
+
 ## 0.24.0 - 2026-11-03
 
 - **Added (`check`, `measure`; rlm v0.3.4, phase 97):** links, a

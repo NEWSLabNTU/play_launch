@@ -1895,6 +1895,32 @@ fn a_named_link_is_charged_as_the_inline_value_and_named() {
     assert!(inline[0].contains("control_mode"), "{inline:?}");
 }
 
+/// The safety island's emergency-stop chain: its route crosses a service the
+/// server latches for its timer, which the nominal dataflow graph does not
+/// walk. The budget is judged on the reaction walk the hazard rows charge
+/// (149 + 33.33 = 182.33), not on rlm's per-manifest flat sum of every node
+/// and every subscriber hop (149 + 57 + 143 = 349): 210 ms fits with no
+/// warning, 180 ms is `chain-latency` naming the route, and neither carries
+/// the flat sum.
+#[test]
+fn a_reaction_chain_budget_is_judged_on_its_walked_route() {
+    let (code, out) = check_takeover("contract_takeover_chain_budget", &[]);
+    assert_eq!(code, 0, "{out}");
+    let chain: Vec<_> = out
+        .lines()
+        .filter(|l| l.contains("[chain-latency]"))
+        .collect();
+    assert_eq!(chain.len(), 1, "only sys.estop_tight's: {chain:?}");
+    assert!(
+        chain[0].contains(
+            "event chain 'sys.estop_tight' (scope 0) max_latency_ms (180) is less than its \
+             reaction route: /handler/call_mrm -> /estop_op/on_timer (+33.33ms sampling) = 182.33ms"
+        ),
+        "{chain:?}"
+    );
+    assert!(!out.contains("sum of node latencies"), "{out}");
+}
+
 /// Phase 97 P4: `check --against` a recorded run in which one of the two
 /// messages across the link took 73.5 ms against its 57 ms bound
 /// (`run_over/interception/events.jsonl`): `transport-exceeded` fails the
