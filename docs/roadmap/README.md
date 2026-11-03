@@ -345,6 +345,11 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     from every Jazzy-and-later wheel and a sequence-layout crash on Lyrical
     and Rolling (`rosidl_runtime_rs`). Released as 0.18.2; no consumer needed a change.
     [phase-92-one-pypi-package.md](./phase-92-one-pypi-package.md).
+  - **Phase 97** - planned (2026-11-03): links, transport measured, sourced
+    and monitored (rlm `docs/design/links.md`, refining issue 55). P1 one
+    transport reader (#0042), P2 `links:`, P3 `measure` proposals, P4
+    `check --against` transport, P5 a runtime link monitor (nano-ros).
+    [phase-97-links.md](./phase-97-links.md).
   - **Phase 95** - ✅ (rlm v0.2.5/v0.2.6, 2026-10-27): service calls on a
     reaction route. A client states its wait and fallback (`timeout`,
     `on_timeout`, `on_rejected`), a server `idempotent`/`stale_after`; the
