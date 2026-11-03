@@ -342,6 +342,7 @@ fn sub_contract(
         && !required
         && p.buffer.is_none()
         && p.max_transport.is_none()
+        && p.link.is_none()
         && p.ingress.is_none()
         && p.min_interarrival.is_none()
         && p.budget.is_none()
@@ -374,6 +375,9 @@ fn sub_contract(
         // it here is what lets `TopicView::transport_ms` apply the same
         // precedence the resolver applies.
         max_transport_ms: p.max_transport.ms(),
+        // play_launch phase 97: the link the hop crosses; its number is
+        // already in `max_transport_ms` (rlm puts it there at parse).
+        link: p.link.clone(),
         // rlm v0.1.64 (nano-ros RFC-0074): what the subscriber is made to
         // absorb. The grammar requires both numbers, so this copies them.
         ingress: p.ingress.map(|i| model::IngressContract {
@@ -388,6 +392,30 @@ fn sub_contract(
         budget_period_ms: p.budget_period.map(|d| d.as_millis_f64()),
         sources: BTreeMap::new(),
     })
+}
+
+/// One `links.<name>` as the model carries it (phase 97).
+pub(crate) fn link_contract(l: &ros_launch_manifest_types::LinkDecl) -> model::LinkContract {
+    use ros_launch_manifest_types::SuperviseReaction as R;
+    let source = l.max_transport.source.as_ref();
+    model::LinkContract {
+        max_transport_ms: l.max_transport.ms().unwrap_or(0.0),
+        synced: l.clock == ros_launch_manifest_types::LinkClock::Synced,
+        source: source.map(|s| s.kind.as_str().to_string()),
+        run: source
+            .and_then(|s| s.measured.as_ref())
+            .and_then(|m| m.run.clone()),
+        monitor: l.monitor.as_ref().map(|m| match &m.reaction {
+            R::Reaction(r) => model::LinkMonitorContract {
+                reaction: Some(r.clone()),
+                enters: None,
+            },
+            R::Enters(e) => model::LinkMonitorContract {
+                reaction: None,
+                enters: Some(e.clone()),
+            },
+        }),
+    }
 }
 
 /// A service server's contract: its response deadline and, since rlm
@@ -1809,6 +1837,17 @@ pub fn build_system_model(
                 node_name,
             );
             contracts.node_criticality.insert(node_fqn, c);
+        }
+    }
+    // play_launch phase 97: the links, by name, with their source and
+    // monitor, for the realizer (P5) and `--explain`. A subscriber's
+    // `link` names one; its number is on the subscriber already.
+    for resolved in index.manifests.values() {
+        for (name, l) in &resolved.manifest.links {
+            contracts
+                .links
+                .entry(name.clone())
+                .or_insert_with(|| link_contract(l));
         }
     }
     for (node_fqn, d) in &index.derived_criticality {

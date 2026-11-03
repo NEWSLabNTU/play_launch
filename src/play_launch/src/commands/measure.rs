@@ -60,6 +60,9 @@ pub fn handle_measure(args: &MeasureArgs) -> eyre::Result<()> {
 
     let model = read_model(&args.model)?;
 
+    // Phase 97 P3: each declared link's bound, proposed from this run.
+    print!("{}", render_links(&body, &model, &events_path));
+
     let specs = path_specs(&model);
     if specs.is_empty()
         && let Some((_, snap)) = &calls
@@ -341,6 +344,91 @@ fn resolve_events_path(arg: &Path) -> eyre::Result<PathBuf> {
     )
 }
 
+/// The edges the model routes over a declared link: each subscriber endpoint
+/// that names one, on the topic `structure.topics` wires it to.
+fn link_edges(model: &SystemModel) -> Vec<ros_launch_resolve::ros::link_samples::LinkEdge> {
+    let mut out = Vec::new();
+    for (topic, wiring) in &model.structure.topics {
+        for ep in &wiring.subscribers {
+            let Some(sub) = model.contracts.sub_endpoints.get(ep) else {
+                continue;
+            };
+            let Some(link) = &sub.link else { continue };
+            let Some((node, _)) = ep.rsplit_once('/') else {
+                continue;
+            };
+            out.push(ros_launch_resolve::ros::link_samples::LinkEdge {
+                link: link.clone(),
+                topic: topic.clone(),
+                sub_node: node.to_string(),
+                bound_ms: sub.max_transport_ms.unwrap_or(0.0),
+            });
+        }
+    }
+    out
+}
+
+/// Phase 97 P3: a `links:` fragment proposing each declared link's
+/// `max_transport` as the observed max x 1.2 with the run named as the
+/// source, and saying so where the run measured nothing. Empty when the model
+/// declares no link.
+fn render_links(events: &str, model: &SystemModel, events_path: &Path) -> String {
+    use ros_launch_resolve::ros::link_samples::{observe, propose_ms};
+    const MARGIN: f64 = 0.2;
+    if model.contracts.links.is_empty() {
+        return String::new();
+    }
+    let edges = link_edges(model);
+    let obs = observe(events, &edges);
+    let run = events_path
+        .parent()
+        .and_then(|p| {
+            if p.ends_with("interception") {
+                p.parent()
+            } else {
+                Some(p)
+            }
+        })
+        .unwrap_or(events_path)
+        .display()
+        .to_string();
+    let mut out = String::from(
+        "\n# links (phase 97): max_transport proposed from this run's publish -> take \
+         deltas, observed max x 1.2.\n# Only processes this run intercepted are seen, on one \
+         clock; a subscriber on another host takes nothing here, and its link is reported \
+         unmeasured.\nlinks:\n",
+    );
+    for (name, l) in &model.contracts.links {
+        let o = obs.get(name);
+        match o.and_then(|o| o.max_ms().map(|m| (m, o.samples_ms.len()))) {
+            Some((max, n)) => out.push_str(&format!(
+                "  {name}:\n    max_transport:\n      duration: {}ms\n      source: {{ measured: \
+                 {{ max: {max:.2}ms, n: {n}, margin: {MARGIN}, run: \"{run}\" }} }}\n    \
+                 # declared {:.2}ms{}\n",
+                propose_ms(max, MARGIN),
+                l.max_transport_ms,
+                if max > l.max_transport_ms {
+                    "; this run EXCEEDED it (`check --against` reports transport-exceeded)"
+                } else {
+                    ""
+                }
+            )),
+            None => out.push_str(&format!(
+                "  # {name}: unmeasured -- no message across it in this run (declared {:.2}ms, \
+                 kept). {}\n",
+                l.max_transport_ms,
+                if l.synced {
+                    "Its clocks are synced: measure it at the receiver (the stamp's age)."
+                } else {
+                    "Its clocks are not synced: across hosts only the inter-arrival gap can be \
+                     timed, and the transport cannot be measured from this record."
+                }
+            )),
+        }
+    }
+    out
+}
+
 /// Lower the model's node paths into measurable specs: endpoint refs resolved
 /// to the topic FQNs the interception layer actually sees.
 fn path_specs(model: &SystemModel) -> Vec<PathSpec> {
@@ -597,6 +685,59 @@ fn header(run: &Run, events_path: &Path, model_path: &Path) -> String {
 mod tests {
     use super::*;
     use crate::interception::measure::{Dist, PathStats};
+
+    /// Phase 97 P3: a model with two links, one crossed by an intercepted
+    /// subscriber and one not; the run names its own directory.
+    #[test]
+    fn measure_proposes_each_link_from_the_run_or_says_unmeasured() {
+        use ros_launch_manifest_model::{LinkContract, SubContract, TopicWiring};
+        let mut m = SystemModel::default();
+        m.structure.topics.insert(
+            "/t".into(),
+            TopicWiring {
+                msg_type: "std_msgs/msg/Header".into(),
+                publishers: vec!["/p/out".into()],
+                subscribers: vec!["/far/in".into(), "/board/in".into()],
+            },
+        );
+        for (ep, link) in [("/far/in", "wire"), ("/board/in", "serial")] {
+            m.contracts.sub_endpoints.insert(
+                ep.into(),
+                SubContract {
+                    link: Some(link.into()),
+                    max_transport_ms: Some(40.0),
+                    ..Default::default()
+                },
+            );
+            m.contracts.links.insert(
+                link.into(),
+                LinkContract {
+                    max_transport_ms: 40.0,
+                    ..Default::default()
+                },
+            );
+        }
+        let events = r#"{"t":{"h":7,"n":"/t"}}
+{"e":{"n":"/p","d":"pub","h":7,"s":1,"ns":0,"t":1000000000,"c":0,"tid":1}}
+{"e":{"n":"/far","d":"take","h":7,"s":1,"ns":0,"t":1046420000,"c":0,"tid":2}}
+"#;
+        let out = render_links(
+            events,
+            &m,
+            Path::new("play_log/2026-11-03/interception/events.jsonl"),
+        );
+        assert!(
+            out.contains("  wire:\n    max_transport:\n      duration: 56ms"),
+            "{out}"
+        );
+        assert!(
+            out.contains("max: 46.42ms, n: 1, margin: 0.2, run: \"play_log/2026-11-03\""),
+            "{out}"
+        );
+        assert!(out.contains("this run EXCEEDED it"), "{out}");
+        assert!(out.contains("# serial: unmeasured"), "{out}");
+        assert!(out.contains("transport cannot be measured"), "{out}");
+    }
 
     fn measured(node: &str, name: &str, max_ns: u64) -> PathResult {
         PathResult {

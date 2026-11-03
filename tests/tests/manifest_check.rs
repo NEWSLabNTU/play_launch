@@ -1869,6 +1869,32 @@ fn takeover_ladder_fits_and_explains_itself() {
     }
 }
 
+/// Phase 97 P2: the same contract with its UART as a named link
+/// (`links.host_serial`, measured): every row and route is the one the
+/// inline `max_transport` gives (one reader), and the route names the link
+/// and the number's source. The inline subscriber value it replaced is no
+/// longer `transport-inline`; the driver's 143 ms still is.
+#[test]
+fn a_named_link_is_charged_as_the_inline_value_and_named() {
+    let (code, out) = check_takeover("contract_takeover_named_link", &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    for needle in [
+        "hpc_loss  estop        mrc      500.00      0.00  239.33   4165.33 derived   4904.67  10000.00   5095.33",
+        "odd_exit  estop        mrc      100.00  10206.00  182.33   4165.33 derived  14653.67  30000.00  15346.33",
+        "hpc_loss/estop: route = link 57.00ms (max_transport into '/handler/availability', \
+         sub-level; link 'host_serial'; measured) + path 182.33ms",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    assert!(!out.contains("link-unsourced"), "{out}");
+    let inline: Vec<_> = out
+        .lines()
+        .filter(|l| l.contains("[transport-inline]"))
+        .collect();
+    assert_eq!(inline.len(), 1, "only control_mode's: {inline:?}");
+    assert!(inline[0].contains("control_mode"), "{inline:?}");
+}
+
 /// Phase 85 T1 (I1): the island's shape -- an availability publisher outside
 /// the tree, behind a link the detecting subscriber states as
 /// `max_transport: 57ms`, and a `call_mrm` that holds only the tick and the
@@ -2642,6 +2668,10 @@ fn g3b_a_topic_transport_warns_and_migrates_to_the_same_verdict() {
             .filter(|l| {
                 !l.contains("deprecated-spelling")
                     && !l.contains("declared-not-charged")
+                    // Phase 97: the migrated subscriber value is written
+                    // inline, which `transport-inline` notes (a link
+                    // would state it once); the topic value was not.
+                    && !l.contains("transport-inline")
                     // Phase 91 E8: `migrate` also names the ASIL scale.
                     && !l.contains("deprecated-implicit-extension")
             })

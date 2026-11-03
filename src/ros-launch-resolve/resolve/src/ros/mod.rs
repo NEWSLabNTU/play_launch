@@ -14,6 +14,7 @@ pub mod dds_env;
 pub mod extensions;
 pub mod graph_identity;
 pub mod launch_dump;
+pub mod link_samples;
 pub mod manifest_graph;
 pub mod manifest_loader;
 pub mod model_builder;

@@ -286,6 +286,12 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
 
     // Phase 85 D6: the declared endpoints against a recorded run's.
     if let Some(run) = &inputs.against {
+        // Phase 97 P4: each declared link's transport in the run.
+        let (link_diags, link_summary) = crate::ros::link_samples::check_against(&index, run);
+        if let Some(sum) = link_summary {
+            crate::say!("Links in {}: {sum}", run.display());
+        }
+        index.merge_diagnostics.extend(link_diags);
         let against = crate::ros::contract_vs_code::check_against(&index, run)?;
         crate::say!(
             "Compared with {}: {} endpoint(s) created{}, {} contract-vs-code finding(s)",

@@ -2165,9 +2165,29 @@ pub(crate) struct GuardLink {
     pub(crate) from: &'static str,
     /// The guard topic's FQN.
     pub(crate) topic: String,
+    /// The named link the hop crosses (phase 97), when the subscriber names
+    /// one.
+    pub(crate) named: Option<String>,
+    /// The source kind of the charged number (`measured`, ...), when stated.
+    pub(crate) source: Option<String>,
 }
 
 impl GuardLink {
+    /// How `--explain` names the charged number: where it is stated, then
+    /// (phase 97) the named link and the number's source, when there are.
+    /// The leading `max_transport into '<sub>'` is kept as it was: tools
+    /// read the guard edge from it.
+    fn what(&self) -> String {
+        let mut out = format!("max_transport into '{}', {}-level", self.sub_ref, self.from);
+        if let Some(n) = &self.named {
+            out.push_str(&format!("; link '{n}'"));
+        }
+        if let Some(src) = &self.source {
+            out.push_str(&format!("; {src}"));
+        }
+        out
+    }
+
     /// The declaration charged: the subscriber's, or its topic's.
     fn declared_on(&self) -> String {
         if self.from == "sub" {
@@ -2192,10 +2212,9 @@ impl ReactionWalk {
             (Some(l), false) => (
                 self.route_ms,
                 format!(
-                    "route = link {:.2}ms (max_transport into '{}', {}-level) + path {:.2}ms",
+                    "route = link {:.2}ms ({}) + path {:.2}ms",
                     l.ms,
-                    l.sub_ref,
-                    l.from,
+                    l.what(),
                     self.route_ms - l.ms
                 ),
             ),
@@ -2642,19 +2661,25 @@ pub(crate) fn walk_reaction_at(
             // Phase 85 I1: the guard edge. Only at the guard: past it the
             // walk charges path latencies and clocks, as before.
             if depth == 0 {
+                // The one precedence (phase 97 P1, rlm `edge_transport_ms`):
+                // the subscriber's own value (its link's, when it names one),
+                // else the topic's.
                 let own = props.and_then(|p| p.max_transport.ms());
-                let link = match (own, topic.max_transport_ms) {
-                    (Some(ms), _) => Some((ms, "sub")),
-                    (None, Some(ms)) => Some((ms, "topic")),
-                    (None, None) => None,
-                };
-                if let Some((ms, from)) = link.filter(|(ms, _)| *ms > 0.0) {
+                let charged =
+                    ros_launch_manifest_types::edge_transport_ms(own, topic.max_transport_ms);
+                if let Some(ms) = charged.filter(|ms| *ms > 0.0) {
+                    let from = if own.is_some() { "sub" } else { "topic" };
                     candidate.route_ms += ms;
                     candidate.link = Some(GuardLink {
                         sub_ref: sub_ref.clone(),
                         ms,
                         from,
                         topic: topic_fqn.to_string(),
+                        named: props.and_then(|p| p.link.clone()),
+                        source: props
+                            .and_then(|p| p.max_transport.as_ref())
+                            .and_then(|b| b.source.as_ref())
+                            .map(|s| s.kind.as_str().to_string()),
                     });
                 }
             }

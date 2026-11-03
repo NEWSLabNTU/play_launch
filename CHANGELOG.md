@@ -6,6 +6,35 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## 0.24.0 - 2026-11-03
+
+- **Added (`check`, `measure`; rlm v0.3.4, phase 97):** links, a
+  transport measured, sourced and checked against runs. A contract names
+  a link once (`links.<name>: { max_transport, clock, monitor }`) and a
+  subscriber names the link its hop crosses (`sub.<ep>.link`); the link's
+  number is charged wherever a written `max_transport` is, so totals do
+  not move. New rules: `link-unsourced` (a link with no `source:`),
+  `transport-inline` (info: a subscriber's written `max_transport`).
+  `--explain` names the link and the number's source on a route's guard
+  edge (`link 56.00ms (max_transport into '<sub>', sub-level; link
+  'host_serial'; measured)`). `check --against <run>` reads the run's
+  `interception/events.jsonl`: `transport-exceeded` (error: a message
+  took longer than its link's bound) and `link-unmeasured` (warning: no
+  sample, as for a subscriber on another host, whose clock is not
+  comparable). `measure` prints a `links:` fragment proposing each link's
+  bound as the observed publish -> take max x 1.2, with the run as
+  `source.measured.run`. The model carries `SubContract.link` and
+  `Contracts.links`.
+- **Fixed (`check`; phase 97 P1):** the reaction walk's guard edge reads
+  the transport by rlm's one precedence (`edge_transport_ms`) instead of
+  an inline copy; no total moves.
+- **Changed (`check`; rlm v0.3.3, phase 98):** the standard names. The
+  contract keys and rule ids renamed by rlm v0.3.3 (integrity level,
+  degradation level, minimal risk condition, dwell, event chain) are read
+  and reported under the new names; the old ones still work for this
+  release with a `deprecated-spelling` warning. See
+  `docs/roadmap/phase-98-standard-names.md`.
+
 ## 0.23.0 - 2026-11-02
 
 - **Added (`check`; rlm v0.3.2):** a supervision whose reaction hands its
