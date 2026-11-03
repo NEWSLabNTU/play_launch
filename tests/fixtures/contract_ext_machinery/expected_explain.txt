@@ -16,7 +16,7 @@ required = if s_2000 <= 500 mm then max(s_2000, 100 mm) else max(1600 mm/s * T +
 if s_2000 <= 500 mm: 732 mm <= 500 mm, false: take `else`
 safety_distance: required <= installed_distance: 611.2 mm <= 650 mm (margin 38.8 mm) PASS
 worst case: proved increasing in reaction_total, device_response
-drive_blind  safety.stop  floor  100.00     0.00   7.00  180.00 literal  287.00     -      -  measured+unstated  unsupervised
-drive_blind  287.00  (floor 'safety.stop')
+drive_blind  safety.stop  mrc   100.00    0.00   7.00  180.00 literal  287.00     -      -  measured+unstated  unsupervised
+drive_blind  287.00  (mrc 'safety.stop')
 machine.iso13855 0.3.0  extension  sha256 594b23c059caff947adf55d3a7864c1786d73274181d7a8fba74b1246d3ea03e
 iso26262 1.1.0  profile  sha256 8cdb7e677892158e0a874aae6dce3605debd1a8ad2a2c6988e927674005adcdd

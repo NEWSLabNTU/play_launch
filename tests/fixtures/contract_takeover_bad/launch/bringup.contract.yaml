@@ -6,8 +6,8 @@
 #                           constant of ControlMode), stamp_field (a message,
 #                           not a scalar): errors; opaque_type (a type the
 #                           ament index cannot resolve): a warning
-#   window-unbound          takeover's window is a bare duration
-#   ladder-window-floor     `stopping` falls to `parked`, which has a window
+#   dwell-unbound          takeover's window is a bare duration
+#   dwell-at-mrc     `stopping` falls to `parked`, which has a window
 #   mode-exit-target        takeover exits to `estop`, a rung of engaged's
 #                           ladder
 #   mode-exit-unwired       hold's exit reads /control_mode, which no node
@@ -64,7 +64,7 @@ modes:
   takeover:
     requires: [hpc_alive]
     reaction: sys.tor
-    window: 10s
+    min_dwell: 10s
     exit: { holds: driver_took_over, to: estop }
   comfortable:
     requires: [hpc_alive]
@@ -80,12 +80,12 @@ modes:
   hold:
     requires: []
     reaction: sys.hold
-    window: 5s
+    min_dwell: 5s
     exit: { holds: driver_took_over, to: manual }
   parked:
     requires: []
     reaction: sys.estop
-    window: 30s
+    min_dwell: 30s
 
 paths:
   sys.tor:

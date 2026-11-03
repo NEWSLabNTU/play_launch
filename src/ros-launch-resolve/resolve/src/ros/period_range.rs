@@ -27,7 +27,7 @@
 //! keeps them right whenever the walk learns a new way for a period to enter.
 
 use super::{
-    manifest_loader::{ManifestIndex, RungBudget, RungRole, recheck_period_probe},
+    manifest_loader::{ManifestIndex, LevelBudget, LevelRole, recheck_period_probe},
     value_rules::contract_node,
 };
 use ros_launch_manifest_check::{Diagnostic, Severity};
@@ -367,12 +367,12 @@ fn new_error(
     (first, follows)
 }
 
-fn row_id(r: &RungBudget) -> (String, String, RungRole) {
+fn row_id(r: &LevelBudget) -> (String, String, LevelRole) {
     (r.hazard.clone(), r.rung.clone(), r.role)
 }
 
-fn checked(r: &RungBudget) -> bool {
-    matches!(r.role, RungRole::Rung | RungRole::Floor)
+fn checked(r: &LevelBudget) -> bool {
+    matches!(r.role, LevelRole::Level | LevelRole::Mrc)
         && r.total_ms.is_some()
         && r.ftti_ms.is_some()
 }
@@ -398,7 +398,7 @@ fn row_uses(index: &ManifestIndex, t: &Timer) -> (Vec<RowUse>, Vec<String>) {
         let mut parts = Vec::new();
         for (name, n) in [
             ("detection", slope(r.fdti_ms, p.fdti_ms)),
-            ("windows", (p.windows_ms - r.windows_ms) / STEP_MS),
+            ("dwells", (p.windows_ms - r.windows_ms) / STEP_MS),
             ("route", slope(r.route_ms, p.route_ms)),
             ("settle", slope(r.settle_ms, p.settle_ms)),
         ] {
@@ -545,7 +545,7 @@ fn range_of(
         upper.push(Limit {
             ms: t.period_ms + r.slack_ms / r.count,
             why: format!(
-                "FTTI: hazard '{}' rung '{}', slack {}ms / {} period(s) ({}{via})",
+                "FTTI: hazard '{}' degradation level '{}', slack {}ms / {} period(s) ({}{via})",
                 r.hazard,
                 r.rung,
                 fmt_ms(r.slack_ms),

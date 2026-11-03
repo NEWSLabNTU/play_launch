@@ -10,10 +10,10 @@ max_rise_rate = 50000 kg/(m*s^3)   (0.5 bar/s)
 hazard.ftti = (hazard_pressure - trip_setpoint) / max_rise_rate = 4 s
 worst case: proved decreasing in max_rise_rate; increasing in hazard_pressure
 info[fault-reaction-budget]: bringup.contract.yaml:11: hazard 'drive_blind': detection 100.00ms (/safety/obstacle_detector/scan detects within 100.00ms) + reaction 2007.00ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 2000.00ms) = 2107.00ms fits the fault-tolerant time interval 4000.00ms with 1893.00ms of slack
-info[settle-derived]: bringup.contract.yaml:73: hazard 'drive_blind', rung 'safety.stop': settle = 2000.00ms derived by process.pst 0.1.0 (sha256 7c2e84dde81d)
+info[settle-derived]: bringup.contract.yaml:73: hazard 'drive_blind', degradation level 'safety.stop': settle = 2000.00ms derived by process.pst 0.1.0 (sha256 7c2e84dde81d)
 valve_stroke = 2 s   (2s)
 settle.duration = valve_stroke = 2 s
-drive_blind  safety.stop  floor  100.00     0.00   7.00  2000.00 derived  2107.00  4000.00  1893.00  unstated  -
-drive_blind  2107.00  (floor 'safety.stop')
+drive_blind  safety.stop  mrc   100.00    0.00   7.00  2000.00 derived  2107.00  4000.00  1893.00  unstated  -
+drive_blind  2107.00  (mrc 'safety.stop')
 process.pst 0.1.0  extension  sha256 7c2e84dde81df3f00695d897fd9b93868aa37547f282a19329b75667841a3987
 iso26262 1.1.0  profile  sha256 8cdb7e677892158e0a874aae6dce3605debd1a8ad2a2c6988e927674005adcdd

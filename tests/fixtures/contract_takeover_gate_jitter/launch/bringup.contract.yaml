@@ -50,7 +50,7 @@ modes:
   takeover:
     requires: [hpc_alive]
     reaction: sys.tor
-    window: { duration: 10s, param: handler.takeover_timeout }
+    min_dwell: { duration: 10s, param: handler.takeover_timeout }
     exit: { holds: driver_took_over, to: manual }
   comfortable:
     requires: [hpc_alive]

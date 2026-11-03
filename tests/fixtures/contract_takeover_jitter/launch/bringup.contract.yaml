@@ -9,7 +9,7 @@
 #   hpc_loss estop                  57 + 187.33 = 244.33, total 4909.67
 #   the window's notice             the handler reads the deadline on its
 #                                   100 ms tick released up to 18 ms late,
-#                                   118 <= call_mrm's 149: window-expiry
+#                                   118 <= call_mrm's 149: dwell-expiry
 #                                   holds.
 version: 1
 rlm: v0.1.49
@@ -51,7 +51,7 @@ modes:
   takeover:
     requires: [hpc_alive]
     reaction: sys.tor
-    window: { duration: 10s, param: handler.takeover_timeout }
+    min_dwell: { duration: 10s, param: handler.takeover_timeout }
     exit: { holds: driver_took_over, to: manual }
   comfortable:
     requires: [hpc_alive]

@@ -564,7 +564,7 @@ pub(crate) fn render_install_prefixes(
 /// listed with the reason it was skipped, so the selection is visible too.
 pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
     use crate::ros::budget_book;
-    use manifest_loader::RungRole;
+    use manifest_loader::LevelRole;
     use ros_launch_manifest_types::BudgetLevel;
     let rows = &index.budgets;
     // Phase 10 B7: a SOURCES column once any contract states a source.
@@ -575,7 +575,7 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
     let ms = |v: Option<f64>| v.map_or("-".to_string(), |v| format!("{v:.2}"));
     let mut out = String::from("\n-- Fault-reaction budgets (--explain, ms) --\n");
     let head = [
-        "HAZARD", "RUNG", "ROLE", "DETECT", "WINDOWS", "ROUTE", "SETTLE", "TOTAL", "FTTI", "SLACK",
+        "HAZARD", "DEGRADATION", "ROLE", "DETECT", "DWELLS", "ROUTE", "SETTLE", "TOTAL", "FTTI", "SLACK",
     ];
     let mut table: Vec<Vec<String>> = vec![head.iter().map(|h| h.to_string()).collect()];
     if with_sources {
@@ -585,23 +585,23 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
     let mut notes: Vec<String> = Vec::new();
     for r in rows {
         let role = match r.role {
-            RungRole::Rung => "rung",
-            RungRole::Window => "window",
-            RungRole::Skipped => "skipped",
-            RungRole::Floor => "floor",
-            RungRole::Overrun => "overrun",
+            LevelRole::Level => "level",
+            LevelRole::Dwell => "dwell",
+            LevelRole::Skipped => "skipped",
+            LevelRole::Mrc => "mrc",
+            LevelRole::Overrun => "overrun",
         };
         let settle = match (r.role, r.settle_ms) {
-            (RungRole::Window, _) => format!("window >={}", ms(r.window_ms)),
+            (LevelRole::Dwell, _) => format!("dwell >={}", ms(r.window_ms)),
             (_, Some(v)) => format!("{v:.2} {}", r.settle_how),
-            (RungRole::Skipped, None) => "-".to_string(),
+            (LevelRole::Skipped, None) => "-".to_string(),
             (_, None) => "unknown".to_string(),
         };
         let slack = match (r.total_ms, r.ftti_ms) {
             (Some(t), Some(f)) => format!("{:.2}", f - t),
             _ => "-".to_string(),
         };
-        let windows = if r.role == RungRole::Skipped {
+        let windows = if r.role == LevelRole::Skipped {
             "-".to_string()
         } else {
             format!("{:.2}", r.windows_ms)
@@ -645,13 +645,13 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
                 .collect();
             kinds.sort();
             kinds.dedup();
-            cells.push(if r.role == RungRole::Skipped || kinds.is_empty() {
+            cells.push(if r.role == LevelRole::Skipped || kinds.is_empty() {
                 "-".to_string()
             } else {
                 kinds.join("+")
             });
             cells.push(match (r.role, level) {
-                (RungRole::Skipped, _) | (_, None) => "-".to_string(),
+                (LevelRole::Skipped, _) | (_, None) => "-".to_string(),
                 (_, Some(l)) => l.to_string(),
             });
         }
@@ -717,11 +717,14 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
         out.push('\n');
     }
     out.push_str(
-        "  TOTAL = DETECT + WINDOWS + ROUTE + SETTLE; WINDOWS is the route and window of every \
-         windowed rung passed on the way, up to its deadline.\n  A window is a least time \
-         (`window >=`); noticing its deadline is the first hop of the ROUTE below it \
-         (`window-expiry`), never a second charge.\n  ROUTE includes the guard edge's link \
-         (`max_transport` into the detecting subscriber), except after a window's deadline.\n",
+        "  TOTAL = DETECT + DWELLS + ROUTE + SETTLE; DWELLS is the route and dwell of every \
+         degradation level with a `min_dwell` passed on the way, up to its deadline.\n  A \
+         dwell is a least time (`dwell >=`); noticing its deadline is the first hop of the \
+         ROUTE below it (`dwell-expiry`), never a second charge.\n  ROUTE includes the guard \
+         edge's link (`max_transport` into the detecting subscriber), except after a dwell's \
+         deadline.\n  DEGRADATION is the level of the hazard's fallback sequence (a mode, or the \
+         event chain of a one-level reaction); role `mrc` is the minimal risk condition, \
+         its last level.\n",
     );
     if with_sources {
         out.push_str(
@@ -1038,16 +1041,16 @@ fn render_derived(index: &manifest_loader::ManifestIndex) -> String {
 /// floor's DETECT + WINDOWS + ROUTE + SETTLE, the value an extension check
 /// reads as `reaction_total`. Read-only: a contract never writes it.
 pub fn render_reaction_totals(index: &manifest_loader::ManifestIndex) -> String {
-    use manifest_loader::RungRole;
+    use manifest_loader::LevelRole;
     let mut out = String::new();
-    for r in index.budgets.iter().filter(|r| r.role == RungRole::Floor) {
+    for r in index.budgets.iter().filter(|r| r.role == LevelRole::Mrc) {
         let Some(total) = r.total_ms else { continue };
         if out.is_empty() {
             out.push_str(
                 "\n-- Reaction totals (--explain, ms; `reaction_total` for extension checks) --\n",
             );
         }
-        out.push_str(&format!("{}  {total:.2}  (floor '{}')\n", r.hazard, r.rung));
+        out.push_str(&format!("{}  {total:.2}  (mrc '{}')\n", r.hazard, r.rung));
     }
     out
 }

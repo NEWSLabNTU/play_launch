@@ -1,7 +1,7 @@
 # Phase 85 T2 (D1) -- contract_takeover_jitter with a call_mrm of 110 ms:
 # the handler reads the window's deadline on its 100 ms tick released up
 # to 18 ms late, so the first hop after the deadline must hold 118 ms, and
-# 8 ms of the late notice is charged nowhere: error[window-expiry], once
+# 8 ms of the late notice is charged nowhere: error[dwell-expiry], once
 # per rung below the window. Without the jitter key 110 >= 100 passes.
 version: 1
 rlm: v0.1.49
@@ -43,7 +43,7 @@ modes:
   takeover:
     requires: [hpc_alive]
     reaction: sys.tor
-    window: { duration: 10s, param: handler.takeover_timeout }
+    min_dwell: { duration: 10s, param: handler.takeover_timeout }
     exit: { holds: driver_took_over, to: manual }
   comfortable:
     requires: [hpc_alive]

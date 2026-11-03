@@ -1545,8 +1545,8 @@ fn modes_resolve_and_a_correct_ladder_is_quiet() {
         "{out}"
     );
     for rule in [
-        "ladder-unterminated",
-        "ladder-rung-budget",
+        "fallback-without-mrc",
+        "degradation-level-budget",
         "mode-requires-unguarded",
         "override-target-missing",
     ] {
@@ -1596,8 +1596,8 @@ fn resolve_fixture_model(dir: &str) -> Option<ros_launch_manifest_model::SystemM
 /// monitor judges the same quantity. The numbers are `--explain`'s ROUTE
 /// column for this fixture (`takeover_link_is_charged_on_the_guard_edge`).
 #[test]
-fn the_model_carries_each_rungs_route() {
-    use ros_launch_manifest_model::RungRole;
+fn the_model_carries_each_degradation_levels_route() {
+    use ros_launch_manifest_model::LevelRole;
     let Some(bin) = ros_launch_resolve_bin() else {
         return;
     };
@@ -1632,11 +1632,11 @@ fn the_model_carries_each_rungs_route() {
             .find(|(k, _)| k.ends_with(h))
             .unwrap_or_else(|| panic!("hazard {h}:\n{yaml}"))
             .1
-            .rungs
+            .degradation_levels
             .iter()
             .map(|r| {
                 (
-                    r.rung.clone(),
+                    r.level.clone(),
                     r.role,
                     r.route_ms.map(|v| (v * 100.0).round() / 100.0),
                 )
@@ -1646,16 +1646,16 @@ fn the_model_carries_each_rungs_route() {
     assert_eq!(
         rungs("odd_exit"),
         vec![
-            ("takeover".to_string(), RungRole::Window, Some(206.0)),
-            ("comfortable".to_string(), RungRole::Rung, Some(192.33)),
-            ("estop".to_string(), RungRole::Floor, Some(182.33)),
+            ("takeover".to_string(), LevelRole::Dwell, Some(206.0)),
+            ("comfortable".to_string(), LevelRole::Level, Some(192.33)),
+            ("estop".to_string(), LevelRole::Mrc, Some(182.33)),
         ],
         "{yaml}"
     );
     let hpc = rungs("hpc_loss");
     assert_eq!(
         hpc.last(),
-        Some(&("estop".to_string(), RungRole::Floor, Some(239.33))),
+        Some(&("estop".to_string(), LevelRole::Mrc, Some(239.33))),
         "{yaml}"
     );
     let floor = model
@@ -1665,7 +1665,7 @@ fn the_model_carries_each_rungs_route() {
         .find(|(k, _)| k.ends_with("odd_exit"))
         .unwrap()
         .1
-        .rungs
+        .degradation_levels
         .last()
         .unwrap()
         .clone();
@@ -1757,10 +1757,10 @@ fn a_mode_overrides_target_is_resolved_to_the_models_keys() {
 fn mode_rules_fire_on_a_broken_ladder() {
     let out = check_fixture("contract_modes_bad");
     for needle in [
-        "error[ladder-unterminated]",
-        "there is no floor",
-        "error[ladder-rung-budget]",
-        "rung 'degraded'",
+        "error[fallback-without-mrc]",
+        "there is no minimal risk condition",
+        "error[degradation-level-budget]",
+        "fallback level 'degraded'",
         "error[mode-requires-unguarded]",
         "error[override-target-missing]",
         // W3's second half: `restricted` TIGHTENS the budget below the
@@ -1824,18 +1824,18 @@ fn takeover_ladder_fits_and_explains_itself() {
         // The emergency profile at the island's assumed 3.0 m/s: the island
         // contract's own hand arithmetic, now the checker's.
         // Phase 91 E8: the bundled vehicle.braking's, named in `use:`.
-        "hazard 'hpc_loss', rung 'estop': settle = 2033.33ms derived by vehicle.braking 1.1.0",
+        "hazard 'hpc_loss', degradation level 'estop': settle = 2033.33ms derived by vehicle.braking 1.1.0",
         "if v0 > v_r: 3 m/s > 2.0833 m/s, true: take `then`",
         // F1: charged, the comfortable rung would have failed a 3 s interval.
         "hazard 'hpc_loss': detection 500.00ms",
         "= 2676.67ms fits the fault-tolerant time interval 3000.00ms",
         "requires hpc_alive, which this fault removes",
         // The window, charged to the rung below it; F3's route is 110 + 300.
-        "+ 'takeover' reaction 110.00ms + window 10000.00ms",
-        "odd_exit  comfortable  rung     120.00  10110.00  410.00    9996.67 derived  20636.67  30000.00   9363.33",
+        "+ 'takeover' reaction 110.00ms + dwell 10000.00ms",
+        "odd_exit  comfortable  level    120.00  10110.00  410.00   9996.67 derived  20636.67  30000.00   9363.33",
         // Phase 84: the window is a least time, charged to its deadline; the
         // handler's late notice of it is the first hop of the route below.
-        "window >=10000.00",
+        "dwell >=10000.00",
         "odd_exit/takeover: lasts at least 10000.00ms once on, and ends within 10110.00ms: \
          /handler reads the deadline on its 100.00ms timer ('on_timer'), charged inside \
          /handler/call_mrm 110.00ms, the first hop of the route below",
@@ -1846,21 +1846,21 @@ fn takeover_ladder_fits_and_explains_itself() {
     for rule in [
         "when-requires-reported",
         "when-field-unknown",
-        "ladder-window-floor",
-        "window-param",
-        "window-unbound",
+        "dwell-at-mrc",
+        "dwell-param",
+        "dwell-unbound",
         "mode-exit-target",
         "mode-exit-unwired",
-        "ladder-rung-budget",
+        "degradation-level-budget",
         "settle-entry-missing",
         "settle-param-unresolved",
         "settle-conflict",
         "reaction-unbudgeted",
         // As `[rule]`, not the bare name: the table's footer names
-        // `window-expiry` when it explains where the notice is charged, and
+        // `dwell-expiry` when it explains where the notice is charged, and
         // the stated-budget table (phase 10 B8) names the rules that check
         // each budget.
-        "window-expiry",
+        "dwell-expiry",
     ] {
         assert!(
             !out.contains(&format!("[{rule}]")),
@@ -1881,16 +1881,16 @@ fn takeover_link_is_charged_on_the_guard_edge() {
     let (code, out) = check_takeover("contract_takeover_link", &["--explain"]);
     assert_eq!(code, 0, "{out}");
     for needle in [
-        "hpc_loss  estop        floor    500.00      0.00  239.33    4165.33 derived   4904.67  10000.00   5095.33",
-        "odd_exit  takeover     window   100.00      0.00  206.00  window >=10000.00         -  30000.00         -",
-        "odd_exit  comfortable  rung     100.00  10206.00  192.33    9996.67 derived  20495.00  30000.00   9505.00",
-        "odd_exit  estop        floor    100.00  10206.00  182.33    4165.33 derived  14653.67  30000.00  15346.33",
+        "hpc_loss  estop        mrc      500.00      0.00  239.33   4165.33 derived   4904.67  10000.00   5095.33",
+        "odd_exit  takeover     dwell    100.00      0.00  206.00  dwell >=10000.00         -  30000.00         -",
+        "odd_exit  comfortable  level    100.00  10206.00  192.33   9996.67 derived  20495.00  30000.00   9505.00",
+        "odd_exit  estop        mrc      100.00  10206.00  182.33   4165.33 derived  14653.67  30000.00  15346.33",
         "hpc_loss/estop: route = link 57.00ms (max_transport into '/handler/availability', \
          sub-level) + path 182.33ms",
         "odd_exit/takeover: route = link 57.00ms (max_transport into '/handler/availability', \
          sub-level) + path 149.00ms",
         "odd_exit/comfortable: route = path 149.00ms; the guard edge's link (57.00ms into \
-         '/handler/availability') is not charged after a window's deadline",
+         '/handler/availability') is not charged after a dwell's deadline",
         "odd_exit/takeover: lasts at least 10000.00ms once on, and ends within 10149.00ms",
         "reaction route link 57.00ms into /handler/availability + /handler/call_mrm",
     ] {
@@ -1957,8 +1957,8 @@ fn a_timers_release_jitter_is_charged_where_a_tick_is_waited_for() {
     let (code, out) = check_takeover("contract_takeover_jitter", &["--explain"]);
     assert_eq!(code, 0, "{out}");
     for needle in [
-        "hpc_loss  estop        floor    500.00      0.00  244.33    4165.33 derived   4909.67  10000.00   5090.33",
-        "odd_exit  estop        floor    100.00  10206.00  187.33    4165.33 derived  14658.67  30000.00  15341.33",
+        "hpc_loss  estop        mrc      500.00      0.00  244.33   4165.33 derived   4909.67  10000.00   5090.33",
+        "odd_exit  estop        mrc      100.00  10206.00  187.33   4165.33 derived  14658.67  30000.00  15341.33",
         "/handler/call_mrm -> /estop_op/on_timer (+33.33ms sampling + 5.00ms jitter) = 187.33ms",
         "odd_exit/takeover: lasts at least 10000.00ms once on, and ends within 10149.00ms: \
          /handler reads the deadline on its 100.00ms timer ('on_timer') released up to 18.00ms \
@@ -1966,7 +1966,7 @@ fn a_timers_release_jitter_is_charged_where_a_tick_is_waited_for() {
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
-    assert!(!out.contains("[window-expiry]"), "{out}");
+    assert!(!out.contains("[dwell-expiry]"), "{out}");
 
     let launch = fixtures::repo_root()
         .join("tests/fixtures/contract_takeover_jitter/launch/bringup.launch.xml");
@@ -2001,7 +2001,7 @@ fn a_timers_release_jitter_is_charged_in_detection_and_the_critical_path() {
     assert_eq!(code, 0, "{out}");
     for needle in [
         "detection 126.00ms (/gate/availability reports every 100.00ms + 6.00ms jitter + 20.00ms)",
-        "odd_exit  takeover     window   126.00",
+        "odd_exit  takeover     dwell    126.00",
         "warning[scope-budget]: scope path 'sys.notice' (scope 0) max_latency_ms (330) is less \
          than critical path: /gate",
         "/handler = 332.00ms (226.00ms event-segment + 106.00ms sampling_cost)",
@@ -2019,14 +2019,15 @@ fn window_expiry_reads_the_owners_release_jitter() {
     assert_eq!(code, 1, "{out}");
     for rung in ["comfortable", "estop"] {
         let needle = format!(
-            "rung '{rung}' is charged from the deadline of 'takeover' (10000.00ms), and /handler \
+            "degradation level '{rung}' is charged from the deadline of 'takeover' (10000.00ms), \
+             and /handler \
              reads the deadline on its 100.00ms timer ('on_timer') released up to 18.00ms late, \
              but the route charges /handler/call_mrm only 110.00ms, so up to 8.00ms of the late \
              notice is charged nowhere"
         );
         assert!(out.contains(&needle), "expected `{needle}`:\n{out}");
     }
-    assert_eq!(out.matches("error[window-expiry]").count(), 2, "{out}");
+    assert_eq!(out.matches("error[dwell-expiry]").count(), 2, "{out}");
 }
 
 /// Phase 84: the window is charged up to its deadline, so the route below
@@ -2039,18 +2040,19 @@ fn window_expiry_names_a_notice_the_route_does_not_hold() {
     assert_eq!(code, 1, "{out}");
     for rung in ["comfortable", "estop"] {
         let needle = format!(
-            "hazard 'odd_exit': rung '{rung}' is charged from the deadline of 'takeover' \
+            "hazard 'odd_exit': degradation level '{rung}' is charged from the deadline of \
+             'takeover' \
              (10000.00ms), and /handler reads the deadline on its 200.00ms timer ('on_timer'), \
              but the route charges /handler/call_mrm only 110.00ms, so up to 90.00ms of the late \
              notice is charged nowhere"
         );
         assert!(out.contains(&needle), "expected `{needle}`:\n{out}");
     }
-    assert_eq!(out.matches("error[window-expiry]").count(), 2, "{out}");
+    assert_eq!(out.matches("error[dwell-expiry]").count(), 2, "{out}");
     // Same numbers as contract_takeover: the rule does not move the budget.
     assert!(
         out.contains(
-            "odd_exit  comfortable  rung     120.00  10110.00  410.00    9996.67 derived  20636.67  30000.00   9363.33"
+            "odd_exit  comfortable  level    120.00  10110.00  410.00   9996.67 derived  20636.67  30000.00   9363.33"
         ),
         "{out}"
     );
@@ -2064,18 +2066,18 @@ fn window_expiry_names_an_owner_off_the_route() {
     let (code, out) = check_takeover("contract_takeover_expiry_owner", &[]);
     assert_eq!(code, 1, "{out}");
     for needle in [
-        "error[window-expiry]",
-        "rung 'comfortable' is charged from the deadline of 'takeover' (10000.00ms), and its \
-         route starts at /handler/call_mrm, not at /planner, which enforces the window -- nothing \
+        "error[dwell-expiry]",
+        "degradation level 'comfortable' is charged from the deadline of 'takeover' (10000.00ms), and its \
+         route starts at /handler/call_mrm, not at /planner, which enforces the dwell -- nothing \
          charges /planner noticing the deadline",
-        "warning[window-expiry]",
+        "warning[dwell-expiry]",
         "mode 'takeover' waits 10000.00ms, enforced by /planner, but no timer path of /planner \
          publishes /tor_state, so when /planner notices the deadline is not declared",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
     // The declaration warning is about the window, once.
-    assert_eq!(out.matches("warning[window-expiry]").count(), 1, "{out}");
+    assert_eq!(out.matches("warning[dwell-expiry]").count(), 1, "{out}");
 }
 
 /// Phase 83: every structural takeover rule, once, with the file and line.
@@ -2092,19 +2094,19 @@ fn takeover_structure_rules_fire_on_their_fixture() {
         "which is `builtin_interfaces/Time` -- not a scalar",
         "warning[when-field-unknown]",
         "other_msgs/msg/Opaque, but its definition is not on the ament index",
-        "error[ladder-window-floor]",
-        "mode 'stopping' falls to 'parked' last, and 'parked' has a 30000ms window",
+        "error[dwell-at-mrc]",
+        "mode 'stopping' falls to 'parked' last, and 'parked' has a 30000ms dwell",
         "error[mode-exit-target]",
-        "exits to 'estop', which is a rung of the `fallback:` ladder of 'engaged'",
+        "exits to 'estop', which is a degradation level of the `fallback:` sequence of 'engaged'",
         "error[mode-exit-unwired]",
-        "mode 'hold' exits when 'driver_took_over' holds (/control_mode), but no node that implements the rung (/holder) takes it on a path trigger",
-        "warning[window-unbound]",
+        "mode 'hold' exits when 'driver_took_over' holds (/control_mode), but no node that implements the level (/holder) takes it on a path trigger",
+        "warning[dwell-unbound]",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
 }
 
-/// Phase 83: the arithmetic, one term broken per rule. The window-param
+/// Phase 83: the arithmetic, one term broken per rule. The dwell-param
 /// mismatch, the cumulative rung budget, a derived settle that contradicts a
 /// measured one, one that cannot be derived, one with no entry speed, and
 /// phase 7's miss: the same floor from 4.23 m/s instead of 3.0.
@@ -2119,26 +2121,26 @@ fn takeover_budget_rules_fire_on_their_fixture() {
         "{out}"
     );
     for needle in [
-        "error[window-param]",
-        "bound to `handler.takeover_timeout`, which resolves to 12.0 s = 12000.00ms, not the 10000.00ms the window declares",
-        "error[ladder-rung-budget]",
-        "fallback rung 'comfortable' cannot make the fault-tolerant time interval",
-        "detection 120.00ms + 'takeover' reaction 110.00ms + window 10000.00ms + reaction 410.00ms + settle 9996.67ms = 20636.67ms against 20000.00ms",
+        "error[dwell-param]",
+        "bound to `handler.takeover_timeout`, which resolves to 12.0 s = 12000.00ms, not the 10000.00ms the dwell declares",
+        "error[degradation-level-budget]",
+        "fallback level 'comfortable' cannot make the fault-tolerant time interval",
+        "detection 120.00ms + 'takeover' reaction 110.00ms + dwell 10000.00ms + reaction 410.00ms + settle 9996.67ms = 20636.67ms against 20000.00ms",
         "warning[settle-conflict]",
         "the literal settle 5000.00ms and vehicle.braking 1.1.0's 9996.67ms differ by 50.0%",
         "warning[settle-entry-missing]",
-        "hazard 'odd_exit_unbounded' reaches rung 'comfortable'",
+        "hazard 'odd_exit_unbounded' reaches degradation level 'comfortable'",
         "falling back to the literal settle 5000.00ms",
         "error[settle-param-unresolved]",
         "`$(param target_decel) m/s^2`: no launch source sets `target_decel` on /estop_op",
         "warning[reaction-unbudgeted]",
         // 4.23 m/s: 2525.33 ms, and the 3 s interval is missed.
-        "hazard 'hpc_observed', rung 'estop_ok': settle = 2525.33ms derived by vehicle.braking",
+        "hazard 'hpc_observed', degradation level 'estop_ok': settle = 2525.33ms derived by vehicle.braking",
         "hazard 'hpc_observed': detection 500.00ms",
         "= 3168.67ms exceeds the fault-tolerant time interval 3000.00ms",
         // Phase 84: this handler declares no tick, so when it reads the
         // deadline is unstated.
-        "warning[window-expiry]",
+        "warning[dwell-expiry]",
         "no timer path of /handler publishes /tor_state, so when /handler notices the deadline \
          is not declared",
     ] {
@@ -2162,7 +2164,7 @@ fn an_exit_without_a_window_refuses_the_contract() {
     assert!(out.contains("error[manifest-parse]"), "{out}");
     assert!(out.contains("bringup.contract.yaml:"), "{out}");
     assert!(
-        out.contains("at 'modes.takeover.exit': an exit is only for a windowed rung"),
+        out.contains("at 'modes.takeover.exit': an exit is only for a level with a `min_dwell:`"),
         "{out}"
     );
 }
@@ -2241,11 +2243,11 @@ fn a_settles_written_response_is_added_to_the_profile() {
     assert_eq!(code, 0, "{out}");
     for needle in [
         // Phase 91 E8: vehicle.braking reads the response itself.
-        "hazard 'hpc_loss', rung 'estop': settle = 2333.33ms derived by vehicle.braking 1.1.0",
+        "hazard 'hpc_loss', degradation level 'estop': settle = 2333.33ms derived by vehicle.braking 1.1.0",
         "response = 300 ms   (300ms)",
         "settle = 10496.67ms derived by vehicle.braking 1.1.0",
         "= 2976.67ms fits the fault-tolerant time interval 3000.00ms with 23.33ms of slack",
-        "odd_exit  comfortable  rung     120.00  10110.00  410.00   10496.67 derived  21136.67",
+        "odd_exit  comfortable  level    120.00  10110.00  410.00  10496.67 derived  21136.67",
         "hpc_loss/estop: settle = profile 2033.33ms + response 300.00ms",
         "odd_exit/comfortable: settle = profile 9996.67ms + response 500.00ms",
     ] {
@@ -2264,7 +2266,7 @@ fn explain_prints_each_budgets_source() {
     assert!(!out.contains("budget-rule"), "{out}");
     for needle in [
         "SLACK  SOURCES",
-        "hpc_loss  estop        floor    500.00      0.00  143.33    2033.33 derived   2676.67   \
+        "hpc_loss  estop        mrc      500.00      0.00  143.33   2033.33 derived   2676.67   \
          3000.00    323.33  measured",
         "9363.33  analysed+measured+requirement",
         // Phase 93: the row's LEVEL, and the unsupervised terms named.
@@ -2304,10 +2306,10 @@ fn a_measured_budget_its_observations_do_not_give_is_budget_rule() {
          300ms` is measured, but its observations give 288ms (240 x 1.2 (n=5) = 288.00 -> 288;",
         // Phase 93: the two measured budgets nothing supervises warn. Phase
         // 95: so do the floor's crossings of a call with no stated wait
-        // (`call-unbounded-floor`: the emergency call on both hazards; the
+        // (`call-unbounded-mrc`: the emergency call on both hazards; the
         // comfortable call states its timeout).
         "(2 errors, 6 warnings)",
-        "warning[call-unbounded-floor]",
+        "warning[call-unbounded-mrc]",
         "warning[measured-unsupervised]",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
@@ -2332,7 +2334,7 @@ fn explain_lists_what_checks_each_stated_budget() {
         "{out}"
     );
     assert!(
-        row("modes.takeover.window").contains("fault-reaction sum (odd_exit); window-param"),
+        row("modes.takeover.min_dwell").contains("fault-reaction sum (odd_exit); dwell-param"),
         "{out}"
     );
     for line in out
@@ -2664,6 +2666,49 @@ fn g3b_a_topic_transport_warns_and_migrates_to_the_same_verdict() {
     assert_eq!(table(&old), table(&new));
 }
 
+/// Phase 98 S4: a mode's `window:` still reads for one release as
+/// `min_dwell:`, warned once, with contract_takeover's verdicts and
+/// fault-reaction table; `migrate --write` rewrites it to that contract.
+#[test]
+fn s4_window_warns_and_migrates_to_min_dwell_with_the_same_verdict() {
+    let (code_new, new) = check_takeover("contract_takeover", &["--explain"]);
+    let (code_old, old) = check_takeover("contract_spelling_deprecated_s4", &["--explain"]);
+    assert_eq!(code_old, code_new, "{old}");
+    let deprecated: Vec<&str> = old
+        .lines()
+        .filter(|l| l.contains("warning[deprecated-spelling]"))
+        .collect();
+    assert_eq!(deprecated.len(), 1, "{old}");
+    assert!(
+        deprecated[0].contains("`window:` is the old spelling of `min_dwell:`"),
+        "{old}"
+    );
+    let table = |out: &str| {
+        out.lines()
+            .skip_while(|l| !l.starts_with("HAZARD"))
+            .take_while(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert!(!table(&new).is_empty(), "{new}");
+    assert_eq!(table(&old), table(&new));
+
+    let (_tmp, dir) = fixture_copy("contract_spelling_deprecated_s4");
+    let contract = dir.join("bringup.contract.yaml");
+    let (code, out) = migrate(&contract, &["--write"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("window-min-dwell"), "{out}");
+    // Only the key moved (the fixture's other rewrites, `ext-param-read`,
+    // are contract_takeover's own and not this test's).
+    assert_eq!(out.matches("window-min-dwell:").count(), 1, "{out}");
+    let migrated = std::fs::read_to_string(&contract).unwrap();
+    assert!(
+        migrated.contains("    min_dwell: { duration: 10s, param: handler.takeover_timeout }\n")
+            && !migrated.lines().any(|l| l.trim_start().starts_with("window:")),
+        "{migrated}"
+    );
+}
+
 /// Phase 98 N1: `severity:` and `severity_levels:` still read for one
 /// release, each warned as the old spelling of `integrity:`/
 /// `integrity_levels:`, and `migrate --write` rewrites both to the same
@@ -2811,13 +2856,13 @@ fn e1_a_derivation_record_checks_as_if_derived() {
     let (code, out) = check_launch(&launch, &["--explain"]);
     assert_eq!(code, 0, "{out}");
     for needle in [
-        "drive_blind  safety.stop  floor  140.00     0.00   7.00  350.00 literal  497.00  500.00   3.00",
+        "drive_blind  safety.stop  mrc   140.00    0.00   7.00  350.00 literal  497.00  500.00   3.00",
         "derived by sensor.warmup 0.2.0",
         "derived by vehicle.braking 1.0.0 (sha256 4f3c9a1d2e8b)",
         "hazards.drive_blind.detection = 40.00 ms   derived by sensor.warmup 0.2.0",
         "    frame_period = 20ms",
         "    v0 / a = 1.5 / 7.5 = 200 ms",
-        "drive_blind  497.00  (floor 'safety.stop')",
+        "drive_blind  497.00  (mrc 'safety.stop')",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
@@ -2920,9 +2965,9 @@ fn e4_uav_derives_its_settle_and_checks_its_energy() {
     let (code, out) = ext_fixture("contract_ext_uav", &["--explain"]);
     assert_eq!(code, 0, "{out}");
     for needle in [
-        "hazard 'drive_blind', rung 'safety.stop': settle = 50952.38ms derived by uav.descent \
+        "hazard 'drive_blind', degradation level 'safety.stop': settle = 50952.38ms derived by uav.descent \
          0.2.0",
-        "drive_blind  safety.stop  floor  100.00     0.00   7.00  50952.38 derived  51059.38  \
+        "drive_blind  safety.stop  mrc   100.00    0.00   7.00  50952.38 derived  51059.38  \
          120000.00  68940.62",
         "info[extension-check]: hazard 'drive_blind': uav.descent/energy_reserve PASS",
         // Phase 91 E5: with the domain contract_ext_uav_refuted is told to
@@ -3333,7 +3378,7 @@ fn supervised_budgets_print_their_overrun_case() {
     assert_eq!(code, 0, "{out}");
     for needle in [
         "info[supervised-fit]",
-        "hazard 'hpc_loss', rung 'estop': if `nodes.handler.paths.call_mrm.max_latency` overruns, \
+        "hazard 'hpc_loss', degradation level 'estop': if `nodes.handler.paths.call_mrm.max_latency` overruns, \
          before it 500.00ms + budget 110.00ms + detection 1.05ms (tick 1.00ms + switch 0.05ms \
          (timer)) + reaction /handler/brake_now 38.33ms + settle 2033.33ms = 2682.72ms fits the \
          fault-tolerant time interval 3000.00ms with 317.28ms of slack",
@@ -3341,7 +3386,7 @@ fn supervised_budgets_print_their_overrun_case() {
          (follow's `work`)",
         "covers slowness, not a hang",
         "hpc_loss  estop (nodes.handler.paths.call_mrm.max_latency)        overrun  500.00      \
-         0.00  149.38    2033.33 derived   2682.72   3000.00    317.28",
+         0.00  149.38   2033.33 derived   2682.72   3000.00    317.28",
         "SOURCES                        LEVEL",
         "runtime monitor (route-deadline-runtime: reaction /handler/brake_now, timer)",
         "runtime monitor (route-deadline-runtime: reaction /planner/stop_now, executor)",
@@ -3472,7 +3517,7 @@ fn a_supervised_overrun_over_the_interval_is_refused() {
     assert_eq!(code, 1, "{out}");
     assert!(
         out.contains(
-            "error[supervised-fit]: bringup.contract.yaml:103: hazard 'hpc_loss', rung 'estop': \
+            "error[supervised-fit]: bringup.contract.yaml:103: hazard 'hpc_loss', degradation level 'estop': \
              if `nodes.handler.paths.call_mrm.max_latency` overruns, before it 500.00ms + budget \
              110.00ms + detection 1.05ms (tick 1.00ms + switch 0.05ms (timer)) + reaction scope \
              path 'sys.comfortable' 410.00ms + settle 4666.67ms = 5687.72ms exceeds the \
@@ -3582,7 +3627,7 @@ fn a_supervised_settle_charges_the_whole_settle() {
     };
     assert_eq!(code, 0, "{out}");
     assert!(!out.contains("supervised-unlowered"), "{out}");
-    let needle = "hazard 'odd_exit', rung 'comfortable': if \
+    let needle = "hazard 'odd_exit', degradation level 'comfortable': if \
                   `nodes.comfort_op.paths.operate.safe_state.settle` overruns, before it \
                   10640.00ms + settle 10939.67ms (profile 9996.67ms + response 943.00ms) + \
                   observation 156.00ms (/handler/kinematic_state: period 100.00ms \
@@ -3648,7 +3693,7 @@ fn a_resuming_supervision_charges_the_gap_once() {
         return;
     };
     assert_eq!(code, 0, "{out}");
-    let needle = "hazard 'odd_exit', rung 'comfortable': if \
+    let needle = "hazard 'odd_exit', degradation level 'comfortable': if \
                   `nodes.comfort_op.paths.operate.safe_state.settle` overruns, before it \
                   10640.00ms + settle 10939.67ms (profile 9996.67ms + response 943.00ms) + \
                   observation 156.00ms (/handler/kinematic_state: period 100.00ms \
@@ -3760,7 +3805,7 @@ fn a_supervised_settle_without_its_observation_is_refused() {
 
 /// rlm v0.1.62: a supervised settle whose overrun case exceeds the interval
 /// while the rung itself fits is refused (`supervised-fit`); when the rung
-/// itself does not fit, `ladder-rung-budget` is the error and the overrun
+/// itself does not fit, `degradation-level-budget` is the error and the overrun
 /// row does not repeat it.
 #[test]
 fn a_supervised_settle_over_the_interval_is_refused_once() {
@@ -3784,7 +3829,7 @@ fn a_supervised_settle_over_the_interval_is_refused_once() {
             && out.contains("`nodes.comfort_op.paths.operate.safe_state.settle` overruns"),
         "{out}"
     );
-    assert!(!out.contains("error[ladder-rung-budget]"), "{out}");
+    assert!(!out.contains("error[degradation-level-budget]"), "{out}");
     let Some((code, out)) = check_supervised_edited(|c| {
         supervised_settle(c, |c| {
             c.replacen(
@@ -3797,14 +3842,14 @@ fn a_supervised_settle_over_the_interval_is_refused_once() {
         return;
     };
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("error[ladder-rung-budget]"), "{out}");
+    assert!(out.contains("error[degradation-level-budget]"), "{out}");
     assert!(
         !out.contains("error[supervised-fit]: bringup.contract.yaml:")
             || !out.contains("safe_state.settle` overruns"),
         "{out}"
     );
     assert!(
-        out.contains("and is refused on the rung's own row"),
+        out.contains("and is refused on the level's own row"),
         "{out}"
     );
 }
@@ -3892,7 +3937,7 @@ fn a_settle_response_check_charges_its_own_row() {
         "the response check of `nodes.comfort_op.paths.operate.safe_state.settle` (shed 0.1 \
          m/s by 1943.00ms after the command) fits: the nominal profile sheds 0.1500 m/s by then \
          (vehicle.braking 1.1.0), 0.0500 m/s above `drop`",
-        "hazard 'odd_exit', rung 'comfortable': if the vehicle has not responded by \
+        "hazard 'odd_exit', degradation level 'comfortable': if the vehicle has not responded by \
          `nodes.comfort_op.paths.operate.safe_state.settle.supervise.early`, before it \
          10640.00ms + response check at 1943.00ms (shed 0.1 m/s by then, else a miss) + \
          observation 156.00ms (/handler/kinematic_state: period 100.00ms (/kinematic_state \
@@ -4161,9 +4206,9 @@ fn contract_values_island_reads_the_launch_tree_and_keeps_its_verdicts() {
     let (tcode, takeover) = check_takeover("contract_takeover", &["--explain"]);
     assert_eq!(tcode, 0, "{takeover}");
     for needle in [
-        "hazard 'hpc_loss', rung 'estop': settle = 2033.33ms derived by vehicle.braking 1.1.0",
-        "hazard 'odd_exit', rung 'comfortable': settle = 9996.67ms derived by vehicle.braking 1.1.0",
-        "hazard 'odd_exit', rung 'estop': settle = 4165.33ms derived by vehicle.braking 1.1.0",
+        "hazard 'hpc_loss', degradation level 'estop': settle = 2033.33ms derived by vehicle.braking 1.1.0",
+        "hazard 'odd_exit', degradation level 'comfortable': settle = 9996.67ms derived by vehicle.braking 1.1.0",
+        "hazard 'odd_exit', degradation level 'estop': settle = 4165.33ms derived by vehicle.braking 1.1.0",
         "= 2676.67ms fits the fault-tolerant time interval 3000.00ms with 323.33ms of slack",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
@@ -4202,7 +4247,7 @@ fn contract_values_island_reads_the_launch_tree_and_keeps_its_verdicts() {
     let rows = |text: &str| -> Vec<String> {
         text.lines()
             .filter(|l| l.starts_with("hpc_loss ") || l.starts_with("odd_exit "))
-            .filter(|l| l.contains("floor") || l.contains("rung") || l.contains("window"))
+            .filter(|l| l.contains("mrc") || l.contains("level") || l.contains("dwell"))
             .map(|l| l.split_whitespace().take(9).collect::<Vec<_>>().join(" "))
             .collect()
     };
@@ -4577,7 +4622,7 @@ fn a_call_on_a_reaction_route_is_bounded_or_reported() {
     for needle in [
         "error[call-unbounded]",
         "crosses /comfort/operate (handler.cli.operate) with no `timeout:` and no \
-         `on_timeout:`, and no supervised rung",
+         `on_timeout:`, and no supervised level",
         "warning[call-deadlock]",
     ] {
         assert!(s2.contains(needle), "expected `{needle}`:\n{s2}");
@@ -4589,10 +4634,10 @@ fn a_call_on_a_reaction_route_is_bounded_or_reported() {
     // On a floor no timeout can bound the call: a warning, kept a warning
     // under `--strict` so a contract can acknowledge it.
     let latch = check_fixture("contract_fault_latch");
-    assert!(latch.contains("warning[call-unbounded-floor]"), "{latch}");
+    assert!(latch.contains("warning[call-unbounded-mrc]"), "{latch}");
     assert!(!latch.contains("error[call-unbounded"), "{latch}");
     let (_, strict) = check_takeover("contract_fault_latch", &["--strict"]);
-    assert!(strict.contains("warning[call-unbounded-floor]"), "{strict}");
+    assert!(strict.contains("warning[call-unbounded-mrc]"), "{strict}");
     // S2's retry, which upstream runs forever.
     let s2b = check_fixture("contract_call_retry_forever");
     assert!(s2b.contains("error[call-retry-unbounded]"), "{s2b}");
@@ -4609,7 +4654,7 @@ fn a_call_on_a_reaction_route_is_bounded_or_reported() {
         s5.contains("2000.00 ms timeout (cli.operate) + 10.00 ms emergency_stop route"),
         "{s5}"
     );
-    assert!(s5.contains("error[ladder-rung-budget]"), "{s5}");
+    assert!(s5.contains("error[degradation-level-budget]"), "{s5}");
     assert!(!s5.contains("[call-"), "{s5}");
     assert!(check_fixture("contract_call_late_effect").contains("warning[call-late-effect]"));
 }

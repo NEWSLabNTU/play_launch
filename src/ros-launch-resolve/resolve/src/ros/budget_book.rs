@@ -291,14 +291,14 @@ fn checks_of(
                 out.push("fault-reaction sum (the interval)".to_string());
             }
         }
-        ["modes", name, "window"] => {
+        ["modes", name, "min_dwell"] => {
             if m.manifest
                 .modes
                 .get(*name)
-                .and_then(|d| d.window.as_ref())
+                .and_then(|d| d.min_dwell.as_ref())
                 .is_some_and(|w| w.param.is_some())
             {
-                out.push("window-param".to_string());
+                out.push("dwell-param".to_string());
             }
         }
         ["nodes", n, "paths", p, "max_latency"] => {
@@ -324,7 +324,7 @@ fn checks_of(
         ["nodes", n, "paths", p, "trigger", "timer", "jitter"] => {
             // The window's owner reads its deadline on this tick.
             let owns_window = m.manifest.modes.values().any(|md| {
-                md.window
+                md.min_dwell
                     .as_ref()
                     .and_then(|w| w.param.as_ref())
                     .is_some_and(|pr| pr.node() == Some(*n))
@@ -336,7 +336,7 @@ fn checks_of(
                 .and_then(|nd| nd.paths.get(*p))
                 .is_some();
             if owns_window && timer {
-                out.push("window-expiry".to_string());
+                out.push("dwell-expiry".to_string());
             }
             if scope_budgets {
                 out.push(CROSSED.to_string());

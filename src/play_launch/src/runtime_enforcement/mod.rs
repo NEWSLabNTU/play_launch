@@ -1252,12 +1252,13 @@ impl RuleEngine {
                 let (sev, to) = match rung {
                     Some(r) => (Severity::Warning, format!("falling to '{r}'")),
                     None if w.fallback.is_empty() => {
-                        (Severity::Warning, "no fallback ladder declared".to_string())
+                        (Severity::Warning, "no fallback sequence declared".to_string())
                     }
                     None => (
                         Severity::Error,
                         format!(
-                            "NO rung of [{}] is available either — the ladder has no floor left",
+                            "NO degradation level of [{}] is available either — the fallback sequence has no \
+                                 minimal risk condition left",
                             w.fallback.join(", ")
                         ),
                     ),

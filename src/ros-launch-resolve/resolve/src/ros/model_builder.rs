@@ -495,7 +495,7 @@ fn model_field(rest: &str) -> String {
     match rest {
         "trigger.timer.rate_hz" => return "rate_hz".to_string(),
         "trigger.timer.jitter" => return "timer_jitter_ms".to_string(),
-        "window" => return "window.duration_ms".to_string(),
+        "min_dwell" => return "min_dwell.duration_ms".to_string(),
         "safe_state.settle" => return "safe_state.settle_ms".to_string(),
         "on_timeout.retry.backoff" => return "on_timeout.backoff_ms".to_string(),
         _ => {}
@@ -1672,7 +1672,7 @@ pub fn build_system_model(
                 // rlm v0.1.46. The window's parameter is keyed by the node's
                 // launch FQN, the same identity `node_params` uses, so a
                 // consumer can look the value up without re-resolving.
-                window: m.decl.window.as_ref().map(|w| model::WindowContract {
+                min_dwell: m.decl.min_dwell.as_ref().map(|w| model::DwellContract {
                     duration_ms: w.ms().unwrap_or_default(),
                     param: w.param.as_ref().and_then(ParamBinding::as_ref).map(|p| {
                         let ns = index
@@ -1735,20 +1735,20 @@ pub fn build_system_model(
                 // ladder order, so an image's route monitor judges the same
                 // quantity. Skipped rungs (the fault removes them) and the
                 // supervised-overrun rows are not rungs the hazard runs.
-                rungs: index
+                degradation_levels: index
                     .budgets
                     .iter()
                     .filter(|b| b.scope_id == h.scope_id && b.hazard == h.name)
                     .filter_map(|b| {
                         let role = match b.role {
-                            super::manifest_loader::RungRole::Rung => model::RungRole::Rung,
-                            super::manifest_loader::RungRole::Window => model::RungRole::Window,
-                            super::manifest_loader::RungRole::Floor => model::RungRole::Floor,
-                            super::manifest_loader::RungRole::Skipped
-                            | super::manifest_loader::RungRole::Overrun => return None,
+                            super::manifest_loader::LevelRole::Level => model::LevelRole::Level,
+                            super::manifest_loader::LevelRole::Dwell => model::LevelRole::Dwell,
+                            super::manifest_loader::LevelRole::Mrc => model::LevelRole::Mrc,
+                            super::manifest_loader::LevelRole::Skipped
+                            | super::manifest_loader::LevelRole::Overrun => return None,
                         };
-                        Some(model::RungRoute {
-                            rung: b.rung.clone(),
+                        Some(model::LevelRoute {
+                            level: b.rung.clone(),
                             role,
                             route_ms: b.route_ms,
                             starts_at: b.route_from.clone(),

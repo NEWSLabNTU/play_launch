@@ -15,7 +15,7 @@ use:
 
 # DELIBERATELY inconsistent (phase 75). Three faults, each its own rule:
 #   * `stopped` — the last rung — still requires `perception`, which this
-#     hazard's own guard removes: there is no floor -> ladder-unterminated
+#     hazard's own guard removes: there is no floor -> fallback-without-mrc
 #   * `blind_mode` requires /safety/brake_cmd, whose only subscriber
 #     declares no on_violation -> mode-requires-unguarded
 #   * an override names a requirement nothing declares
@@ -27,7 +27,7 @@ use:
 #     it ends at /safety/status, reached through a 900ms path, while the
 #     floor `stopped` ends at /safety/brake_cmd in 7ms. Two rungs, two
 #     routes — which is the only shape where a per-rung check says anything
-#     the terminal check does not.                 -> ladder-rung-budget
+#     the terminal check does not.                 -> degradation-level-budget
 #     It requires nothing the fault removes: since phase 83 (#0057) a rung
 #     that requires `perception` is one this hazard can never land on, and
 #     is neither checked nor charged.

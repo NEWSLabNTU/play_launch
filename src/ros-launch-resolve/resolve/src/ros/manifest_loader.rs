@@ -311,19 +311,22 @@ impl DerivedCriticality {
     }
 }
 
-/// Where a rung stands in a hazard's reaction (phase 83).
+/// Where a degradation level stands in a hazard's reaction (phase 83).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RungRole {
-    /// A graded rung, checked in its own right (`ladder-rung-budget`).
+pub enum LevelRole {
+    /// A degradation level, checked in its own right
+    /// (`degradation-level-budget`).
     #[default]
-    Rung,
-    /// A windowed, transitional rung: charged to every rung below it.
-    Window,
-    /// A rung this hazard's fault removes (F1): neither checked nor charged.
+    Level,
+    /// A level with a `min_dwell`, transitional: charged to every level
+    /// below it.
+    Dwell,
+    /// A level this hazard's fault removes (F1): neither checked nor charged.
     Skipped,
-    /// The floor, measured by `fault-reaction-budget`.
-    Floor,
-    /// A supervised budget on the rung above overruns (phase 93): the time
+    /// The minimal risk condition (the fallback sequence's last level),
+    /// measured by `fault-reaction-budget`.
+    Mrc,
+    /// A supervised budget on the level above overruns (phase 93): the time
     /// before it + the budget + the detection delay + the supervision's
     /// reaction and settle, against the interval (`supervised-fit`).
     Overrun,
@@ -333,10 +336,10 @@ pub enum RungRole {
 /// `check --explain` can print the terms the verdicts were computed from
 /// (phase 83). Every number is the checker's own.
 #[derive(Debug, Clone, Default)]
-pub struct RungBudget {
+pub struct LevelBudget {
     pub hazard: String,
     pub rung: String,
-    pub role: RungRole,
+    pub role: LevelRole,
     pub fdti_ms: Option<f64>,
     /// The windowed rungs passed on the way, route + window each, summed.
     pub windows_ms: f64,
@@ -504,7 +507,7 @@ fn walk_keys(index: &ManifestIndex, w: &ReactionWalk, after_deadline: bool) -> V
 #[derive(Debug, Default, Clone)]
 pub struct ManifestIndex {
     /// Every node's resolved launch parameter values, keyed by node FQN
-    /// (phase 83): what `window-param` and a braking-profile settle read.
+    /// (phase 83): what `dwell-param` and a braking-profile settle read.
     pub launch_params: HashMap<String, BTreeMap<String, super::value_rules::LaunchParam>>,
     /// The launch tree's scopes by id, and its launch configurations at the
     /// end of the run (phase 94): what a `$(var)` in a contract reads, kept
@@ -517,7 +520,7 @@ pub struct ManifestIndex {
     pub launch_config_seq: HashMap<String, usize>,
     /// The fault-reaction arithmetic per (hazard, rung), for `--explain`
     /// (phase 83).
-    pub budgets: Vec<RungBudget>,
+    pub budgets: Vec<LevelBudget>,
     /// The extensions each scope's contract uses (phase 91 E4), by scope.
     pub extensions: BTreeMap<usize, Vec<super::extensions::LoadedExt>>,
     /// The profile each scope's contract uses, if any (phase 91 E6).
@@ -2200,7 +2203,7 @@ impl ReactionWalk {
                 self.route_after_deadline_ms(),
                 format!(
                     "route = path {:.2}ms; the guard edge's link ({:.2}ms into '{}') is not \
-                     charged after a window's deadline, which its owner reads on its own clock",
+                     charged after a dwell's deadline, which its owner reads on its own clock",
                     self.route_after_deadline_ms(),
                     l.ms,
                     l.sub_ref
@@ -2237,7 +2240,7 @@ pub(crate) struct ReactionHop {
     /// `sampling_ms`: a sampling hop waits up to one period plus this.
     pub(crate) jitter_ms: Option<f64>,
     /// What this hop is charged in the route: its `max_latency` plus the
-    /// sampling period above. `window-expiry` reads the first hop's, because
+    /// sampling period above. `dwell-expiry` reads the first hop's, because
     /// after a window that hop is the node noticing the deadline (phase 84).
     pub(crate) ms: f64,
 }
@@ -2840,7 +2843,7 @@ fn supervised_effect(index: &ManifestIndex, w: &ReactionWalk, call: &CallCross) 
 /// - a rung whose effect is supervised takes no failure branch at the call:
 ///   its failure case is the supervisor's, which `supervised-fit` computes.
 ///
-/// The rules (`call-unbounded`, `call-unbounded-floor`, `call-retry-not-idempotent`,
+/// The rules (`call-unbounded`, `call-unbounded-mrc`, `call-retry-not-idempotent`,
 /// `call-retry-unbounded`, `call-late-effect`, `call-rejected-unhandled`,
 /// `call-deadlock`) judge only calls on a reaction route: a startup call, a
 /// parameter client or a map loader is never walked, so never judged.
@@ -2926,7 +2929,7 @@ pub(crate) fn judge_calls(
             .unwrap_or_default();
         let supervised = supervised_effect(index, w, c);
         let head = format!(
-            "{site_}: hazard '{}', rung '{}': the reaction route crosses {} ({label})",
+            "{site_}: hazard '{}', degradation level '{}': the reaction route crosses {} ({label})",
             h.name, r.rung, c.service
         );
         let mut push = |rule: &str, severity: Severity, message: String| {
@@ -3004,9 +3007,10 @@ pub(crate) fn judge_calls(
                     Severity::Warning,
                     format!(
                         "{head}, whose `on_timeout` falls to '{target}', which is not a lower \
-                         rung of this hazard's ladder, and no server declares `stale_after:`: a \
-                         request the client gave up on may still act after the fallback has \
-                         started, and two reactions then act at once. Fall to a rung below \
+                         level of this hazard's fallback sequence, and no server declares \
+                         `stale_after:`: a request the client gave up on may still act after the \
+                         fallback has started, and two reactions then act at once. Fall to a \
+                         level below \
                          this one (a stronger reaction supersedes a late weaker one), or have \
                          the server refuse stale requests (`srv.<e>.stale_after`)"
                     ),
@@ -3036,7 +3040,7 @@ pub(crate) fn judge_calls(
         }
         if let Some(sv) = &supervised {
             notes.push(format!(
-                "call {} -> {}: no failure branch, the rung's effect is supervised ({sv})",
+                "call {} -> {}: no failure branch, the level's effect is supervised ({sv})",
                 c.client_ref(),
                 c.service
             ));
@@ -3050,7 +3054,7 @@ pub(crate) fn judge_calls(
                     "{head}, a blocking call after which the route continues at the client, \
                      and no `on_rejected:`: a server that answers `success: false` leaves the \
                      client carrying on with no effect behind it. State what the code does on \
-                     a refusal (`on_rejected: {{ reaction }}`), or supervise the rung's effect"
+                     a refusal (`on_rejected: {{ reaction }}`), or supervise the level's effect"
                 ),
             );
         }
@@ -3070,14 +3074,14 @@ pub(crate) fn judge_calls(
             let floor = r.idx + 1 >= r.rungs.len();
             if floor {
                 push(
-                    "call-unbounded-floor",
+                    "call-unbounded-mrc",
                     Severity::Warning,
                     format!(
-                        "{head} with {missing}, and no supervised effect. This is the floor: \
-                         it has no lower rung, so `on_timeout:` has nothing to fall to and no \
-                         timeout can bound the call. Supervise its effect \
-                         (`safe_state.settle: {{ ..., supervise }}`), or guard the floor's \
-                         output so a stalled call is detected"
+                        "{head} with {missing}, and no supervised effect. This is the minimal \
+                         risk condition: it has no lower level, so `on_timeout:` has nothing to \
+                         fall to and no timeout can bound the call. Supervise its effect \
+                         (`safe_state.settle: {{ ..., supervise }}`), or guard the minimal risk \
+                         condition's output so a stalled call is detected"
                     ),
                 );
             } else {
@@ -3085,11 +3089,11 @@ pub(crate) fn judge_calls(
                     "call-unbounded",
                     Severity::Error,
                     format!(
-                        "{head} with {missing}, and no supervised rung: a call in stock ROS 2 \
+                        "{head} with {missing}, and no supervised level: a call in stock ROS 2 \
                          can wait forever (no server, a server that dies, a lost request or \
                          response), so this route is a number the system may never meet. \
                          State how long the client waits and what it does then (`timeout:` + \
-                         `on_timeout:` falling to a lower rung), or supervise the rung's \
+                         `on_timeout:` falling to a lower level), or supervise the level's \
                          effect (`safe_state.settle: {{ ..., supervise }}`)"
                     ),
                 );
@@ -3237,7 +3241,7 @@ fn resolve_ladder(
                 rule_id: "reaction-unreachable".to_string(),
                 severity: Severity::Error,
                 message: format!(
-                    "hazard '{}': fallback rung '{name}' declares no `reaction:` path, so falling \
+                    "hazard '{}': fallback level '{name}' declares no `reaction:` path, so falling \
                      to it reaches no safe state",
                     h.name
                 ),
@@ -3251,10 +3255,10 @@ fn resolve_ladder(
     }
     let Some((_, terminal)) = rungs.last().cloned() else {
         diags.push(Diagnostic {
-            rule_id: "ladder-unterminated".to_string(),
+            rule_id: "fallback-without-mrc".to_string(),
             severity: Severity::Error,
             message: format!(
-                "hazard '{}': mode '{reaction_name}' has no `fallback:` ladder, so losing it \
+                "hazard '{}': mode '{reaction_name}' has no `fallback:` sequence, so losing it \
                  reaches no safe state",
                 h.name
             ),
@@ -3263,9 +3267,9 @@ fn resolve_ladder(
         });
         return None;
     };
-    // The floor must survive the fault. A last rung that requires anything
-    // this hazard guards is not a floor: losing the guard takes the whole
-    // ladder with it.
+    // The minimal risk condition must survive the fault. A last level that
+    // requires anything this hazard guards is not one: losing the guard
+    // takes the whole fallback sequence with it.
     let guarded: HashSet<&str> = h
         .guards
         .iter()
@@ -3287,12 +3291,12 @@ fn resolve_ladder(
         .collect();
     if !doomed.is_empty() {
         diags.push(Diagnostic {
-            rule_id: "ladder-unterminated".to_string(),
+            rule_id: "fallback-without-mrc".to_string(),
             severity: Severity::Error,
             message: format!(
-                "hazard '{}': the last fallback rung requires {doomed:?}, which this hazard's own \
-                 guards can take away — there is no floor. The bottom of a ladder must require \
-                 nothing the fault can remove",
+                "hazard '{}': the last fallback level requires {doomed:?}, which this hazard's \
+                 own guards can take away — there is no minimal risk condition. The last level \
+                 of a fallback sequence must require nothing the fault can remove",
                 h.name
             ),
             path: format!("{at}.{rk}"),
@@ -3391,7 +3395,7 @@ fn owner_notice(
         })
 }
 
-/// `window-expiry` (phase 84): a window is charged up to its DEADLINE, and
+/// `dwell-expiry` (phase 84): a window is charged up to its DEADLINE, and
 /// the rung below is charged its route from there. That is sound only if
 /// the route's first hop is the node that enforces the window, charged at
 /// least the period of the clock it reads the deadline on -- otherwise the
@@ -3404,7 +3408,7 @@ fn check_window_expiry(
     hazard: &str,
     rung: &str,
     site: &str,
-    budgets: &mut [RungBudget],
+    budgets: &mut [LevelBudget],
     diags: &mut Vec<Diagnostic>,
 ) {
     let Some(first) = walk.and_then(|w| w.hops.first()) else {
@@ -3416,7 +3420,7 @@ fn check_window_expiry(
         };
         let problem = if &first.node != owner {
             Some(format!(
-                "its route starts at {first}, not at {owner}, which enforces the window -- \
+                "its route starts at {first}, not at {owner}, which enforces the dwell -- \
                  nothing charges {owner} noticing the deadline"
             ))
         } else {
@@ -3433,14 +3437,15 @@ fn check_window_expiry(
         };
         if let Some(problem) = problem {
             diags.push(Diagnostic {
-                rule_id: "window-expiry".to_string(),
+                rule_id: "dwell-expiry".to_string(),
                 severity: Severity::Error,
                 message: format!(
-                    "{site}: hazard '{hazard}': rung '{rung}' is charged from the deadline of \
+                    "{site}: hazard '{hazard}': degradation level '{rung}' is charged from the \
+                     deadline of \
                      '{}' ({:.2}ms), and {problem}",
                     w.rung, w.window_ms
                 ),
-                path: format!("modes.{}.window", w.rung),
+                path: format!("modes.{}.min_dwell", w.rung),
                 span: None,
             });
             continue;
@@ -3477,8 +3482,8 @@ fn check_fault_reaction(
     use ros_launch_manifest_types::FaultKind;
 
     let mut diags: Vec<Diagnostic> = Vec::new();
-    let mut budgets: Vec<RungBudget> = Vec::new();
-    // `window-expiry`'s warning is about the declaration, once per window
+    let mut budgets: Vec<LevelBudget> = Vec::new();
+    // `dwell-expiry`'s warning is about the declaration, once per window
     // however many hazards wait it out (phase 84).
     let mut expiry_warned: HashSet<(usize, String)> = HashSet::new();
     // Phase 85 I1: the guard edges some route charged a link on.
@@ -3849,14 +3854,14 @@ fn check_fault_reaction(
         };
         // Phase 75 — the reaction may name a MODE, and then the ladder is
         // the reaction. Every rung is checked in its own right
-        // (`ladder-rung-budget`); the LAST rung is what
+        // (`degradation-level-budget`); the LAST rung is what
         // `fault-reaction-budget` measures, because it is the floor the
         // system is guaranteed to reach. Phase 71's single-path form is the
         // one-rung case, unchanged.
         // Phase 83 F1: the rungs THIS fault leaves standing. A rung that
         // requires a function the fault removes is not a place the hazard
         // can land, so it is neither checked nor charged -- the same test
-        // `ladder-unterminated` applies to the floor.
+        // `fallback-without-mrc` applies to the floor.
         let removed = super::value_rules::removed_by(h, index);
         let Some((rungs, terminal)) =
             resolve_ladder(h, reaction_name, &modes, &removed, &mut diags, &at)
@@ -3890,7 +3895,7 @@ fn check_fault_reaction(
         // later rung. Each is charged to every rung below it: the system
         // waits the window out before it moves on. Phase 84: the charge ends
         // at the window's DEADLINE, and noticing it belongs to the route
-        // below (`window-expiry`).
+        // below (`dwell-expiry`).
         let mut windows: Vec<WaitedWindow> = Vec::new();
         let windows_ms = |w: &[WaitedWindow]| {
             w.iter()
@@ -3900,7 +3905,7 @@ fn check_fault_reaction(
             w.iter()
                 .map(|x| {
                     format!(
-                        " + '{}' reaction {:.2}ms + window {:.2}ms",
+                        " + '{}' reaction {:.2}ms + dwell {:.2}ms",
                         x.rung, x.route_ms, x.window_ms
                     )
                 })
@@ -3936,10 +3941,10 @@ fn check_fault_reaction(
                     .filter(|r| removed.contains(*r))
                     .collect();
                 if !lost.is_empty() {
-                    budgets.push(RungBudget {
+                    budgets.push(LevelBudget {
                         hazard: h.name.clone(),
                         rung: rung_name.clone(),
-                        role: RungRole::Skipped,
+                        role: LevelRole::Skipped,
                         ftti_ms,
                         note: format!("requires {}, which this fault removes", lost.join(", ")),
                         ..Default::default()
@@ -4027,7 +4032,7 @@ fn check_fault_reaction(
             // not a safe state, so it has no settle and is not a promise of
             // its own -- which is also why it is exempt from
             // `reaction-unbudgeted`. What it costs is charged below it.
-            if let Some(win) = mode.and_then(|m| m.decl.window.as_ref()) {
+            if let Some(win) = mode.and_then(|m| m.decl.min_dwell.as_ref()) {
                 let d = win.ms().unwrap_or_default();
                 let r = route_ms.unwrap_or(0.0);
                 // Phase 84: who enforces the window, and on what clock it
@@ -4048,24 +4053,24 @@ fn check_fault_reaction(
                     && expiry_warned.insert((h.scope_id, rung_name.clone()))
                 {
                     diags.push(Diagnostic {
-                        rule_id: "window-expiry".to_string(),
+                        rule_id: "dwell-expiry".to_string(),
                         severity: Severity::Warning,
                         message: format!(
                             "{}: mode '{rung_name}' waits {d:.2}ms, enforced by {o}, but no \
                              timer path of {o} publishes {}, so when {o} notices the deadline \
-                             is not declared. The rung below is charged from the deadline as \
+                             is not declared. The level below is charged from the deadline as \
                              if it were noticed at once",
                             rung_site(rung_name),
                             rp.output_topics.join(", ")
                         ),
-                        path: format!("modes.{rung_name}.window"),
+                        path: format!("modes.{rung_name}.min_dwell"),
                         span: None,
                     });
                 }
                 let mut rung_terms = route_terms.clone();
-                rung_terms.push((h.scope_id, format!("modes.{rung_name}.window")));
+                rung_terms.push((h.scope_id, format!("modes.{rung_name}.min_dwell")));
                 let row = budgets.len();
-                budgets.push(RungBudget {
+                budgets.push(LevelBudget {
                     route_from: walk
                         .as_ref()
                         .and_then(|w| w.hops.first())
@@ -4074,14 +4079,14 @@ fn check_fault_reaction(
                     scope_id: h.scope_id,
                     hazard: h.name.clone(),
                     rung: rung_name.clone(),
-                    role: RungRole::Window,
+                    role: LevelRole::Dwell,
                     fdti_ms,
                     windows_ms: windows_ms(&windows),
                     route_ms,
                     window_ms: Some(d),
                     ftti_ms,
                     note: format!(
-                        "lasts at least {d:.2}ms once on; transitional: charged to every rung \
+                        "lasts at least {d:.2}ms once on; transitional: charged to every level \
                          below it up to its deadline"
                     ),
                     route_note,
@@ -4118,9 +4123,9 @@ fn check_fault_reaction(
                     rule_id: "reaction-unbudgeted".to_string(),
                     severity: Severity::Warning,
                     message: format!(
-                        "{}: hazard '{}': fallback rung '{rung_name}' reaches {} but no path \
+                        "{}: hazard '{}': fallback level '{rung_name}' reaches {} but no path \
                          there declares a `safe_state` with a settle time -- the plant's share \
-                         of the rung is unknown, so its budget runs on INCOMPLETE EVIDENCE",
+                         of the level is unknown, so its budget runs on INCOMPLETE EVIDENCE",
                         rung_site(rung_name),
                         h.name,
                         rp.output_topics.join(", ")
@@ -4135,7 +4140,7 @@ fn check_fault_reaction(
             let settle_ms = settle.ms.unwrap_or(0.0);
             let waited = windows_ms(&windows);
             let total = fdti + waited + route_ms + settle_ms;
-            budgets.push(RungBudget {
+            budgets.push(LevelBudget {
                 route_from: walk
                     .as_ref()
                     .and_then(|w| w.hops.first())
@@ -4144,7 +4149,7 @@ fn check_fault_reaction(
                 scope_id: h.scope_id,
                 hazard: h.name.clone(),
                 rung: rung_name.clone(),
-                role: RungRole::Rung,
+                role: LevelRole::Level,
                 fdti_ms: Some(fdti),
                 windows_ms: waited,
                 route_ms: Some(route_ms),
@@ -4183,14 +4188,14 @@ fn check_fault_reaction(
             );
             if total > ftti {
                 diags.push(Diagnostic {
-                    rule_id: "ladder-rung-budget".to_string(),
+                    rule_id: "degradation-level-budget".to_string(),
                     severity: Severity::Error,
                     message: format!(
-                        "{}: hazard '{}': fallback rung '{rung_name}' cannot make the \
+                        "{}: hazard '{}': fallback level '{rung_name}' cannot make the \
                          fault-tolerant time interval — detection {fdti:.2}ms{} + reaction \
                          {route_ms:.2}ms{} + settle {settle_ms:.2}ms = {total:.2}ms against \
                          {ftti:.2}ms. A graded reaction is a promise in its own right, not only \
-                         a step on the way to the floor",
+                         a step on the way to the minimal risk condition",
                         rung_site(rung_name),
                         h.name,
                         windows_note(&windows),
@@ -4424,7 +4429,7 @@ fn check_fault_reaction(
             },
         ]
         .concat();
-        budgets.push(RungBudget {
+        budgets.push(LevelBudget {
             route_from: walk
                 .as_ref()
                 .and_then(|w| w.hops.first())
@@ -4433,7 +4438,7 @@ fn check_fault_reaction(
             scope_id: h.scope_id,
             hazard: h.name.clone(),
             rung: floor_name.clone(),
-            role: RungRole::Floor,
+            role: LevelRole::Mrc,
             fdti_ms,
             windows_ms: waited,
             route_ms: Some(frti_route),
@@ -4868,7 +4873,8 @@ fn check_modes(
                     message: format!(
                         "mode '{}' requires '{req}', but no subscriber of it declares an \
                          `on_violation` — nothing would notice it lost, so this mode can never \
-                         be declared unavailable and the ladder below it can never be taken",
+                         be declared unavailable and the fallback sequence below it can never be \
+                         taken",
                         m.name
                     ),
                     path: format!("{at}.requires"),

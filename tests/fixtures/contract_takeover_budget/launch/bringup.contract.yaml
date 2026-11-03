@@ -1,8 +1,8 @@
 # Phase 83 -- the takeover arithmetic, one term broken per rule, on the
 # ladder of `contract_takeover`.
 #
-#   window-param             the window says 10 s, the launch file runs 12.0
-#   ladder-rung-budget       odd_exit at 20 s: comfortable is 120 + (110 +
+#   dwell-param             the window says 10 s, the launch file runs 12.0
+#   degradation-level-budget       odd_exit at 20 s: comfortable is 120 + (110 +
 #                            10000) + 410 + 9996.67 = 20636.67 ms, the window
 #                            charged cumulatively
 #   settle-conflict          comfort_op also states a measured 5000ms, the
@@ -69,7 +69,7 @@ modes:
   takeover:
     requires: [hpc_alive]
     reaction: sys.tor
-    window: { duration: 10s, param: handler.takeover_timeout }
+    min_dwell: { duration: 10s, param: handler.takeover_timeout }
     exit: { holds: driver_took_over, to: manual }
   comfortable:
     requires: [hpc_alive]

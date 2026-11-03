@@ -7,7 +7,7 @@ use:
 # Phase 75 — a function is a named guard group; a mode is the functions it
 # requires plus the ladder to fall to. The hazard enters a MODE (`enters:`),
 # so the ladder IS the reaction: `degraded` is checked in its own right by
-# `ladder-rung-budget`, and `stopped` — the floor, requiring nothing the
+# `degradation-level-budget`, and `stopped` — the floor, requiring nothing the
 # fault can remove — is what `fault-reaction-budget` measures.
 functions:
   perception: [/safety/scan]

@@ -44,7 +44,7 @@ use std::{
 };
 
 use ros_launch_manifest_check::{Diagnostic, Severity};
-use ros_launch_manifest_types::AckDecl;
+use ros_launch_manifest_types::{AckDecl, rule_names};
 
 use super::manifest_loader::ManifestIndex;
 
@@ -80,8 +80,10 @@ impl Entry<'_> {
     fn key(&self) -> (PathBuf, usize) {
         (self.contract_path.clone(), self.index)
     }
+    /// A renamed rule's old id (phase 98) matches the rule under its new
+    /// one for one release; [`apply`] warns the entry as the old spelling.
     fn matches(&self, d: &Diagnostic) -> bool {
-        d.rule_id == self.decl.rule && d.path == self.decl.at
+        d.rule_id == rule_names::current(&self.decl.rule) && d.path == self.decl.at
     }
 }
 
@@ -174,6 +176,21 @@ pub fn apply(index: &mut ManifestIndex) {
         let key = e.key();
         let site = super::value_rules::site(index, e.scope_id, "acknowledged");
         let (rule, at) = (&e.decl.rule, &e.decl.at);
+        if let Some(r) = rule_names::renamed(rule) {
+            out.push(Diagnostic {
+                rule_id: "deprecated-spelling".to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "{site}: acknowledged[{}] names `{}`, the rule's id before rlm v{}; it \
+                     is `{}` now (phase 98: the vocabulary takes the standards' words), and \
+                     the entry still matches it this release. Fix: write `rule: {}`; \
+                     `play_launch migrate <contract> --write` rewrites it",
+                    e.index, r.old, r.since, r.new, r.new
+                ),
+                path: format!("acknowledged[{}]", e.index),
+                span: None,
+            });
+        }
         if on_error.contains(&key) {
             out.push(Diagnostic {
                 rule_id: "ack-error".to_string(),
@@ -303,6 +320,38 @@ mod tests {
         assert_eq!(a.entry, 0);
         assert!(index.merge_diagnostics.is_empty(), "no stale, no error");
         assert_eq!(index.total_warnings, 1);
+    }
+
+    /// Phase 98: an entry naming a renamed rule by its old id still matches
+    /// the rule under its new id this release, and is warned as the old
+    /// spelling (naming the new id), never reported stale.
+    #[test]
+    fn an_old_rule_id_still_matches_and_is_warned() {
+        let old = ros_launch_manifest_types::rule_names::RENAMED_RULES[0];
+        let mut index = ManifestIndex::default();
+        index.manifests.insert(
+            0,
+            scope(
+                0,
+                "a",
+                vec![ack(old.old, "hazards.h.integrity")],
+                vec![diag(old.new, Severity::Warning, "hazards.h.integrity")],
+            ),
+        );
+        index.total_warnings = 1;
+        apply(&mut index);
+        assert!(index.manifests[&0].diagnostics.is_empty());
+        assert_eq!(index.acknowledged.len(), 1);
+        assert_eq!(
+            rules(&index.merge_diagnostics),
+            vec![("deprecated-spelling", "acknowledged[0]")]
+        );
+        assert!(
+            index.merge_diagnostics[0]
+                .message
+                .contains(&format!("write `rule: {}`", old.new))
+        );
+        assert_eq!(index.total_warnings, 1, "the acked one out, the spelling in");
     }
 
     #[test]

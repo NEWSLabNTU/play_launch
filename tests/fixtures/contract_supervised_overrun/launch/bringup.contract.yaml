@@ -43,7 +43,7 @@ modes:
   takeover:
     requires: [hpc_alive]
     reaction: sys.tor
-    window: { duration: 10s, param: handler.takeover_timeout, source: requirement }
+    min_dwell: { duration: 10s, param: handler.takeover_timeout, source: requirement }
     exit: { holds: driver_took_over, to: manual }
   comfortable:
     requires: [hpc_alive]
@@ -92,7 +92,7 @@ nodes:
       # Phase 84: the handler holds the request on its tick and reads the
       # deadline there, so the rung below's first hop (call_mrm, 110 ms =
       # the 100 ms tick + a 10 ms call) is where the late notice is charged
-      # (`window-expiry`).
+      # (`dwell-expiry`).
       on_timer:
         trigger: { timer: { rate_hz: 10 } }
         output: [tor_state]

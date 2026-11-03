@@ -9,7 +9,7 @@
 //!
 //! - `when-requires-reported`, `when-field-unknown` -- a predicate is only
 //!   meaningful on a detector's output, and names a field that exists.
-//! - `ladder-window-floor`, `window-param`, `window-unbound` -- a window is
+//! - `dwell-at-mrc`, `dwell-param`, `dwell-unbound` -- a window is
 //!   never the floor, and is the number the image runs.
 //! - `mode-exit-target`, `mode-exit-unwired` -- an exit leaves the ladder, and
 //!   something that implements the rung takes the input that ends it.
@@ -798,6 +798,21 @@ fn g3_spellings(
             "integrity_levels",
         ));
     }
+    for (name, md) in &manifest.modes {
+        if md.spelled_window {
+            diags.push(diag(
+                "deprecated-spelling",
+                Severity::Warning,
+                format!(
+                    "{}: `window:` is the old spelling of `min_dwell:` (a least time in a mode \
+                     before the next is the switched-systems dwell time). Fix: write \
+                     `min_dwell:`; {MIGRATE_HINT}",
+                    site(index, scope_id, &format!("{prefix}modes.{name}.window"))
+                ),
+                format!("{prefix}modes.{name}.window"),
+            ));
+        }
+    }
     for (name, h) in &manifest.hazards {
         if h.spelled_severity {
             diags.push(renamed(
@@ -950,7 +965,7 @@ fn g4_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
 // Windows and exits
 // ---------------------------------------------------------------------------
 
-/// `ladder-window-floor`, `window-param`, `window-unbound`,
+/// `dwell-at-mrc`, `dwell-param`, `dwell-unbound`,
 /// `mode-exit-target`, `mode-exit-unwired`.
 pub(crate) fn check_windows_and_exits(
     index: &ManifestIndex,
@@ -966,37 +981,37 @@ pub(crate) fn check_windows_and_exits(
                 .iter()
                 .find(|x| x.scope_id == m.scope_id && x.name == name)
         };
-        // The floor of THIS mode's ladder.
+        // The minimal risk condition of THIS mode's fallback sequence.
         if let Some(last) = m.decl.fallback.last()
             && let Some(floor) = in_scope(last)
-            && let Some(w) = &floor.decl.window
+            && let Some(w) = &floor.decl.min_dwell
         {
             diags.push(diag(
-                "ladder-window-floor",
+                "dwell-at-mrc",
                 Severity::Error,
                 format!(
-                    "{}: mode '{}' falls to '{last}' last, and '{last}' has a {:.0}ms window -- \
-                     a floor you leave after a timeout is not a floor. The bottom of a ladder \
-                     must be a safe state the system can stay in",
-                    site(index, floor.scope_id, &format!("modes.{last}.window")),
+                    "{}: mode '{}' falls to '{last}' last, and '{last}' has a {:.0}ms dwell -- \
+                     a minimal risk condition you leave after a timeout is not one. The last \
+                     level of a fallback sequence must be a safe state the system can stay in",
+                    site(index, floor.scope_id, &format!("modes.{last}.min_dwell")),
                     m.name,
                     w.ms().unwrap_or_default()
                 ),
                 format!("{at}.fallback"),
             ));
         }
-        if let Some(w) = &m.decl.window {
-            let wat = format!("{at}.window");
+        if let Some(w) = &m.decl.min_dwell {
+            let wat = format!("{at}.min_dwell");
             let where_ = site(index, m.scope_id, &wat);
             let ms = w.ms().unwrap_or_default();
             match w.param.as_ref().and_then(ParamBinding::as_ref) {
                 None => diags.push(diag(
-                    "window-unbound",
+                    "dwell-unbound",
                     Severity::Warning,
                     format!(
-                        "{where_}: mode '{}' waits {ms:.0}ms, but the window names no `param:` \
+                        "{where_}: mode '{}' waits {ms:.0}ms, but the dwell names no `param:` \
                          -- nothing ties the number to what the image runs. Write \
-                         `window: {{ duration: {}, param: <node>.<parameter> }}`",
+                         `min_dwell: {{ duration: {}, param: <node>.<parameter> }}`",
                         m.name,
                         w.duration().unwrap_or_default()
                     ),
@@ -1029,7 +1044,7 @@ pub(crate) fn check_windows_and_exits(
                             )),
                             Some(s) if ((s * 1000.0) - ms).abs() > 1e-6 * ms.max(1.0) => {
                                 Some(format!(
-                                    "resolves to {} s = {:.2}ms, not the {ms:.2}ms the window \
+                                    "resolves to {} s = {:.2}ms, not the {ms:.2}ms the dwell \
                                      declares",
                                     v.text,
                                     s * 1000.0
@@ -1040,7 +1055,7 @@ pub(crate) fn check_windows_and_exits(
                     };
                     if let Some(problem) = problem {
                         diags.push(diag(
-                            "window-param",
+                            "dwell-param",
                             Severity::Error,
                             format!(
                                 "{where_}: mode '{}' waits {ms:.2}ms, bound to `{p}`, which \
@@ -1082,9 +1097,9 @@ pub(crate) fn check_windows_and_exits(
                         "mode-exit-target",
                         Severity::Error,
                         format!(
-                            "{where_}: mode '{}' exits to '{}', which is a rung of the \
-                             `fallback:` ladder of {} -- an exit ends the ladder, it is not a \
-                             step down it",
+                            "{where_}: mode '{}' exits to '{}', which is a degradation level \
+                             of the `fallback:` sequence of {} -- an exit ends the sequence, it \
+                             is not a step down it",
                             m.name,
                             exit.to,
                             ladders
@@ -1127,7 +1142,7 @@ pub(crate) fn check_windows_and_exits(
                 Severity::Error,
                 format!(
                     "{where_}: mode '{}' has an exit but no `reaction:` scope path, so no node \
-                     implements the rung and nothing can take the input that ends it",
+                     implements the level and nothing can take the input that ends it",
                     m.name
                 ),
                 format!("{eat}.{hk}"),
@@ -1164,7 +1179,7 @@ pub(crate) fn check_windows_and_exits(
                 Severity::Error,
                 format!(
                     "{where_}: mode '{}' exits when '{}' holds ({}), but no node that implements the \
-                     rung ({}) takes it on a path trigger -- without a trigger there is no take \
+                     level ({}) takes it on a path trigger -- without a trigger there is no take \
                      to trace and no evidence the exit was seen",
                     m.name,
                     exit.holds,
@@ -1221,7 +1236,7 @@ fn bound_value(
 /// names the parameter that sets its period, and a subscriber whose
 /// `max_age` names the parameter that sets it, must state the number that
 /// parameter resolves to in the launch tree -- the same agreement
-/// `window-param` asks of a window. A node the launch tree does not start
+/// `dwell-param` asks of a window. A node the launch tree does not start
 /// (no launch values at all) is skipped: there is no image to disagree with.
 pub(crate) fn check_param_bindings(
     index: &ManifestIndex,

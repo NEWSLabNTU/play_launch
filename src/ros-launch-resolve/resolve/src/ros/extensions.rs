@@ -64,7 +64,7 @@ use ros_launch_manifest_types::{
     profile::{self, Profile},
 };
 
-use super::manifest_loader::{ManifestIndex, ResolvedHazard, RungRole};
+use super::manifest_loader::{ManifestIndex, ResolvedHazard, LevelRole};
 
 /// One extension file a contract uses.
 #[derive(Debug, Clone)]
@@ -1850,7 +1850,7 @@ fn worst_case(
 /// `check --strict`: an undecided worst case is an error.
 pub fn strict(index: &mut ManifestIndex) {
     // Phase 95: `call-unbounded` is an error already, and
-    // `call-unbounded-floor` stays a warning so a contract can acknowledge
+    // `call-unbounded-mrc` stays a warning so a contract can acknowledge
     // it (no timeout can bound a floor's call).
     for d in index
         .merge_diagnostics
@@ -2093,7 +2093,8 @@ pub(crate) fn derived_settle(
                 Severity::Warning,
                 format!("hazards.{}.{first}", h.name),
                 format!(
-                    "{}: hazard '{}' reaches rung '{rung}', whose settle {} derives ({node_fqn}), \
+                    "{}: hazard '{}' reaches degradation level '{rung}', whose settle {} derives \
+                     ({node_fqn}), \
                      but the hazard states no {} -- {}",
                     site(index, h.scope_id, &format!("hazards.{}", h.name)),
                     h.name,
@@ -2135,7 +2136,8 @@ pub(crate) fn derived_settle(
                     Severity::Info,
                     at.to_string(),
                     format!(
-                        "{where_}: hazard '{}', rung '{rung}': settle = {ms:.2}ms derived by {} \
+                        "{where_}: hazard '{}', degradation level '{rung}': settle = {ms:.2}ms derived \
+                         by {} \
                          (sha256 {}){}\n{}{}",
                         h.name,
                         ext.label(),
@@ -2156,7 +2158,8 @@ pub(crate) fn derived_settle(
                         Severity::Warning,
                         at.to_string(),
                         format!(
-                            "{where_}: hazard '{}', rung '{rung}': the literal settle {l:.2}ms \
+                            "{where_}: hazard '{}', degradation level '{rung}': the literal settle \
+                             {l:.2}ms \
                              and {}'s {ms:.2}ms differ by {:.1}% -- one of them describes a \
                              different vehicle or a different speed. The derived value is \
                              charged{}",
@@ -2304,7 +2307,7 @@ pub fn run_checks(index: &mut ManifestIndex) {
     let floor: BTreeMap<&str, f64> = index
         .budgets
         .iter()
-        .filter(|r| r.role == RungRole::Floor)
+        .filter(|r| r.role == LevelRole::Mrc)
         .filter_map(|r| r.total_ms.map(|t| (r.hazard.as_str(), t)))
         .collect();
     // The safe state the hazard's floor ends at: a check may read its keys
@@ -2313,7 +2316,7 @@ pub fn run_checks(index: &mut ManifestIndex) {
     let floor_settle: BTreeMap<&str, (&str, &SafeState)> = index
         .budgets
         .iter()
-        .filter(|r| r.role == RungRole::Floor)
+        .filter(|r| r.role == LevelRole::Mrc)
         .filter_map(|r| {
             let (node, path) = r.settle_at.as_ref()?;
             let ss = index

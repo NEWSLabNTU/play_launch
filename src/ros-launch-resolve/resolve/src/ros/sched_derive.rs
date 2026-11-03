@@ -1106,7 +1106,7 @@ mod tests {
     fn every_call_fixture_reports_its_design_verdict() {
         const RULES: [&str; 7] = [
             "call-unbounded",
-            "call-unbounded-floor",
+            "call-unbounded-mrc",
             "call-retry-not-idempotent",
             "call-retry-unbounded",
             "call-late-effect",
@@ -1121,7 +1121,7 @@ mod tests {
             (
                 "contract_call_unbounded",
                 &["call-unbounded", "call-deadlock"],
-                &["with no `timeout:` and no `on_timeout:`, and no supervised rung"],
+                &["with no `timeout:` and no `on_timeout:`, and no supervised level"],
             ),
             // S2, second step: the retry upstream runs forever.
             (
@@ -1196,8 +1196,8 @@ mod tests {
         assert!(
             s5.merge_diagnostics
                 .iter()
-                .any(|d| d.rule_id == "ladder-rung-budget"),
-            "S5 must be refused by ladder-rung-budget"
+                .any(|d| d.rule_id == "degradation-level-budget"),
+            "S5 must be refused by degradation-level-budget"
         );
         let s1 = budgets("contract_call_supervised");
         let row = s1
@@ -1207,7 +1207,7 @@ mod tests {
             .expect("S1 comfortable row");
         assert_eq!(row.route_ms, Some(21.5));
         assert!(
-            row.route_note.contains("the rung's effect is supervised"),
+            row.route_note.contains("the level's effect is supervised"),
             "{}",
             row.route_note
         );

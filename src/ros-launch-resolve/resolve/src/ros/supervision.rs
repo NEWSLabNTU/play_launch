@@ -13,7 +13,7 @@
 //!   term) + the check (taken as 0); `timer` is the tick + the platform's
 //!   switch. Both read `supervision: { tick, switch }`.
 //! - [`overrun_rows`] -- per supervised budget a rung or floor row charges,
-//!   a `RungRole::Overrun` row: the time before it + the budget + the
+//!   a `LevelRole::Overrun` row: the time before it + the budget + the
 //!   detection + the reaction's route and settle, against the FTTI
 //!   (`supervised-fit`).
 //! - [`check`] -- `supervised-unlowered` (a supervised budget no monitor
@@ -24,7 +24,7 @@
 
 use super::{
     manifest_loader::{
-        ManifestIndex, ReactionWalk, ResolvedHazard, RungBudget, RungRole, TermKey, WalkStart,
+        ManifestIndex, ReactionWalk, ResolvedHazard, LevelBudget, LevelRole, TermKey, WalkStart,
         resolve_node_fqn, walk_reaction_at, walk_terms,
     },
     value_rules::{Settle, settle_for, site},
@@ -553,12 +553,12 @@ struct Charged<'a> {
     early: bool,
 }
 
-/// The `RungRole::Overrun` rows of one rung or floor row (phase 93), and
+/// The `LevelRole::Overrun` rows of one rung or floor row (phase 93), and
 /// their `supervised-fit` verdicts.
 pub(crate) fn overrun_rows(
     index: &ManifestIndex,
     ctx: &RowCtx<'_>,
-    budgets: &mut Vec<RungBudget>,
+    budgets: &mut Vec<LevelBudget>,
     diags: &mut Vec<Diagnostic>,
 ) {
     let (Some(walk), Some(fdti)) = (ctx.walk, ctx.fdti_ms) else {
@@ -678,10 +678,10 @@ pub(crate) fn overrun_rows(
             }
             None => {
                 let key = &s.term.1;
-                budgets.push(RungBudget {
+                budgets.push(LevelBudget {
                     hazard: ctx.h.name.clone(),
                     rung: format!("{} ({key})", ctx.rung),
-                    role: RungRole::Overrun,
+                    role: LevelRole::Overrun,
                     fdti_ms: Some(fdti),
                     windows_ms: ctx.waited_ms,
                     ftti_ms: ctx.ftti_ms,
@@ -694,7 +694,7 @@ pub(crate) fn overrun_rows(
                     severity: Severity::Error,
                     message: format!(
                         "{}: hazard '{}': `{key}` is supervised, but its overrun case cannot be \
-                         checked: the settle is unknown for rung '{}'",
+                         checked: the settle is unknown for degradation level '{}'",
                         site(index, s.term.0, key),
                         ctx.h.name,
                         ctx.rung
@@ -724,11 +724,11 @@ pub(crate) fn overrun_rows(
         } else {
             format!("`{key}` overruns")
         };
-        let fail = |why: String, budgets: &mut Vec<RungBudget>, diags: &mut Vec<Diagnostic>| {
-            budgets.push(RungBudget {
+        let fail = |why: String, budgets: &mut Vec<LevelBudget>, diags: &mut Vec<Diagnostic>| {
+            budgets.push(LevelBudget {
                 hazard: ctx.h.name.clone(),
                 rung: row_name.clone(),
-                role: RungRole::Overrun,
+                role: LevelRole::Overrun,
                 fdti_ms: Some(fdti),
                 windows_ms: ctx.waited_ms,
                 ftti_ms: ctx.ftti_ms,
@@ -868,10 +868,10 @@ pub(crate) fn overrun_rows(
              {route_ms:.2}ms{gap_how} + settle {settle_ms:.2}ms{settle_note} = {total:.2}ms",
             c.before_ms, c.deadline_how
         );
-        budgets.push(RungBudget {
+        budgets.push(LevelBudget {
             hazard: ctx.h.name.clone(),
             rung: row_name.clone(),
-            role: RungRole::Overrun,
+            role: LevelRole::Overrun,
             fdti_ms: Some(fdti),
             windows_ms: ctx.waited_ms,
             route_ms: Some(c.before_ms - start + c.deadline_ms + det + route_ms + gap_ms),
@@ -892,7 +892,7 @@ pub(crate) fn overrun_rows(
             continue;
         };
         // A supervised settle's overrun case contains the rung's own total:
-        // when that already exceeds the interval, `ladder-rung-budget` says
+        // when that already exceeds the interval, `degradation-level-budget` says
         // so, and this row repeats it.
         let rung_over = s.settle && settle_rung_total.is_some_and(|t| t > ftti);
         let (severity, verdict) = if total > ftti && rung_over {
@@ -900,8 +900,8 @@ pub(crate) fn overrun_rows(
                 Severity::Info,
                 format!(
                     "exceeds the fault-tolerant time interval {ftti:.2}ms; not a separate \
-                     error: it contains the rung's own total {:.2}ms, which already exceeds it \
-                     and is refused on the rung's own row",
+                     error: it contains the level's own total {:.2}ms, which already exceeds it \
+                     and is refused on the level's own row",
                     settle_rung_total.unwrap_or_default()
                 ),
             )
@@ -923,7 +923,7 @@ pub(crate) fn overrun_rows(
             rule_id: "supervised-fit".to_string(),
             severity,
             message: format!(
-                "{where_}: hazard '{}', rung '{}': if {what}, {arith} {verdict}{hang_note}",
+                "{where_}: hazard '{}', degradation level '{}': if {what}, {arith} {verdict}{hang_note}",
                 ctx.h.name, ctx.rung
             ),
             path,
@@ -1017,7 +1017,8 @@ fn early_fit(
     let path = format!("{key}.supervise.early");
     let where_ = site(index, s.term.0, key);
     let head = format!(
-        "{where_}: hazard '{}', rung '{}': the response check of `{key}` (shed {} by \
+        "{where_}: hazard '{}', degradation level '{}': the response check of `{key}` \
+         (shed {} by \
          {within:.2}ms after the command)",
         ctx.h.name, ctx.rung, e.drop_text
     );

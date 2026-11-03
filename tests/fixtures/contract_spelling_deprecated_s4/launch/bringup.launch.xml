@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<!-- Phase 83: a takeover ladder that FITS. An arbiter (the MRM handler), a
+     takeover request with a 10 s window bound to a parameter, a comfortable
+     stop the planner executes, and an emergency stop as the floor. The
+     parameter values below are the ones the contract's window and braking
+     profiles are checked against. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="listener" name="handler">
+    <param name="takeover_timeout" value="10.0"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="listener" name="comfort_op">
+    <param name="min_acceleration" value="-1.0"/>
+    <param name="min_jerk" value="-0.3"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="listener" name="estop_op">
+    <param name="target_acceleration" value="-2.5"/>
+    <param name="target_jerk" value="-1.5"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="talker" name="gate"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="planner"/>
+</launch>

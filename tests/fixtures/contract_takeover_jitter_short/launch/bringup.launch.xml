@@ -2,7 +2,7 @@
 <!-- Phase 85 T2 (D1): the island's takeover ladder with the availability
      publisher outside the tree, behind a link the handler's subscriber
      states as `max_transport`. A call_mrm shorter than the handler's
-     period + jitter: window-expiry. -->
+     period + jitter: dwell-expiry. -->
 <launch>
   <node pkg="demo_nodes_cpp" exec="listener" name="handler">
     <param name="takeover_timeout" value="10.0"/>

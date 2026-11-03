@@ -246,7 +246,7 @@ impl ContractView {
                 .iter()
                 .find(|b| {
                     b.hazard == h.name
-                        && b.role == ros_launch_resolve::ros::manifest_loader::RungRole::Floor
+                        && b.role == ros_launch_resolve::ros::manifest_loader::LevelRole::Mrc
                 })
                 .and_then(|b| b.settle_ms)
                 .or(settle_ms);
