@@ -372,7 +372,10 @@ mod tests {
                 .message
                 .contains(&format!("write `rule: {}`", old.new))
         );
-        assert_eq!(index.total_warnings, 1, "the acked one out, the spelling in");
+        assert_eq!(
+            index.total_warnings, 1,
+            "the acked one out, the spelling in"
+        );
     }
 
     #[test]

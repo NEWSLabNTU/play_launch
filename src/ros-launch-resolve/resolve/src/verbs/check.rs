@@ -575,7 +575,16 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
     let ms = |v: Option<f64>| v.map_or("-".to_string(), |v| format!("{v:.2}"));
     let mut out = String::from("\n-- Fault-reaction budgets (--explain, ms) --\n");
     let head = [
-        "HAZARD", "DEGRADATION", "ROLE", "DETECT", "DWELLS", "ROUTE", "SETTLE", "TOTAL", "FTTI", "SLACK",
+        "HAZARD",
+        "DEGRADATION",
+        "ROLE",
+        "DETECT",
+        "DWELLS",
+        "ROUTE",
+        "SETTLE",
+        "TOTAL",
+        "FTTI",
+        "SLACK",
     ];
     let mut table: Vec<Vec<String>> = vec![head.iter().map(|h| h.to_string()).collect()];
     if with_sources {

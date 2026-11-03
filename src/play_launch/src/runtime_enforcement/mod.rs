@@ -1251,9 +1251,10 @@ impl RuleEngine {
                 });
                 let (sev, to) = match rung {
                     Some(r) => (Severity::Warning, format!("falling to '{r}'")),
-                    None if w.fallback.is_empty() => {
-                        (Severity::Warning, "no fallback sequence declared".to_string())
-                    }
+                    None if w.fallback.is_empty() => (
+                        Severity::Warning,
+                        "no fallback sequence declared".to_string(),
+                    ),
                     None => (
                         Severity::Error,
                         format!(

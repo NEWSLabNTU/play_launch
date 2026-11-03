@@ -24,7 +24,7 @@
 
 use super::{
     manifest_loader::{
-        ManifestIndex, ReactionWalk, ResolvedHazard, LevelBudget, LevelRole, TermKey, WalkStart,
+        LevelBudget, LevelRole, ManifestIndex, ReactionWalk, ResolvedHazard, TermKey, WalkStart,
         resolve_node_fqn, walk_reaction_at, walk_terms,
     },
     value_rules::{Settle, settle_for, site},

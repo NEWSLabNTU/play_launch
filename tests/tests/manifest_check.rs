@@ -2704,7 +2704,9 @@ fn s4_window_warns_and_migrates_to_min_dwell_with_the_same_verdict() {
     let migrated = std::fs::read_to_string(&contract).unwrap();
     assert!(
         migrated.contains("    min_dwell: { duration: 10s, param: handler.takeover_timeout }\n")
-            && !migrated.lines().any(|l| l.trim_start().starts_with("window:")),
+            && !migrated
+                .lines()
+                .any(|l| l.trim_start().starts_with("window:")),
         "{migrated}"
     );
 }
@@ -2744,7 +2746,8 @@ fn n1_severity_warns_and_migrates_to_integrity_with_the_same_verdict() {
             && migrated.contains("    integrity: ASIL_B\n")
             && !migrated
                 .lines()
-                .any(|l| l.starts_with("severity_levels:") || l.trim_start().starts_with("severity:")),
+                .any(|l| l.starts_with("severity_levels:")
+                    || l.trim_start().starts_with("severity:")),
         "{migrated}"
     );
 

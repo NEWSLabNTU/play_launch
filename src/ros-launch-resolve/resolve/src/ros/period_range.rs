@@ -27,7 +27,7 @@
 //! keeps them right whenever the walk learns a new way for a period to enter.
 
 use super::{
-    manifest_loader::{ManifestIndex, LevelBudget, LevelRole, recheck_period_probe},
+    manifest_loader::{LevelBudget, LevelRole, ManifestIndex, recheck_period_probe},
     value_rules::contract_node,
 };
 use ros_launch_manifest_check::{Diagnostic, Severity};

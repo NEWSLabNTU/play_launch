@@ -3524,7 +3524,8 @@ mod tests {
                 ..Default::default()
             },
         );
-        manifest.integrity_levels = vec!["none".to_string(), "sil1".to_string(), "sil2".to_string()];
+        manifest.integrity_levels =
+            vec!["none".to_string(), "sil1".to_string(), "sil2".to_string()];
         index
             .manifests
             .insert(0, resolved_manifest(0, "/perception", manifest));
@@ -3615,10 +3616,9 @@ mod tests {
                 .scopes
                 .contains_key("root_pkg/bringup.launch.xml")
         );
-        let sp =
-            model.contracts.scope_paths.get(key).unwrap_or_else(|| {
-                panic!("event chain keyed {key}: {:?}", model.contracts.scope_paths)
-            });
+        let sp = model.contracts.scope_paths.get(key).unwrap_or_else(|| {
+            panic!("event chain keyed {key}: {:?}", model.contracts.scope_paths)
+        });
         // A scope path carries no trigger fact; the model documents `None`.
         assert_eq!(sp.trigger, None);
         assert_eq!(sp.max_latency_ms, Some(30.0));

@@ -567,7 +567,11 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             requires: m.decl.requires.clone(),
             fallback: m.decl.fallback.clone(),
             reaction: m.decl.reaction.clone(),
-            window_ms: m.decl.min_dwell.as_ref().map(|w| w.ms().unwrap_or_default()),
+            window_ms: m
+                .decl
+                .min_dwell
+                .as_ref()
+                .map(|w| w.ms().unwrap_or_default()),
             exit: m.decl.exit.as_ref().map(|e| ExitOut {
                 on: e.holds.clone(),
                 to: e.to.clone(),

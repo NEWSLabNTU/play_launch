@@ -64,7 +64,7 @@ use ros_launch_manifest_types::{
     profile::{self, Profile},
 };
 
-use super::manifest_loader::{ManifestIndex, ResolvedHazard, LevelRole};
+use super::manifest_loader::{LevelRole, ManifestIndex, ResolvedHazard};
 
 /// One extension file a contract uses.
 #[derive(Debug, Clone)]
