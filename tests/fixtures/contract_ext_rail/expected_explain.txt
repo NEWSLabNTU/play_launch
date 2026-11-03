@@ -31,4 +31,4 @@ stop_before_svl: stopping_distance <= distance_to_svl: 1847.15 m <= 2000 m (marg
 drive_blind  safety.stop  floor  100.00     0.00   7.00  76022.08 derived  76129.08  90000.00  13870.92
 drive_blind  76129.08  (floor 'safety.stop')
 rail.ebd 1.0.1  extension  sha256 6d65754efbde9f22138294de46e7cb857c85d884022b93231fffdcdbf7a4750c
-en50129 1.0.0  profile  sha256 cd8cc00b0c0d1bdfbfe26747925145303b4a2fbf03249da0d9e84abfd4a1df7f
+en50129 1.1.0  profile  sha256 85be44047ec3145019706f98782e992a313e4e0c84d204704a73299969edf4df

@@ -1378,7 +1378,7 @@ fn a_reaction_crossing_a_service_is_walked_like_one_crossing_a_topic() {
             "expected `{needle}` on contract_fault_service:\n{out}"
         );
     }
-    // The severity reaches the node that ACTS: ASIL_D derives `high`
+    // The integrity level reaches the node that ACTS: ASIL_D derives `high`
     // (phase 90 G5 removed the label that used to show it as an info).
     assert_eq!(
         derived_criticality("contract_fault_service", "/safety/brake_controller").as_deref(),
@@ -2664,6 +2664,75 @@ fn g3b_a_topic_transport_warns_and_migrates_to_the_same_verdict() {
     assert_eq!(table(&old), table(&new));
 }
 
+/// Phase 98 N1: `severity:` and `severity_levels:` still read for one
+/// release, each warned as the old spelling of `integrity:`/
+/// `integrity_levels:`, and `migrate --write` rewrites both to the same
+/// findings, the same derived criticality and the same `--explain` sums.
+#[test]
+fn n1_severity_warns_and_migrates_to_integrity_with_the_same_verdict() {
+    let (_tmp, dir) = fixture_copy("contract_spelling_deprecated_n1");
+    let launch = dir.join("bringup.launch.xml");
+    let contract = dir.join("bringup.contract.yaml");
+    let (code, old) = check_launch(&launch, &["--explain"]);
+    assert_eq!(code, 0, "{old}");
+    let deprecated = |out: &str| {
+        out.lines()
+            .filter(|l| l.contains("warning[deprecated-spelling]"))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(deprecated(&old).len(), 2, "{old}");
+    for needle in [
+        "`severity_levels:` is the old spelling of `integrity_levels:`",
+        "`severity:` is the old spelling of `integrity:`",
+        "ISO 26262's severity is the S0-S3 class it is derived from",
+    ] {
+        assert!(old.contains(needle), "expected `{needle}`:\n{old}");
+    }
+
+    let (code, out) = migrate(&contract, &["--write"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("1 rewritten (2 edit(s))"), "{out}");
+    let migrated = std::fs::read_to_string(&contract).unwrap();
+    assert!(
+        migrated.contains("\nintegrity_levels: [QM, ASIL_A")
+            && migrated.contains("    integrity: ASIL_B\n")
+            && !migrated
+                .lines()
+                .any(|l| l.starts_with("severity_levels:") || l.trim_start().starts_with("severity:")),
+        "{migrated}"
+    );
+
+    let (code_new, new) = check_launch(&launch, &["--explain"]);
+    assert_eq!(code_new, 0, "{new}");
+    assert!(deprecated(&new).is_empty(), "{new}");
+    let findings = |out: &str| {
+        let mut v: Vec<String> = out
+            .lines()
+            .filter(|l| {
+                l.contains("info[")
+                    || l.contains("error[")
+                    || l.contains("warning[")
+                    || l.contains("note[")
+            })
+            .filter(|l| !l.contains("deprecated-spelling"))
+            .map(without_lines)
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(findings(&old), findings(&new));
+    let table = |out: &str| {
+        out.lines()
+            .skip_while(|l| !l.starts_with("HAZARD"))
+            .take_while(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert!(!table(&old).is_empty(), "{old}");
+    assert_eq!(table(&old), table(&new));
+}
+
 /// Phase 90 G3: a node path's `drop:` refuses the contract (exit 3) naming
 /// the topic form; `migrate` moves it to the path's one output topic and
 /// the contract loads.
@@ -2943,7 +3012,7 @@ fn e4_an_unknown_extension_or_key_is_an_error() {
     }
 }
 
-/// Phase 91 E6: a contract under the iec61508 profile draws its severity
+/// Phase 91 E6: a contract under the iec61508 profile draws its integrity level
 /// from the SIL scale, and each node the hazard reaches takes the
 /// criticality the profile's map names (SIL_2: `medium`).
 #[test]
@@ -2951,11 +3020,11 @@ fn e6_a_sil_contract_derives_criticality_through_its_profile() {
     let (code, out) = ext_fixture("contract_profile_sil", &["--explain"]);
     assert_eq!(code, 0, "{out}");
     assert!(
-        out.contains("iec61508 1.0.0  profile  sha256 ")
+        out.contains("iec61508 1.1.0  profile  sha256 ")
             && out.contains("bundled with the checker"),
         "{out}"
     );
-    assert!(!out.contains("severity-"), "{out}");
+    assert!(!out.contains("integrity-"), "{out}");
     for node in [
         "/safety/lidar_driver",
         "/safety/obstacle_detector",
@@ -2969,16 +3038,16 @@ fn e6_a_sil_contract_derives_criticality_through_its_profile() {
     }
 }
 
-/// Phase 91 E6: a profile states the scale, so `severity_levels:` beside
+/// Phase 91 E6: a profile states the scale, so `integrity_levels:` beside
 /// it is an error, and a level the profile lacks names the profile.
 #[test]
 fn e6_a_profile_refuses_a_second_scale_and_a_foreign_level() {
     let (code, out) = ext_fixture("contract_profile_refused", &[]);
     assert_eq!(code, 1, "{out}");
     for needle in [
-        "error[severity-scale-conflict]: `severity_levels:` beside the profile iec61508 1.0.0",
-        "error[severity-unknown]: hazard 'drive_blind' declares severity 'ASIL_D', which is \
-         not in the scale [none, SIL_1, SIL_2, SIL_3, SIL_4] (profile iec61508 1.0.0)",
+        "error[integrity-scale-conflict]: `integrity_levels:` beside the profile iec61508 1.1.0",
+        "error[integrity-unknown]: hazard 'drive_blind' declares integrity level 'ASIL_D', which is \
+         not in the scale [none, SIL_1, SIL_2, SIL_3, SIL_4] (profile iec61508 1.1.0)",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }

@@ -42,7 +42,7 @@ modes:
 
 hazards:
   mode_unavailable:
-    severity: ASIL_D
+    integrity: ASIL_D
     description: the operation-mode availability stream stops; the vehicle must reach a stop
     guards: [/system/operation_mode/availability]
     on: omission

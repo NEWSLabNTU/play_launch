@@ -288,7 +288,7 @@ pub struct ResolvedHazard {
 /// A node's criticality, derived from the hazards that reach it (phase 72).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DerivedCriticality {
-    /// The severity label, verbatim from the hazard.
+    /// The integrity level, verbatim from the hazard.
     pub level: String,
     /// Position in the scale (0 = the no-requirement entry).
     pub rank: usize,
@@ -304,7 +304,7 @@ pub struct DerivedCriticality {
 
 impl DerivedCriticality {
     /// The mapper's bucket for this level: the scale's map, applied when
-    /// the derivation ran (`extensions::severity_scale`). On the default
+    /// the derivation ran (`extensions::integrity_scale`). On the default
     /// five-level scale: QM none, A Low, B Medium, C and D High.
     pub fn bucket(&self) -> Option<ros_launch_manifest_sched::Criticality> {
         self.criticality
@@ -5061,32 +5061,32 @@ fn derive_criticality_from_hazards(
     };
 
     for h in &hazards {
-        let Some(level) = &h.decl.severity else {
+        let Some(level) = &h.decl.integrity else {
             continue;
         };
-        let scale = super::extensions::severity_scale(index, h.scope_id);
+        let scale = super::extensions::integrity_scale(index, h.scope_id);
         let Some(rank) = scale
             .levels
             .iter()
             .position(|s| s.eq_ignore_ascii_case(level))
         else {
             diags.push(Diagnostic {
-                rule_id: "severity-unknown".to_string(),
+                rule_id: "integrity-unknown".to_string(),
                 severity: Severity::Error,
                 message: format!(
-                    "hazard '{}' declares severity '{level}', which is not in the scale [{}] \
+                    "hazard '{}' declares integrity level '{level}', which is not in the scale [{}] \
                      ({}).{}",
                     h.name,
                     scale.levels.join(", "),
                     scale.source,
                     if scale.default {
                         " Use the profile of your standard (`use: { iec61508: \"^1\" }`) or \
-                         declare `severity_levels:` if the scale is not ISO 26262's"
+                         declare `integrity_levels:` if the scale is not ISO 26262's"
                     } else {
                         ""
                     }
                 ),
-                path: format!("hazards.{}.severity", h.name),
+                path: format!("hazards.{}.integrity", h.name),
                 span: None,
             });
             continue;
@@ -5199,7 +5199,7 @@ fn derive_criticality_from_hazards(
                      which derives {}. A hazard reaches this node, so its criticality is \
                      derived, never written, and the derivation is what schedules it. Fix: \
                      delete `criticality: {label}` (if the derived value is wrong, the \
-                     hazard's severity is)",
+                     hazard's integrity level is)",
                     d.role,
                     d.hazard,
                     d.level,

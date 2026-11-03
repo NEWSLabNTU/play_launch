@@ -32,7 +32,7 @@
 //! version `rlm.lock` names while it is installed and accepted, else the
 //! highest the requirement accepts ([`prepare`], [`super::rlm_lock`]). A
 //! profile gives its scope the severity scale and criticality map
-//! ([`severity_scale`]).
+//! ([`integrity_scale`]).
 //!
 //! Bundled extensions (phase 91 E8): `vehicle.braking` ships with the
 //! checker (rlm `types::extension::BUNDLED`) and is a candidate for a `use:`
@@ -153,7 +153,7 @@ impl LoadedExt {
     }
 }
 
-/// One profile a contract uses (phase 91 E6): a severity scale and its
+/// One profile a contract uses (phase 91 E6): an integrity scale and its
 /// criticality map.
 #[derive(Debug, Clone)]
 pub struct LoadedProfile {
@@ -171,22 +171,22 @@ impl LoadedProfile {
     }
 }
 
-/// The severity scale a scope's hazards draw from, with the criticality
+/// The integrity scale a scope's hazards draw from, with the criticality
 /// each level derives.
 #[derive(Debug, Clone)]
-pub struct SeverityScale {
+pub struct IntegrityScale {
     pub levels: Vec<String>,
     pub criticality: Vec<Option<ros_launch_manifest_sched::Criticality>>,
-    /// Where the scale came from, for messages: `profile iec61508 1.0.0`,
-    /// `severity_levels`, or `the default (ISO 26262)`.
+    /// Where the scale came from, for messages: `profile iec61508 1.1.0`,
+    /// `integrity_levels`, or `the default (ISO 26262)`.
     pub source: String,
-    /// True when the contract wrote neither a profile nor `severity_levels`.
+    /// True when the contract wrote neither a profile nor `integrity_levels`.
     pub default: bool,
 }
 
 /// The scale scope `scope_id`'s hazards draw from: the profile it uses,
-/// else its `severity_levels:` (split into thirds), else ISO 26262's.
-pub fn severity_scale(index: &ManifestIndex, scope_id: usize) -> SeverityScale {
+/// else its `integrity_levels:` (split into thirds), else ISO 26262's.
+pub fn integrity_scale(index: &ManifestIndex, scope_id: usize) -> IntegrityScale {
     use ros_launch_manifest_sched::Criticality;
     let crit = |c: Option<&str>| match c? {
         "low" => Some(Criticality::Low),
@@ -194,7 +194,7 @@ pub fn severity_scale(index: &ManifestIndex, scope_id: usize) -> SeverityScale {
         _ => Some(Criticality::High),
     };
     if let Some(p) = index.profiles.get(&scope_id) {
-        return SeverityScale {
+        return IntegrityScale {
             levels: p.profile.scale.clone(),
             criticality: p.profile.criticality.iter().map(|c| crit(*c)).collect(),
             source: format!("profile {}", p.label()),
@@ -204,15 +204,15 @@ pub fn severity_scale(index: &ManifestIndex, scope_id: usize) -> SeverityScale {
     let (levels, source, default) = match index
         .manifests
         .get(&scope_id)
-        .filter(|m| !m.manifest.severity_levels.is_empty())
+        .filter(|m| !m.manifest.integrity_levels.is_empty())
     {
         Some(m) => (
-            m.manifest.severity_levels.clone(),
-            "severity_levels".to_string(),
+            m.manifest.integrity_levels.clone(),
+            "integrity_levels".to_string(),
             false,
         ),
         None => (
-            ros_launch_manifest_types::severity::DEFAULT_SEVERITY_LEVELS
+            ros_launch_manifest_types::integrity::DEFAULT_INTEGRITY_LEVELS
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
@@ -221,8 +221,8 @@ pub fn severity_scale(index: &ManifestIndex, scope_id: usize) -> SeverityScale {
         ),
     };
     let n = levels.len();
-    SeverityScale {
-        criticality: (0..n).map(|r| Criticality::from_severity(r, n)).collect(),
+    IntegrityScale {
+        criticality: (0..n).map(|r| Criticality::from_integrity(r, n)).collect(),
         levels,
         source,
         default,
@@ -638,14 +638,14 @@ pub fn prepare(index: &mut ManifestIndex) {
                     ),
                 ));
             }
-            if !m.manifest.severity_levels.is_empty() {
+            if !m.manifest.integrity_levels.is_empty() {
                 diags.push(diag(
-                    "severity-scale-conflict",
+                    "integrity-scale-conflict",
                     Severity::Error,
-                    "severity_levels".to_string(),
+                    "integrity_levels".to_string(),
                     format!(
-                        "`severity_levels:` beside the profile {}: the profile states the scale \
-                         and its criticality map -- delete `severity_levels:`",
+                        "`integrity_levels:` beside the profile {}: the profile states the scale \
+                         and its criticality map -- delete `integrity_levels:`",
                         first.label()
                     ),
                 ));
@@ -660,6 +660,19 @@ pub fn prepare(index: &mut ManifestIndex) {
                     format!("use.{}", first.profile.name),
                     format!(
                         "profile {} requires rlm {req}; this checker reads rlm {grammar}",
+                        first.label()
+                    ),
+                ));
+            }
+            if first.profile.spelled_severity_scale {
+                diags.push(diag(
+                    "deprecated-spelling",
+                    Severity::Warning,
+                    format!("use.{}", first.profile.name),
+                    format!(
+                        "profile {}: `severity_scale:` is the old spelling of `integrity_scale:` \
+                         (an ASIL, SIL or DAL is an integrity level). Fix: rename the key in the \
+                         profile file",
                         first.label()
                     ),
                 ));
@@ -691,7 +704,7 @@ pub fn prepare(index: &mut ManifestIndex) {
 /// Phase 91 E8: a scope that writes the legacy vehicle keys (`entry_speed`,
 /// `settle: { decel, jerk }`) with no used extension declaring them, or
 /// whose hazards state a severity with no profile and no
-/// `severity_levels:`, is refused with `deprecated-implicit-extension` (an
+/// `integrity_levels:`, is refused with `deprecated-implicit-extension` (an
 /// error since play_launch 0.20; 0.19 warned), naming the `use:` line
 /// `migrate` adds. The bundled `vehicle.braking` is still loaded, a
 /// plain-number `entry_speed` read as m/s, and the severities still read on
@@ -743,7 +756,7 @@ fn implicit_loads(
             .manifest
             .hazards
             .values()
-            .filter_map(|h| h.severity.clone())
+            .filter_map(|h| h.integrity.clone())
             .collect();
         v.sort();
         v.dedup();
@@ -751,17 +764,17 @@ fn implicit_loads(
     };
     let implicit_scale = !severities.is_empty()
         && !index.profiles.contains_key(&scope)
-        && m.manifest.severity_levels.is_empty();
+        && m.manifest.integrity_levels.is_empty();
     if implicit_scale {
         diags.push(diag(
             RULE,
             Severity::Error,
             "use".to_string(),
             format!(
-                "{file}: hazard severities ({}) need a scale, and the contract names none: the \
+                "{file}: hazard integrity levels ({}) need a scale, and the contract names none: the \
                  implicit ISO 26262 scale is the bundled profile `iso26262` and must be named \
                  -- add `use: {{ iso26262: \"^1\" }}` (`play_launch migrate --write` does), or \
-                 declare `severity_levels:`",
+                 declare `integrity_levels:`",
                 severities.join(", ")
             ),
         ));

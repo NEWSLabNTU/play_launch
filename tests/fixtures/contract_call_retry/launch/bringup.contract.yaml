@@ -12,7 +12,7 @@ functions:
 
 hazards:
   hpc_loss:
-    severity: ASIL_B
+    integrity: ASIL_B
     description: the planner's availability stops arriving
     guards: [/availability]
     on: omission

@@ -775,6 +775,38 @@ fn g3_spellings(
             diags.push(legacy(format!("{prefix}paths.{name}.input"), name, p));
         }
     }
+    // Phase 98 N1: the integrity level's pre-0.3.3 keys. An ASIL, SIL or
+    // DAL is an integrity level; ISO 26262's severity is the S0-S3 class
+    // it is derived from, so the old key named the wrong concept.
+    let renamed = |at: String, old: &str, new: &str| {
+        diag(
+            "deprecated-spelling",
+            Severity::Warning,
+            format!(
+                "{}: `{old}:` is the old spelling of `{new}:` (the level a HARA assigns -- an \
+                 ASIL, SIL or DAL -- is an integrity level; ISO 26262's severity is the S0-S3 \
+                 class it is derived from). Fix: write `{new}:`; {MIGRATE_HINT}",
+                site(index, scope_id, &at)
+            ),
+            at,
+        )
+    };
+    if manifest.spelled_severity_levels {
+        diags.push(renamed(
+            format!("{prefix}severity_levels"),
+            "severity_levels",
+            "integrity_levels",
+        ));
+    }
+    for (name, h) in &manifest.hazards {
+        if h.spelled_severity {
+            diags.push(renamed(
+                format!("{prefix}hazards.{name}.severity"),
+                "severity",
+                "integrity",
+            ));
+        }
+    }
     for (node, decl) in &manifest.nodes {
         for (name, p) in &decl.paths {
             if !p.input.is_empty() {

@@ -18,7 +18,7 @@ use:
 
 hazards:
   hpc_lost:
-    severity: ASIL_B
+    integrity: ASIL_B
     description: the heartbeat stops
     guards: [/safety/heartbeat]
     on: omission

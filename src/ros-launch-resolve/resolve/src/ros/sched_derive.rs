@@ -963,7 +963,7 @@ mod tests {
         }
     }
 
-    /// Each node's derived criticality, and each severity refusal, of a
+    /// Each node's derived criticality, and each integrity-level refusal, of a
     /// loaded index: what a profile may change.
     fn criticality_of(index: &ManifestIndex) -> (BTreeMap<String, String>, Vec<String>) {
         let nodes = index
@@ -979,7 +979,7 @@ mod tests {
         let refusals = index
             .merge_diagnostics
             .iter()
-            .filter(|d| d.rule_id.contains("criticality") || d.rule_id.starts_with("severity"))
+            .filter(|d| d.rule_id.contains("criticality") || d.rule_id.starts_with("integrity"))
             .map(|d| format!("{}: {}", d.rule_id, d.path))
             .collect();
         (nodes, refusals)

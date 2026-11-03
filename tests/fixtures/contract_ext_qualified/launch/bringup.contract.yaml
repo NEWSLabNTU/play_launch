@@ -13,7 +13,7 @@ use: { machine.iso13855: "^0.3", machine.stopping: ">=0.1.0", iso26262: "^1" }
 
 hazards:
   drive_blind:
-    severity: ASIL_D
+    integrity: ASIL_D
     description: vehicle continues with no obstacle data
     guards: [/safety/scan]
     on: omission

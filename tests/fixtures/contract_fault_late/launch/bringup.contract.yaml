@@ -23,7 +23,7 @@ hazards:
     ftti: 1s
     reaction: safety.stop
   drive_blind:
-    severity: ASIL_D
+    integrity: ASIL_D
     description: vehicle continues with no obstacle data
     guards: [/safety/scan]
     on: omission

@@ -1,15 +1,15 @@
 # Phase 91 E6: a contract under the iec61508 profile. The hazard's
-# severity is a SIL, drawn from the profile's scale, and each node the
+# integrity level is a SIL, drawn from the profile's scale, and each node the
 # hazard reaches takes the criticality the profile's map names: SIL_2 is
 # `medium` (lidar_driver feeds the guard, obstacle_detector detects,
-# brake_controller reacts). No `severity_levels:` is written; the profile
+# brake_controller reacts). No `integrity_levels:` is written; the profile
 # states the scale. Otherwise contract_fault: 100 + 7 + 200 = 307ms.
 version: 1
 use: { iec61508: "^1" }
 
 hazards:
   drive_blind:
-    severity: SIL_2
+    integrity: SIL_2
     description: vehicle continues with no obstacle data
     guards: [/safety/scan]
     on: omission

@@ -1,14 +1,14 @@
 # Phase 91 E6: what a profile refuses. The contract uses iec61508 and
-# also writes `severity_levels:` (`severity-scale-conflict`: the profile
+# also writes `integrity_levels:` (`integrity-scale-conflict`: the profile
 # states the scale), and its hazard keeps an ISO 26262 level the SIL
-# scale does not have (`severity-unknown`, naming the profile).
+# scale does not have (`integrity-unknown`, naming the profile).
 version: 1
 use: { iec61508: "^1" }
-severity_levels: [none, SIL_1, SIL_2, SIL_3, SIL_4]
+integrity_levels: [none, SIL_1, SIL_2, SIL_3, SIL_4]
 
 hazards:
   drive_blind:
-    severity: ASIL_D
+    integrity: ASIL_D
     description: vehicle continues with no obstacle data
     guards: [/safety/scan]
     on: omission

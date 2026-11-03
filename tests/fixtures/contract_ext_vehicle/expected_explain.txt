@@ -20,4 +20,4 @@ worst case: proved increasing in entry_speed, response; decreasing in decel, jer
 drive_blind  safety.stop  floor  100.00     0.00   7.00  4422.67 derived  4529.67  10000.00  5470.33
 drive_blind  4529.67  (floor 'safety.stop')
 vehicle.braking 1.1.0  extension  sha256 5441e622d5c478c1da4cc3186d8083b877da267e012a5e9b3b7b56c35472c8d7
-iso26262 1.0.0  profile  sha256 9d0c941effbe16fe4b8b32b596a467b7243b79145dce81de8767af31b4ec13cb
+iso26262 1.1.0  profile  sha256 8cdb7e677892158e0a874aae6dce3605debd1a8ad2a2c6988e927674005adcdd

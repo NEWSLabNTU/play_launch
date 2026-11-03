@@ -24,7 +24,7 @@ topics:
 
 hazards:
   pose_lost:
-    severity: ASIL_B
+    integrity: ASIL_B
     guards:
       - all_of: [/loc/ndt, /loc/gnss]
     on: omission

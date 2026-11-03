@@ -20,7 +20,7 @@ version: 1
 use:
   vehicle.braking: "^1"
 
-severity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
+integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 
 functions:
   hpc_alive: [/availability]
@@ -33,7 +33,7 @@ functions:
 
 hazards:
   odd_exit:
-    severity: ASIL_B
+    integrity: ASIL_B
     guards: [/availability]
     on: reported
     when: { field: autonomous, equals: false }
@@ -41,21 +41,21 @@ hazards:
     ftti: 20s
     enters: engaged
   odd_exit_unbounded:
-    severity: ASIL_B
+    integrity: ASIL_B
     guards: [/availability]
     on: reported
     when: { field: autonomous, equals: false }
     ftti: 30s
     enters: engaged
   hpc_loss:
-    severity: ASIL_D
+    integrity: ASIL_D
     guards: [/availability]
     on: omission
     entry_speed: 3.0 m/s
     ftti: 3s
     enters: engaged
   hpc_observed:
-    severity: ASIL_D
+    integrity: ASIL_D
     guards: [/availability]
     on: omission
     entry_speed: 4.23 m/s

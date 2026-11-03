@@ -1705,7 +1705,7 @@ pub fn build_system_model(
         contracts.hazards.insert(
             scope_scoped_key(&scope_key(Some(h.scope_id)), &h.name),
             model::HazardContract {
-                severity: h.decl.severity.clone(),
+                integrity: h.decl.integrity.clone(),
                 guards: h
                     .guards
                     .iter()
@@ -1823,17 +1823,17 @@ pub fn build_system_model(
     }
     // The severity scale those entries were derived on. The loader reads
     // each hazard's scale from its own manifest (a used profile's, else
-    // `severity_levels:`); the model has one field, so the first declared
+    // `integrity_levels:`); the model has one field, so the first declared
     // scale in scope order is carried, and an empty one means every
     // manifest used the ISO 26262 default.
     let mut scoped: Vec<usize> = index.manifests.keys().copied().collect();
     scoped.sort_unstable();
     if let Some(scale) = scoped
         .iter()
-        .map(|&scope| super::extensions::severity_scale(index, scope))
+        .map(|&scope| super::extensions::integrity_scale(index, scope))
         .find(|s| !s.default)
     {
-        contracts.severity_levels = scale.levels;
+        contracts.integrity_levels = scale.levels;
     }
 
     // The declared parameters (nano-ros phase 446), keyed by node FQN the way
@@ -3524,7 +3524,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        manifest.severity_levels = vec!["none".to_string(), "sil1".to_string(), "sil2".to_string()];
+        manifest.integrity_levels = vec!["none".to_string(), "sil1".to_string(), "sil2".to_string()];
         index
             .manifests
             .insert(0, resolved_manifest(0, "/perception", manifest));
@@ -3534,7 +3534,7 @@ mod tests {
             scale_len: 3,
             hazard: "h".to_string(),
             role: "reacts to",
-            criticality: ros_launch_manifest_sched::Criticality::from_severity(rank, 3),
+            criticality: ros_launch_manifest_sched::Criticality::from_integrity(rank, 3),
         };
         // ASIL-D-like top of a three-level scale: High, overriding `low`.
         index
@@ -3554,7 +3554,7 @@ mod tests {
         assert_eq!(c.get("/perception/pipeline_container"), None);
         assert_eq!(c.len(), 2, "{c:?}");
         assert_eq!(
-            model.contracts.severity_levels,
+            model.contracts.integrity_levels,
             vec!["none".to_string(), "sil1".to_string(), "sil2".to_string()]
         );
     }
@@ -3682,7 +3682,7 @@ contracts:
             None
         );
         assert!(model.contracts.node_criticality.is_empty());
-        assert!(model.contracts.severity_levels.is_empty());
+        assert!(model.contracts.integrity_levels.is_empty());
         assert!(
             model
                 .contracts

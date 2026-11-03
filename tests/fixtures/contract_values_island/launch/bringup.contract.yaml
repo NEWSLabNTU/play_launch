@@ -38,7 +38,7 @@ version: 1
 use:
   vehicle.braking: "^1"
 
-severity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
+integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 
 let:
   odd_speed: 8.33 m/s    # the ODD bound, stated once
@@ -54,7 +54,7 @@ functions:
 
 hazards:
   odd_exit:
-    severity: ASIL_B
+    integrity: ASIL_B
     guards: [/availability]
     on: reported
     when: { field: autonomous, equals: false }
@@ -62,7 +62,7 @@ hazards:
     ftti: 30s
     enters: engaged
   hpc_loss:
-    severity: ASIL_D
+    integrity: ASIL_D
     guards: [/availability]
     on: omission
     entry_speed: 3.0 m/s

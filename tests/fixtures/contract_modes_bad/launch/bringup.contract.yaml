@@ -65,7 +65,7 @@ modes:
 
 hazards:
   drive_blind:
-    severity: ASIL_D
+    integrity: ASIL_D
     guards: [perception]
     on: omission
     ftti: 500ms

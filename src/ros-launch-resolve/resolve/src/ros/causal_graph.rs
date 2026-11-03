@@ -95,7 +95,7 @@ pub struct HazardOut {
     pub name: String,
     pub scope_id: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub severity: Option<String>,
+    pub integrity: Option<String>,
     /// Resolved guard topic FQNs, one entry per group.
     pub guards: Vec<GuardOut>,
     /// The fault classes claimed (`omission`, `late`, `loss`, `reported`);
@@ -195,7 +195,7 @@ pub struct NodeOut {
     pub contracted: bool,
 }
 
-/// A node's hazard-derived criticality: the severity level, the hazard that
+/// A node's hazard-derived criticality: the integrity level, the hazard that
 /// set it, and how the node relates to that hazard.
 #[derive(Debug, Serialize)]
 pub struct DerivedCriticalityOut {
@@ -533,7 +533,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
         .map(|h| HazardOut {
             name: h.name.clone(),
             scope_id: h.scope_id,
-            severity: h.decl.severity.clone(),
+            integrity: h.decl.integrity.clone(),
             guards: h
                 .guards
                 .iter()

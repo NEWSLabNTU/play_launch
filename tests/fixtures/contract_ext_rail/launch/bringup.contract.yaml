@@ -11,7 +11,7 @@ use: { rail.ebd: "^1", en50129: "^1" }
 
 hazards:
   drive_blind:
-    severity: SIL_4
+    integrity: SIL_4
     description: train passes the end of its movement authority
     guards: [/safety/scan]
     on: omission

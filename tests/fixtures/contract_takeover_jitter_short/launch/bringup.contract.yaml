@@ -8,7 +8,7 @@ rlm: v0.1.49
 use:
   vehicle.braking: "^1"
 
-severity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
+integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 
 functions:
   hpc_alive: [/availability]
@@ -21,14 +21,14 @@ functions:
 
 hazards:
   hpc_loss:
-    severity: ASIL_D
+    integrity: ASIL_D
     guards: [/availability]
     on: omission
     entry_speed: 8.33 m/s
     ftti: 10s
     enters: engaged
   odd_exit:
-    severity: ASIL_B
+    integrity: ASIL_B
     guards: [/availability]
     on: reported
     when: { field: autonomous, equals: false }
