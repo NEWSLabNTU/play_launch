@@ -6,7 +6,7 @@
 #
 #   odd_exit detection     the gate reports every 100 + 6 jitter + 20 = 126
 #   sys.notice             /odd -> gate (100 + 6 + 20) -> link 57 ->
-#                          call_mrm 149 = 332 > 330: scope-budget, with
+#                          call_mrm 149 = 332 > 330: chain-latency, with
 #                          106.00ms of it sampling cost
 #
 # Without the jitter the two read 120 and 326 (no warning).

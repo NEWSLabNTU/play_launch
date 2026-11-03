@@ -113,7 +113,7 @@ fn a_subscribers_max_transport_reaches_the_model() {
 
 /// The two consumers, on one contract.
 ///
-/// The resolver names its route and total in `scope-budget` (the fixture's
+/// The resolver names its route and total in `chain-latency` (the fixture's
 /// budget is 1ms so the rule always fires and prints them). The shared
 /// derivation names its route in the chain it resolves for the same scope
 /// path. They must be the same route.
@@ -147,7 +147,7 @@ fn the_resolver_and_the_shared_derivation_take_the_same_route() {
     assert_eq!(
         chains.len(),
         1,
-        "one scope path, so one chain: {:?}",
+        "one event chain, so one chain: {:?}",
         chains.iter().map(|c| &c.name).collect::<Vec<_>>()
     );
     let route: Vec<String> = chains[0]

@@ -38,7 +38,7 @@
 # wrong ones both name `fast`. That is what makes this a test rather than a
 # coincidence.
 #
-# The scope path's budget is 1ms on purpose: `scope-budget` then always
+# The scope path's budget is 1ms on purpose: `chain-latency` then always
 # fires and PRINTS the resolver's route and total, so the assertion reads a
 # number the tool computed instead of inferring one from silence.
 version: 1

@@ -1356,7 +1356,7 @@ fn check_endpoint_unwired(index: &mut ManifestIndex) {
 /// hazard's numbers. Before I1 that was every declaration: the island
 /// contract's `--explain` output was byte-identical with and without
 /// `max_transport: 57ms`, and nothing said so. Path and chain latencies
-/// (`scope-budget`, the shared chain derivation) charge every declaration;
+/// (`chain-latency`, the shared chain derivation) charge every declaration;
 /// the notice names the fault arithmetic only.
 fn note_declared_not_charged(index: &mut ManifestIndex) {
     let mut out: Vec<Diagnostic> = Vec::new();
@@ -3138,7 +3138,7 @@ pub(crate) fn judge_calls(
                 Severity::Error,
                 format!(
                     "{head}, whose `on_timeout` falls to '{target}', which is neither a mode \
-                     nor a scope path of the hazard's scope with a route: the failure branch \
+                     nor an event chain of the hazard's scope with a route: the failure branch \
                      reaches no safe state"
                 ),
             );
@@ -4217,7 +4217,7 @@ fn check_fault_reaction(
                 rule_id: "reaction-unreachable".to_string(),
                 severity: Severity::Error,
                 message: format!(
-                    "hazard '{}' names reaction '{terminal}', which is not a scope path in its \
+                    "hazard '{}' names reaction '{terminal}', which is not an event chain in its \
                      scope",
                     h.name
                 ),
@@ -5333,7 +5333,7 @@ fn derive_and_check_endpoint_rates(
 /// input and output topics within the scope's subtree.
 ///
 /// This is the topology-aware replacement for the per-manifest
-/// `scope-budget` sum check (which was incorrect for parallel branches).
+/// `chain-latency` sum check (which was incorrect for parallel branches).
 fn check_scope_path_critical_path(
     index: &mut ManifestIndex,
     graph: &super::manifest_graph::GlobalDataflowGraph,
@@ -5390,7 +5390,7 @@ fn check_scope_path_critical_path(
                 rule_id: "jitter-feasibility".to_string(),
                 severity: Severity::Warning,
                 message: format!(
-                    "scope path '{}' (scope {}) declares max_jitter ({max_jitter:.2}ms) below \
+                    "event chain '{}' (scope {}) declares max_jitter ({max_jitter:.2}ms) below \
                      the sampling jitter its own route already carries ({:.2}ms, one period and \
                      its declared release jitter per clock boundary crossed: {}). No priority \
                      assignment can reduce this \
@@ -5405,7 +5405,7 @@ fn check_scope_path_critical_path(
             });
         }
 
-        // `scope-sampling-feasibility`: the sampling term ALONE meeting or
+        // `chain-sampling-feasibility`: the sampling term ALONE meeting or
         // exceeding the budget is a different and worse statement than the
         // total exceeding it. A total over budget may be fixable by
         // scheduling; a sampling cost over budget cannot be fixed by any
@@ -5415,15 +5415,15 @@ fn check_scope_path_critical_path(
         //
         // Carried over from the retired `chain-sampling-feasibility`, which
         // said the same thing about an authored chain. Emitted BEFORE
-        // `scope-budget` so the structural verdict reads first — the budget
+        // `chain-latency` so the structural verdict reads first — the budget
         // warning necessarily fires too, and on its own it invites an author
         // to go optimise callbacks that are not the problem.
         if cp.sampling_cost_ms >= declared {
             index.merge_diagnostics.push(Diagnostic {
-                rule_id: "scope-sampling-feasibility".to_string(),
+                rule_id: "chain-sampling-feasibility".to_string(),
                 severity: Severity::Warning,
                 message: format!(
-                    "scope path '{}' (scope {}) is structurally infeasible: sampling cost \
+                    "event chain '{}' (scope {}) is structurally infeasible: sampling cost \
                      alone ({:.2}ms, one period and its declared release jitter per clock boundary \
                      crossed: {}) meets or \
                      exceeds the declared max_latency ({declared}ms). No priority assignment \
@@ -5440,10 +5440,10 @@ fn check_scope_path_critical_path(
 
         if cp.total_ms > declared {
             index.merge_diagnostics.push(Diagnostic {
-                rule_id: "scope-budget".to_string(),
+                rule_id: "chain-latency".to_string(),
                 severity: Severity::Warning,
                 message: format!(
-                    "scope path '{}' (scope {}) max_latency_ms ({}) is less than \
+                    "event chain '{}' (scope {}) max_latency_ms ({}) is less than \
                      critical path: {} = {:.2}ms{}",
                     scope_path.path_name,
                     scope_path.scope_id,
@@ -5483,7 +5483,7 @@ fn check_scope_path_critical_path(
         if let Some(m) = index.manifests.get_mut(&scope_id) {
             let before = m.diagnostics.len();
             m.diagnostics
-                .retain(|d| !(d.rule_id == "scope-budget" && d.path == key));
+                .retain(|d| !(d.rule_id == "chain-latency" && d.path == key));
             let dropped = before - m.diagnostics.len();
             index.total_warnings = index.total_warnings.saturating_sub(dropped);
         }
@@ -5499,7 +5499,7 @@ fn check_scope_path_critical_path(
 /// subtree, so a topic declared in another contract of the tree is compared
 /// too. rlm's per-manifest rule of the same id sees one manifest; where a
 /// route is traced here, its findings are this check's and the per-manifest
-/// ones are dropped (as `scope-budget`'s are).
+/// ones are dropped (as `chain-latency`'s are).
 fn check_scope_path_drop_tightness(
     index: &mut ManifestIndex,
     graph: &super::manifest_graph::GlobalDataflowGraph,
@@ -5568,10 +5568,10 @@ fn check_scope_path_drop_tightness(
                     rule_id: "drop-tightness".to_string(),
                     severity: Severity::Warning,
                     message: format!(
-                        "{}: scope path '{}' permits a loss of {whole} ({:.2}%) end to end, but \
+                        "{}: event chain '{}' permits a loss of {whole} ({:.2}%) end to end, but \
                          topic '{t}' on its route permits {part} ({:.2}%) on one hop: a part \
-                         looser than the whole. Tighten the topic's `drop:` or loosen the scope \
-                         path's",
+                         looser than the whole. Tighten the topic's `drop:` or loosen the event \
+                         chain's",
                         super::value_rules::site(
                             index,
                             sp.scope_id,
@@ -5673,7 +5673,7 @@ fn check_route_exclusion_blocking(
             rule_id: "path-exclusion".to_string(),
             severity: Severity::Info,
             message: format!(
-                "scope path '{path_name}' (scope {scope_id}): the critical path assumes each \
+                "event chain '{path_name}' (scope {scope_id}): the critical path assumes each \
                  node runs on arrival, but these traversals serialise with a sibling callback \
                  and may be delayed by it — {}. Declare `concurrency.exclusive` on the node if \
                  they can in fact run concurrently; absent that declaration every path of a \
@@ -6340,7 +6340,7 @@ fn check_path_budget_overflow(index: &mut ManifestIndex) {
                     rule_id: "budget-overflow".to_string(),
                     severity: Severity::Error,
                     message: format!(
-                        "scope path '{}' (scope {}) max_latency_ms ({}) exceeds ancestor \
+                        "event chain '{}' (scope {}) max_latency_ms ({}) exceeds ancestor \
                          path '{}' (scope {}) max_latency_ms ({}) — child budget cannot \
                          exceed parent budget on the same (input, output) topics",
                         child.path_name,
@@ -6575,7 +6575,7 @@ fn remap_direction(from: &str) -> Option<bool> {
 /// **0 topics**, because `structure.topics` comes from contracts and four
 /// scopes of eighty-three have one — while 62 nodes carry 371 remaps that
 /// describe the wiring and nothing read them. Every graph rule we have
-/// (criticality propagation, `scope-budget`, the fault-reaction walk) was
+/// (criticality propagation, `chain-latency`, the fault-reaction walk) was
 /// therefore working on almost nothing.
 ///
 /// Three rules keep this honest:
@@ -8883,15 +8883,15 @@ mod tests {
         )]);
         let index = overlay_index(&dump);
 
-        // The declared 70ms == critical path, so no scope-budget warning.
+        // The declared 70ms == critical path, so no chain-latency warning.
         let budget_warnings: Vec<_> = index
             .merge_diagnostics
             .iter()
-            .filter(|d| d.rule_id == "scope-budget")
+            .filter(|d| d.rule_id == "chain-latency")
             .collect();
         assert!(
             budget_warnings.is_empty(),
-            "expected no scope-budget warnings for parallel pipeline at exact \
+            "expected no chain-latency warnings for parallel pipeline at exact \
              critical path budget, got: {budget_warnings:?}"
         );
     }
@@ -9028,15 +9028,15 @@ mod tests {
         );
 
         // The declared 70ms scope budget matches the critical path → no
-        // scope-budget warning expected.
+        // chain-latency warning expected.
         let budget_warnings: Vec<_> = index
             .merge_diagnostics
             .iter()
-            .filter(|d| d.rule_id == "scope-budget")
+            .filter(|d| d.rule_id == "chain-latency")
             .collect();
         assert!(
             budget_warnings.is_empty(),
-            "expected no scope-budget warnings at exact critical path budget, \
+            "expected no chain-latency warnings at exact critical path budget, \
              got: {budget_warnings:?}"
         );
     }
@@ -9870,7 +9870,7 @@ paths:
         assert_eq!(
             v2_paths[0].input_topics, legacy_paths[0].input_topics,
             "the v2 spelling must resolve the same input topics as the legacy one — \
-             an empty list here is a scope path with no route, which degrades \
+             an empty list here is an event chain with no route, which degrades \
              silently rather than failing"
         );
         assert_eq!(v2_paths[0].output_topics, legacy_paths[0].output_topics);

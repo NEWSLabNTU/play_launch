@@ -83,7 +83,8 @@ impl Entry<'_> {
     /// A renamed rule's old id (phase 98) matches the rule under its new
     /// one for one release; [`apply`] warns the entry as the old spelling.
     fn matches(&self, d: &Diagnostic) -> bool {
-        d.rule_id == rule_names::current(&self.decl.rule) && d.path == self.decl.at
+        d.rule_id == *rule_names::current(&self.decl.rule)
+            && d.path == rule_names::current_path(&self.decl.at)
     }
 }
 
@@ -176,6 +177,22 @@ pub fn apply(index: &mut ManifestIndex) {
         let key = e.key();
         let site = super::value_rules::site(index, e.scope_id, "acknowledged");
         let (rule, at) = (&e.decl.rule, &e.decl.at);
+        let now_at = rule_names::current_path(at);
+        if now_at != *at {
+            out.push(Diagnostic {
+                rule_id: "deprecated-spelling".to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "{site}: acknowledged[{}] names the path `{at}`, which spells a renamed \
+                     key; it is `{now_at}` now (phase 98), and the entry still matches it \
+                     this release. Fix: write `at: {now_at}`; \
+                     `play_launch migrate <contract> --write` rewrites it",
+                    e.index
+                ),
+                path: format!("acknowledged[{}]", e.index),
+                span: None,
+            });
+        }
         if let Some(r) = rule_names::renamed(rule) {
             out.push(Diagnostic {
                 rule_id: "deprecated-spelling".to_string(),
@@ -185,7 +202,11 @@ pub fn apply(index: &mut ManifestIndex) {
                      is `{}` now (phase 98: the vocabulary takes the standards' words), and \
                      the entry still matches it this release. Fix: write `rule: {}`; \
                      `play_launch migrate <contract> --write` rewrites it",
-                    e.index, r.old, r.since, r.new, r.new
+                    e.index,
+                    rule,
+                    r.since,
+                    rule_names::current(rule),
+                    rule_names::current(rule)
                 ),
                 path: format!("acknowledged[{}]", e.index),
                 span: None,

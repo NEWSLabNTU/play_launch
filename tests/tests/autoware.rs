@@ -419,7 +419,7 @@ fn strip_ansi(s: &str) -> String {
 
 /// Phase 76: the launch file's own remaps become a topic graph. Before this
 /// the Autoware model resolved to 119 nodes and ZERO topics, so every graph
-/// rule — criticality propagation, scope-budget, the fault-reaction walk —
+/// rule — criticality propagation, chain-latency, the fault-reaction walk —
 /// was computing over nothing and reporting clean.
 #[test]
 fn test_autoware_topic_graph_derived_from_remaps() {

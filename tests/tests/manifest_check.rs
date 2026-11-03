@@ -1264,8 +1264,8 @@ fn w4_the_mapper_reads_the_derived_route_not_just_authored_segments() {
     // difference between the two spellings even with identical priorities.
     assert!(
         text.contains("override-inversion"),
-        "the override-inversion warning must survive the move to a scope \
-         path:\n{text}"
+        "the override-inversion warning must survive the move to an event \
+         chain:\n{text}"
     );
 }
 
@@ -1340,7 +1340,7 @@ fn fault_reaction_rules_fire_on_a_broken_chain() {
         "error[fault-reaction-budget]",
         "607.00ms exceeds",
         "error[reaction-unreachable]",
-        "not a scope path",
+        "not an event chain",
         "error[hazard-unguarded]",
         "nothing would ever notice",
     ] {
@@ -1766,7 +1766,7 @@ fn mode_rules_fire_on_a_broken_ladder() {
         // W3's second half: `restricted` TIGHTENS the budget below the
         // derived route. The default contract's 100ms is fine, so only the
         // per-mode run sees this — which is the whole reason to run them.
-        "warning[mode:scope-budget]",
+        "warning[mode:chain-latency]",
         "in mode 'restricted'",
     ] {
         assert!(
@@ -2002,7 +2002,7 @@ fn a_timers_release_jitter_is_charged_in_detection_and_the_critical_path() {
     for needle in [
         "detection 126.00ms (/gate/availability reports every 100.00ms + 6.00ms jitter + 20.00ms)",
         "odd_exit  takeover     dwell    126.00",
-        "warning[scope-budget]: scope path 'sys.notice' (scope 0) max_latency_ms (330) is less \
+        "warning[chain-latency]: event chain 'sys.notice' (scope 0) max_latency_ms (330) is less \
          than critical path: /gate",
         "/handler = 332.00ms (226.00ms event-segment + 106.00ms sampling_cost)",
     ] {
@@ -2436,8 +2436,8 @@ fn enters_naming_no_mode_is_an_error() {
     assert!(
         out.contains(
             "error[enters-unknown-mode]: bringup.contract.yaml:40: hazard 'drive_blind' enters \
-             'safety.stop', which is not a mode in its scope. A hazard that reacts by one scope \
-             path writes `reaction: safety.stop`"
+             'safety.stop', which is not a mode in its scope. A hazard that reacts by one event \
+             chain writes `reaction: safety.stop`"
         ),
         "{out}"
     );
@@ -2821,7 +2821,7 @@ fn g3b_drop_tightness_compares_a_scope_path_with_a_topic_of_another_contract() {
     assert_eq!(hits.len(), 1, "{out}");
     assert!(
         hits[0].contains(
-            "scope path 'e2e' permits a loss of 1 / 25 (4.00%) end to end, but topic \
+            "event chain 'e2e' permits a loss of 1 / 25 (4.00%) end to end, but topic \
              '/perception/objects' on its route permits 1 / 20 (5.00%) on one hop"
         ),
         "{out}"
@@ -3519,8 +3519,8 @@ fn a_supervised_overrun_over_the_interval_is_refused() {
         out.contains(
             "error[supervised-fit]: bringup.contract.yaml:103: hazard 'hpc_loss', degradation level 'estop': \
              if `nodes.handler.paths.call_mrm.max_latency` overruns, before it 500.00ms + budget \
-             110.00ms + detection 1.05ms (tick 1.00ms + switch 0.05ms (timer)) + reaction scope \
-             path 'sys.comfortable' 410.00ms + settle 4666.67ms = 5687.72ms exceeds the \
+             110.00ms + detection 1.05ms (tick 1.00ms + switch 0.05ms (timer)) + reaction event \
+             chain 'sys.comfortable' 410.00ms + settle 4666.67ms = 5687.72ms exceeds the \
              fault-tolerant time interval 3000.00ms"
         ),
         "{out}"
@@ -3632,7 +3632,7 @@ fn a_supervised_settle_charges_the_whole_settle() {
                   10640.00ms + settle 10939.67ms (profile 9996.67ms + response 943.00ms) + \
                   observation 156.00ms (/handler/kinematic_state: period 100.00ms \
                   (/kinematic_state rate_hz 10) + max_transport 56.00ms) + detection 1.05ms \
-                  (tick 1.00ms + switch 0.05ms (timer)) + reaction scope path 'sys.estop' \
+                  (tick 1.00ms + switch 0.05ms (timer)) + reaction event chain 'sys.estop' \
                   143.33ms + settle 4165.33ms = 26045.38ms fits the fault-tolerant time \
                   interval 30000.00ms with 3954.62ms of slack";
     assert!(out.contains(needle), "expected `{needle}`:\n{out}");
@@ -3658,7 +3658,7 @@ fn a_supervised_settle_charges_the_whole_settle() {
     assert!(resp.contains(" supervised "), "{resp}");
     assert!(
         resp.contains(
-            "runtime monitor (settle-deadline: reaction scope path 'sys.estop', timer, \
+            "runtime monitor (settle-deadline: reaction event chain 'sys.estop', timer, \
              standstill seen on /handler/kinematic_state)"
         ),
         "{resp}"
@@ -3698,7 +3698,7 @@ fn a_resuming_supervision_charges_the_gap_once() {
                   10640.00ms + settle 10939.67ms (profile 9996.67ms + response 943.00ms) + \
                   observation 156.00ms (/handler/kinematic_state: period 100.00ms \
                   (/kinematic_state rate_hz 10) + max_transport 56.00ms) + detection 1.05ms \
-                  (tick 1.00ms + switch 0.05ms (timer)) + reaction scope path 'sys.estop' \
+                  (tick 1.00ms + switch 0.05ms (timer)) + reaction event chain 'sys.estop' \
                   143.33ms + resume gap 101.05ms (3 periods of /estop_op/on_timer 33.33ms + \
                   detection 1.05ms (tick 1.00ms + switch 0.05ms (timer))) + settle 4165.33ms = \
                   26146.43ms fits the fault-tolerant time interval 30000.00ms with 3853.57ms of \
@@ -3942,7 +3942,7 @@ fn a_settle_response_check_charges_its_own_row() {
          10640.00ms + response check at 1943.00ms (shed 0.1 m/s by then, else a miss) + \
          observation 156.00ms (/handler/kinematic_state: period 100.00ms (/kinematic_state \
          rate_hz 10) + max_transport 56.00ms) + detection 1.05ms (tick 1.00ms + switch 0.05ms \
-         (timer)) + reaction scope path 'sys.estop' 143.33ms + settle 4165.33ms = 17048.72ms \
+         (timer)) + reaction event chain 'sys.estop' 143.33ms + settle 4165.33ms = 17048.72ms \
          fits the fault-tolerant time interval 30000.00ms with 12951.28ms of slack",
         // The whole settle's row stays.
         "if `nodes.comfort_op.paths.operate.safe_state.settle` overruns, before it 10640.00ms \

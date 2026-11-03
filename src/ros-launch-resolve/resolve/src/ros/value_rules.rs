@@ -917,7 +917,7 @@ fn g4_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
                 Severity::Error,
                 format!(
                     "{where_}: hazard '{}' enters '{e}', which is not a mode in its scope. A \
-                     hazard that reacts by one scope path writes `reaction: {e}`",
+                     hazard that reacts by one event chain writes `reaction: {e}`",
                     h.name
                 ),
                 format!("{at}.enters"),
@@ -932,7 +932,7 @@ fn g4_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
                 Severity::Warning,
                 format!(
                     "{where_}: hazard '{}': `reaction: {r}` names a mode. A hazard enters a \
-                     mode with `enters: {r}`; `reaction:` names a scope path. Fix: rename the \
+                     mode with `enters: {r}`; `reaction:` names an event chain. Fix: rename the \
                      key to `enters`; {MIGRATE_HINT}",
                     h.name
                 ),
@@ -1141,7 +1141,7 @@ pub(crate) fn check_windows_and_exits(
                 "mode-exit-unwired",
                 Severity::Error,
                 format!(
-                    "{where_}: mode '{}' has an exit but no `reaction:` scope path, so no node \
+                    "{where_}: mode '{}' has an exit but no `reaction:` event chain, so no node \
                      implements the level and nothing can take the input that ends it",
                     m.name
                 ),

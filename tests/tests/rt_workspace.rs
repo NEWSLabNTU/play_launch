@@ -428,7 +428,7 @@ fn check_explain_shows_derived_override_and_default_provenance() {
 /// Deliverable 4(c): an overlay that tightens the fixture's end-to-end budget
 /// below the derived route's own sampling cost (the `sensor_node.tick`
 /// boundary's period alone, 10ms at 100 Hz) must trigger the
-/// `scope-sampling-feasibility` warning (structural infeasibility — no
+/// `chain-sampling-feasibility` warning (structural infeasibility — no
 /// scheduling assignment can fix it) — `check` must still exit 0 (warnings
 /// never fail `check`).
 ///
@@ -536,8 +536,8 @@ topics:
         "tightened chain budget must warn, not fail, check:\n{combined}"
     );
     assert!(
-        combined.contains("scope-sampling-feasibility"),
-        "expected the scope-sampling-feasibility warning:\n{combined}"
+        combined.contains("chain-sampling-feasibility"),
+        "expected the chain-sampling-feasibility warning:\n{combined}"
     );
     assert!(
         combined.contains("points_to_cmd"),
@@ -1328,7 +1328,7 @@ fn check_export_graph_json_matches_contract() {
         array_len(&graph, "scope_paths"),
         1,
         "phase 68 W4: bringup.contract.yaml states its end-to-end requirement \
-         as the scope path `points_to_cmd`, where it used to write the route \
+         as the event chain `points_to_cmd`, where it used to write the route \
          out as `chains:`/`segments:`: {graph}"
     );
     assert_eq!(

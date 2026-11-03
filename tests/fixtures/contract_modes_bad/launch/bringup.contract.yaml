@@ -22,7 +22,7 @@ use:
 #                                                  -> override-target-missing
 #   * `restricted` pins a 20ms budget the derived route cannot meet; the
 #     default contract's 100ms is fine, so only the per-mode run sees it
-#                                                  -> mode:scope-budget
+#                                                  -> mode:chain-latency
 #   * `degraded` is a rung whose own ROUTE cannot make the 500ms interval:
 #     it ends at /safety/status, reached through a 900ms path, while the
 #     floor `stopped` ends at /safety/brake_cmd in 7ms. Two rungs, two
@@ -55,7 +55,7 @@ modes:
     reaction: safety.stop
   # A mode that TIGHTENS: 20ms is below the route the graph derives, so the
   # requirement checks fail in this mode and pass in every other. That is
-  # the whole point of running them per mode.  -> mode:scope-budget
+  # the whole point of running them per mode.  -> mode:chain-latency
   restricted:
     requires: []
     reaction: safety.stop

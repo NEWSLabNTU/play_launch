@@ -886,7 +886,7 @@ impl RuleEngine {
                 if latency_ms > max {
                     to_emit.push((
                         format!(
-                            "scope path '{}' (input '{}' → output '{}'): observed latency \
+                            "event chain '{}' (input '{}' → output '{}'): observed latency \
                              {:.2} ms > declared max ({})",
                             sp.name, input_fqn, output_fqn, latency_ms, max
                         ),

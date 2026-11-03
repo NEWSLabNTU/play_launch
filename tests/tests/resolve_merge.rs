@@ -162,7 +162,7 @@ fn resolve_merges_launch_and_contracts_into_full_model() {
         .expect("scope_paths")
         .iter()
         .find(|(k, _)| k.ends_with("/e2e"))
-        .expect("e2e scope path present");
+        .expect("e2e event chain present");
     // `"<scope id>/<path name>"`, the shape the model documents and the one
     // `ros-launch-manifest-derive` splits at the last `/` to find the scope
     // (phase 78 W1; rlm CHANGELOG v0.1.37, seam 1). The key used to start
@@ -170,12 +170,12 @@ fn resolve_merges_launch_and_contracts_into_full_model() {
     // a scope that did not exist.
     assert!(
         !e2e_key.starts_with('/'),
-        "scope-path key is `<scope id>/<name>`, not FQN-shaped: {e2e_key}"
+        "event-chain key is `<scope id>/<name>`, not FQN-shaped: {e2e_key}"
     );
     let (scope, _) = e2e_key.rsplit_once('/').expect("scope id and name");
     assert!(
         model["structure"]["scopes"][scope].is_object(),
-        "scope-path key names a scope of the model: {e2e_key}"
+        "event-chain key names a scope of the model: {e2e_key}"
     );
     assert_eq!(e2e["input"][0], "/sensing/points");
     assert_eq!(e2e["output"][0], "/perception/objects");

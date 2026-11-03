@@ -49,7 +49,7 @@ impl std::fmt::Display for ReactionTarget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ReactionTarget::NodePath { node, path } => write!(f, "{node}/{path}"),
-            ReactionTarget::ScopePath { name, .. } => write!(f, "scope path '{name}'"),
+            ReactionTarget::ScopePath { name, .. } => write!(f, "event chain '{name}'"),
         }
     }
 }
@@ -194,7 +194,7 @@ pub(crate) fn supervised(index: &ManifestIndex) -> Vec<Supervised> {
             let lowered = match (&node, &reaction, &observe) {
                 (None, _, _) => Err(
                     "only a node path's settle lowers to a standstill deadline (the realizer \
-                     arms it where the safe state is commanded); a scope path's is not checked \
+                     arms it where the safe state is commanded); an event chain's is not checked \
                      while the system runs"
                         .to_string(),
                 ),
@@ -374,9 +374,9 @@ fn resolve_reaction(
             .or_else(|| scope_path(name))
             .ok_or_else(|| match node {
                 Some(n) => {
-                    format!("its reaction '{name}' is neither a path of {n} nor a scope path")
+                    format!("its reaction '{name}' is neither a path of {n} nor an event chain")
                 }
-                None => format!("its reaction '{name}' is not a scope path"),
+                None => format!("its reaction '{name}' is not an event chain"),
             }),
         SuperviseReaction::Enters(mode) => {
             match index
@@ -387,10 +387,10 @@ fn resolve_reaction(
                 None => Err(format!("it enters '{mode}', which is not a mode")),
                 Some(md) => match &md.decl.reaction {
                     Some(r) => scope_path(r).ok_or_else(|| {
-                        format!("it enters '{mode}', whose reaction '{r}' is not a scope path")
+                        format!("it enters '{mode}', whose reaction '{r}' is not an event chain")
                     }),
                     None => Err(format!(
-                        "it enters '{mode}', which names no `reaction:` scope path to run"
+                        "it enters '{mode}', which names no `reaction:` event chain to run"
                     )),
                 },
             }

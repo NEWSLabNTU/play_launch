@@ -1188,7 +1188,7 @@ fn render_scope_diagnostics(
                 // Show what the LOADER decided, not what a fresh re-run
                 // derives. The re-run exists only to recover spans the stored
                 // diagnostics lack, so anything the loader suppressed —
-                // a `scope-budget` sum superseded by a real critical path, say
+                // a `chain-latency` sum superseded by a real critical path, say
                 // — must not reappear here. Without this the terminal and
                 // `--format json` outputs disagree, since the JSON path emits
                 // the stored diagnostics directly.

@@ -3617,7 +3617,7 @@ mod tests {
         );
         let sp =
             model.contracts.scope_paths.get(key).unwrap_or_else(|| {
-                panic!("scope path keyed {key}: {:?}", model.contracts.scope_paths)
+                panic!("event chain keyed {key}: {:?}", model.contracts.scope_paths)
             });
         // A scope path carries no trigger fact; the model documents `None`.
         assert_eq!(sp.trigger, None);

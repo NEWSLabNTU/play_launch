@@ -819,7 +819,7 @@ pub fn derive_sched_plan(
     let (input, report) = mapper_input_via_model(dump, index, &budgets);
     debug!(
         "sched: derived {} node(s), {} chain(s) from the model; {} path(s) without a trigger, \
-         {} scope path(s) without a chain",
+         {} event chain(s) without a chain",
         input.nodes.len(),
         input.chains.len(),
         report.paths_without_trigger.len(),

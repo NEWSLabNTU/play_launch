@@ -7,7 +7,7 @@
 //! - [`stated_budgets`] -- one row per budget written in a contract, with its
 //!   source and the checks that read it: the fault-reaction sum (a hazard
 //!   charges it), a static rule that compares it with something
-//!   (`scope-budget`, `reaction-within`, a parameter binding), a runtime
+//!   (`chain-latency`, `reaction-within`, a parameter binding), a runtime
 //!   monitor, or nothing. `--explain` prints the table, and
 //!   `declared-not-charged` says the same thing about a `max_transport`.
 
@@ -265,7 +265,7 @@ fn checks_of(
     // A scope path's name may hold dots (`island.tor`).
     if key.starts_with("paths.") {
         if key.ends_with(".max_latency") {
-            out.push("scope-budget".to_string());
+            out.push("chain-latency".to_string());
             out.push("runtime monitor (max-latency-runtime)".to_string());
         } else if key.ends_with(".max_jitter") {
             out.push("jitter-feasibility".to_string());
@@ -274,7 +274,7 @@ fn checks_of(
     }
     // A scope-path budget charges the latencies and sampling waits of the
     // nodes its route crosses.
-    const CROSSED: &str = "scope-budget (where a scope path's route crosses the node)";
+    const CROSSED: &str = "chain-latency (where an event chain's route crosses the node)";
     let scope_budgets = index
         .scope_paths
         .iter()
@@ -373,14 +373,14 @@ fn checks_of(
                 .filter(in_tree)
                 .any(|e| e.to == fqn && e.sub_endpoint == *ep)
             {
-                out.push("scope-budget (an in-tree edge into it)".to_string());
+                out.push("chain-latency (an in-tree edge into it)".to_string());
             }
         }
         ["topics", _, "max_transport"] => {
             let t = parts[1..parts.len() - 1].join(".");
             let fqn = qualify(&m.ns, &t);
             if graph.edges.iter().filter(in_tree).any(|e| e.topic == fqn) {
-                out.push("scope-budget (an in-tree edge on it)".to_string());
+                out.push("chain-latency (an in-tree edge on it)".to_string());
             }
         }
         ["nodes", _, "srv", _, "max_response"] => out.push("response-blocking".to_string()),
