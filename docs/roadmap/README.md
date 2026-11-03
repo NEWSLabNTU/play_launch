@@ -350,6 +350,14 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     transport reader (#0042), P2 `links:`, P3 `measure` proposals, P4
     `check --against` transport, P5 a runtime link monitor (nano-ros).
     [phase-97-links.md](./phase-97-links.md).
+  - **Phase 98** - planned (2026-11-03): standard names (rlm
+    `docs/design/standard-names.md`, design issue 57). The vocabulary takes
+    the standards' words: `severity` holding an ASIL becomes `integrity`;
+    rung/ladder/floor/window/scope path become degradation level, degradation
+    chain, minimal risk condition, dwell and event chain. Each old name is
+    retired over three releases (warned alias, refused with the new name,
+    listed in a `check-terms` gate); saved models keep loading.
+    [phase-98-standard-names.md](./phase-98-standard-names.md).
   - **Phase 95** - ✅ (rlm v0.2.5/v0.2.6, 2026-10-27): service calls on a
     reaction route. A client states its wait and fallback (`timeout`,
     `on_timeout`, `on_rejected`), a server `idempotent`/`stale_after`; the
