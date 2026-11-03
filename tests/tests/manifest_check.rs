@@ -1895,6 +1895,30 @@ fn a_named_link_is_charged_as_the_inline_value_and_named() {
     assert!(inline[0].contains("control_mode"), "{inline:?}");
 }
 
+/// Phase 97 P4: `check --against` a recorded run in which one of the two
+/// messages across the link took 73.5 ms against its 57 ms bound
+/// (`run_over/interception/events.jsonl`): `transport-exceeded` fails the
+/// check and names the worst message; the summary line gives the samples.
+#[test]
+fn a_run_over_the_links_bound_fails_transport_exceeded() {
+    let run = fixtures::repo_root().join("tests/fixtures/contract_takeover_named_link/run_over");
+    let (code, out) = check_takeover(
+        "contract_takeover_named_link",
+        &["--against", run.to_str().unwrap()],
+    );
+    assert_ne!(code, 0, "{out}");
+    assert!(
+        out.contains("host_serial: 2 sample(s), max 73.50ms"),
+        "{out}"
+    );
+    assert!(
+        out.contains("error[transport-exceeded]")
+            && out.contains("1 of 2 message(s) took longer than its max_transport 57.00ms")
+            && out.contains("the worst 73.50ms on /availability into /handler"),
+        "{out}"
+    );
+}
+
 /// Phase 85 T1 (I1): the island's shape -- an availability publisher outside
 /// the tree, behind a link the detecting subscriber states as
 /// `max_transport: 57ms`, and a `call_mrm` that holds only the tick and the

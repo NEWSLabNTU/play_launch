@@ -1,6 +1,6 @@
 # Phase 97 - links: transport measured, sourced and monitored
 
-**Status (2026-11-03): P1-P4 done (rlm v0.3.4, play_launch 0.24.0); P5 held, see below; P6 deferred.** Design of record: rlm
+**Status (2026-11-03): P1-P4 done (rlm v0.3.4, play_launch 0.24.0); P5 not adopted (user decision, below); P6 deferred.** Design of record: rlm
 `docs/design/links.md` (refines design issue 55). Spans rlm, play_launch and
 nano-ros (pull requests). First consumer: the safety island (RTSS demo phase
 10, tier 3 as revised).
@@ -58,20 +58,19 @@ then P5 with nano-ros. P6 waits.
   `link-unmeasured` (warning) from the run's `interception/events.jsonl`.
   A subscriber on another host takes nothing the record sees, so its link
   is reported unmeasured rather than guessed.
-- **P5 held (user decision needed).** On the first consumer the monitor
-  cannot be added without changing what the system does. The safety
-  island's only monitored candidate is the gate's availability across the
-  UART, whose clocks are not synchronised, so the monitor can only time
+- **P5 not adopted (user decision 2026-11-03).** On the first consumer
+  the monitor cannot be added without changing what the system does. The
+  safety island's monitored candidate is the gate's availability across
+  the UART, whose clocks are not synchronised, so a monitor could only time
   arrival gaps: no arrival within the sender's period + the bound (100 +
-  56 ms, + the executor's check). That is an omission detector, tighter
-  than the 500 ms the handler applies today, so it would become the
-  hazard `hpc_loss`'s detector (500 -> about 190 ms) and its reaction
-  (the image can start only the island supervisor's safe state through
-  the reaction hook, not the handler's `call_mrm`), changing the encore
-  act's behaviour and the hazard's rows. Observed availability gaps on
-  the board in normal driving reach 124.8 ms (846 gaps over four a/b acts),
-  so the 156 ms window leaves about 31 ms against host-side scheduling. The
-  options and their consequences are in the demo's phase 10 doc; the
-  walk's charge (a supervised-fit row per monitored link: before it + the
-  window + the check + the reaction) and `link-unmonitored` wait for that
-  decision.
+  56 ms, + the executor's check). That is an omission detector tighter
+  than the handler's 500 ms, so it would replace hpc_loss's detector and
+  its reaction (the image can start only the island supervisor's safe
+  state). Observed availability gaps in normal driving reach 124.8 ms (846
+  gaps over four a/b acts), leaving about 31 ms against host-side
+  scheduling. Decision: no runtime link monitor; links stay measured and
+  sourced, `measured-unsupervised` stays a warning, and `check --against`
+  holds the bound (`transport-exceeded`; gate: the fixture run
+  `contract_takeover_named_link/run_over`, 73.5 ms against 57). The walk's
+  link-monitor charge and `link-unmonitored` are not built; `monitor:`
+  stays in the grammar, read by nothing yet.
