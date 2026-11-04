@@ -6,6 +6,43 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## 0.25.0 - 2026-11-04
+
+- **Changed (`check`; rlm v0.3.7, phase 98 N6 M1/M2/M4/M5):** the standard
+  names for four more contract keys. A hazard's `monitors` (was `guards`),
+  a subscriber's `arrival_curve` (was `ingress`), a publisher's `aperiodic`
+  and `trigger: aperiodic` (were `on_demand` and `trigger: spontaneous`),
+  and a platform file's `priority_assignment:` (was `mapper:`). The old
+  spellings still work for this release with one `deprecated-spelling`
+  warning each; `migrate --write` rewrites the contract keys. The model's
+  field names are unchanged.
+- **Changed (`check`; rlm v0.3.8, phase 98 N6 M3):** three rule ids name a
+  time limit, not a budget: `fault-reaction-time` (was
+  `fault-reaction-budget`), `degradation-level-time`
+  (`degradation-level-budget`), `latency-bound-overflow`
+  (`budget-overflow`). An `acknowledged:` entry naming an old id still
+  matches for this release, warned as a deprecated spelling; `migrate`
+  rewrites it.
+- **Removed (`check`; rlm v0.3.6, phase 98 N4):** the old spellings 0.24.0
+  read with a warning are refused, each naming its new key and `migrate`:
+  `severity_levels:`, a hazard's `severity:`, a mode's `window:` and a
+  profile's `severity_scale:`. An old rule id or path in `acknowledged:`
+  is `error[ack-renamed]` naming the new one, not a silent `ack-stale`.
+- **Changed (chains; phase 98 M6):** a carried edge is a triggered edge:
+  `kind: "triggered"` on a hop, `triggered_hops` on a path, the Chains
+  page. `chains.json` and `/api/chains/paths` carry `version: 2`;
+  `carried_hops` is still emitted beside `triggered_hops` for this release.
+- **Added:** `just check-terms` (a `just check` step) fails on a retired
+  word in user-facing text.
+- **Fixed (rolling):** the rclrs fix of 0.24.2 (rcl 10.5.3).
+
+## 0.24.2 - 2026-11-04
+
+- Fix: rclrs builds on ROS rolling with rcl 10.5.3, which stopped including
+  `rmw/qos_profiles.h` from its public headers; the vendored rclrs wrapper
+  includes it itself (ros2_rust 9ba36eb). v0.24.1 was tagged but never
+  published (its arm64 rolling wheel failed).
+
 ## 0.24.1 - 2026-11-04
 
 - **Fixed (`check`):** an event chain whose route the nominal dataflow

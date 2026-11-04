@@ -3,7 +3,8 @@
 **Status (2026-11-04): in progress -- N0-N4 done (R = rlm v0.3.3 /
 play_launch 0.24.0, R+1 = rlm v0.3.6); N5's `check-terms` gate is in both
 repos, the old-id message is dropped at the next release; N6: M6 done,
-M1-M5 at R (rlm v0.3.7, v0.3.8); N7 open.** Design
+M1-M5 at R (rlm v0.3.7, v0.3.8), released in play_launch 0.25.0; N7
+open.** Design
 of record: rlm
 `docs/design/standard-names.md` (design issue 57). Spans rlm, play_launch,
 the safety island's contracts and nano-ros (pull requests from
@@ -139,6 +140,11 @@ Here R+1 waits until R has been published and nano-ros has followed.
   naming an old id still matches this release, warned as a deprecated
   spelling (`rule_names::accepted`); `migrate` rewrites it. `budget`
   keeps its reservation sense.
+
+- **Release** (play_launch 0.25.0, 2026-11-04): the release carrying N4
+  (rlm v0.3.6), N5's gate, M6 and M1-M5 at R (rlm v0.3.7, v0.3.8). The
+  island and nano-ros follow it (nano-ros phase 534); the M1-M5 R+1
+  refusals wait until they have.
 
 ## Order
 
