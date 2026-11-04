@@ -1,8 +1,8 @@
 # Phase 99 - tier rename: the scheduling unit in the standards' word
 
 **Status (2026-11-05): planned. Decided (user, 2026-11-05): `tier` is
-renamed, in its own phase on both sides (phase 98 N7). Open: the new word
-(T0, decision slot below; recommended: task).** Design of record: rlm
+renamed, in its own phase on both sides (phase 98 N7); T0 decided
+(user, 2026-11-05): the new word is **task** (option A). T1 not started.** Design of record: rlm
 `docs/design/standard-names.md` M7 (design issue 57); the release schedule
 is that document's section 6, as phase 98 ran it. Spans rlm, play_launch,
 the safety island and nano-ros (its own phase: "follow rlm's tier rename").
@@ -50,7 +50,8 @@ argument above, not a scheduling record.
 
 ## Decision slot (T0)
 
-The user picks one; recorded here and in the design doc's M7 row.
+**Decided (user, 2026-11-05): A, task.** Recorded here and in the design
+doc's M7 row.
 
 | Option | Authored keys | Types | Model | For | Against |
 |---|---|---|---|---|---|
