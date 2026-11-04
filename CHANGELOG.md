@@ -6,6 +6,13 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## 0.24.2 - 2026-11-04
+
+- Fix: rclrs builds on ROS rolling with rcl 10.5.3, which stopped including
+  `rmw/qos_profiles.h` from its public headers; the vendored rclrs wrapper
+  includes it itself (ros2_rust 9ba36eb). v0.24.1 was tagged but never
+  published (its arm64 rolling wheel failed).
+
 ## 0.24.1 - 2026-11-04
 
 - **Fixed (`check`):** an event chain whose route the nominal dataflow
