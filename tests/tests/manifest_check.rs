@@ -395,7 +395,7 @@ topics:
 /// `rt_priority_band` its posix resources require.
 fn minimal_platform_file(target: &str) -> String {
     format!(
-        "target: {target}\nmapper: rate_monotonic\nresources:\n  rt_priority_band: {{ min: 10, max: 40 }}\n"
+        "target: {target}\npriority_assignment: rate_monotonic\nresources:\n  rt_priority_band: {{ min: 10, max: 40 }}\n"
     )
 }
 
@@ -644,7 +644,7 @@ topics:
         &system_toml,
         "\
 target: posix
-mapper: manual
+priority_assignment: manual
 overrides:
   talker: { priority: 10, sched_class: SCHED_FIFO }
   listener: { priority: 40, sched_class: SCHED_FIFO }
@@ -709,7 +709,7 @@ fn check_refuses_a_legacy_toml_platform_file_naming_the_v2_form() {
         "a .toml platform file must fail: {stderr}"
     );
     assert!(stderr.contains("removed in rlm v0.3.0"), "{stderr}");
-    assert!(stderr.contains("mapper: manual"), "{stderr}");
+    assert!(stderr.contains("priority_assignment: manual"), "{stderr}");
 }
 
 // ── Issue #0056: the contradiction scan reads the DECLARED facts, and phase
@@ -767,7 +767,7 @@ fn manual_pinning(high_node: &str, low_node: &str) -> String {
     format!(
         "\
 target: posix
-mapper: manual
+priority_assignment: manual
 overrides:
   {high_node}: {{ priority: 40, sched_class: SCHED_FIFO }}
   {low_node}: {{ priority: 10, sched_class: SCHED_FIFO }}
@@ -1024,7 +1024,7 @@ topics:
     std::fs::write(
         &platform,
         r#"target: posix
-mapper: chain_aware
+priority_assignment: chain_aware
 resources:
   rt_priority_band: { min: 10, max: 40 }
 "#,
@@ -2017,7 +2017,7 @@ fn an_on_demand_publisher_promises_no_rate() {
     assert!(
         out.contains(
             "error[rate-hierarchy]: subscriber 'planner/limit' requires min_rate_hz (10), but \
-             every publisher of the topic is on demand (`on_demand: true` on 'operator/limit') \
+             every publisher of the topic is aperiodic (`aperiodic: true` on 'operator/limit') \
              and promises no rate"
         ),
         "{out}"
@@ -2792,6 +2792,100 @@ fn phase_98_old_keys_are_refused_and_migrate_to_the_reference_verdict() {
     assert!(new.lines().any(|l| l.starts_with("HAZARD")), "{new}");
 }
 
+/// Phase 98 N6: `guards:`, `ingress:`, `on_demand:` and
+/// `trigger: spontaneous` still read in rlm v0.3.7, each with one
+/// `deprecated-spelling` warning naming its new spelling, and `migrate
+/// --write` rewrites the four to a contract with the same verdict and no
+/// warning about spelling.
+#[test]
+fn phase_98_n6_old_spellings_warn_and_migrate_to_the_same_verdict() {
+    let (_tmp, dir) = fixture_copy("contract_spelling_deprecated_n6");
+    let launch = dir.join("bringup.launch.xml");
+    let contract = dir.join("bringup.contract.yaml");
+    let (code_old, old) = check_launch(&launch, &["--explain"]);
+    assert_eq!(code_old, 0, "{old}");
+    for new in [
+        "old spelling of `monitors:`",
+        "old spelling of `arrival_curve:`",
+        "old spelling of `aperiodic:`",
+        "old spelling of `trigger: aperiodic`",
+    ] {
+        assert_eq!(
+            old.lines()
+                .filter(|l| l.contains("warning[deprecated-spelling]") && l.contains(new))
+                .count(),
+            1,
+            "{new}: {old}"
+        );
+    }
+    let (code, out) = migrate(&contract, &["--write"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("1 rewritten (4 edit(s))"), "{out}");
+    let (code_new, new) = check_launch(&launch, &["--explain"]);
+    assert_eq!(code_new, code_old, "{new}");
+    assert!(!new.contains("deprecated-spelling"), "{new}");
+    let rest = |s: &str| {
+        s.lines()
+            .filter(|l| {
+                (l.starts_with("  warning[") || l.starts_with("  error["))
+                    && !l.contains("deprecated-spelling")
+            })
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(rest(&old), rest(&new));
+    let table = |s: &str| {
+        s.lines()
+            .skip_while(|l| !l.starts_with("HAZARD"))
+            .take_while(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert!(!table(&old).is_empty(), "{old}");
+    assert_eq!(table(&old), table(&new));
+}
+
+/// Phase 98 N6 M1: a platform file's `mapper:` still selects the priority
+/// assignment in rlm v0.3.7, warned naming `priority_assignment:`.
+#[test]
+fn a_platform_file_mapper_key_warns_naming_priority_assignment() {
+    let launch = simple_launch_dir().join("pure_nodes.launch.xml");
+    let tmp = tempfile::TempDir::new().unwrap();
+    let old = tmp.path().join("old.system.posix.yaml");
+    std::fs::write(
+        &old,
+        minimal_platform_file("posix").replace("priority_assignment:", "mapper:"),
+    )
+    .unwrap();
+    let new = tmp.path().join("new.system.posix.yaml");
+    std::fs::write(&new, minimal_platform_file("posix")).unwrap();
+    let run = |p: &std::path::Path| {
+        let o = play_launch_cmd()
+            .args(["check", "--sched"])
+            .arg(p)
+            .arg(&launch)
+            .output()
+            .unwrap();
+        (
+            o.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            ),
+        )
+    };
+    let (code_old, out_old) = run(&old);
+    let (code_new, out_new) = run(&new);
+    assert_eq!(code_old, 0, "{out_old}");
+    assert_eq!(code_new, 0, "{out_new}");
+    assert!(
+        out_old.contains("`mapper:` is the old spelling of `priority_assignment:`"),
+        "{out_old}"
+    );
+    assert!(!out_new.contains("old spelling"), "{out_new}");
+}
+
 /// Phase 90 G3: a node path's `drop:` refuses the contract (exit 3) naming
 /// the topic form; `migrate` moves it to the path's one output topic and
 /// the contract loads.
@@ -3261,8 +3355,8 @@ fn g7_removed_keys_refuse_the_contract_with_a_fix_it() {
         (
             "contract_guard_all_of_removed",
             &[
-                "at 'hazards.pose_lost.guards[0].all_of': Removed in v0.1.59",
-                "Declare the function and guard it by name: `guards: [<f>]`; `play_launch \
+                "at 'hazards.pose_lost.monitors[0].all_of': Removed in v0.1.59",
+                "Declare the function and monitor it by name: `monitors: [<f>]`; `play_launch \
                  migrate` does it",
             ],
         ),

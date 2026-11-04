@@ -13,7 +13,7 @@
 # bridge test (`just check`'s case 4/5) — this file is the only channel
 # that changed mappers.
 target: posix
-mapper: chain_aware
+priority_assignment: chain_aware
 
 resources:
   rt_priority_band: { min: 10, max: 40 }

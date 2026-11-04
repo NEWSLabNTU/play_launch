@@ -4427,8 +4427,8 @@ fn check_fault_reaction(
                 severity: Severity::Warning,
                 message: format!(
                     "hazard '{}' reaction '{reaction_name}' ends at {} and no subscriber there \
-                     declares an `on_violation` — a stalled reaction would go unnoticed. Guard \
-                     it with a second hazard whose guard is this output",
+                     declares an `on_violation` — a stalled reaction would go unnoticed. Monitor \
+                     it with a second hazard whose `monitors:` name this output",
                     h.name,
                     reaction.output_topics.join(", ")
                 ),
@@ -5899,8 +5899,8 @@ fn check_cross_scope_on_demand(
                 rule_id: "rate-hierarchy".to_string(),
                 severity: Severity::Error,
                 message: format!(
-                    "topic '{fqn}' rate_hz ({rate}) beside on-demand publisher '{first}', which \
-                     promises no rate (`on_demand: true`)"
+                    "topic '{fqn}' rate_hz ({rate}) beside aperiodic publisher '{first}', which \
+                     promises no rate (`aperiodic: true`)"
                 ),
                 path: format!("topics.{fqn}.rate_hz"),
                 span: None,
@@ -5922,7 +5922,7 @@ fn check_cross_scope_on_demand(
                     severity: Severity::Error,
                     message: format!(
                         "subscriber '{sub_ref}' requires min_rate_hz ({rate}) of topic '{fqn}', \
-                         but every publisher of it is on demand (`on_demand: true` on \
+                         but every publisher of it is aperiodic (`aperiodic: true` on \
                          '{first}') and promises no rate"
                     ),
                     path: format!("topics.{fqn}"),

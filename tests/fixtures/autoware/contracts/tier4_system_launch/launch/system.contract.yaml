@@ -44,13 +44,13 @@ hazards:
   mode_unavailable:
     integrity: ASIL_D
     description: the operation-mode availability stream stops; the vehicle must reach a stop
-    guards: [/system/operation_mode/availability]
+    monitors: [/system/operation_mode/availability]
     on: omission
     ftti: 2s
     enters: autonomous          # a MODE: the ladder is the reaction
   mode_unavailable_tight:
     description: the same chain against a 1.5 s interval, which it cannot meet
-    guards: [/system/operation_mode/availability]
+    monitors: [/system/operation_mode/availability]
     on: omission
     ftti: 1500ms
     reaction: system.emergency_stop

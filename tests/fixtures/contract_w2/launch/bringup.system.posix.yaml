@@ -9,7 +9,7 @@
 # budget, so it ranks nowhere and stays best-effort — which is why it needs no
 # `budget_us` under `reservations: required`.
 target: posix
-mapper: deadline_monotonic
+priority_assignment: deadline_monotonic
 reservations: required
 
 resources:

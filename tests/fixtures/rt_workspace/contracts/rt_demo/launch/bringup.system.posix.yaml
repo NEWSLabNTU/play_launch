@@ -13,7 +13,7 @@
 # the provider's channel so the overlay demonstrates a resources/overrides
 # tweak, not a mapper swap).
 target: posix
-mapper: chain_aware
+priority_assignment: chain_aware
 
 resources:
   rt_priority_band: { min: 10, max: 45 }

@@ -28,24 +28,24 @@ use:
 hazards:
   scan_classes:
     integrity: ASIL_D
-    guards: [/safety/scan]
+    monitors: [/safety/scan]
     on: [omission, late]
     ftti: 500ms
     reaction: safety.stop
   scan_unnamed:
     integrity: ASIL_D
-    guards: [/safety/scan]
+    monitors: [/safety/scan]
     ftti: 500ms
     reaction: safety.stop
   imu_age_under_qos:
     integrity: ASIL_D
-    guards: [/safety/imu]
+    monitors: [/safety/imu]
     on: omission
     ftti: 500ms
     reaction: safety.stop
   odom_age_evaluated:
     integrity: ASIL_D
-    guards: [/safety/odom]
+    monitors: [/safety/odom]
     on: omission
     ftti: 500ms
     reaction: safety.stop

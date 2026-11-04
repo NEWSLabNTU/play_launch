@@ -5,7 +5,7 @@
 # from `<pkg> <exe>`, so an override naming any other node would be a
 # fixture bug rather than a check under test.
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 
 resources:
   rt_priority_band: { min: 10, max: 40 }

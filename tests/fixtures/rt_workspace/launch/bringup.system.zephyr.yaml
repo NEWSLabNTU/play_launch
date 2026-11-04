@@ -12,7 +12,7 @@
 # only validates that this file parses and declares `target: zephyr`; it
 # does not (and cannot) derive or apply a plan for it.
 target: zephyr
-mapper: deadline_monotonic
+priority_assignment: deadline_monotonic
 
 resources:
   # Zephyr priority numbers are consumer-defined (cooperative priorities can

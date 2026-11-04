@@ -716,6 +716,14 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   carried edge is a TRIGGERED edge (`kind: "triggered"`, `triggered_hops`,
   `TriggeredEdge`); `chains.json` and `/api/chains/paths` carry
   `version: 2`, and `carried_hops` stays one release.
+  Same day, rlm v0.3.7 (N6 at release R): `monitors` (a hazard's
+  `guards`), `arrival_curve` (`ingress`), `aperiodic` (`on_demand`,
+  `trigger: spontaneous`) and the platform file's `priority_assignment:`
+  (`mapper:`). An old spelling reads with one `deprecated-spelling`
+  warning, from rlm's `Manifest::deprecated_spellings` (one loop in
+  `value_rules.rs`, not a flag per key) or `PlatformFile::spelled_mapper`
+  (a `sched_loader` warning). The MODEL's field names did not move, since
+  nano-ros reads them; renaming them is a nano-ros PR and model schema 4.
 
 - **2026-11-03**: **The contract vocabulary takes the standards' words**
   (phase 98, rlm v0.3.3, design issue 57, rlm

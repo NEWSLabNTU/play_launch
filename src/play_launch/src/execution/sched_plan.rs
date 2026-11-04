@@ -648,7 +648,7 @@ mod tests {
         let dump = dump_with_node_and_composable();
         let yaml = r#"
 target: posix
-mapper: manual
+priority_assignment: manual
 overrides:
   "/control/ndt_localizer": { priority: 80, sched_class: SCHED_FIFO }
   "/control/my_node": { priority: 80, sched_class: SCHED_FIFO }
@@ -685,7 +685,7 @@ overrides:
     fn unassigned_node_in_default_tier_has_no_applied_entry() {
         let dump = dump_with_node_and_composable();
         // No overrides: `manual` derives nothing, so everything lands in the default tier.
-        let yaml = "target: posix\nmapper: manual\n";
+        let yaml = "target: posix\npriority_assignment: manual\n";
         with_temp_yaml(yaml, |path| {
             let plan = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Off)
                 .expect("build plan");
@@ -699,7 +699,7 @@ overrides:
         let dump = dump_with_node_and_composable();
         let yaml = r#"
 target: posix
-mapper: manual
+priority_assignment: manual
 overrides:
   "/control/ndt_localizer": { priority: 0, sched_class: SCHED_FIFO }
 "#;
@@ -725,7 +725,7 @@ overrides:
         let dump = dump_with_node_and_composable();
         let yaml = r#"
 target: posix
-mapper: manual
+priority_assignment: manual
 overrides:
   "/control/ndt_localizer": { priority: 4294967316, sched_class: SCHED_FIFO }
 "#;
@@ -740,7 +740,7 @@ overrides:
         let dump = dump_with_node_and_composable();
         let yaml = r#"
 target: posix
-mapper: manual
+priority_assignment: manual
 overrides:
   "/control/ndt_localizer": { priority: 100, sched_class: SCHED_FIFO }
 "#;
@@ -761,7 +761,7 @@ overrides:
         // 999 is far beyond any real machine's CPU count.
         let yaml = r#"
 target: posix
-mapper: manual
+priority_assignment: manual
 overrides:
   "/control/ndt_localizer": { priority: 20, core: 999 }
 "#;
@@ -784,7 +784,7 @@ overrides:
         let dump = dump_with_node_and_composable();
         let yaml = r#"
 target: posix
-mapper: manual
+priority_assignment: manual
 overrides:
   "/control/ndt_localizer": { priority: 20, sched_class: SCHED_FIFO, core: 0 }
 "#;

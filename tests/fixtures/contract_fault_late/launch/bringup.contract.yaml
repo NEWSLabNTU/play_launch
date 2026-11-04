@@ -13,19 +13,19 @@ use:
 
 hazards:
   stale_obstacles:
-    guards: [/safety/obstacles]
+    monitors: [/safety/obstacles]
     on: late
     ftti: 300ms
     reaction: safety.nope
   unwatched_brake:
-    guards: [/safety/brake_cmd]
+    monitors: [/safety/brake_cmd]
     on: omission
     ftti: 1s
     reaction: safety.stop
   drive_blind:
     integrity: ASIL_D
     description: vehicle continues with no obstacle data
-    guards: [/safety/scan]
+    monitors: [/safety/scan]
     on: omission
     ftti: 500ms
     reaction: safety.stop

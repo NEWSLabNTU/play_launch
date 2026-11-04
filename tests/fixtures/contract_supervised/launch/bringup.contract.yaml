@@ -33,7 +33,7 @@ functions:
 hazards:
   odd_exit:
     integrity: ASIL_B
-    guards: [/availability]
+    monitors: [/availability]
     on: reported
     when: { field: autonomous, equals: false }
     entry_speed: 8.33 m/s
@@ -41,7 +41,7 @@ hazards:
     enters: engaged
   hpc_loss:
     integrity: ASIL_D
-    guards: [/availability]
+    monitors: [/availability]
     on: omission
     entry_speed: 3.0 m/s
     ftti: { duration: 3s, source: requirement }
@@ -118,7 +118,7 @@ nodes:
       # Phase 93: what a call_mrm overrun starts, on a timer independent of
       # the executor: the emergency stop's request, straight away.
       brake_now:
-        trigger: spontaneous
+        trigger: aperiodic
         output: [estop_operate]
         max_latency: { duration: 5ms, source: analysed }
       driver_exit:
@@ -160,7 +160,7 @@ nodes:
       # Phase 93: the planner's own stop, on its own executor: an overrun of
       # `follow` is caught once the callback returns (slowness, not a hang).
       stop_now:
-        trigger: spontaneous
+        trigger: aperiodic
         output: [cmd]
         max_latency: { duration: 5ms, source: { measured: { margin: 0.2, terms: { work: { max: 4ms, n: 20 } } } } }
 

@@ -798,7 +798,7 @@ pub fn derive_sched_plan(
     let registry = MapperRegistry::with_builtins();
     let mapper = registry.get(&file.mapper).ok_or_else(|| {
         eyre::eyre!(
-            "unknown mapper `{}` in {} (known mappers: {})",
+            "unknown `priority_assignment: {}` in {} (known: {})",
             file.mapper,
             platform_path.display(),
             KNOWN_MAPPERS.join(", "),
@@ -849,6 +849,14 @@ pub fn derive_sched_plan(
     // instead of letting that be a silent no-op. Full FQN unification is a
     // tracked follow-up (W4 report, "notes for W5").
     let mut warnings = Vec::new();
+    if file.spelled_mapper {
+        // Phase 98 N6 M1: read for one release.
+        warnings.push(format!(
+            "{}: `mapper:` is the old spelling of `priority_assignment:` (renamed in rlm \
+             v0.3.7: what it names is a priority assignment policy) -- rename the key",
+            platform_path.display()
+        ));
+    }
     {
         let plan_node_set: BTreeSet<&str> = input.nodes.iter().map(|n| n.name.as_str()).collect();
         for fqn in &chain_member_nodes {
@@ -872,7 +880,10 @@ pub fn derive_sched_plan(
     let (derived, diagnostics) = mapper
         .map_with_diagnostics(&input, &file.resources)
         .map_err(|e: MapError| {
-            eyre::eyre!("mapper `{}` failed to derive a plan: {e}", file.mapper)
+            eyre::eyre!(
+                "`priority_assignment: {}` failed to derive a plan: {e}",
+                file.mapper
+            )
         })?;
 
     let mut plan = flatten_to_one_tier_per_node(&derived);
@@ -2895,14 +2906,14 @@ mod tests {
 
     const V2_RM_BAND: &str = "\
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
 ";
 
     const V2_CHAIN_AWARE_BAND: &str = "\
 target: posix
-mapper: chain_aware
+priority_assignment: chain_aware
 resources:
   rt_priority_band: { min: 5, max: 45 }
 ";
@@ -2938,7 +2949,7 @@ resources:
     #[test]
     fn derive_unknown_mapper_errors_listing_known_names() {
         let dump = dump_two_plain_nodes();
-        let yaml = "target: posix\nmapper: bogus_algo\n";
+        let yaml = "target: posix\npriority_assignment: bogus_algo\n";
         with_temp_file("yaml", yaml, |path| {
             let err = derive_sched_plan(&dump, None, path, "posix", SchedApplyMode::Warn)
                 .expect_err("unknown mapper must error");
@@ -2956,7 +2967,7 @@ resources:
     #[test]
     fn derive_target_mismatch_errors() {
         let dump = dump_two_plain_nodes();
-        let yaml = "target: zephyr\nmapper: manual\n";
+        let yaml = "target: zephyr\npriority_assignment: manual\n";
         with_temp_file("yaml", yaml, |path| {
             let err = derive_sched_plan(&dump, None, path, "posix", SchedApplyMode::Warn)
                 .expect_err("target mismatch must error");
@@ -2971,7 +2982,7 @@ resources:
         let index = index_with_rates();
         let yaml = "\
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
 overrides:
@@ -3011,7 +3022,7 @@ overrides:
         // No contract index at all: both nodes are fact-less (default tier).
         let yaml = "\
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
 overrides:
@@ -3044,7 +3055,7 @@ overrides:
         let index = index_with_rates();
         let yaml = "\
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
 overrides:
@@ -3089,7 +3100,7 @@ overrides:
         let index = index_with_rates();
         let yaml = "\
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
 overrides:
@@ -3128,7 +3139,7 @@ overrides:
         // Pin the SLOW node above the fast one — contradicts the rate order.
         let yaml = "\
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
 overrides:
@@ -3276,7 +3287,7 @@ overrides:
     #[test]
     fn derive_manual_yaml_places_nodes_by_override_only() {
         let dump = dump_two_plain_nodes();
-        let yaml = "target: posix\nmapper: manual\noverrides:\n  fast_node: { priority: 20, sched_class: SCHED_FIFO }\n";
+        let yaml = "target: posix\npriority_assignment: manual\noverrides:\n  fast_node: { priority: 20, sched_class: SCHED_FIFO }\n";
         with_temp_file("yaml", yaml, |path| {
             let derived = derive_sched_plan(&dump, None, path, "posix", SchedApplyMode::Warn)
                 .expect("a manual v2 file derives");
@@ -3306,7 +3317,7 @@ overrides:
                 .expect_err("the legacy schema is refused");
             let msg = format!("{err:#}");
             assert!(msg.contains("removed in rlm v0.3.0"), "{msg}");
-            assert!(msg.contains("mapper: manual"), "{msg}");
+            assert!(msg.contains("priority_assignment: manual"), "{msg}");
         });
     }
 
@@ -3392,6 +3403,7 @@ overrides:
         ros_launch_manifest_sched::PlatformFile {
             target: "posix".to_string(),
             mapper: "chain_aware".to_string(),
+            spelled_mapper: false,
             reservations,
             resources: ros_launch_manifest_sched::PlatformResources::default(),
             overrides: Default::default(),
@@ -3619,7 +3631,8 @@ overrides:
                 ..Default::default()
             }],
         };
-        let src = format!("target: posix\nmapper: manual\noverrides:\n  /n:\n{yaml_body}");
+        let src =
+            format!("target: posix\npriority_assignment: manual\noverrides:\n  /n:\n{yaml_body}");
         let file =
             ros_launch_manifest_sched::parse_platform_file_yaml(&src).expect("override must parse");
         let mut warnings = Vec::new();
@@ -3911,7 +3924,7 @@ overrides:
         // classes can't fit into width 1 — guaranteed `BandTooNarrow`.
         let narrow_yaml = "\
 target: posix
-mapper: chain_aware
+priority_assignment: chain_aware
 resources:
   rt_priority_band: { min: 45, max: 45 }
 ";
@@ -3991,7 +4004,7 @@ resources:
         // via an override; a third fact-less node lands in the default tier.
         let yaml = "\
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
 overrides:
@@ -4024,7 +4037,7 @@ overrides:
         // No contract index: both nodes are fact-less.
         let yaml = "\
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
 ";
@@ -4047,7 +4060,7 @@ resources:
         let dump = dump_two_plain_nodes();
         let yaml = "\
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
 overrides:
@@ -4189,7 +4202,7 @@ overrides:
         // Invert the rate order: slow (scope 1) pinned above fast (scope 0).
         let yaml = "\
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
 overrides:
@@ -4221,7 +4234,7 @@ overrides:
         let index = index_with_rates();
         let yaml = "\
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
 overrides:
@@ -4255,7 +4268,7 @@ overrides:
         // in Phase 41.4).
         let yaml = "\
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
 overrides:
@@ -4282,7 +4295,7 @@ overrides:
         let index = index_with_rates();
         let yaml = "\
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
 overrides:
@@ -4351,7 +4364,7 @@ overrides:
         let dump = dump_two_plain_nodes();
         let yaml = "\
 target: posix
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
 ";
@@ -4440,7 +4453,7 @@ resources:
         std::fs::write(&launch_file, "<launch/>").unwrap();
         std::fs::write(
             launch_dir.join("bringup.system.posix.yaml"),
-            "target: posix\nmapper: manual\nprovider_marker: true\n",
+            "target: posix\npriority_assignment: manual\nprovider_marker: true\n",
         )
         .unwrap();
 
@@ -4448,7 +4461,7 @@ resources:
         std::fs::create_dir_all(overlay_root.join("mypkg/launch")).unwrap();
         std::fs::write(
             overlay_root.join("mypkg/launch/bringup.system.posix.yaml"),
-            "target: posix\nmapper: manual\noverlay_marker: true\n",
+            "target: posix\npriority_assignment: manual\noverlay_marker: true\n",
         )
         .unwrap();
 
@@ -4474,7 +4487,7 @@ resources:
         std::fs::write(&launch_file, "<launch/>").unwrap();
         std::fs::write(
             launch_dir.join("bringup.system.posix.yaml"),
-            "target: posix\nmapper: manual\n",
+            "target: posix\npriority_assignment: manual\n",
         )
         .unwrap();
 
@@ -4501,7 +4514,7 @@ resources:
         std::fs::write(&launch_file, "<launch/>").unwrap();
         std::fs::write(
             launch_dir.join("bringup.system.posix.yaml"),
-            "target: posix\nmapper: manual\n",
+            "target: posix\npriority_assignment: manual\n",
         )
         .unwrap();
 
@@ -4515,7 +4528,7 @@ resources:
         std::fs::create_dir_all(overlay_root.join("mypkg/launch")).unwrap();
         std::fs::write(
             overlay_root.join("mypkg/launch/bringup.system.posix.yaml"),
-            "target: posix\nmapper: manual\n",
+            "target: posix\npriority_assignment: manual\n",
         )
         .unwrap();
         let resolved = resolve_platform_file(&dump, None, Some(&overlay_root), false, "posix")
@@ -4535,7 +4548,7 @@ resources:
         // Only a posix file is shipped — a zephyr request must not match it.
         std::fs::write(
             launch_dir.join("bringup.system.posix.yaml"),
-            "target: posix\nmapper: manual\n",
+            "target: posix\npriority_assignment: manual\n",
         )
         .unwrap();
 

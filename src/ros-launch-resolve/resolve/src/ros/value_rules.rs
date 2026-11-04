@@ -728,6 +728,28 @@ fn g3_spellings(
     prefix: &str,
     diags: &mut Vec<Diagnostic>,
 ) {
+    // Phase 98 N6: an old spelling read for one release.
+    for sp in &manifest.deprecated_spellings {
+        let at = format!("{prefix}{}", sp.at);
+        let (old, new) = if sp.at.ends_with(".trigger") {
+            (
+                format!("`trigger: {}`", sp.old),
+                format!("`trigger: {}`", sp.new),
+            )
+        } else {
+            (format!("`{}:`", sp.old), format!("`{}:`", sp.new))
+        };
+        diags.push(diag(
+            "deprecated-spelling",
+            Severity::Warning,
+            format!(
+                "{}: {old} is the old spelling of {new} (renamed in rlm v0.3.7, phase 98); it \
+                 reads for one release. Fix: write {new}; {MIGRATE_HINT}",
+                site(index, scope_id, &at),
+            ),
+            at,
+        ));
+    }
     for (name, e) in &manifest.external_topics {
         let at = format!("{prefix}external_topics.{name}");
         let side = match e.side {

@@ -5,7 +5,7 @@
 # /perception namespace at FIFO 10). The `.toml` schema and its bridge were
 # removed in rlm v0.3.0 (play_launch phase 41.6); this file is its v2 form.
 target: posix
-mapper: manual
+priority_assignment: manual
 
 overrides:
   control_node: { priority: 20, sched_class: SCHED_FIFO, core: 0 }

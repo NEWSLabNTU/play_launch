@@ -12,7 +12,7 @@ nodes:
     srv:
       operate: {}
     pub:
-      limit: { on_demand: true }
+      limit: { aperiodic: true }
     paths:
       operate:
         trigger: { input: [operate] }

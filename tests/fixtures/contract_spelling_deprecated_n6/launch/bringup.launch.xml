@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!-- Phase 71: a safety chain with a declared hazard, in a state that FITS.
+     lidar -> detector -> brake; the hazard is "drive blind" (scan lost). -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="lidar_driver"      namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="obstacle_detector" namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="brake_controller"  namespace="/safety"/>
+</launch>

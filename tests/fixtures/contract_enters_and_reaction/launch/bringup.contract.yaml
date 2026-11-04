@@ -33,7 +33,7 @@ hazards:
   drive_blind:
     integrity: ASIL_D
     description: vehicle continues with no obstacle data
-    guards: [perception]          # the function, by name
+    monitors: [perception]          # the function, by name
     on: omission
     ftti: 500ms
     reaction: safety.stop

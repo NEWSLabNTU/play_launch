@@ -11,7 +11,7 @@
 # them apart means `just ab` is unchanged and `just ab3` is the one that asks
 # for privilege.
 target: posix
-mapper: chain_aware
+priority_assignment: chain_aware
 reservations: required
 
 resources:

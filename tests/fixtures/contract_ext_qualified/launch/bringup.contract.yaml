@@ -15,7 +15,7 @@ hazards:
   drive_blind:
     integrity: ASIL_D
     description: vehicle continues with no obstacle data
-    guards: [/safety/scan]
+    monitors: [/safety/scan]
     on: omission
     deadline_by: machine.iso13855/safety_distance
     reaction: safety.stop

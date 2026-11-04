@@ -4,7 +4,7 @@
 # brake_controller > obstacle_detector > lidar_driver — so the hop nearest the
 # actuator preempts the ones feeding it.
 target: posix
-mapper: chain_aware
+priority_assignment: chain_aware
 
 resources:
   rt_priority_band: { min: 10, max: 40 }

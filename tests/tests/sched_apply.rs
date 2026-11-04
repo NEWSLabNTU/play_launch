@@ -33,7 +33,7 @@ fn write_sched_toml(dir: &std::path::Path) -> std::path::PathBuf {
         &path,
         r#"
 target: posix
-mapper: manual
+priority_assignment: manual
 overrides:
   talker: { priority: 20, sched_class: SCHED_FIFO }
   listener: { priority: 20, sched_class: SCHED_FIFO }

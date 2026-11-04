@@ -25,7 +25,7 @@ topics:
 hazards:
   pose_lost:
     integrity: ASIL_B
-    guards:
+    monitors:
       - all_of: [/loc/ndt, /loc/gnss]
     on: omission
     ftti: 1s

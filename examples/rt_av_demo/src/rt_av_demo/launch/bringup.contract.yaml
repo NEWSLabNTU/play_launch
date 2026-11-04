@@ -49,7 +49,7 @@ hazards:
   drive_blind:
     integrity: ASIL_D
     description: vehicle continues with no obstacle data
-    guards: [perception]
+    monitors: [perception]
     on: omission
     ftti: 500ms
     enters: driving

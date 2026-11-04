@@ -39,14 +39,14 @@ functions:
 hazards:
   hpc_loss:
     integrity: ASIL_D
-    guards: [/availability]
+    monitors: [/availability]
     on: omission
     entry_speed: 8.33 m/s
     ftti: 10s
     enters: engaged
   odd_exit:
     integrity: ASIL_B
-    guards: [/availability]
+    monitors: [/availability]
     on: reported
     when: { field: autonomous, equals: false }
     entry_speed: 8.33 m/s

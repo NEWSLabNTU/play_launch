@@ -82,7 +82,7 @@ priority table:
 
 ```yaml
 target: posix
-mapper: chain_aware        # the committed file; rate_monotonic is the simplest alternative
+priority_assignment: chain_aware        # the committed file; rate_monotonic is the simplest alternative
 
 resources:
   rt_priority_band: { min: 10, max: 40 }
@@ -128,7 +128,7 @@ within the platform facts you give it:
 
 ```yaml
 target: posix
-mapper: rate_monotonic     # or: deadline_monotonic, chain_aware, manual
+priority_assignment: rate_monotonic     # or: deadline_monotonic, chain_aware, manual
 resources:
   rt_priority_band: { min: 10, max: 40 }   # the mapper's working range
   isolated_cpus: [0]
@@ -208,7 +208,7 @@ stands, and it is what the mapper reads there.
 
 ```yaml
 target: posix                     # required; must match --target
-mapper: rate_monotonic
+priority_assignment: rate_monotonic
 
 resources:                        # platform facts the mapper works within
   rt_priority_band: { min: 10, max: 40 }   # POSIX RT range: 1..=99
@@ -288,12 +288,12 @@ paths are the common case: they have no input take to measure from.
 ### 1.2.2 `reservations:` — `SCHED_DEADLINE`, and why you probably don't want it
 
 Phase 60 made the reservation policy real: with `reservations: required` beside
-`mapper:` in the platform file, the resolver turns the real-time band's tiers
+`priority_assignment:` in the platform file, the resolver turns the real-time band's tiers
 into `SCHED_DEADLINE` reservations instead of fixed priorities.
 
 ```yaml
 target: posix
-mapper: chain_aware
+priority_assignment: chain_aware
 reservations: required          # default: off
 resources:
   rt_priority_band: { min: 10, max: 40 }
@@ -309,7 +309,7 @@ The three parameters are derived, not written:
 | `period` | `1/rate_hz`, propagated along the node's chain from that chain's source |
 | `deadline` | the declared deadline, else the period |
 
-`reservations:` sits beside `mapper:` rather than in `resources:` because it is
+`reservations:` sits beside `priority_assignment:` rather than in `resources:` because it is
 **policy, not a platform fact**, and it is opt-in because reservations are
 all-or-nothing within a band: a reserved thread preempts every fixed-priority
 thread regardless of priority, so a band holding both loses the ordering the
@@ -376,7 +376,7 @@ play_launch check --sched launch/bringup.system.posix.yaml --explain \
     rt_demo bringup.launch.xml
 ```
 
-Shape of the output (this one under `mapper: rate_monotonic`; §1.7 step 4 shows
+Shape of the output (this one under `priority_assignment: rate_monotonic`; §1.7 step 4 shows
 the committed `chain_aware` run):
 
 ```
@@ -564,7 +564,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
 
 1. **Declare node paths with explicit triggers.** Every node path the
    route will run through needs a `trigger:` — `timer`, `input`, `once`,
-   or `spontaneous` (§[Path triggers](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.3.6/docs/launch-manifest.md#path-triggers-trigger)
+   or `aperiodic` (§[Path triggers](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.3.6/docs/launch-manifest.md#path-triggers-trigger)
    in the manifest format reference) — and an `output:`. A path with a
    budget of its own declares `max_latency:` (units on the value: `5ms`,
    never a `_ms` suffix in the name). This is `rt_workspace`'s contract,
@@ -959,7 +959,7 @@ for t in /proc/$pid/task/*; do chrt -p ${t##*/}; done   # per-thread policy
 taskset -cp $pid                                        # affinity
 ```
 
-## 4. Hand-placed schedules: `mapper: manual`
+## 4. Hand-placed schedules: `priority_assignment: manual`
 
 `manual` derives nothing: every node starts in the default (non-RT) tier,
 and the platform file's `overrides:` place the nodes you name. It is the
@@ -967,7 +967,7 @@ form for a schedule you want to state by hand:
 
 ```yaml
 target: posix
-mapper: manual
+priority_assignment: manual
 overrides:
   control_node: { priority: 20, sched_class: SCHED_FIFO, core: 0 }
   sensor_node:  { priority: 10, sched_class: SCHED_FIFO }
@@ -995,12 +995,12 @@ never `budget_us: 8000`.
 | `It WAS granted (...), but the binary has been replaced since` | rebuild/upgrade replaced the binary; a capability is bound to file CONTENTS | `play_launch setcap` again — expected after every rebuild |
 | `the binary is UNCHANGED, so something removed it` | `setcap -r`, a filesystem without xattr support, or a copy over the same path | `play_launch setcap`; if it keeps happening, check the mount options |
 | `error while loading shared libraries: lib...rosidl...` | someone ran `setcap` on the **main** binary (`AT_SECURE` drops `LD_LIBRARY_PATH`) | `play_launch setcap` (it strips it) |
-| `mapper 'X' requires resources.rt_priority_band` | platform file's `resources` doesn't declare a band, or `target` isn't `posix` | add `rt_priority_band` to `resources`; non-`posix` targets aren't derivable by play_launch's built-in mappers today (nano-ros's job) |
+| `priority_assignment: X` requires `resources.rt_priority_band` | platform file's `resources` doesn't declare a band, or `target` isn't `posix` | add `rt_priority_band` to `resources`; non-`posix` targets aren't derivable by play_launch's built-in mappers today (nano-ros's job) |
 | ``platform file ... targets `zephyr`, but --target requested `posix` `` | wrong file resolved for the target, or wrong `--target` passed | check `--target`, or that the right per-target file is on disk |
 | warning: `priority N outside band [min, max], clamping to ...` | derived or overridden priority exceeds the platform file's band | widen `rt_priority_band`, or fix the override |
 | warning citing both a contract and a platform file | a pinned priority order contradicts the contract's declared rate/deadline order | re-check the override, or accept the warning if intentional |
 | `--explain` prints a no-op note | no platform file resolved (no `--sched`, nothing on the overlay/provider channels) | pass `--sched <path>`, or ship one via the overlay/provider channels |
-| `the legacy system.toml scheduling schema ... was removed` | a `.toml` platform file | rewrite it as `mapper: manual` with `overrides:` (§4) |
+| `the legacy system.toml scheduling schema ... was removed` | a `.toml` platform file | rewrite it as `priority_assignment: manual` with `overrides:` (§4) |
 | composable skipped: `pid no longer matches its start_time` | the composable died right after loading; its PID may have been recycled | benign — nothing to schedule |
 | `chrt -p <pid>` shows `SCHED_OTHER` but the node "should" be RT | `chrt -p` reads only the main thread — or the node is in the default tier (no fact, no override) | check all TIDs; check contract facts / overrides coverage |
 | EPERM with caps correct, inside a container/slice | cgroup `rt_runtime = 0` gate (`CONFIG_RT_GROUP_SCHED`) | provision RT bandwidth for the cgroup |

@@ -18,7 +18,7 @@ hazards:
   hpc_loss:
     integrity: ASIL_B
     description: the planner's availability stops arriving
-    guards: [/availability]
+    monitors: [/availability]
     on: omission
     ftti: 5s
     enters: engaged

@@ -11,7 +11,7 @@ hazards:
   hpc_lost:
     integrity: ASIL_B
     description: the heartbeat stops
-    guards: [/safety/heartbeat]
+    monitors: [/safety/heartbeat]
     on: omission
     ftti: 1000ms
     reaction: safety.stop

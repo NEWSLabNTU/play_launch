@@ -805,7 +805,7 @@ mod tests {
 
         // Exactly what an integrator does: paste it under a platform file's
         // head.
-        let platform = format!("target: posix\nmapper: chain_aware\n{fragment}\n");
+        let platform = format!("target: posix\npriority_assignment: chain_aware\n{fragment}\n");
         let file = ros_launch_manifest_sched::parse_platform_file_yaml(&platform)
             .unwrap_or_else(|e| panic!("measure's own output must load:\n{e}\n---\n{platform}"));
 
