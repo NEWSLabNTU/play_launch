@@ -1316,7 +1316,7 @@ fn rate_propagation_and_service_response_have_rules_that_fire() {
 #[test]
 fn fault_reaction_budget_fits_and_names_its_terms() {
     let out = check_fixture("contract_fault");
-    assert!(out.contains("fault-reaction-budget"), "{out}");
+    assert!(out.contains("fault-reaction-time"), "{out}");
     assert!(
         out.contains("detection 100.00ms") && out.contains("settle 200.00ms"),
         "the verdict must name the derived terms:\n{out}"
@@ -1330,14 +1330,14 @@ fn fault_reaction_budget_fits_and_names_its_terms() {
     // Phase 90 G5: the brake's label is gone (a hazard reaches it, so it is
     // derived); `contract_criticality_written` keeps one to refuse.
     assert!(!out.contains("criticality"), "{out}");
-    assert!(!out.contains("error[fault-reaction-budget]"), "{out}");
+    assert!(!out.contains("error[fault-reaction-time]"), "{out}");
 }
 
 #[test]
 fn fault_reaction_rules_fire_on_a_broken_chain() {
     let out = check_fixture("contract_fault_late");
     for needle in [
-        "error[fault-reaction-budget]",
+        "error[fault-reaction-time]",
         "607.00ms exceeds",
         "error[reaction-unreachable]",
         "not an event chain",
@@ -1539,14 +1539,14 @@ fn contract_qos_becomes_qos_override_parameters_on_the_model() {
 #[test]
 fn modes_resolve_and_a_correct_ladder_is_quiet() {
     let out = check_fixture("contract_modes");
-    assert!(out.contains("fault-reaction-budget"), "{out}");
+    assert!(out.contains("fault-reaction-time"), "{out}");
     assert!(
         out.contains("fits the fault-tolerant time interval"),
         "{out}"
     );
     for rule in [
         "fallback-without-mrc",
-        "degradation-level-budget",
+        "degradation-level-time",
         "mode-requires-unguarded",
         "override-target-missing",
     ] {
@@ -1759,7 +1759,7 @@ fn mode_rules_fire_on_a_broken_ladder() {
     for needle in [
         "error[fallback-without-mrc]",
         "there is no minimal risk condition",
-        "error[degradation-level-budget]",
+        "error[degradation-level-time]",
         "fallback level 'degraded'",
         "error[mode-requires-unguarded]",
         "error[override-target-missing]",
@@ -1851,7 +1851,7 @@ fn takeover_ladder_fits_and_explains_itself() {
         "dwell-unbound",
         "mode-exit-target",
         "mode-exit-unwired",
-        "degradation-level-budget",
+        "degradation-level-time",
         "settle-entry-missing",
         "settle-param-unresolved",
         "settle-conflict",
@@ -2199,7 +2199,7 @@ fn takeover_budget_rules_fire_on_their_fixture() {
     for needle in [
         "error[dwell-param]",
         "bound to `handler.takeover_timeout`, which resolves to 12.0 s = 12000.00ms, not the 10000.00ms the dwell declares",
-        "error[degradation-level-budget]",
+        "error[degradation-level-time]",
         "fallback level 'comfortable' cannot make the fault-tolerant time interval",
         "detection 120.00ms + 'takeover' reaction 110.00ms + dwell 10000.00ms + reaction 410.00ms + settle 9996.67ms = 20636.67ms against 20000.00ms",
         "warning[settle-conflict]",
@@ -2518,7 +2518,7 @@ fn enters_naming_no_mode_is_an_error() {
         "{out}"
     );
     // Not read as a path either: no reaction is walked or charged.
-    assert!(!out.contains("fault-reaction-budget"), "{out}");
+    assert!(!out.contains("fault-reaction-time"), "{out}");
 }
 
 /// Phase 90 G4: a hazard enters a mode or reacts by a path, not both.
@@ -3054,7 +3054,7 @@ fn e4_medical_derives_a_detection_that_does_not_fit() {
     for needle in [
         "info[detection-derived]: hazard 'drive_blind': detection = 50.48 min derived by \
          medical.occlusion 0.1.0",
-        "error[fault-reaction-budget]",
+        "error[fault-reaction-time]",
         "stated detection 3029000.00ms + /safety/obstacle_detector/scan detects within 100.00ms",
         "info[extension-report]: hazard 'drive_blind': medical.occlusion/bolus_on_release = \
          0.84 mL (report, no verdict)",
@@ -3913,7 +3913,7 @@ fn a_supervised_settle_without_its_observation_is_refused() {
 
 /// rlm v0.1.62: a supervised settle whose overrun case exceeds the interval
 /// while the rung itself fits is refused (`supervised-fit`); when the rung
-/// itself does not fit, `degradation-level-budget` is the error and the overrun
+/// itself does not fit, `degradation-level-time` is the error and the overrun
 /// row does not repeat it.
 #[test]
 fn a_supervised_settle_over_the_interval_is_refused_once() {
@@ -3937,7 +3937,7 @@ fn a_supervised_settle_over_the_interval_is_refused_once() {
             && out.contains("`nodes.comfort_op.paths.operate.safe_state.settle` overruns"),
         "{out}"
     );
-    assert!(!out.contains("error[degradation-level-budget]"), "{out}");
+    assert!(!out.contains("error[degradation-level-time]"), "{out}");
     let Some((code, out)) = check_supervised_edited(|c| {
         supervised_settle(c, |c| {
             c.replacen(
@@ -3950,7 +3950,7 @@ fn a_supervised_settle_over_the_interval_is_refused_once() {
         return;
     };
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("error[degradation-level-budget]"), "{out}");
+    assert!(out.contains("error[degradation-level-time]"), "{out}");
     assert!(
         !out.contains("error[supervised-fit]: bringup.contract.yaml:")
             || !out.contains("safe_state.settle` overruns"),
@@ -4762,7 +4762,7 @@ fn a_call_on_a_reaction_route_is_bounded_or_reported() {
         s5.contains("2000.00 ms timeout (cli.operate) + 10.00 ms emergency_stop route"),
         "{s5}"
     );
-    assert!(s5.contains("error[degradation-level-budget]"), "{s5}");
+    assert!(s5.contains("error[degradation-level-time]"), "{s5}");
     assert!(!s5.contains("[call-"), "{s5}");
     assert!(check_fixture("contract_call_late_effect").contains("warning[call-late-effect]"));
 }

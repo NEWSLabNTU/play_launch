@@ -11,7 +11,7 @@ alarm_threshold = 40 kPa
 signal_delay = 5 s   (5s)
 hazard.detection = (alarm_threshold - baseline_pressure) * compliance / min_rate + signal_delay = 50.48 min
 worst case: proved decreasing in min_rate; increasing in compliance, alarm_threshold
-error[fault-reaction-budget]: bringup.contract.yaml:16: hazard 'drive_blind': detection 3029100.00ms (stated detection 3029000.00ms + /safety/obstacle_detector/scan detects within 100.00ms) + reaction 357.00ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 350.00ms) = 3029457.00ms exceeds the fault-tolerant time interval 1800000.00ms. Tighten the slowest detector, shorten the reaction route, or the hazard is not covered in time
+error[fault-reaction-time]: bringup.contract.yaml:16: hazard 'drive_blind': detection 3029100.00ms (stated detection 3029000.00ms + /safety/obstacle_detector/scan detects within 100.00ms) + reaction 357.00ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 350.00ms) = 3029457.00ms exceeds the fault-tolerant time interval 1800000.00ms. Tighten the slowest detector, shorten the reaction route, or the hazard is not covered in time
 info[extension-report]: hazard 'drive_blind': medical.occlusion/bolus_on_release = 0.84 mL (report, no verdict)
 compliance = 2.2502e-11 m^4*s^2/kg   (0.003 mL/mmHg)
 baseline_pressure = 2.6664 kPa   (20 mmHg)

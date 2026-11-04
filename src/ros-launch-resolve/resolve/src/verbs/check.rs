@@ -349,7 +349,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // Render per-scope diagnostics
     render_scope_diagnostics(&index, &inputs.format, rule_filter.as_ref())?;
 
-    // Render cross-scope diagnostics (consistency, dangling-entity, budget-overflow)
+    // Render cross-scope diagnostics (consistency, dangling-entity, latency-bound-overflow)
     render_cross_scope_diagnostics(&index, &inputs.format, rule_filter.as_ref())?;
 
     // Phase 85 D8: the findings the contracts acknowledge, apart.
@@ -1332,7 +1332,7 @@ fn render_load_diagnostics(
     Ok(())
 }
 
-/// Render cross-scope diagnostics (consistency, dangling-entity, budget-overflow).
+/// Render cross-scope diagnostics (consistency, dangling-entity, latency-bound-overflow).
 fn render_cross_scope_diagnostics(
     index: &manifest_loader::ManifestIndex,
     format: &str,

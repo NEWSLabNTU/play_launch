@@ -1,7 +1,7 @@
 # DELIBERATELY inconsistent (phase 71). Three faults, each its own rule:
 #
 #   * the lease is 400ms, so 400 + 7 + 200 = 607ms > ftti 500ms
-#                                                     -> fault-reaction-budget
+#                                                     -> fault-reaction-time
 #   * `stale_obstacles` names a reaction that is not a scope path
 #                                                     -> reaction-unreachable
 #   * `unwatched_brake` guards a topic nobody subscribes to, so nothing

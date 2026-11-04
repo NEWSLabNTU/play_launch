@@ -724,6 +724,9 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   `value_rules.rs`, not a flag per key) or `PlatformFile::spelled_mapper`
   (a `sched_loader` warning). The MODEL's field names did not move, since
   nano-ros reads them; renaming them is a nano-ros PR and model schema 4.
+  rlm v0.3.8 (M3): rule ids `fault-reaction-time`, `degradation-level-time`
+  and `latency-bound-overflow` (were `...-budget` and `budget-overflow`);
+  an old id in `acknowledged:` still matches this release, with a warning.
 
 - **2026-11-03**: **The contract vocabulary takes the standards' words**
   (phase 98, rlm v0.3.3, design issue 57, rlm

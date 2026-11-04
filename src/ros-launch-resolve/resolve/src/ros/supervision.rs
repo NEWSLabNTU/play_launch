@@ -892,7 +892,7 @@ pub(crate) fn overrun_rows(
             continue;
         };
         // A supervised settle's overrun case contains the rung's own total:
-        // when that already exceeds the interval, `degradation-level-budget` says
+        // when that already exceeds the interval, `degradation-level-time` says
         // so, and this row repeats it.
         let rung_over = s.settle && settle_rung_total.is_some_and(|t| t > ftti);
         let (severity, verdict) = if total > ftti && rung_over {

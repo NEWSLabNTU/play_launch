@@ -161,11 +161,11 @@ fn expect_passes_only_on_exactly_the_expected_rules() {
     assert!(text(&out).contains("expect: ok"), "{}", text(&out));
 
     // The expected rule did not fire.
-    let out = check("contract_error", &["--expect", "degradation-level-budget"]);
+    let out = check("contract_error", &["--expect", "degradation-level-time"]);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
     let s = text(&out);
     assert!(
-        s.contains("expected error[degradation-level-budget] did not fire"),
+        s.contains("expected error[degradation-level-time] did not fire"),
         "{s}"
     );
     assert!(s.contains("unexpected error[rate-hierarchy]"), "{s}");
@@ -173,7 +173,7 @@ fn expect_passes_only_on_exactly_the_expected_rules() {
     // It fired, alongside rules that were not expected.
     let out = check_takeover(
         "contract_takeover_budget",
-        &["--expect", "degradation-level-budget"],
+        &["--expect", "degradation-level-time"],
     );
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
     // The unexpected rules are listed in id order on one line.
@@ -181,7 +181,7 @@ fn expect_passes_only_on_exactly_the_expected_rules() {
         text(&out)
             .lines()
             .any(|l| l.contains("expect: FAILED -- unexpected")
-                && l.contains("error[fault-reaction-budget]")),
+                && l.contains("error[fault-reaction-time]")),
         "{}",
         text(&out)
     );
@@ -191,9 +191,9 @@ fn expect_passes_only_on_exactly_the_expected_rules() {
         "contract_takeover_budget",
         &[
             "--expect",
-            "degradation-level-budget",
+            "degradation-level-time",
             "--expect",
-            "fault-reaction-budget",
+            "fault-reaction-time",
             "--expect",
             "settle-param-unresolved",
             "--expect",

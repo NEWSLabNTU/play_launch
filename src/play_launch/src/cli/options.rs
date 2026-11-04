@@ -164,7 +164,7 @@ pub enum Command {
         play_launch check autoware_launch planning_simulator.launch.xml\n  \
         play_launch check autoware_launch planning_simulator.launch.xml --format json --explain\n  \
         play_launch check --contracts ~/contracts /path/to/launch.py arg:=value\n  \
-        play_launch check bringup.launch.xml --expect degradation-level-budget\n\n\
+        play_launch check bringup.launch.xml --expect degradation-level-time\n\n\
         Exit status:\n  \
         0  no Error-severity diagnostic (with --expect: exactly the expected rules erred)\n  \
         1  an Error-severity diagnostic, or an --expect mismatch, or the launch file failed\n  \

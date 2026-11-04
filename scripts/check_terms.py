@@ -50,7 +50,7 @@ RETIRED: list[tuple[str, str]] = [
     (r"\bscope[ -]paths?\b", "event chain"),
     (r"\bseverity-unknown\b", "integrity-unknown"),
     (r"\bseverity-scale-conflict\b", "integrity-scale-conflict"),
-    (r"\bladder-rung-budget\b", "degradation-level-budget"),
+    (r"\bladder-rung-budget\b", "degradation-level-time"),
     (r"\bladder-unterminated\b", "fallback-without-mrc"),
     (r"\bladder-window-floor\b", "dwell-at-mrc"),
     (r"\bcall-unbounded-floor\b", "call-unbounded-mrc"),

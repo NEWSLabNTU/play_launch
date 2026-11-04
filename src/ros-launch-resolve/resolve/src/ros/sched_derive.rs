@@ -1196,8 +1196,8 @@ mod tests {
         assert!(
             s5.merge_diagnostics
                 .iter()
-                .any(|d| d.rule_id == "degradation-level-budget"),
-            "S5 must be refused by degradation-level-budget"
+                .any(|d| d.rule_id == "degradation-level-time"),
+            "S5 must be refused by degradation-level-time"
         );
         let s1 = budgets("contract_call_supervised");
         let row = s1

@@ -3,7 +3,7 @@
 # longer one); `#` lines are comments. Regenerate with tmp/e8/golden.py
 # only after reading the change.
 # exit 0
-info[fault-reaction-budget]: bringup.contract.yaml:18: hazard 'drive_blind': detection 100.00ms (/safety/obstacle_detector/scan detects within 100.00ms) + reaction 4429.67ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 4422.67ms) = 4529.67ms fits the fault-tolerant time interval 10000.00ms with 5470.33ms of slack
+info[fault-reaction-time]: bringup.contract.yaml:18: hazard 'drive_blind': detection 100.00ms (/safety/obstacle_detector/scan detects within 100.00ms) + reaction 4429.67ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 4422.67ms) = 4529.67ms fits the fault-tolerant time interval 10000.00ms with 5470.33ms of slack
 info[settle-derived]: bringup.contract.yaml:77: hazard 'drive_blind', degradation level 'safety.stop': settle = 4422.67ms derived by vehicle.braking 1.1.0 (sha256 5441e622d5c4)
 entry_speed = 8.3333 m/s   (30 km/h)
 decel = 2.5 m/s^2

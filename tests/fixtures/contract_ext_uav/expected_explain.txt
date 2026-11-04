@@ -3,7 +3,7 @@
 # longer one); `#` lines are comments. Regenerate with tmp/e8/golden.py
 # only after reading the change.
 # exit 0
-info[fault-reaction-budget]: bringup.contract.yaml:17: hazard 'drive_blind': detection 100.00ms (/safety/obstacle_detector/scan detects within 100.00ms) + reaction 50959.38ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 50952.38ms) = 51059.38ms fits the fault-tolerant time interval 120000.00ms with 68940.62ms of slack
+info[fault-reaction-time]: bringup.contract.yaml:17: hazard 'drive_blind': detection 100.00ms (/safety/obstacle_detector/scan detects within 100.00ms) + reaction 50959.38ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 50952.38ms) = 51059.38ms fits the fault-tolerant time interval 120000.00ms with 68940.62ms of slack
 info[settle-derived]: bringup.contract.yaml:77: hazard 'drive_blind', degradation level 'safety.stop': settle = 50952.38ms derived by uav.descent 0.2.0 (sha256 574db07d94e7)
 max_altitude = 120 m   (120 m)
 descent_speed = 3 m/s

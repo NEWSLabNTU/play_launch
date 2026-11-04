@@ -1,7 +1,7 @@
 # Phase 95, S5: a blocking call with `timeout: 2s` on the comfortable rung
 # of a hazard with `ftti: 1.5s`. No new rule fires: the failure branch
 # (2 s + the emergency stop's route) is the rung's route, so the existing
-# `degradation-level-budget` refuses it and names the term. The fallback is a
+# `degradation-level-time` refuses it and names the term. The fallback is a
 # lower rung of the call's own ladder, so `call-late-effect` stays silent.
 #
 # Success alone fits: 500 (lease) + 20 (route) + 500 (settle) = 1020 ms.

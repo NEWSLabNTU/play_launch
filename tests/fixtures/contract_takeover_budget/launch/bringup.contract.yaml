@@ -2,7 +2,7 @@
 # ladder of `contract_takeover`.
 #
 #   dwell-param             the window says 10 s, the launch file runs 12.0
-#   degradation-level-budget       odd_exit at 20 s: comfortable is 120 + (110 +
+#   degradation-level-time       odd_exit at 20 s: comfortable is 120 + (110 +
 #                            10000) + 410 + 9996.67 = 20636.67 ms, the window
 #                            charged cumulatively
 #   settle-conflict          comfort_op also states a measured 5000ms, the
@@ -11,7 +11,7 @@
 #   settle-param-unresolved  estop_op's profile names `target_decel`, which
 #                            it does not declare
 #   reaction-unbudgeted      the floor, whose settle could not be derived
-#   fault-reaction-budget    hpc_observed brakes from 4.23 m/s, phase 7's
+#   fault-reaction-time    hpc_observed brakes from 4.23 m/s, phase 7's
 #                            measured speed: with a derived settle, the same
 #                            floor misses 3 s -- 500 + 143.33 + 2525.33 =
 #                            3168.67 ms. (hpc_loss at 3.0 m/s is the island

@@ -3,7 +3,7 @@
 **Status (2026-11-04): in progress -- N0-N4 done (R = rlm v0.3.3 /
 play_launch 0.24.0, R+1 = rlm v0.3.6); N5's `check-terms` gate is in both
 repos, the old-id message is dropped at the next release; N6: M6 done,
-M1/M2/M4/M5 at R (rlm v0.3.7), M3 waits on names; N7 open.** Design
+M1-M5 at R (rlm v0.3.7, v0.3.8); N7 open.** Design
 of record: rlm
 `docs/design/standard-names.md` (design issue 57). Spans rlm, play_launch,
 the safety island's contracts and nano-ros (pull requests from
@@ -131,7 +131,14 @@ Here R+1 waits until R has been published and nano-ros has followed.
   uses the new ones, and `contract_spelling_deprecated_n6` proves the old
   ones warn and migrate to the same verdict. The model's field names and
   the Rust types did not move: nano-ros reads them, so they go with its
-  pull request (the model's schema 4). M3 waits on its rule ids.
+  pull request (the model's schema 4).
+- **N6, M3** (R, rlm v0.3.8, 2026-11-04): the time-limit sense of
+  "budget" -- `fault-reaction-time` (was `fault-reaction-budget`),
+  `degradation-level-time` (`degradation-level-budget`),
+  `latency-bound-overflow` (`budget-overflow`). An `acknowledged:` entry
+  naming an old id still matches this release, warned as a deprecated
+  spelling (`rule_names::accepted`); `migrate` rewrites it. `budget`
+  keeps its reservation sense.
 
 ## Order
 

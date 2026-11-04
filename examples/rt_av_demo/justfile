@@ -351,7 +351,7 @@ fault:
     "{{ play_launch }}" resolve rt_av_demo bringup.launch.xml \
         --sched "$share/bringup.system.posix.yaml" -o model.yaml > resolve.log 2>&1
     "{{ play_launch }}" check rt_av_demo bringup.launch.xml 2>&1 \
-        | sed -E 's/\x1b\[[0-9;]*m//g' | grep -E '\[fault-reaction-budget\]' | head -1 > derived.txt || true
+        | sed -E 's/\x1b\[[0-9;]*m//g' | grep -E '\[fault-reaction-time\]' | head -1 > derived.txt || true
     echo "derived: $(cut -c1-160 derived.txt)…"
 
     echo "=== run: lidar dies at 8s, RT off, unconfined, 14s ==="

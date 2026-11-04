@@ -49,7 +49,7 @@ exit status with 1, and a refusal also exited 1, so a checker too old for the
 grammar passed every negative test. State the expected verdict instead:
 
 ```bash
-play_launch check stage2-rungBudget.launch.xml --expect degradation-level-budget
+play_launch check stage2-rungBudget.launch.xml --expect degradation-level-time
 ```
 
 `--expect` is repeatable. The exit is 0 only when every Error-severity
@@ -58,8 +58,8 @@ least once, nothing was refused and no launch action was dropped. Otherwise
 one line says what differed, and the exit is 1 (3 for a refusal):
 
 ```
-expect: ok -- the errors are exactly [error[degradation-level-budget] x1]
-expect: FAILED -- expected error[degradation-level-budget] did not fire; unexpected error[rate-hierarchy] x4
+expect: ok -- the errors are exactly [error[degradation-level-time] x1]
+expect: FAILED -- expected error[degradation-level-time] did not fire; unexpected error[rate-hierarchy] x4
 expect: FAILED -- 1 contract file(s) were refused (error[manifest-parse]), so the expected rule(s) [rate-hierarchy] were never checked
 ```
 
@@ -85,7 +85,7 @@ Each element:
 | field | type | meaning |
 |---|---|---|
 | `file` | string | the group: `<load>`, `<cross-scope>`, or the scope label |
-| `rule` | string | rule id, e.g. `degradation-level-budget`, `manifest-parse` |
+| `rule` | string | rule id, e.g. `degradation-level-time`, `manifest-parse` |
 | `severity` | string | `error`, `warning` or `info` |
 | `message` | string | the diagnostic text (may contain a newline: a refusal's checker line) |
 | `path` | string | the dotted contract path the finding is about |
@@ -189,7 +189,7 @@ degradation level), in milliseconds:
 | FTTI | the hazard's fault-tolerant time interval |
 | SLACK | FTTI - TOTAL |
 
-The per-hop breakdown of a ROUTE is in the matching `fault-reaction-budget`
+The per-hop breakdown of a ROUTE is in the matching `fault-reaction-time`
 info above the table.
 
 ## The `--explain` timer-period table

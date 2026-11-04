@@ -403,6 +403,47 @@ mod tests {
         }
     }
 
+    /// Phase 98 N6 (rlm v0.3.7/v0.3.8): an old id or path whose rename is
+    /// still accepted matches the finding under its new name, warned as a
+    /// deprecated spelling.
+    #[test]
+    fn an_accepted_old_rule_id_or_path_matches_and_warns() {
+        use ros_launch_manifest_types::rule_names::RENAMED_RULES;
+        let mut cases: Vec<(String, String, String, String)> = RENAMED_RULES
+            .iter()
+            .filter(|r| !r.refused)
+            .map(|r| (r.old.into(), r.new.into(), "p".into(), "p".into()))
+            .collect();
+        assert_eq!(cases.len(), 3, "the M3 ids");
+        cases.push((
+            "reaction-unguarded".into(),
+            "reaction-unguarded".into(),
+            "hazards.h.guards[0]".into(),
+            "hazards.h.monitors[0]".into(),
+        ));
+        for (old, new, at, new_at) in cases {
+            let mut index = ManifestIndex::default();
+            index.manifests.insert(
+                0,
+                scope(
+                    0,
+                    "a",
+                    vec![ack(&old, &at)],
+                    vec![diag(&new, Severity::Warning, &new_at)],
+                ),
+            );
+            index.total_warnings = 1;
+            apply(&mut index);
+            assert_eq!(index.acknowledged.len(), 1, "{old} {at}");
+            assert_eq!(
+                rules(&index.merge_diagnostics),
+                vec![("deprecated-spelling", "acknowledged[0]")],
+                "{old} {at}"
+            );
+            assert_eq!(index.total_errors, 0);
+        }
+    }
+
     #[test]
     fn an_info_can_be_acknowledged_too() {
         let mut index = ManifestIndex::default();

@@ -5,7 +5,7 @@
 # rail.ebd 1.0.1: every worst case is proved, the distance check's included
 # (rlm v0.2.2 orders the `where` bindings before the final query).
 # exit 0
-info[fault-reaction-budget]: bringup.contract.yaml:18: hazard 'drive_blind': detection 100.00ms (/safety/obstacle_detector/scan detects within 100.00ms) + reaction 76029.08ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 76022.08ms) = 76129.08ms fits the fault-tolerant time interval 90000.00ms with 13870.92ms of slack
+info[fault-reaction-time]: bringup.contract.yaml:18: hazard 'drive_blind': detection 100.00ms (/safety/obstacle_detector/scan detects within 100.00ms) + reaction 76029.08ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 76022.08ms) = 76129.08ms fits the fault-tolerant time interval 90000.00ms with 13870.92ms of slack
 info[settle-derived]: bringup.contract.yaml:75: hazard 'drive_blind', degradation level 'safety.stop': settle = 76022.08ms derived by rail.ebd 1.0.1 (sha256 6d65754efbde)
 entry_speed = 44.44 m/s   (160 km/h)
 speed_error = 0.5556 m/s   (2 km/h)

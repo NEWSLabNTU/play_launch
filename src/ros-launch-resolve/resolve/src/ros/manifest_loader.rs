@@ -315,7 +315,7 @@ impl DerivedCriticality {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LevelRole {
     /// A degradation level, checked in its own right
-    /// (`degradation-level-budget`).
+    /// (`degradation-level-time`).
     #[default]
     Level,
     /// A level with a `min_dwell`, transitional: charged to every level
@@ -324,7 +324,7 @@ pub enum LevelRole {
     /// A level this hazard's fault removes (F1): neither checked nor charged.
     Skipped,
     /// The minimal risk condition (the fallback sequence's last level),
-    /// measured by `fault-reaction-budget`.
+    /// measured by `fault-reaction-time`.
     Mrc,
     /// A supervised budget on the level above overruns (phase 93): the time
     /// before it + the budget + the detection delay + the supervision's
@@ -1050,7 +1050,7 @@ pub fn load_manifests(
 /// - Topics with 0 publishers across the entire tree (dangling sub)
 /// - Services with 0 servers across the entire tree (dangling client)
 /// - Actions with 0 servers across the entire tree (dangling client)
-/// - Cross-scope path budget-overflow (parent vs child paths matched
+/// - Cross-scope path latency-bound-overflow (parent vs child paths matched
 ///   by resolved (input, output) topics)
 /// - Critical-path latency for each scope path (Phase 35.3/35.4):
 ///   builds the global dataflow graph, traces actual paths between
@@ -1195,7 +1195,7 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
         }
     }
 
-    // Cross-scope path budget-overflow: when a child scope and an ancestor
+    // Cross-scope path latency-bound-overflow: when a child scope and an ancestor
     // scope declare paths with the same resolved (input, output) topics,
     // the child's max_latency_ms must not exceed the ancestor's.
     check_path_budget_overflow(index);
@@ -3879,8 +3879,8 @@ fn check_fault_reaction(
         };
         // Phase 75 — the reaction may name a MODE, and then the ladder is
         // the reaction. Every rung is checked in its own right
-        // (`degradation-level-budget`); the LAST rung is what
-        // `fault-reaction-budget` measures, because it is the floor the
+        // (`degradation-level-time`); the LAST rung is what
+        // `fault-reaction-time` measures, because it is the floor the
         // system is guaranteed to reach. Phase 71's single-path form is the
         // one-rung case, unchanged.
         // Phase 83 F1: the rungs THIS fault leaves standing. A rung that
@@ -4213,7 +4213,7 @@ fn check_fault_reaction(
             );
             if total > ftti {
                 diags.push(Diagnostic {
-                    rule_id: "degradation-level-budget".to_string(),
+                    rule_id: "degradation-level-time".to_string(),
                     severity: Severity::Error,
                     message: format!(
                         "{}: hazard '{}': fallback level '{rung_name}' cannot make the \
@@ -4519,7 +4519,7 @@ fn check_fault_reaction(
         let waits = windows_note(&windows);
         if total > ftti {
             diags.push(Diagnostic {
-                rule_id: "fault-reaction-budget".to_string(),
+                rule_id: "fault-reaction-time".to_string(),
                 severity: Severity::Error,
                 message: format!(
                     "{where_}: hazard '{}': detection {fdti:.2}ms ({fdti_why}){waits} + reaction \
@@ -4533,7 +4533,7 @@ fn check_fault_reaction(
             });
         } else {
             diags.push(Diagnostic {
-                rule_id: "fault-reaction-budget".to_string(),
+                rule_id: "fault-reaction-time".to_string(),
                 severity: Severity::Info,
                 message: format!(
                     "{where_}: hazard '{}': detection {fdti:.2}ms ({fdti_why}){waits} + reaction \
@@ -6405,7 +6405,7 @@ fn check_path_budget_overflow(index: &mut ManifestIndex) {
             }
             if child_lat > ancestor_lat {
                 index.merge_diagnostics.push(Diagnostic {
-                    rule_id: "budget-overflow".to_string(),
+                    rule_id: "latency-bound-overflow".to_string(),
                     severity: Severity::Error,
                     message: format!(
                         "event chain '{}' (scope {}) max_latency_ms ({}) exceeds ancestor \
@@ -8720,12 +8720,12 @@ mod tests {
         let overflow_errors: Vec<_> = index
             .merge_diagnostics
             .iter()
-            .filter(|d| d.rule_id == "budget-overflow")
+            .filter(|d| d.rule_id == "latency-bound-overflow")
             .collect();
         assert_eq!(
             overflow_errors.len(),
             1,
-            "expected 1 budget-overflow error, got: {overflow_errors:?}"
+            "expected 1 latency-bound-overflow error, got: {overflow_errors:?}"
         );
         let err = overflow_errors[0];
         assert_eq!(err.severity, Severity::Error);
@@ -8752,18 +8752,18 @@ mod tests {
         let overflow_errors: Vec<_> = index
             .merge_diagnostics
             .iter()
-            .filter(|d| d.rule_id == "budget-overflow")
+            .filter(|d| d.rule_id == "latency-bound-overflow")
             .collect();
         assert!(
             overflow_errors.is_empty(),
-            "expected no budget-overflow errors, got: {overflow_errors:?}"
+            "expected no latency-bound-overflow errors, got: {overflow_errors:?}"
         );
     }
 
     #[test]
     fn test_path_budget_unrelated_scopes_no_overflow() {
         // Two unrelated scopes (no parent-child relationship) declaring paths
-        // with the same boundaries should NOT trigger budget-overflow,
+        // with the same boundaries should NOT trigger latency-bound-overflow,
         // because the rule applies only along the scope tree.
         let dump = make_dump(vec![
             scope(0, "manifest_path_parent", "manifest.launch.xml", "", None),
@@ -8781,11 +8781,11 @@ mod tests {
         let overflow_errors: Vec<_> = index
             .merge_diagnostics
             .iter()
-            .filter(|d| d.rule_id == "budget-overflow")
+            .filter(|d| d.rule_id == "latency-bound-overflow")
             .collect();
         assert!(
             overflow_errors.is_empty(),
-            "expected no budget-overflow errors for unrelated scopes, got: {overflow_errors:?}"
+            "expected no latency-bound-overflow errors for unrelated scopes, got: {overflow_errors:?}"
         );
     }
 

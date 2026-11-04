@@ -2,7 +2,7 @@
 # medical.occlusion derives the hazard's detection: (300 - 20) mmHg *
 # 0.003 mL/mmHg / 1 mL/h + 5s = 3028.8s (50.48 min), charged before the
 # 100ms the detectors take, so the reaction cannot fit the 1800s ftti:
-# fault-reaction-budget is an error. `alarm_threshold` names a parameter
+# fault-reaction-time is an error. `alarm_threshold` names a parameter
 # of the node that publishes the guard (lidar_driver: 300, in mmHg).
 version: 1
 use: { medical.occlusion: "^0.1", iso26262: "^1" }

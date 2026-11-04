@@ -660,7 +660,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    |---|---|---|
    | `chain-sampling-feasibility` | warning | sampling cost **alone** meets or exceeds the budget — structurally infeasible; no priority assignment can fix it, only a period or architecture change can. Emitted first, so the structural verdict reads before the budget one |
    | `chain-latency` | warning | the derived route's total (event segments + sampling cost) exceeds `max_latency` |
-   | `budget-overflow` | error | a child scope's path over the same two ends declares a larger budget than its parent's |
+   | `latency-bound-overflow` | error | a child scope's path over the same two ends declares a larger budget than its parent's |
    | `jitter-feasibility` | warning | a declared `max_jitter` is below the sampling jitter the route's boundaries already carry |
    | `jitter-range` | error / info | `max_latency − min_latency` exceeds `max_jitter` when both bounds are declared (error); with no `min_latency` the requirement is reported unverifiable (info) — an absent floor is unknown, not zero |
 
