@@ -6,6 +6,32 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## 0.26.0 - 2026-11-05
+
+- **Removed (`check`; rlm v0.3.9, phase 98 N6 at R+1):** the spellings
+  0.25.0 read with a warning are refused (exit 3), each naming its new key
+  and `migrate` (which still rewrites them): a hazard's `guards:`, a
+  subscriber's `ingress:`, a publisher's `on_demand:` and `trigger:
+  spontaneous`. A platform file's `mapper:` is refused naming
+  `priority_assignment:`. An `acknowledged:` entry naming
+  `fault-reaction-budget`, `degradation-level-budget` or `budget-overflow`
+  is `error[ack-renamed]` naming the new id.
+- **Changed (`check`; phase 98 N5 at R+2):** an `acknowledged:` entry naming
+  an old S1-S5 id (`ladder-rung-budget`, `scope-budget`, ...) or a path
+  through an S1-S5 key gets no rename message any more; it matches nothing
+  and is `ack-stale` like any other. `migrate` still rewrites it.
+- **Changed (model schema 4, rlm v0.3.9):** a written model says
+  `monitors`, `arrival_curve`, `aperiodic` and trigger `kind: aperiodic`; a
+  saved schema-3 model still loads. Readers of the model YAML other than
+  rlm must accept the new names (nano-ros follows in its phase 534 W3).
+- **Changed (`check --sched`):** the plan line reads `Scheduling (posix,
+  priority_assignment=...)`.
+- **Removed (chains; phase 98 M6):** `carried_hops`, format 1's name for
+  `triggered_hops`, is no longer emitted in `chains.json` or
+  `/api/chains/paths`.
+- **Changed:** `just check-terms` also refuses the N6 old words in
+  user-facing text.
+
 ## 0.25.0 - 2026-11-04
 
 - **Changed (`check`; rlm v0.3.7, phase 98 N6 M1/M2/M4/M5):** the standard
