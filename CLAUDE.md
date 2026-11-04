@@ -709,8 +709,8 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   `arrival_curve`/`ArrivalCurve`, `aperiodic`, `kind: aperiodic`; schema 3
   read for good). `--sched` prints `Scheduling (posix,
   priority_assignment=...)` and `check-terms` refuses `mapper=`;
-  `carried_hops` is gone from `chains.json`. `field_census_baseline.txt`
-  lists `arrival_curve` until nano-ros's phase 534 W3 merges.
+  `carried_hops` is gone from `chains.json`. nano-ros reads the schema-4
+  `arrival_curve` since its phase 534 W3 (PR #3115).
 
 - **2026-11-04**: **The phase 98 old spellings are refused, and a gate
   keeps the old words out** (phase 98 N4/N5, rlm v0.3.6). `severity_levels:`,
