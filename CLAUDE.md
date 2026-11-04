@@ -697,6 +697,26 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-11-04**: **The phase 98 old spellings are refused, and a gate
+  keeps the old words out** (phase 98 N4/N5, rlm v0.3.6). `severity_levels:`,
+  a hazard's `severity:`, a mode's `window:` and a profile's
+  `severity_scale:` are parse errors naming the new key and `migrate`
+  (which still rewrites them); a contract using one exits 3, refused. An
+  old rule id or path in `acknowledged:` is `error[ack-renamed]` naming the
+  new one (rlm `rule_names::accepted`, which maps no refused rename), not a
+  silent `ack-stale`; that message goes at the next release, per the
+  schedule. `just check-terms` (`scripts/check_terms.py`, a `just check`
+  step; rlm has its own copy run by `cargo test`) fails on a retired word
+  in the guides, the README, a Rust string literal (placeholders removed,
+  `#[cfg(test)]` skipped), clap help or a web UI literal, after a
+  self-test that injects one word per kind. History is not scanned. Its
+  first run found `--explain`'s help naming RUNG/WINDOWS columns, "Contract
+  scope path" on the Chains page (inside an htm `${...}`, which its first
+  draft could not see) and v0.1.43 links in the RT guide. Also M6: a
+  carried edge is a TRIGGERED edge (`kind: "triggered"`, `triggered_hops`,
+  `TriggeredEdge`); `chains.json` and `/api/chains/paths` carry
+  `version: 2`, and `carried_hops` stays one release.
+
 - **2026-11-03**: **The contract vocabulary takes the standards' words**
   (phase 98, rlm v0.3.3, design issue 57, rlm
   `docs/design/standard-names.md`). `hazards.<h>.severity` is `integrity`

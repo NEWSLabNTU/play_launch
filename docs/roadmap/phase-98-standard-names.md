@@ -1,7 +1,8 @@
 # Phase 98 - standard names: the vocabulary in the terms its readers know
 
-**Status (2026-11-03): in progress -- N0 decided, N1 + N2 done (rlm
-v0.3.3, play_launch on main); N3 waits on a play_launch release.** Design
+**Status (2026-11-04): in progress -- N0-N4 done (R = rlm v0.3.3 /
+play_launch 0.24.0, R+1 = rlm v0.3.6); N5's `check-terms` gate is in both
+repos, the old-id message is dropped at the next release; N6, N7 open.** Design
 of record: rlm
 `docs/design/standard-names.md` (design issue 57). Spans rlm, play_launch,
 the safety island's contracts and nano-ros (pull requests from
@@ -91,6 +92,34 @@ Here R+1 waits until R has been published and nano-ros has followed.
   (and `l3_takeover`'s `call-unbounded`, which is phase 95's, not this
   phase's). nano-ros: the pull request bumping the rlm tag and the mirrored
   `rungs`/`RungRole` reads is still to open.
+
+- **N4** (rlm v0.3.6, 2026-11-04): `severity_levels:`, a hazard's
+  `severity:` and a mode's `window:` are `removed` rows whose messages name
+  the new key and `migrate`; a profile's `severity_scale:` has its own
+  refusal; the `spelled_*` fields and the resolver's `deprecated-spelling`
+  blocks are gone. `rule_names` marks every rename `refused`, and
+  `accepted()`/`accepted_path()` (what `acknowledged:` matching reads) map
+  none of them, so an old id or path is `error[ack-renamed]` naming the
+  new one instead of a silent `ack-stale`. `contract_spelling_deprecated_n1`
+  and `_s4` now prove the refusal (exit 3, the message) and that
+  `migrate --write` still reaches the reference verdict.
+- **N5** (gate): `scripts/check_terms.py` in both repos -- play_launch's
+  `just check-terms` (a `just check` step), rlm's
+  `types/tests/retired_terms.rs`. Markdown lines, Rust string literals
+  (placeholders removed, `#[cfg(test)]` skipped), clap help comments and
+  web UI literals; `--self-test` injects one word per kind (the negative
+  control) and runs first. Its first run found the `--explain` help still
+  naming RUNG/WINDOWS columns, "node/scope paths" in `--export-graph`'s
+  help, "Contract scope path" on the Chains page, and stale v0.1.43 links
+  in the RT guide. The floor-as-MRC sense is not mechanically separable
+  from a rate's or `min_latency`'s floor, so the gate does not list it.
+  Still to do at the next release: drop `ack-renamed` (an old id then reads
+  as `ack-stale`), per the schedule.
+- **N6, M6** (R, 2026-11-04): play_launch's carried edges are triggered
+  edges -- `kind: "triggered"` on a hop, `triggered_hops` on a path,
+  `TriggeredEdge`, the Chains page. `chains.json` and `/api/chains/paths`
+  carry `version: 2` (format 1 had none); `carried_hops` is emitted beside
+  `triggered_hops` for one release and then goes.
 
 ## Order
 

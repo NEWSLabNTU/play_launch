@@ -439,18 +439,19 @@ pub struct CheckArgs {
     /// no-op note is printed otherwise (not an error).
     ///
     /// When the contract declares hazards, also prints the fault-reaction
-    /// budget table, one row per (hazard, rung), in ms: HAZARD, RUNG, ROLE
-    /// (rung, window, floor, skipped), DETECT (the fault's detection time),
-    /// WINDOWS (route and window of every windowed rung passed on the way),
-    /// ROUTE (the reaction route of this rung, one number summed over its
+    /// budget table, one row per (hazard, degradation level), in ms: HAZARD,
+    /// DEGRADATION (the level), ROLE (level, dwell, mrc -- the minimal risk
+    /// condition -- or skipped), DETECT (the fault's detection time), DWELLS
+    /// (route and minimum dwell of every dwelling level passed on the way),
+    /// ROUTE (the reaction route of this level, one number summed over its
     /// hops), SETTLE (time to settle, and how it was obtained), TOTAL
-    /// (DETECT + WINDOWS + ROUTE + SETTLE), FTTI (the hazard's fault-tolerant
+    /// (DETECT + DWELLS + ROUTE + SETTLE), FTTI (the hazard's fault-tolerant
     /// time interval) and SLACK (FTTI - TOTAL).
     #[arg(long)]
     pub explain: bool,
 
     /// Export the DECLARED causal graph (nodes, topics, pub/sub edges,
-    /// node/scope paths, cycle catalogue) to `<path>` instead of — in
+    /// node paths and event chains, cycle catalogue) to `<path>` instead of — in
     /// addition to — the normal validation output. Format is picked by
     /// extension: `.json` (default, for tooling) or `.dot` (Graphviz, for
     /// human inspection via `dot -Tsvg`). Extension-less paths are written
@@ -537,7 +538,7 @@ pub struct ResolveArgs {
     pub sched: Option<std::path::PathBuf>,
 
     /// R1-P1 — the integrator `system.toml` (deploy placement, transports,
-    /// bridges, capability features, domain/locator/rmw ladder). Fills the
+    /// bridges, capability features, domain/locator/rmw fallback order). Fills the
     /// model's execution layer; consumers never parse system.toml
     /// themselves (canonical-path decision).
     #[arg(long, value_name = "system.toml")]

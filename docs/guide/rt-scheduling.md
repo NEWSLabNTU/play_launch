@@ -564,7 +564,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
 
 1. **Declare node paths with explicit triggers.** Every node path the
    route will run through needs a `trigger:` — `timer`, `input`, `once`,
-   or `spontaneous` (§[Path triggers](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/launch-manifest.md#path-triggers-trigger)
+   or `spontaneous` (§[Path triggers](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.3.6/docs/launch-manifest.md#path-triggers-trigger)
    in the manifest format reference) — and an `output:`. A path with a
    budget of its own declares `max_latency:` (units on the value: `5ms`,
    never a `_ms` suffix in the name). This is `rt_workspace`'s contract,
@@ -601,7 +601,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    `paths:` entry in the root contract (or your overlay) names the topic
    where the requirement starts, the topic where it ends, and the budget.
    Topic names are absolute, because the nodes usually sit in different
-   namespaces (§[Cross-scope end-to-end budgets](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/launch-manifest.md#cross-scope-end-to-end-budgets-scope-paths)):
+   namespaces (§[Cross-scope end-to-end budgets](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.3.6/docs/launch-manifest.md#cross-scope-event-chains)):
 
    ```yaml
    paths:
@@ -618,7 +618,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    `max_jitter` is falsifiable — `play_launch measure` prints the observed
    floor for you), and `miss:` (what a missed deadline costs and what to do
    about it). The full key list is the manifest crate's generated
-   [format reference](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/format-reference.md).
+   [format reference](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.3.6/docs/format-reference.md).
 
 3. **`check`.** The same command validates the event chain alongside
    everything else — no path-specific flag:
@@ -654,7 +654,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
 
    The rules that grade an event chain, all cross-scope, all reported under
    `── Cross-scope diagnostics ──` (severities in the [manifest format
-   reference](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/launch-manifest.md#static-validation)):
+   reference](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.3.6/docs/launch-manifest.md#static-validation)):
 
    | rule | severity | fires when |
    |---|---|---|
@@ -1009,7 +1009,7 @@ never `budget_us: 8000`.
 ## 6. Related documents
 
 - Design of record (v2, derived scheduling): [`docs/superpowers/specs/2026-07-16-rt-config-v2-design.md`](../superpowers/specs/2026-07-16-rt-config-v2-design.md)
-- Spec schema in depth (v1 + v2): [`ros-launch-manifest/docs/scheduling.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/scheduling.md)
+- Spec schema in depth (v1 + v2): [`ros-launch-manifest/docs/scheduling.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.3.6/docs/scheduling.md)
 - Design of record (apply layer, current — the full Linux policy surface:
   `sched_setattr(2)`, `SCHED_DEADLINE`, uclamp, typed placement):
   [`docs/superpowers/specs/2026-08-10-linux-sched-feature-surface-design.md`](../superpowers/specs/2026-08-10-linux-sched-feature-surface-design.md) ·
@@ -1020,5 +1020,5 @@ never `budget_us: 8000`.
   reversed it): [`docs/superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md`](../superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md)
 - Design of record (RT helper, per-TID, capabilities): [`docs/superpowers/specs/2026-07-14-rt-helper-design.md`](../superpowers/specs/2026-07-14-rt-helper-design.md)
 - Design of record (event chains and derived routes, §1.7): [contract primitives — facts and requirements, never consequences](../design/contract-primitives.md) · [chain-aware mapper](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md) (the clock-segmented ranking; its authored-`chains:` input was superseded by the derived route) · Roadmap: [phase 67](../roadmap/phase-67-contract-primitives.md), [phase 68 §W4](../roadmap/phase-68-contract-consequences.md)
-- Manifest format reference (triggers, scope `paths:`, rule severities): [`ros-launch-manifest/docs/launch-manifest.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/launch-manifest.md#cross-scope-end-to-end-budgets-scope-paths) · every accepted key, generated from the parser's own table: [`docs/format-reference.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/format-reference.md)
+- Manifest format reference (triggers, event chains, rule severities): [`ros-launch-manifest/docs/launch-manifest.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.3.6/docs/launch-manifest.md#cross-scope-event-chains) · every accepted key, generated from the parser's own table: [`docs/format-reference.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.3.6/docs/format-reference.md)
 - Roadmap and implementation history: [`docs/roadmap/phase-38-linux_rt_scheduling.md`](../roadmap/phase-38-linux_rt_scheduling.md), [`docs/roadmap/phase-41-rt_config_v2.md`](../roadmap/phase-41-rt_config_v2.md), [`docs/roadmap/phase-44-vocab_v2_chain_mapper.md`](../roadmap/phase-44-vocab_v2_chain_mapper.md)

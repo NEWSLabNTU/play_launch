@@ -664,19 +664,6 @@ pub fn prepare(index: &mut ManifestIndex) {
                     ),
                 ));
             }
-            if first.profile.spelled_severity_scale {
-                diags.push(diag(
-                    "deprecated-spelling",
-                    Severity::Warning,
-                    format!("use.{}", first.profile.name),
-                    format!(
-                        "profile {}: `severity_scale:` is the old spelling of `integrity_scale:` \
-                         (an ASIL, SIL or DAL is an integrity level). Fix: rename the key in the \
-                         profile file",
-                        first.label()
-                    ),
-                ));
-            }
             index.profiles.insert(scope, first.clone());
         }
         for e in &chosen_exts {

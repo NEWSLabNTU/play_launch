@@ -81,10 +81,12 @@ impl Entry<'_> {
         (self.contract_path.clone(), self.index)
     }
     /// A renamed rule's old id (phase 98) matches the rule under its new
-    /// one for one release; [`apply`] warns the entry as the old spelling.
+    /// one for the one release it is still accepted, and [`apply`] warns
+    /// the entry as the old spelling; once refused it matches nothing and
+    /// [`apply`] reports it as `ack-renamed`.
     fn matches(&self, d: &Diagnostic) -> bool {
-        d.rule_id == *rule_names::current(&self.decl.rule)
-            && d.path == rule_names::current_path(&self.decl.at)
+        d.rule_id == *rule_names::accepted(&self.decl.rule)
+            && d.path == rule_names::accepted_path(&self.decl.at)
     }
 }
 
@@ -177,40 +179,52 @@ pub fn apply(index: &mut ManifestIndex) {
         let key = e.key();
         let site = super::value_rules::site(index, e.scope_id, "acknowledged");
         let (rule, at) = (&e.decl.rule, &e.decl.at);
+        // Phase 98: an old rule id or a path through a renamed key. While
+        // the rename is accepted the entry matches and is warned; once it
+        // is refused the entry is an error naming the new spelling.
+        let now_rule = rule_names::current(rule);
         let now_at = rule_names::current_path(at);
-        if now_at != *at {
-            out.push(Diagnostic {
-                rule_id: "deprecated-spelling".to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "{site}: acknowledged[{}] names the path `{at}`, which spells a renamed \
-                     key; it is `{now_at}` now (phase 98), and the entry still matches it \
-                     this release. Fix: write `at: {now_at}`; \
-                     `play_launch migrate <contract> --write` rewrites it",
-                    e.index
-                ),
-                path: format!("acknowledged[{}]", e.index),
-                span: None,
-            });
+        let refused = rule_names::renamed(rule).is_some_and(|r| r.refused)
+            || rule_names::accepted_path(at) != now_at;
+        let mut olds: Vec<String> = Vec::new();
+        if now_rule != *rule {
+            olds.push(format!("`rule: {rule}` (now `{now_rule}`)"));
         }
-        if let Some(r) = rule_names::renamed(rule) {
+        if now_at != *at {
+            olds.push(format!("`at: {at}` (now `{now_at}`)"));
+        }
+        if !olds.is_empty() {
+            let (rule_id, severity, tail) = if refused {
+                (
+                    "ack-renamed",
+                    Severity::Error,
+                    "Since rlm v0.3.6 the old spelling is refused and the entry matches \
+                     nothing",
+                )
+            } else {
+                (
+                    "deprecated-spelling",
+                    Severity::Warning,
+                    "The entry still matches it this release",
+                )
+            };
             out.push(Diagnostic {
-                rule_id: "deprecated-spelling".to_string(),
-                severity: Severity::Warning,
+                rule_id: rule_id.to_string(),
+                severity,
                 message: format!(
-                    "{site}: acknowledged[{}] names `{}`, the rule's id before rlm v{}; it \
-                     is `{}` now (phase 98: the vocabulary takes the standards' words), and \
-                     the entry still matches it this release. Fix: write `rule: {}`; \
-                     `play_launch migrate <contract> --write` rewrites it",
+                    "{site}: acknowledged[{}] names {}, renamed in phase 98 (the vocabulary \
+                     takes the standards' words). {tail}. Fix: write `rule: {now_rule}` / \
+                     `at: {now_at}`; `play_launch migrate <contract> --write` rewrites it",
                     e.index,
-                    rule,
-                    r.since,
-                    rule_names::current(rule),
-                    rule_names::current(rule)
+                    olds.join(" and ")
                 ),
                 path: format!("acknowledged[{}]", e.index),
                 span: None,
             });
+            if refused {
+                // Reported here; an `ack-stale` beside it would say the same.
+                continue;
+            }
         }
         if on_error.contains(&key) {
             out.push(Diagnostic {
@@ -343,39 +357,50 @@ mod tests {
         assert_eq!(index.total_warnings, 1);
     }
 
-    /// Phase 98: an entry naming a renamed rule by its old id still matches
-    /// the rule under its new id this release, and is warned as the old
-    /// spelling (naming the new id), never reported stale.
+    /// Phase 98 N4: every refused old rule id, and a path through a
+    /// refused key, is an error naming the new spelling and matches
+    /// nothing, so the finding stays a warning (one case per id).
     #[test]
-    fn an_old_rule_id_still_matches_and_is_warned() {
-        let old = ros_launch_manifest_types::rule_names::RENAMED_RULES[0];
-        let mut index = ManifestIndex::default();
-        index.manifests.insert(
-            0,
-            scope(
+    fn a_refused_old_rule_id_or_path_is_an_error_naming_the_new_one() {
+        use ros_launch_manifest_types::rule_names::RENAMED_RULES;
+        let mut cases: Vec<(String, String, String, String)> = RENAMED_RULES
+            .iter()
+            .filter(|r| r.refused)
+            .map(|r| (r.old.into(), r.new.into(), "p".into(), "p".into()))
+            .collect();
+        assert!(!cases.is_empty());
+        cases.push((
+            "reaction-unguarded".into(),
+            "reaction-unguarded".into(),
+            "modes.m.window".into(),
+            "modes.m.min_dwell".into(),
+        ));
+        for (old, new, at, new_at) in cases {
+            let mut index = ManifestIndex::default();
+            index.manifests.insert(
                 0,
-                "a",
-                vec![ack(old.old, "hazards.h.integrity")],
-                vec![diag(old.new, Severity::Warning, "hazards.h.integrity")],
-            ),
-        );
-        index.total_warnings = 1;
-        apply(&mut index);
-        assert!(index.manifests[&0].diagnostics.is_empty());
-        assert_eq!(index.acknowledged.len(), 1);
-        assert_eq!(
-            rules(&index.merge_diagnostics),
-            vec![("deprecated-spelling", "acknowledged[0]")]
-        );
-        assert!(
-            index.merge_diagnostics[0]
-                .message
-                .contains(&format!("write `rule: {}`", old.new))
-        );
-        assert_eq!(
-            index.total_warnings, 1,
-            "the acked one out, the spelling in"
-        );
+                scope(
+                    0,
+                    "a",
+                    vec![ack(&old, &at)],
+                    vec![diag(&new, Severity::Warning, &new_at)],
+                ),
+            );
+            index.total_warnings = 1;
+            apply(&mut index);
+            assert_eq!(index.acknowledged.len(), 0, "{old} {at}");
+            assert_eq!(
+                rules(&index.merge_diagnostics),
+                vec![("ack-renamed", "acknowledged[0]")],
+                "{old} {at}"
+            );
+            let m = &index.merge_diagnostics[0].message;
+            assert!(
+                m.contains(&format!("`rule: {new}`")) && m.contains(&format!("`at: {new_at}`")),
+                "{m}"
+            );
+            assert_eq!(index.total_errors, 1);
+        }
     }
 
     #[test]

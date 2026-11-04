@@ -1270,6 +1270,8 @@ check:
 
     step "phase 78: a promise is not a period (issue #0056)" just check-sched-rates
 
+    step "phase 98: no retired word in user-facing text" just check-terms
+
     echo ""
     echo "──────────────────────────────────────────────────────────────────────"
     echo "check report"
@@ -1343,6 +1345,15 @@ check-issue-index:
 # phase being undone one call site at a time.
 check-sched-rates:
     python3 scripts/check_sched_rates.py
+
+# Phase 98 N5: fail when a word phase 98 retired (rung, ladder,
+# severity_levels, scope path, an old rule id, ...) reaches the guides, the
+# README, a message the binaries print or the web UI. History (roadmap,
+# design, issues, CLAUDE.md) is not scanned. The self-test injects one word
+# per scanned kind first, so a scan that stopped seeing a kind fails.
+check-terms:
+    python3 scripts/check_terms.py --self-test
+    python3 scripts/check_terms.py
 
 # Issue #0036: fail when the user-facing docs or help text drift back to the
 # phase-38 world. Same shape as the #0015 gate in `commands/cap_status.rs`

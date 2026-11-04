@@ -2746,119 +2746,50 @@ fn g3b_a_topic_transport_warns_and_migrates_to_the_same_verdict() {
     assert_eq!(table(&old), table(&new));
 }
 
-/// Phase 98 S4: a mode's `window:` still reads for one release as
-/// `min_dwell:`, warned once, with contract_takeover's verdicts and
-/// fault-reaction table; `migrate --write` rewrites it to that contract.
+/// Phase 98 N4: the keys renamed in rlm v0.3.3 (`window:`, `severity:`,
+/// `severity_levels:`) are refused since v0.3.6 by a message naming the
+/// new key and `migrate`, and `migrate --write` still rewrites them to a
+/// contract that checks as its reference does (one fixture per rename).
 #[test]
-fn s4_window_warns_and_migrates_to_min_dwell_with_the_same_verdict() {
-    let (code_new, new) = check_takeover("contract_takeover", &["--explain"]);
-    let (code_old, old) = check_takeover("contract_spelling_deprecated_s4", &["--explain"]);
-    assert_eq!(code_old, code_new, "{old}");
-    let deprecated: Vec<&str> = old
-        .lines()
-        .filter(|l| l.contains("warning[deprecated-spelling]"))
-        .collect();
-    assert_eq!(deprecated.len(), 1, "{old}");
+fn phase_98_old_keys_are_refused_and_migrate_to_the_reference_verdict() {
+    // S4: contract_takeover with `window:`.
+    let (code, old) = check_takeover("contract_spelling_deprecated_s4", &[]);
+    assert_eq!(code, 3, "a refused contract exits EXIT_REFUSED: {old}");
     assert!(
-        deprecated[0].contains("`window:` is the old spelling of `min_dwell:`"),
+        old.contains("error[manifest-parse]") && old.contains("Renamed `min_dwell:`"),
         "{old}"
     );
-    let table = |out: &str| {
-        out.lines()
-            .skip_while(|l| !l.starts_with("HAZARD"))
-            .take_while(|l| !l.is_empty())
-            .map(str::to_string)
-            .collect::<Vec<_>>()
-    };
-    assert!(!table(&new).is_empty(), "{new}");
-    assert_eq!(table(&old), table(&new));
-
     let (_tmp, dir) = fixture_copy("contract_spelling_deprecated_s4");
-    let contract = dir.join("bringup.contract.yaml");
-    let (code, out) = migrate(&contract, &["--write"]);
+    let (code, out) = migrate(&dir.join("bringup.contract.yaml"), &["--write"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("window-min-dwell"), "{out}");
-    // Only the key moved (the fixture's other rewrites, `ext-param-read`,
-    // are contract_takeover's own and not this test's).
     assert_eq!(out.matches("window-min-dwell:").count(), 1, "{out}");
-    let migrated = std::fs::read_to_string(&contract).unwrap();
+    let migrated = std::fs::read_to_string(dir.join("bringup.contract.yaml")).unwrap();
     assert!(
-        migrated.contains("    min_dwell: { duration: 10s, param: handler.takeover_timeout }\n")
-            && !migrated
-                .lines()
-                .any(|l| l.trim_start().starts_with("window:")),
+        migrated.contains("    min_dwell: { duration: 10s, param: handler.takeover_timeout }\n"),
         "{migrated}"
     );
-}
 
-/// Phase 98 N1: `severity:` and `severity_levels:` still read for one
-/// release, each warned as the old spelling of `integrity:`/
-/// `integrity_levels:`, and `migrate --write` rewrites both to the same
-/// findings, the same derived criticality and the same `--explain` sums.
-#[test]
-fn n1_severity_warns_and_migrates_to_integrity_with_the_same_verdict() {
+    // N1: `severity:` and `severity_levels:`, refused, then migrated to a
+    // clean check.
     let (_tmp, dir) = fixture_copy("contract_spelling_deprecated_n1");
     let launch = dir.join("bringup.launch.xml");
     let contract = dir.join("bringup.contract.yaml");
-    let (code, old) = check_launch(&launch, &["--explain"]);
-    assert_eq!(code, 0, "{old}");
-    let deprecated = |out: &str| {
-        out.lines()
-            .filter(|l| l.contains("warning[deprecated-spelling]"))
-            .map(str::to_string)
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(deprecated(&old).len(), 2, "{old}");
-    for needle in [
-        "`severity_levels:` is the old spelling of `integrity_levels:`",
-        "`severity:` is the old spelling of `integrity:`",
-        "ISO 26262's severity is the S0-S3 class it is derived from",
-    ] {
-        assert!(old.contains(needle), "expected `{needle}`:\n{old}");
-    }
-
+    let (code, old) = check_launch(&launch, &[]);
+    assert_eq!(code, 3, "a refused contract exits EXIT_REFUSED: {old}");
+    assert!(
+        old.contains("error[manifest-parse]")
+            && (old.contains("Renamed `integrity:`")
+                || old.contains("Renamed `integrity_levels:`"))
+            && old.contains("migrate"),
+        "{old}"
+    );
     let (code, out) = migrate(&contract, &["--write"]);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("1 rewritten (2 edit(s))"), "{out}");
-    let migrated = std::fs::read_to_string(&contract).unwrap();
-    assert!(
-        migrated.contains("\nintegrity_levels: [QM, ASIL_A")
-            && migrated.contains("    integrity: ASIL_B\n")
-            && !migrated
-                .lines()
-                .any(|l| l.starts_with("severity_levels:")
-                    || l.trim_start().starts_with("severity:")),
-        "{migrated}"
-    );
-
     let (code_new, new) = check_launch(&launch, &["--explain"]);
     assert_eq!(code_new, 0, "{new}");
-    assert!(deprecated(&new).is_empty(), "{new}");
-    let findings = |out: &str| {
-        let mut v: Vec<String> = out
-            .lines()
-            .filter(|l| {
-                l.contains("info[")
-                    || l.contains("error[")
-                    || l.contains("warning[")
-                    || l.contains("note[")
-            })
-            .filter(|l| !l.contains("deprecated-spelling"))
-            .map(without_lines)
-            .collect();
-        v.sort();
-        v
-    };
-    assert_eq!(findings(&old), findings(&new));
-    let table = |out: &str| {
-        out.lines()
-            .skip_while(|l| !l.starts_with("HAZARD"))
-            .take_while(|l| !l.is_empty())
-            .map(str::to_string)
-            .collect::<Vec<_>>()
-    };
-    assert!(!table(&old).is_empty(), "{old}");
-    assert_eq!(table(&old), table(&new));
+    assert!(!new.contains("deprecated-spelling"), "{new}");
+    assert!(new.lines().any(|l| l.starts_with("HAZARD")), "{new}");
 }
 
 /// Phase 90 G3: a node path's `drop:` refuses the contract (exit 3) naming

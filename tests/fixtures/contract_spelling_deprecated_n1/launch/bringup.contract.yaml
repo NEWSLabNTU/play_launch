@@ -1,8 +1,8 @@
-# Phase 98 N1: the integrity level under its pre-0.3.3 keys. `severity:`
-# and `severity_levels:` still read (one release), each with a
-# `deprecated-spelling` warning naming `integrity:`/`integrity_levels:`, and
-# `migrate --write` rewrites both to the same verdict. Otherwise
-# contract_profile_sil on ISO 26262's scale: ASIL_B derives `medium`.
+# Phase 98: the integrity level under its pre-0.3.3 keys `severity:` and
+# `severity_levels:`. Read with a warning in rlm v0.3.3-v0.3.5, refused
+# since v0.3.6 naming `integrity:`/`integrity_levels:`; `migrate --write`
+# rewrites both. Otherwise contract_profile_sil on ISO 26262's scale:
+# ASIL_B derives `medium`.
 version: 1
 severity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 
