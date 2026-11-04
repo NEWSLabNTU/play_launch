@@ -351,6 +351,13 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     (#0042), P2 `links:`, P3 `measure` proposals, P4 `check --against`
     transport; P5 (a runtime link monitor) not adopted.
     [phase-97-links.md](./phase-97-links.md).
+  - **Phase 99** - planned (2026-11-05): tier rename (phase 98 N7,
+    decided: rename, own phase). `tier` (rlm `TierDef`/`ResolvedTier`,
+    the model's `execution.tiers`, nano-ros's `system.toml` `[tiers.*]`)
+    takes the standard word for the unit; options task (recommended),
+    scheduling context, executor; T0 is the user's pick. Same R / R+1 / R+2
+    schedule, model schema 5 at R+1; nano-ros follows in its own phase.
+    [phase-99-tier-rename.md](./phase-99-tier-rename.md).
   - **Phase 98** - in progress (2026-11-03; N0-N2 done, rlm v0.3.3): standard names (rlm
     `docs/design/standard-names.md`, design issue 57). The vocabulary takes
     the standards' words: `severity` holding an ASIL becomes `integrity`;

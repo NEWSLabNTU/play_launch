@@ -4,7 +4,8 @@
 play_launch 0.24.0, R+1 = rlm v0.3.6, R+2 = rlm v0.3.9 / play_launch
 0.26.0); N6: M6 done (`carried_hops` gone in 0.26.0), M1-M5 at R+1 (rlm
 v0.3.9, with the model's schema 4), released in play_launch 0.26.0; their
-R+2 is the next release; N7 open.** Design
+R+2 is the next release; N7 decided 2026-11-05: rename, moved to phase
+99.** Design
 of record: rlm
 `docs/design/standard-names.md` (design issue 57). Spans rlm, play_launch,
 the safety island's contracts and nano-ros (pull requests from
@@ -42,7 +43,7 @@ are in the design doc. This phase is the work and its order.
 | N4 | **Release R+1 (refuse)**, only after R is on PyPI and N3 is merged: each alias row becomes a `removed` row with its own message naming the new key; an old rule id in `acknowledged:` is an error naming the new id; alias handling deleted from the parser | one negative test per old key and per old rule id (a removal that forgot one fails); the model rewrite still loads an R-1 model |
 | N5 | **Release R+2 (purge)**: `check-terms` gate (fails on a retired word in user-facing text, allowlisted by file) in `just check` and rlm's gate; old-id message dropped | the gate lists every S1–S5 old word; it was checked by injecting one (a negative control) |
 | N6 | M1–M6 (mapper, guards, budget-as-limit, ingress, on_demand, carried edges), each through its own R / R+1 / R+2 when its area is next touched; M6 is play_launch only (`chains.json` with a version field, `/api/chains`, the Chains page) | per name, as N1–N5 |
-| N7 | Decide M7 (tier): rename, or only gloss it in the docs' prose ("a tier, i.e. a scheduling context") | a recorded decision; ~14.5k nano-ros mentions weighed against the gain |
+| N7 | Decide M7 (tier): rename, or only gloss it in the docs' prose ("a tier, i.e. a scheduling context") | **decided (user, 2026-11-05): rename, in its own phase on both sides -- play_launch [phase 99](./phase-99-tier-rename.md), nano-ros "follow rlm's tier rename"** |
 
 ## Retiring the old names
 
@@ -171,6 +172,21 @@ Here R+1 waits until R has been published and nano-ros has followed.
   `carried_hops` is gone from `chains.json` and `/api/chains/paths`.
 - **Release** (play_launch 0.26.0, 2026-11-05): the release carrying the
   above (rlm v0.3.9). nano-ros follows in its phase 534 W3.
+- **N7** (2026-11-05): decided -- `tier` is renamed, in its own phase:
+  [phase 99](./phase-99-tier-rename.md) (rlm, play_launch, the island) and
+  a nano-ros phase following it. The word itself is phase 99's T0.
+
+## Follow-ups
+
+- **`--export-graph` format** (found in stage B, 2026-11-05):
+  play_launch's own graph export (`causal_graph.rs`, `version: 2`) still
+  writes the M5 old words -- `TriggerOut::Spontaneous`, serialized
+  `"spontaneous"`, and a publisher edge's `on_demand` field -- and beside
+  them the S2/S4/S5/M2 ones: `scope_paths` (`ScopePathOut`), a hazard's
+  `guards` (`GuardOut`) and `window_ms`, plus "guard groups", "rung" and
+  "ladder" in its doc comments. Renaming them changes the JSON shape, so it
+  needs its own format version (3), with the same one-release overlap M6
+  gave `chains.json` if any reader outside this repository consumes it.
 
 ## Order
 
