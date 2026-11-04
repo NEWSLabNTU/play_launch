@@ -393,7 +393,8 @@ island's `src/safety_island_bringup/launch/safety_island.contract.yaml`
   arithmetic.
 - D2 and D4 pair with the nano-ros phase for the island's findings: the
   budget / deadline split and a route-level runtime check need both
-  toolchains to agree.
+  toolchains to agree. Both agreed 2026-11-05 (nano-ros phase 474 D4 and
+  D3, archived by nano-ros PR #3114).
 - D1-D3 land in rlm first and are pinned here, as phases 83 and 84 were.
 
 ## Where the full list lives
@@ -568,6 +569,16 @@ rlm commits on its `main`: D3 `356383c`, D1 `957075d`, D5 `7936317`, D7
   "budget" kind. Waits on nano-ros 474 D4 agreeing that an edge cost
   derives no deadline or monitor, and on whether `srv.<ep>.max_response`
   (runtime only today) should bound the same hop.
+  **Closed (2026-11-05), nano-ros 474 D4 agrees** (nano-ros PR #3114,
+  which archives phase 474): a cost lives on an edge (`max_transport`,
+  `services.<s>.max_transport`, `cli.<ep>.max_transport`, a client's
+  `timeout:`/`on_timeout:`) and derives no deadline or monitor in the
+  image; a node path's `max_latency` stays the image's deadline and
+  latency monitor. Nothing in nano-ros reads `max_transport`,
+  `timeout_ms`, `on_timeout`, `on_rejected` or `stale_after` (phase 96's
+  survey), and a future reader must stay out of the deadline derivation.
+  Left open, with no nano-ros position: whether `srv.<ep>.max_response`
+  should bound the same hop.
 - **D4 (with nano-ros 474 D3): route versus callback.** They are two
   quantities and the contract should say so rather than pretend one
   checks the other: a node path's `max_latency` is one dispatch (what the
@@ -579,6 +590,13 @@ rlm commits on its `main`: D3 `356383c`, D1 `957075d`, D5 `7936317`, D7
   `on_violation` fire and at the first publish on the rung's output,
   reported as `route-runtime`. Waits on nano-ros 474 D3 (whether the
   image can stamp the fire), and on I1/D1 settling what ROUTE includes.
+  **Closed (2026-11-05), nano-ros 474 D3 agrees** (nano-ros PR #3114):
+  two quantities. The checker writes each rung's route into the model
+  (rlm v0.3.0 `HazardContract.rungs`, `degradation_levels` since schema
+  3), and the image judges it with one route monitor per rung,
+  `hazard-route-runtime`, started at the rung's `starts_at` (nano-ros
+  issue 2173, phase 96 W4.2). The image can stamp the fire; that landed
+  in 2173.
 - **D8: acknowledging a true warning.** Key: a top-level
   `acknowledged:` list of `{ rule: <id>, at: <diagnostic path>, reason:
   <text> }`. A matching diagnostic is printed as `ack[<rule>]` with the
@@ -632,9 +650,10 @@ rlm commits on its `main`: D3 `356383c`, D1 `957075d`, D5 `7936317`, D7
   The derivation would stay the max over hazards and print the bound as
   a justification. No work until the WG rules on decomposition.
 
-Still open (2026-10-31): D4 (route versus callback), D10 (waits on the
-WG). D2 is phase 95 (released in 0.21.0), D7's provenance and D9 are
-phase 94. And the island's own move (phase 9 W5: call_mrm 206 -> 149, and the link re-sized
+Still open (2026-11-05): D10 (waits on the WG), and from D2 whether
+`srv.<ep>.max_response` bounds the service hop. D2 (phase 95, released in
+0.21.0) and D4 closed 2026-11-05 with nano-ros 474 D4 and D3; D7's
+provenance and D9 are phase 94. And the island's own move (phase 9 W5: call_mrm 206 -> 149, and the link re-sized
 from 57 to about 81 ms).
 
 ## After 0.15.1: D1's two missing charges (branch `fix/timer-jitter-detection`)

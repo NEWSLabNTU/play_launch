@@ -222,6 +222,12 @@ it on real runs:
    phase 85 D4's (the `on_violation` timestamp) and whether nano-ros fills
    `source_timestamp`; it is unsent until we know which nano-ros session
    owns their phase 474.
+   *Agreed (2026-11-05):* nano-ros 474 D4 (nano-ros PR #3114) agrees an
+   edge cost and a client's `timeout:`/`on_timeout:` derive no deadline or
+   monitor in the image; nothing there reads `max_transport`, `timeout_ms`,
+   `on_timeout`, `on_rejected` or `stale_after`, and a future reader must
+   stay out of the deadline derivation. The `on_violation` timestamp
+   question went with phase 85 D4, also closed: nano-ros issue 2173.
 5. **`call-unbounded` as an error.** [Error. Evaluation: how many real
    contracts it turns red (the island must stay clean through its
    supervised rung).]
