@@ -646,9 +646,6 @@ pub struct ChainPath {
     pub p50_ms: f64,
     pub p99_ms: f64,
     pub triggered_hops: usize,
-    /// Format 1's name for `triggered_hops`, kept for one release (phase 98
-    /// M6); gone in the release after 0.25.
-    pub carried_hops: usize,
     pub sampled_hops: usize,
 }
 
@@ -739,7 +736,6 @@ impl ChainSnapshot {
                     p50_ms: hops.iter().filter_map(|h| h.p50_ms).sum(),
                     p99_ms: hops.iter().filter_map(|h| h.p99_ms).sum(),
                     triggered_hops,
-                    carried_hops: triggered_hops,
                     sampled_hops: hops.len() - triggered_hops,
                     hops: hops.into_iter().cloned().collect(),
                 }

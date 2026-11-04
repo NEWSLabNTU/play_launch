@@ -664,7 +664,7 @@ pub(crate) fn removed_by(h: &ResolvedHazard, index: &ManifestIndex) -> BTreeSet<
         .collect();
     let named: BTreeSet<&str> = h
         .decl
-        .guards
+        .monitors
         .iter()
         .flat_map(|g| g.members.iter().map(String::as_str))
         .collect();
@@ -728,28 +728,6 @@ fn g3_spellings(
     prefix: &str,
     diags: &mut Vec<Diagnostic>,
 ) {
-    // Phase 98 N6: an old spelling read for one release.
-    for sp in &manifest.deprecated_spellings {
-        let at = format!("{prefix}{}", sp.at);
-        let (old, new) = if sp.at.ends_with(".trigger") {
-            (
-                format!("`trigger: {}`", sp.old),
-                format!("`trigger: {}`", sp.new),
-            )
-        } else {
-            (format!("`{}:`", sp.old), format!("`{}:`", sp.new))
-        };
-        diags.push(diag(
-            "deprecated-spelling",
-            Severity::Warning,
-            format!(
-                "{}: {old} is the old spelling of {new} (renamed in rlm v0.3.7, phase 98); it \
-                 reads for one release. Fix: write {new}; {MIGRATE_HINT}",
-                site(index, scope_id, &at),
-            ),
-            at,
-        ));
-    }
     for (name, e) in &manifest.external_topics {
         let at = format!("{prefix}external_topics.{name}");
         let side = match e.side {
@@ -1424,9 +1402,9 @@ mod tests {
     fn a_fault_removes_functions_by_class() {
         use super::super::manifest_loader::ResolvedFunction;
         use ros_launch_manifest_types::{
-            CompareOp, FaultKind as F, GuardGroup, HazardDecl, PredicateValue,
+            CompareOp, FaultKind as F, HazardDecl, MonitorGroup, PredicateValue,
         };
-        let group = |t: &str| GuardGroup {
+        let group = |t: &str| MonitorGroup {
             members: vec![t.to_string()],
             all_of: false,
         };
@@ -1453,7 +1431,7 @@ mod tests {
             name: "h".into(),
             guards: vec![group("/avail")],
             decl: HazardDecl {
-                guards: vec![group("/avail")],
+                monitors: vec![group("/avail")],
                 on,
                 ..Default::default()
             },

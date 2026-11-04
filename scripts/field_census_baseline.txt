@@ -105,3 +105,11 @@ ftti_derived       # HazardContract (rlm v0.2.0, phase 91 E10): as
                    # `settle_derived`, for a derived `ftti_ms`.
 detection_derived  # HazardContract (rlm v0.2.0, phase 91 E10): as
                    # `settle_derived`, for a derived `detection_ms`.
+
+arrival_curve      # SubContract (model schema 4, rlm v0.3.9; `ingress`
+                   # before). nano-ros reads it -- the read task's budget,
+                   # the router rule -- from its phase 534 W3 pull request
+                   # on; until that merges its main reads the schema-3
+                   # name, which this census cannot see. Delete this line
+                   # when it merges (the census then fails the other way,
+                   # as it did for `node_concurrency`).

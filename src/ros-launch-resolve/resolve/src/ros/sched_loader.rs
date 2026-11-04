@@ -796,10 +796,10 @@ pub fn derive_sched_plan(
     }
 
     let registry = MapperRegistry::with_builtins();
-    let mapper = registry.get(&file.mapper).ok_or_else(|| {
+    let mapper = registry.get(&file.priority_assignment).ok_or_else(|| {
         eyre::eyre!(
             "unknown `priority_assignment: {}` in {} (known: {})",
-            file.mapper,
+            file.priority_assignment,
             platform_path.display(),
             KNOWN_MAPPERS.join(", "),
         )
@@ -849,14 +849,6 @@ pub fn derive_sched_plan(
     // instead of letting that be a silent no-op. Full FQN unification is a
     // tracked follow-up (W4 report, "notes for W5").
     let mut warnings = Vec::new();
-    if file.spelled_mapper {
-        // Phase 98 N6 M1: read for one release.
-        warnings.push(format!(
-            "{}: `mapper:` is the old spelling of `priority_assignment:` (renamed in rlm \
-             v0.3.7: what it names is a priority assignment policy) -- rename the key",
-            platform_path.display()
-        ));
-    }
     {
         let plan_node_set: BTreeSet<&str> = input.nodes.iter().map(|n| n.name.as_str()).collect();
         for fqn in &chain_member_nodes {
@@ -882,7 +874,7 @@ pub fn derive_sched_plan(
         .map_err(|e: MapError| {
             eyre::eyre!(
                 "`priority_assignment: {}` failed to derive a plan: {e}",
-                file.mapper
+                file.priority_assignment
             )
         })?;
 
@@ -1098,7 +1090,7 @@ pub fn derive_sched_plan(
     let provenance = build_provenance(
         &plan,
         &input,
-        &file.mapper,
+        &file.priority_assignment,
         &overridden,
         &diagnostics.details,
     );
@@ -1106,7 +1098,7 @@ pub fn derive_sched_plan(
     Ok(DerivedSchedPlan {
         plan,
         target: file.target,
-        mapper: file.mapper,
+        mapper: file.priority_assignment,
         warnings,
         provenance,
         chain_member_nodes,
@@ -1999,7 +1991,7 @@ pub fn check_sched(
     let derived = derive_sched_plan(dump, index, sched_path, target, SchedApplyMode::Warn)?;
 
     crate::say!(
-        "Scheduling ({}, mapper={}): {} tier(s)",
+        "Scheduling ({}, priority_assignment={}): {} tier(s)",
         derived.target,
         derived.mapper,
         derived.plan.tiers.len()
@@ -3402,8 +3394,7 @@ overrides:
     ) -> ros_launch_manifest_sched::PlatformFile {
         ros_launch_manifest_sched::PlatformFile {
             target: "posix".to_string(),
-            mapper: "chain_aware".to_string(),
-            spelled_mapper: false,
+            priority_assignment: "chain_aware".to_string(),
             reservations,
             resources: ros_launch_manifest_sched::PlatformResources::default(),
             overrides: Default::default(),

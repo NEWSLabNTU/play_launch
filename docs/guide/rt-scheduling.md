@@ -690,7 +690,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    ```
 
    ```
-   Scheduling (posix, mapper=chain_aware): 4 tier(s)
+   Scheduling (posix, priority_assignment=chain_aware): 4 tier(s)
    ...
    FQN                               CLASS        PRIO  CORE  PROVENANCE
    /perception/filter_component      SCHED_FIFO     39     -  derived(chain_aware: points_to_cmd segment drain 2/2) -> prio 39

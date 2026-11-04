@@ -264,7 +264,7 @@ fn check_channel_resolution_picks_provider_platform_file_with_no_sched_flag() {
         "expected the provider platform-file provenance line in check output:\n{combined}"
     );
     assert!(
-        combined.contains("mapper=chain_aware"),
+        combined.contains("priority_assignment=chain_aware"),
         "expected the v2 chain_aware mapper (not the legacy manual bridge) \
          to have been selected:\n{combined}"
     );

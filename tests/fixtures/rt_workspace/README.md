@@ -25,7 +25,7 @@ rt_workspace/
 ├── launch/
 │   ├── bringup.launch.xml                    # sensor_node + control_node + 1 container w/ filter_component
 │   ├── bringup.contract.yaml                 # provider sidecar: vocab v2 triggers + `points_to_cmd` chain (44.5)
-│   ├── bringup.system.posix.yaml             # provider platform file (v2): mapper=chain_aware + 1 override
+│   ├── bringup.system.posix.yaml             # provider platform file (v2): priority_assignment: chain_aware + 1 override
 │   └── bringup.system.zephyr.yaml            # Zephyr stub: proves per-target coexistence (nano-ros's file, not ours)
 ├── contracts/rt_demo/launch/
 │   ├── bringup.contract.yaml                 # user overlay: tightens control_node's max_age_ms

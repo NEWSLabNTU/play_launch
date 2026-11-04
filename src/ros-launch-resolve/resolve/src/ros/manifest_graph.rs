@@ -998,8 +998,8 @@ fn path_rate(
         }
         T::Input(_) => DerivedRate::Unknown("an input trigger with no endpoints"),
         T::Once => DerivedRate::Unknown("a `once` trigger — it fires exactly once"),
-        T::Spontaneous => {
-            DerivedRate::Unknown("a `spontaneous` trigger — the contract says nothing about when")
+        T::Aperiodic => {
+            DerivedRate::Unknown("an `aperiodic` trigger — the contract says nothing about when")
         }
         T::Unclassified => DerivedRate::Unknown("a path with no declared trigger"),
     }
@@ -1610,7 +1610,7 @@ mod tests {
             output: vec!["out".to_string()],
             ..Default::default()
         };
-        spont.trigger = Some(Trigger::Spontaneous);
+        spont.trigger = Some(Trigger::Aperiodic);
         let g = assemble(
             vec![
                 node("/ext", &[("event", spont)]),
@@ -1624,7 +1624,7 @@ mod tests {
         ]);
         let rates = derive_topic_rates(&index, &g);
         match &rates["/downstream"] {
-            DerivedRate::Unknown(why) => assert!(why.contains("spontaneous"), "{why}"),
+            DerivedRate::Unknown(why) => assert!(why.contains("aperiodic"), "{why}"),
             other => panic!("expected Unknown, got {other:?}"),
         }
     }

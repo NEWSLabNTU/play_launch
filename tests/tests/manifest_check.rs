@@ -457,7 +457,7 @@ fn check_sched_overlay_platform_file_beats_provider_sidecar() {
         "expected the resolved path to be the overlay file, got: {stderr}"
     );
     assert!(
-        stderr.contains("Scheduling (posix, mapper=rate_monotonic)"),
+        stderr.contains("Scheduling (posix, priority_assignment=rate_monotonic)"),
         "expected the resolved platform file to actually be parsed/derived, got: {stderr}"
     );
 }
@@ -500,7 +500,7 @@ fn check_sched_provider_sidecar_only_platform_file() {
         "expected the provider sidecar to be resolved, got: {stderr}"
     );
     assert!(
-        stderr.contains("Scheduling (posix, mapper=rate_monotonic)"),
+        stderr.contains("Scheduling (posix, priority_assignment=rate_monotonic)"),
         "expected the resolved platform file to actually be parsed/derived, got: {stderr}"
     );
 }
@@ -866,7 +866,7 @@ fn check_promise_rates_are_not_ranked_by_rate_monotonic() {
     );
     // One tier, holding both nodes: nothing was ranked.
     assert!(
-        combined.contains("mapper=rate_monotonic): 1 tier(s)"),
+        combined.contains("priority_assignment=rate_monotonic): 1 tier(s)"),
         "expected rate_monotonic to derive a single (default) tier from \
          promise-only rates, got: {combined}"
     );
@@ -1986,7 +1986,7 @@ fn takeover_link_is_charged_on_the_guard_edge() {
 }
 
 /// Phase 85 T2 (D3): an on-demand publisher (rlm v0.1.49 `on_demand: true`)
-/// reaches the model as a statement -- `on_demand: true` and no rate -- so
+/// reaches the model as a statement -- `aperiodic: true` (schema 4) and no rate -- so
 /// the image derives no rate monitor for it; a subscriber that requires a
 /// rate of it is a `rate-hierarchy` error.
 #[test]
@@ -2008,7 +2008,7 @@ fn an_on_demand_publisher_promises_no_rate() {
     assert!(status.success(), "resolve failed");
     let model = std::fs::read_to_string(&model_path).expect("model written");
     assert!(
-        model.contains("/operator/limit:\n      on_demand: true"),
+        model.contains("/operator/limit:\n      aperiodic: true"),
         "{model}"
     );
     let _ = std::fs::remove_file(&model_path);
@@ -2792,63 +2792,55 @@ fn phase_98_old_keys_are_refused_and_migrate_to_the_reference_verdict() {
     assert!(new.lines().any(|l| l.starts_with("HAZARD")), "{new}");
 }
 
-/// Phase 98 N6: `guards:`, `ingress:`, `on_demand:` and
-/// `trigger: spontaneous` still read in rlm v0.3.7, each with one
-/// `deprecated-spelling` warning naming its new spelling, and `migrate
-/// --write` rewrites the four to a contract with the same verdict and no
-/// warning about spelling.
+/// Phase 98 N6 at R+1 (rlm v0.3.9): `guards:`, `ingress:`, `on_demand:`
+/// and `trigger: spontaneous`, read with a warning in v0.3.7/v0.3.8, are
+/// refused (exit 3) by a message naming the new spelling and `migrate`;
+/// `migrate --write` still rewrites all four, to a contract that checks
+/// clean with its hazard table.
 #[test]
-fn phase_98_n6_old_spellings_warn_and_migrate_to_the_same_verdict() {
+fn phase_98_n6_old_spellings_are_refused_and_migrate() {
     let (_tmp, dir) = fixture_copy("contract_spelling_deprecated_n6");
     let launch = dir.join("bringup.launch.xml");
     let contract = dir.join("bringup.contract.yaml");
     let (code_old, old) = check_launch(&launch, &["--explain"]);
-    assert_eq!(code_old, 0, "{old}");
-    for new in [
-        "old spelling of `monitors:`",
-        "old spelling of `arrival_curve:`",
-        "old spelling of `aperiodic:`",
-        "old spelling of `trigger: aperiodic`",
-    ] {
-        assert_eq!(
-            old.lines()
-                .filter(|l| l.contains("warning[deprecated-spelling]") && l.contains(new))
-                .count(),
-            1,
-            "{new}: {old}"
-        );
-    }
+    assert_eq!(code_old, 3, "a refused contract exits EXIT_REFUSED: {old}");
+    assert!(
+        old.contains("error[manifest-parse]")
+            && [
+                "Renamed `monitors:`",
+                "Renamed `arrival_curve:`",
+                "Renamed `aperiodic:`",
+                "renamed `trigger: aperiodic`",
+            ]
+            .iter()
+            .any(|n| old.contains(n))
+            && old.contains("migrate"),
+        "{old}"
+    );
     let (code, out) = migrate(&contract, &["--write"]);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("1 rewritten (4 edit(s))"), "{out}");
+    let migrated = std::fs::read_to_string(&contract).unwrap();
+    for gone in ["guards:", "ingress:", "on_demand:", "spontaneous"] {
+        assert!(
+            !migrated
+                .lines()
+                .filter(|l| !l.trim_start().starts_with('#'))
+                .any(|l| l.contains(gone)),
+            "{gone}: {migrated}"
+        );
+    }
     let (code_new, new) = check_launch(&launch, &["--explain"]);
-    assert_eq!(code_new, code_old, "{new}");
+    assert_eq!(code_new, 0, "{new}");
     assert!(!new.contains("deprecated-spelling"), "{new}");
-    let rest = |s: &str| {
-        s.lines()
-            .filter(|l| {
-                (l.starts_with("  warning[") || l.starts_with("  error["))
-                    && !l.contains("deprecated-spelling")
-            })
-            .map(str::to_string)
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(rest(&old), rest(&new));
-    let table = |s: &str| {
-        s.lines()
-            .skip_while(|l| !l.starts_with("HAZARD"))
-            .take_while(|l| !l.is_empty())
-            .map(str::to_string)
-            .collect::<Vec<_>>()
-    };
-    assert!(!table(&old).is_empty(), "{old}");
-    assert_eq!(table(&old), table(&new));
+    assert!(new.lines().any(|l| l.starts_with("HAZARD")), "{new}");
 }
 
-/// Phase 98 N6 M1: a platform file's `mapper:` still selects the priority
-/// assignment in rlm v0.3.7, warned naming `priority_assignment:`.
+/// Phase 98 N6 M1 at R+1 (rlm v0.3.9): a platform file's `mapper:`, read
+/// with a warning in v0.3.7/v0.3.8, is refused naming
+/// `priority_assignment:`.
 #[test]
-fn a_platform_file_mapper_key_warns_naming_priority_assignment() {
+fn a_platform_file_mapper_key_is_refused_naming_priority_assignment() {
     let launch = simple_launch_dir().join("pure_nodes.launch.xml");
     let tmp = tempfile::TempDir::new().unwrap();
     let old = tmp.path().join("old.system.posix.yaml");
@@ -2877,13 +2869,13 @@ fn a_platform_file_mapper_key_warns_naming_priority_assignment() {
     };
     let (code_old, out_old) = run(&old);
     let (code_new, out_new) = run(&new);
-    assert_eq!(code_old, 0, "{out_old}");
+    assert_ne!(code_old, 0, "{out_old}");
     assert_eq!(code_new, 0, "{out_new}");
     assert!(
-        out_old.contains("`mapper:` is the old spelling of `priority_assignment:`"),
+        out_old.contains("`mapper:` was renamed `priority_assignment:`"),
         "{out_old}"
     );
-    assert!(!out_new.contains("old spelling"), "{out_new}");
+    assert!(!out_new.contains("renamed"), "{out_new}");
 }
 
 /// Phase 90 G3: a node path's `drop:` refuses the contract (exit 3) naming

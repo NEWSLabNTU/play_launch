@@ -44,7 +44,10 @@ use std::{
 };
 
 use ros_launch_manifest_check::{Diagnostic, Severity};
-use ros_launch_manifest_types::{AckDecl, rule_names};
+use ros_launch_manifest_types::{
+    AckDecl,
+    rule_names::{self, Stage},
+};
 
 use super::manifest_loader::ManifestIndex;
 
@@ -83,7 +86,8 @@ impl Entry<'_> {
     /// A renamed rule's old id (phase 98) matches the rule under its new
     /// one for the one release it is still accepted, and [`apply`] warns
     /// the entry as the old spelling; once refused it matches nothing and
-    /// [`apply`] reports it as `ack-renamed`.
+    /// [`apply`] reports it as `ack-renamed`; once retired it matches
+    /// nothing and is `ack-stale`.
     fn matches(&self, d: &Diagnostic) -> bool {
         d.rule_id == *rule_names::accepted(&self.decl.rule)
             && d.path == rule_names::accepted_path(&self.decl.at)
@@ -181,10 +185,12 @@ pub fn apply(index: &mut ManifestIndex) {
         let (rule, at) = (&e.decl.rule, &e.decl.at);
         // Phase 98: an old rule id or a path through a renamed key. While
         // the rename is accepted the entry matches and is warned; once it
-        // is refused the entry is an error naming the new spelling.
-        let now_rule = rule_names::current(rule);
-        let now_at = rule_names::current_path(at);
-        let refused = rule_names::renamed(rule).is_some_and(|r| r.refused)
+        // is refused the entry is an error naming the new spelling; once
+        // it is retired (rlm `Stage::Retired`) there is no message, and the
+        // entry is `ack-stale` like any other that matches nothing.
+        let now_rule = rule_names::noticed(rule);
+        let now_at = rule_names::noticed_path(at);
+        let refused = rule_names::renamed(rule).is_some_and(|r| r.stage == Stage::Refused)
             || rule_names::accepted_path(at) != now_at;
         let mut olds: Vec<String> = Vec::new();
         if now_rule != *rule {
@@ -198,8 +204,7 @@ pub fn apply(index: &mut ManifestIndex) {
                 (
                     "ack-renamed",
                     Severity::Error,
-                    "Since rlm v0.3.6 the old spelling is refused and the entry matches \
-                     nothing",
+                    "The old spelling is refused and the entry matches nothing",
                 )
             } else {
                 (
@@ -357,23 +362,24 @@ mod tests {
         assert_eq!(index.total_warnings, 1);
     }
 
-    /// Phase 98 N4: every refused old rule id, and a path through a
-    /// refused key, is an error naming the new spelling and matches
-    /// nothing, so the finding stays a warning (one case per id).
+    /// Phase 98 N6 at R+1 (rlm v0.3.9): every refused old rule id (the
+    /// M3 ids), and a path through a refused key (`guards`), is an error
+    /// naming the new spelling and matches nothing, so the finding stays a
+    /// warning (one case per id).
     #[test]
     fn a_refused_old_rule_id_or_path_is_an_error_naming_the_new_one() {
         use ros_launch_manifest_types::rule_names::RENAMED_RULES;
         let mut cases: Vec<(String, String, String, String)> = RENAMED_RULES
             .iter()
-            .filter(|r| r.refused)
+            .filter(|r| r.stage == Stage::Refused)
             .map(|r| (r.old.into(), r.new.into(), "p".into(), "p".into()))
             .collect();
-        assert!(!cases.is_empty());
+        assert_eq!(cases.len(), 3, "the M3 ids");
         cases.push((
             "reaction-unguarded".into(),
             "reaction-unguarded".into(),
-            "modes.m.window".into(),
-            "modes.m.min_dwell".into(),
+            "hazards.h.guards[0]".into(),
+            "hazards.h.monitors[0]".into(),
         ));
         for (old, new, at, new_at) in cases {
             let mut index = ManifestIndex::default();
@@ -403,23 +409,23 @@ mod tests {
         }
     }
 
-    /// Phase 98 N6 (rlm v0.3.7/v0.3.8): an old id or path whose rename is
-    /// still accepted matches the finding under its new name, warned as a
-    /// deprecated spelling.
+    /// Phase 98 N5 at R+2 (rlm v0.3.9): an S1-S5 old id, or a path through
+    /// an S1-S5 key, gets no rename message any more; it matches nothing
+    /// and reads as `ack-stale`, like any other id that matches nothing.
     #[test]
-    fn an_accepted_old_rule_id_or_path_matches_and_warns() {
+    fn a_retired_old_rule_id_or_path_reads_as_ack_stale() {
         use ros_launch_manifest_types::rule_names::RENAMED_RULES;
         let mut cases: Vec<(String, String, String, String)> = RENAMED_RULES
             .iter()
-            .filter(|r| !r.refused)
+            .filter(|r| r.stage == Stage::Retired)
             .map(|r| (r.old.into(), r.new.into(), "p".into(), "p".into()))
             .collect();
-        assert_eq!(cases.len(), 3, "the M3 ids");
+        assert_eq!(cases.len(), 11, "the S1-S5 ids");
         cases.push((
             "reaction-unguarded".into(),
             "reaction-unguarded".into(),
-            "hazards.h.guards[0]".into(),
-            "hazards.h.monitors[0]".into(),
+            "modes.m.window".into(),
+            "modes.m.min_dwell".into(),
         ));
         for (old, new, at, new_at) in cases {
             let mut index = ManifestIndex::default();
@@ -434,10 +440,10 @@ mod tests {
             );
             index.total_warnings = 1;
             apply(&mut index);
-            assert_eq!(index.acknowledged.len(), 1, "{old} {at}");
+            assert_eq!(index.acknowledged.len(), 0, "{old} {at}");
             assert_eq!(
                 rules(&index.merge_diagnostics),
-                vec![("deprecated-spelling", "acknowledged[0]")],
+                vec![("ack-stale", "acknowledged[0]")],
                 "{old} {at}"
             );
             assert_eq!(index.total_errors, 0);

@@ -2,7 +2,7 @@
 # `guards:` (now `monitors:`), a subscriber's `ingress:` (now
 # `arrival_curve:`), a publisher's `on_demand:` (now `aperiodic:`) and a
 # path's `trigger: spontaneous` (now `trigger: aperiodic`). Read with a
-# warning in rlm v0.3.7, refused in the release after; `migrate --write`
+# warning in rlm v0.3.7/v0.3.8, refused since v0.3.9; `migrate --write`
 # rewrites all four. Otherwise contract_spelling_deprecated_n1.
 version: 1
 integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]

@@ -269,7 +269,7 @@ pub struct ResolvedMode {
 pub struct ResolvedFunction {
     pub scope_id: usize,
     pub name: String,
-    pub group: ros_launch_manifest_types::GuardGroup,
+    pub group: ros_launch_manifest_types::MonitorGroup,
     /// The predicate that loses the function by value (`of:` + `when:`,
     /// rlm v0.1.46). `None` for a function lost only by silence.
     pub when: Option<ros_launch_manifest_types::ValuePredicate>,
@@ -281,7 +281,7 @@ pub struct ResolvedHazard {
     pub scope_id: usize,
     pub name: String,
     /// Guard groups with members qualified by the scope namespace.
-    pub guards: Vec<ros_launch_manifest_types::GuardGroup>,
+    pub guards: Vec<ros_launch_manifest_types::MonitorGroup>,
     pub decl: ros_launch_manifest_types::HazardDecl,
 }
 
@@ -3302,7 +3302,7 @@ fn resolve_ladder(
         .collect();
     let named: HashSet<&str> = h
         .decl
-        .guards
+        .monitors
         .iter()
         .flat_map(|g| g.members.iter().map(String::as_str))
         .collect();
@@ -5885,7 +5885,7 @@ fn check_cross_scope_on_demand(
             .iter()
             .filter_map(|r| {
                 endpoint(r, true)
-                    .filter(|(_, p)| p.on_demand == Some(true))
+                    .filter(|(_, p)| p.aperiodic == Some(true))
                     .map(|(s, _)| (r, s))
             })
             .collect();
@@ -7136,13 +7136,13 @@ fn resolve_scope_paths(manifest: &Manifest, scope: &ScopeEntry, index: &mut Mani
 /// Resolve hazard declarations: guard topics are topic names, relative or
 /// absolute, qualified the way scope-path ends are.
 fn resolve_hazards(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestIndex) {
-    use ros_launch_manifest_types::GuardGroup;
+    use ros_launch_manifest_types::MonitorGroup;
 
     for (name, f) in &manifest.functions {
         index.functions.push(ResolvedFunction {
             scope_id: scope.id,
             name: name.clone(),
-            group: GuardGroup {
+            group: MonitorGroup {
                 members: f
                     .group
                     .members
@@ -7167,14 +7167,14 @@ fn resolve_hazards(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifest
         // scope (phase 75). Resolved here rather than at parse time: the
         // parser sees one manifest, this sees the scope.
         let guards = decl
-            .guards
+            .monitors
             .iter()
             .map(|g| {
                 if !g.all_of
                     && g.members.len() == 1
                     && let Some(f) = manifest.functions.get(&g.members[0])
                 {
-                    return GuardGroup {
+                    return MonitorGroup {
                         members: f
                             .group
                             .members
@@ -7184,7 +7184,7 @@ fn resolve_hazards(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifest
                         all_of: f.group.all_of,
                     };
                 }
-                GuardGroup {
+                MonitorGroup {
                     members: g
                         .members
                         .iter()

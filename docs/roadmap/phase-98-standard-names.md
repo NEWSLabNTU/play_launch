@@ -1,10 +1,10 @@
 # Phase 98 - standard names: the vocabulary in the terms its readers know
 
-**Status (2026-11-04): in progress -- N0-N4 done (R = rlm v0.3.3 /
-play_launch 0.24.0, R+1 = rlm v0.3.6); N5's `check-terms` gate is in both
-repos, the old-id message is dropped at the next release; N6: M6 done,
-M1-M5 at R (rlm v0.3.7, v0.3.8), released in play_launch 0.25.0; N7
-open.** Design
+**Status (2026-11-05): in progress -- N0-N5 done (R = rlm v0.3.3 /
+play_launch 0.24.0, R+1 = rlm v0.3.6, R+2 = rlm v0.3.9 / play_launch
+0.26.0); N6: M6 done (`carried_hops` gone in 0.26.0), M1-M5 at R+1 (rlm
+v0.3.9, with the model's schema 4), released in play_launch 0.26.0; their
+R+2 is the next release; N7 open.** Design
 of record: rlm
 `docs/design/standard-names.md` (design issue 57). Spans rlm, play_launch,
 the safety island's contracts and nano-ros (pull requests from
@@ -145,6 +145,32 @@ Here R+1 waits until R has been published and nano-ros has followed.
   (rlm v0.3.6), N5's gate, M6 and M1-M5 at R (rlm v0.3.7, v0.3.8). The
   island and nano-ros follow it (nano-ros phase 534); the M1-M5 R+1
   refusals wait until they have.
+
+- **N5** (R+2, rlm v0.3.9, 2026-11-05): `ack-renamed` is no longer
+  emitted for an S1-S5 id or a path through an S1-S5 key -- rlm's
+  `rule_names` gives each rename a `Stage` (`Accepted`, `Refused`,
+  `Retired`), the S1-S5 renames are `Retired`, and `acknowledge.rs` names
+  the new spelling only through `rule_names::noticed`/`noticed_path`, which
+  skip a retired rename; such an entry now matches nothing and reads as
+  `ack-stale` (`a_retired_old_rule_id_or_path_reads_as_ack_stale`, one
+  case per id). The S1-S5 words were already in `check-terms`.
+- **N6, M1-M5 at R+1** (rlm v0.3.9, 2026-11-05): a hazard's `guards:`, a
+  subscriber's `ingress:`, a publisher's `on_demand:` and `trigger:
+  spontaneous` are refused (exit 3) naming the new spelling and `migrate`,
+  which still rewrites them; a platform file's `mapper:` is refused naming
+  `priority_assignment:`; the three M3 ids in `acknowledged:` are
+  `error[ack-renamed]` naming the new id. The `deprecated-spelling` loop
+  over `Manifest::deprecated_spellings` and the `spelled_mapper` warning
+  are gone with the rlm fields. `contract_spelling_deprecated_n6` now proves
+  the refusal and that `migrate --write` reaches a clean check (as `_n1` and
+  `_s4` did at N4); its ranked plan is empty like theirs. The model moved
+  with them, schema 4: `monitors` (`MonitorContract`), `arrival_curve`
+  (`ArrivalCurve`), `aperiodic` and `kind: aperiodic`; schema 3 and older
+  are read for good. `Scheduling (posix, mapper=...)` reads
+  `priority_assignment=...`, and `check-terms` refuses `mapper=`. M6's
+  `carried_hops` is gone from `chains.json` and `/api/chains/paths`.
+- **Release** (play_launch 0.26.0, 2026-11-05): the release carrying the
+  above (rlm v0.3.9). nano-ros follows in its phase 534 W3.
 
 ## Order
 

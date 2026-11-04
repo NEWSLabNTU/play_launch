@@ -105,7 +105,7 @@ fn hazard_specs(model: &SystemModel) -> Vec<HazardSpec> {
     c.hazards
         .iter()
         .map(|(key, h)| {
-            let guards: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
+            let guards: Vec<String> = h.monitors.iter().flat_map(|g| g.members.clone()).collect();
             // Phase 75: the reaction may name a MODE, and the sink is then
             // the terminal rung's path — the floor of its ladder.
             let sinks: Vec<String> = h

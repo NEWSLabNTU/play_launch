@@ -1452,8 +1452,8 @@ fn test_triggered_edges_form_a_chain_and_an_old_stamp_is_reported() {
         (Some(1), Some(1))
     );
     assert_eq!(answer["version"], 2, "{answer}");
-    // Format 1's name, kept for one release (phase 98 M6).
-    assert_eq!(path["carried_hops"].as_u64(), Some(1));
+    // Format 1's name was kept for 0.25 only (phase 98 M6).
+    assert!(path.get("carried_hops").is_none(), "{answer}");
     assert_eq!(answer["sink_age"]["source"], "/chain/raw", "{answer}");
     assert!(answer["budget"].is_null(), "no contract here: {answer}");
 

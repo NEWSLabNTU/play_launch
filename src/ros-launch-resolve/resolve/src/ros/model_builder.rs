@@ -228,17 +228,17 @@ fn resolve_endpoint_ref(nodes: &IndexMap<String, model::NodeInstance>, ep_ref: &
 
 fn pub_contract(p: &EndpointProps, topic_qos: Option<&QosDecl>) -> Option<model::PubContract> {
     let qos = effective_qos(topic_qos, p.qos.as_ref());
-    // Phase 85 D3: `on_demand` is a statement of its own -- the endpoint
+    // Phase 85 D3: `aperiodic` is a statement of its own -- the endpoint
     // promises no rate, so a consumer derives no rate monitor for it.
-    let on_demand = p.on_demand == Some(true);
-    if p.min_rate_hz.is_none() && p.max_rate_hz.is_none() && qos.is_none() && !on_demand {
+    let aperiodic = p.aperiodic == Some(true);
+    if p.min_rate_hz.is_none() && p.max_rate_hz.is_none() && qos.is_none() && !aperiodic {
         return None;
     }
     Some(model::PubContract {
         min_rate_hz: p.min_rate_hz.hz(),
         max_rate_hz: p.max_rate_hz.hz(),
         qos,
-        on_demand,
+        aperiodic,
         sources: BTreeMap::new(),
     })
 }
@@ -343,7 +343,7 @@ fn sub_contract(
         && p.buffer.is_none()
         && p.max_transport.is_none()
         && p.link.is_none()
-        && p.ingress.is_none()
+        && p.arrival_curve.is_none()
         && p.min_interarrival.is_none()
         && p.budget.is_none()
         && p.budget_period.is_none()
@@ -380,7 +380,7 @@ fn sub_contract(
         link: p.link.clone(),
         // rlm v0.1.64 (nano-ros RFC-0074): what the subscriber is made to
         // absorb. The grammar requires both numbers, so this copies them.
-        ingress: p.ingress.map(|i| model::IngressContract {
+        arrival_curve: p.arrival_curve.map(|i| model::ArrivalCurve {
             rate_hz: i.rate_hz,
             burst: i.burst,
         }),
@@ -739,7 +739,7 @@ pub(crate) fn convert_trigger(t: ros_launch_manifest_types::EffectiveTrigger) ->
         T::Timer { rate_hz } => EffectiveTrigger::Timer { rate_hz },
         T::Input(eps) => EffectiveTrigger::Input(eps),
         T::Once => EffectiveTrigger::Once,
-        T::Spontaneous => EffectiveTrigger::Spontaneous,
+        T::Aperiodic => EffectiveTrigger::Aperiodic,
         T::Unclassified => EffectiveTrigger::Unclassified,
     }
 }
@@ -1734,10 +1734,10 @@ pub fn build_system_model(
             scope_scoped_key(&scope_key(Some(h.scope_id)), &h.name),
             model::HazardContract {
                 integrity: h.decl.integrity.clone(),
-                guards: h
+                monitors: h
                     .guards
                     .iter()
-                    .map(|g| model::GuardContract {
+                    .map(|g| model::MonitorContract {
                         members: g.members.clone(),
                         all_of: g.all_of,
                     })
@@ -2076,7 +2076,7 @@ mod tests {
     #[test]
     fn a_subscribers_ingress_reaches_the_model() {
         let props = EndpointProps {
-            ingress: Some(ros_launch_manifest_types::IngressDecl {
+            arrival_curve: Some(ros_launch_manifest_types::ArrivalCurveDecl {
                 rate_hz: 200.0,
                 burst: 4,
             }),
@@ -2085,8 +2085,8 @@ mod tests {
         let c =
             sub_contract("/control/handler", &props, None).expect("an ingress alone is a contract");
         assert_eq!(
-            c.ingress,
-            Some(model::IngressContract {
+            c.arrival_curve,
+            Some(model::ArrivalCurve {
                 rate_hz: 200.0,
                 burst: 4
             })
@@ -3338,7 +3338,7 @@ mod tests {
         index.node_paths.push(node_path(
             "serve",
             PathDecl {
-                trigger: Some(Trigger::Spontaneous),
+                trigger: Some(Trigger::Aperiodic),
                 output: out(),
                 ..Default::default()
             },
@@ -3371,7 +3371,7 @@ mod tests {
             Some(EffectiveTrigger::Timer { rate_hz: 10.0 })
         );
         assert_eq!(trigger("load"), Some(EffectiveTrigger::Once));
-        assert_eq!(trigger("serve"), Some(EffectiveTrigger::Spontaneous));
+        assert_eq!(trigger("serve"), Some(EffectiveTrigger::Aperiodic));
         assert_eq!(trigger("mystery"), Some(EffectiveTrigger::Unclassified));
         let fuse = &paths["/perception/detector/fuse"];
         assert_eq!(

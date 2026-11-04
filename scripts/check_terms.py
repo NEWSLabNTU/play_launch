@@ -59,9 +59,24 @@ RETIRED: list[tuple[str, str]] = [
     (r"\bwindow-unbound\b", "dwell-unbound"),
     (r"\bscope-budget\b", "chain-latency"),
     (r"\bscope-sampling-feasibility\b", "chain-sampling-feasibility"),
+    # Phase 98 N6 M1: the platform file's key is `priority_assignment:`
+    # (`mapper:` refused since rlm v0.3.9); a label naming the policy by
+    # the old key (`Scheduling (posix, mapper=chain_aware)`) teaches it.
+    (r"\bmapper=", "priority_assignment="),
+    # Phase 98 N6, refused since rlm v0.3.9 (R+1, with model schema 4); the
+    # words are listed here a release ahead of R+2, as in rlm's gate.
+    (r"\bfault-reaction-budget\b", "fault-reaction-time"),
+    (r"\bdegradation-level-budget\b", "degradation-level-time"),
+    (r"\bbudget-overflow\b", "latency-bound-overflow"),
+    (r"\bon_demand\b", "aperiodic"),
+    (r"\bspontaneous\b", "aperiodic"),
 ]
 # Markdown only: a mode's `window:` key in an example block.
-MD_ONLY: list[tuple[str, str]] = [(r"^\s+window:", "min_dwell:")]
+MD_ONLY: list[tuple[str, str]] = [
+    (r"^\s+window:", "min_dwell:"),
+    # Phase 98 N6 keys in an example block (refused since rlm v0.3.9).
+    (r"^\s*-?\s*(?:guards|ingress|on_demand|mapper):", "monitors / arrival_curve / aperiodic / priority_assignment"),
+]
 
 COMPILED = [(re.compile(p, re.IGNORECASE), new) for p, new in RETIRED]
 MD_COMPILED = COMPILED + [(re.compile(p), new) for p, new in MD_ONLY]
@@ -214,6 +229,15 @@ def self_test() -> int:
         "src/play_launch/src/a.rs": (
             'fn f(rung: &str) { eprintln!("hazard {rung}: scope-budget over"); }\n',
             'fn f(rung: &str) { eprintln!("hazard {rung}: chain-latency over"); }\n',
+        ),
+        "src/ros-launch-resolve/resolve/src/e.rs": (
+            'fn f(t: &str, m: &str) { eprintln!("Scheduling ({t}, mapper={m})"); }\n',
+            'fn f(t: &str, m: &str) { eprintln!("Scheduling ({t}, priority_assignment={m})"); }\n',
+        ),
+        "docs/guide/y.md": ("hazards:\n  h:\n    guards: [a]\n", "hazards:\n  h:\n    monitors: [a]\n"),
+        "src/play_launch/src/f.rs": (
+            'const M: &str = "acknowledge fault-reaction-budget";\n',
+            'const M: &str = "acknowledge fault-reaction-time";\n',
         ),
         "src/ros-launch-resolve/resolve/src/b.rs": (
             'const M: &str = r#"the ladder ends"#;\n',

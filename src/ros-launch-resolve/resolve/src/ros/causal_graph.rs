@@ -423,7 +423,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
                 rate_hz: topic.rate_hz,
                 min_rate_hz: props.and_then(|p| p.min_rate_hz.hz()),
                 max_rate_hz: props.and_then(|p| p.max_rate_hz.hz()),
-                on_demand: props.is_some_and(|p| p.on_demand == Some(true)),
+                on_demand: props.is_some_and(|p| p.aperiodic == Some(true)),
             });
         }
         for sref in &topic.subscribers {
@@ -607,7 +607,7 @@ fn trigger_out(path: &ros_launch_manifest_types::PathDecl) -> TriggerOut {
         },
         T::Input(eps) => TriggerOut::Input(eps),
         T::Once => TriggerOut::Once,
-        T::Spontaneous => TriggerOut::Spontaneous,
+        T::Aperiodic => TriggerOut::Spontaneous,
         T::Unclassified => TriggerOut::Unclassified,
     }
 }

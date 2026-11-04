@@ -697,6 +697,21 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-11-05**: **N6 at R+1, model schema 4, S1-S5 ids retired** (phase
+  98, rlm v0.3.9). A hazard's `guards:`, a subscriber's `ingress:`, a
+  publisher's `on_demand:` and `trigger: spontaneous` are refused (exit 3)
+  naming the new spelling and `migrate`; a platform file's `mapper:` is
+  refused naming `priority_assignment:`; the M3 ids in `acknowledged:` are
+  `error[ack-renamed]`. rlm's `rule_names` carries a `Stage` per rename:
+  `acknowledge.rs` names the new spelling through `noticed`/`noticed_path`,
+  which skip a `Retired` rename, so an S1-S5 old id is now plain
+  `ack-stale`. The model is schema 4 (`monitors`/`MonitorContract`,
+  `arrival_curve`/`ArrivalCurve`, `aperiodic`, `kind: aperiodic`; schema 3
+  read for good). `--sched` prints `Scheduling (posix,
+  priority_assignment=...)` and `check-terms` refuses `mapper=`;
+  `carried_hops` is gone from `chains.json`. `field_census_baseline.txt`
+  lists `arrival_curve` until nano-ros's phase 534 W3 merges.
+
 - **2026-11-04**: **The phase 98 old spellings are refused, and a gate
   keeps the old words out** (phase 98 N4/N5, rlm v0.3.6). `severity_levels:`,
   a hazard's `severity:`, a mode's `window:` and a profile's

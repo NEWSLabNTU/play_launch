@@ -366,7 +366,7 @@ impl ContractView {
             });
         }
         for (key, h) in &m.contracts.hazards {
-            let guards: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
+            let guards: Vec<String> = h.monitors.iter().flat_map(|g| g.members.clone()).collect();
             let sinks: Vec<String> = h
                 .reaction
                 .as_ref()
