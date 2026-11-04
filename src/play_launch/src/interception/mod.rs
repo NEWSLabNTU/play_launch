@@ -15,7 +15,9 @@ mod latency;
 pub(crate) mod live;
 mod tf;
 pub use calls::{CallSnapshot, ClientRow, ServerRow};
-pub use chains::{CarriedEdge, Chain, ChainPath, ChainSnapshot, Hop, SampledEdge, TopicAge};
+pub use chains::{
+    CHAINS_FORMAT, Chain, ChainPath, ChainSnapshot, Hop, SampledEdge, TopicAge, TriggeredEdge,
+};
 pub(crate) use endpoint_stats::Direction;
 pub use endpoint_stats::{LifecycleMark, StartupMark};
 pub use live::{ClockStatus, EntitySnapshot};
@@ -846,7 +848,7 @@ pub async fn run_interception_task(
                 warn!("Interception: calls.json not written: {e:#}");
             }
         }
-        // Carried edges and chains (`chains.rs`), when any stamp crossed a node.
+        // Triggered edges and chains (`chains.rs`), when any stamp crossed a node.
         if !endpoints.chains.is_empty() {
             let snap = endpoints
                 .chains_snapshot(crate::runtime_enforcement::monotonic_now_ns(), &names.names);

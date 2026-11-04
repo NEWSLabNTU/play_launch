@@ -64,7 +64,7 @@
     font-weight: 600;
 }
 
-.chain-kind-carried { background: var(--running-bg); color: var(--running-text); }
+.chain-kind-triggered { background: var(--running-bg); color: var(--running-text); }
 .chain-kind-sampled { background: var(--pending-bg); color: var(--pending-text); }
 
 .chain-budget {

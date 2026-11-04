@@ -681,7 +681,7 @@ pub async fn get_startup(State(state): State<Arc<WebState>>) -> Response {
     Json(&*snap).into_response()
 }
 
-/// Carried edges and the chains they form (`interception/chains.rs`), as of
+/// Triggered edges and the chains they form (`interception/chains.rs`), as of
 /// the last Entities snapshot. Empty until a node republishes a stamp it took.
 pub async fn get_chains(State(state): State<Arc<WebState>>) -> Response {
     let Some(rx) = &state.entities else {
@@ -719,6 +719,7 @@ pub async fn get_chain_paths(
         })
         .map(|p| json!({ "name": p.name, "max_latency_ms": p.max_latency_ms }));
     Json(json!({
+        "version": crate::interception::CHAINS_FORMAT,
         "from": q.from,
         "to": q.to,
         "paths": paths,

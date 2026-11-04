@@ -1,5 +1,7 @@
 //! Data-flow chains found in the running system, with no contract
-//! (`docs/design/data-flow-chains.md`, phase 88 C1): CARRIED edges.
+//! (`docs/design/data-flow-chains.md`, phase 88 C1): TRIGGERED edges
+//! (event-triggered: the input's stamp crossed the node; "carried" before
+//! phase 98 M6).
 //!
 //! Node N took a message stamped `s` on topic A and later published `s` on
 //! topic B, so A →N→ B is a real edge and `t_publish − t_take` is N's latency
@@ -20,7 +22,7 @@
 //! says the data flowed (the input sat in a buffer the callback could read)
 //! and not what triggered the output: a timer node with several inputs is
 //! attributed to whichever it handled last. So a sampled edge is reported
-//! apart from the carried ones, with its `share` of the output's publishes,
+//! apart from the triggered ones, with its `share` of the output's publishes,
 //! and only once seen [`CHAIN_MIN_SAMPLES`] times. Its time is from the
 //! node's latest take of the input on ANY thread to the publish: a lower
 //! bound on the hop's staleness, since the node cannot have used data newer
@@ -34,7 +36,7 @@
 //!
 //! C3 propagates an ORIGIN with each publish: the time of the oldest
 //! publish behind it along the hops that produced it, and the topic that
-//! publish was on. A carried hop passes on the origin of the message whose
+//! publish was on. A triggered hop passes on the origin of the message whose
 //! stamp it carries; a sampled hop passes on the origin of the input it is
 //! attributed to (the thread's latest take), as the node's latest take of
 //! that input. A publish with neither starts a new origin. `t_publish −
@@ -242,7 +244,7 @@ impl ChainBook {
         }
     }
 
-    /// A publish: a carried edge when `node` took this stamp, else a sampled
+    /// A publish: a triggered edge when `node` took this stamp, else a sampled
     /// edge from the latest take on the same thread.
     pub(crate) fn publish(
         &mut self,
@@ -256,12 +258,12 @@ impl ChainBook {
             return;
         }
         *self.outputs.entry((node, topic)).or_default() += 1;
-        let carried = stamp
+        let triggered = stamp
             .and_then(|s| self.taken.get(&node).and_then(|t| t.at.get(&s)))
             .copied();
         // The input's origin: (input, its stamp, take time, sampled?).
         let mut from: Option<(u64, Option<u64>, u64, bool)> = None;
-        if let Some((input, take_ns)) = carried {
+        if let Some((input, take_ns)) = triggered {
             if input != topic && take_ns <= at_ns {
                 self.edges
                     .entry((input, node, topic))
@@ -397,7 +399,7 @@ impl ChainBook {
         node_name: impl Fn(NodeKey) -> String,
     ) -> ChainSnapshot {
         let secs = |ns: u64| ns as f64 / 1e9;
-        let mut edges: Vec<CarriedEdge> = Vec::new();
+        let mut edges: Vec<TriggeredEdge> = Vec::new();
         for ((a, node, b), e) in &self.edges {
             let (Some(from), Some(to)) = (topic_names.get(a), topic_names.get(b)) else {
                 continue;
@@ -408,7 +410,7 @@ impl ChainBook {
             let run = &e.latency.run;
             let recent = e.latency.recent(now_ns);
             let life = secs(e.last_ns.saturating_sub(e.first_ns));
-            edges.push(CarriedEdge {
+            edges.push(TriggeredEdge {
                 from: from.clone(),
                 node: node_name(*node),
                 to: to.clone(),
@@ -508,6 +510,7 @@ impl ChainBook {
         }
         ages.sort_by(|x, y| x.topic.cmp(&y.topic));
         ChainSnapshot {
+            version: ChainsFormat,
             edges,
             sampled,
             chains,
@@ -516,9 +519,9 @@ impl ChainBook {
     }
 }
 
-/// One carried edge: `node` took a stamp on `from` and published it on `to`.
+/// One triggered edge: `node` took a stamp on `from` and published it on `to`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct CarriedEdge {
+pub struct TriggeredEdge {
     pub from: String,
     pub node: String,
     pub to: String,
@@ -558,7 +561,7 @@ pub struct SampledEdge {
 }
 
 /// How old the data behind a topic's publishes is: publish time minus the
-/// origin propagated along carried and sampled hops.
+/// origin propagated along triggered and sampled hops.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct TopicAge {
     pub topic: String,
@@ -576,7 +579,7 @@ pub struct TopicAge {
     pub source_share: f64,
 }
 
-/// A chain of topics joined by carried edges, source first.
+/// A chain of topics joined by triggered edges, source first.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Chain {
     pub topics: Vec<String>,
@@ -586,12 +589,31 @@ pub struct Chain {
     pub p50_ms: f64,
 }
 
+/// The format of `chains.json` and `/api/chains`: 2 since phase 98 M6,
+/// when a hop's `kind` `carried` became `triggered` (an event-triggered
+/// hop, beside `sampled`, the words of cause-effect chain analysis) and a
+/// path's `carried_hops` became `triggered_hops`. Format 1 had no
+/// `version` field.
+pub const CHAINS_FORMAT: u32 = 2;
+
+/// Serializes as [`CHAINS_FORMAT`].
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ChainsFormat;
+
+impl Serialize for ChainsFormat {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u32(CHAINS_FORMAT)
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct ChainSnapshot {
-    /// Carried edges.
-    pub edges: Vec<CarriedEdge>,
+    /// [`CHAINS_FORMAT`].
+    pub version: ChainsFormat,
+    /// Triggered edges.
+    pub edges: Vec<TriggeredEdge>,
     /// Sampled edges seen at least [`CHAIN_MIN_SAMPLES`] times, minus those
-    /// a carried edge already states.
+    /// a triggered edge already states.
     pub sampled: Vec<SampledEdge>,
     pub chains: Vec<Chain>,
     /// Data age per topic, for topics with an upstream seen at least
@@ -605,7 +627,7 @@ pub struct Hop {
     pub from: String,
     pub node: String,
     pub to: String,
-    /// `carried` (the stamp crossed the node: measured) or `sampled` (the
+    /// `triggered` (the stamp crossed the node: measured) or `sampled` (the
     /// thread's latest input: the data flowed, the time is a lower bound).
     pub kind: &'static str,
     pub samples: u64,
@@ -623,6 +645,9 @@ pub struct ChainPath {
     /// path's p99 from above only if the hops' worst cases coincide.
     pub p50_ms: f64,
     pub p99_ms: f64,
+    pub triggered_hops: usize,
+    /// Format 1's name for `triggered_hops`, kept for one release (phase 98
+    /// M6); gone in the release after 0.25.
     pub carried_hops: usize,
     pub sampled_hops: usize,
 }
@@ -633,7 +658,7 @@ pub const PATHS_SHOWN: usize = 10;
 const PATH_MAX_HOPS: usize = 16;
 
 impl ChainSnapshot {
-    /// Simple paths from `from` to `to` over carried edges seen at least
+    /// Simple paths from `from` to `to` over triggered edges seen at least
     /// [`CHAIN_MIN_SAMPLES`] times and the sampled edges reported, fewest
     /// hops first, then fastest. `truncated` when the walk hit its bound.
     pub fn paths(&self, from: &str, to: &str) -> (Vec<ChainPath>, bool) {
@@ -643,7 +668,7 @@ impl ChainSnapshot {
                 from: e.from.clone(),
                 node: e.node.clone(),
                 to: e.to.clone(),
-                kind: "carried",
+                kind: "triggered",
                 samples: e.samples,
                 p50_ms: e.p50_ms,
                 p99_ms: e.p99_ms,
@@ -709,12 +734,13 @@ impl ChainSnapshot {
         let mut paths: Vec<ChainPath> = found
             .into_iter()
             .map(|hops| {
-                let carried_hops = hops.iter().filter(|h| h.kind == "carried").count();
+                let triggered_hops = hops.iter().filter(|h| h.kind == "triggered").count();
                 ChainPath {
                     p50_ms: hops.iter().filter_map(|h| h.p50_ms).sum(),
                     p99_ms: hops.iter().filter_map(|h| h.p99_ms).sum(),
-                    carried_hops,
-                    sampled_hops: hops.len() - carried_hops,
+                    triggered_hops,
+                    carried_hops: triggered_hops,
+                    sampled_hops: hops.len() - triggered_hops,
                     hops: hops.into_iter().cloned().collect(),
                 }
             })
@@ -733,8 +759,8 @@ impl ChainSnapshot {
 /// The longest simple paths over well-observed edges, starting at topics no
 /// such edge leads to (or anywhere in a cycle with no entry). Paths that are
 /// a prefix or suffix of a longer one reported are dropped.
-fn longest_chains(edges: &[CarriedEdge]) -> Vec<Chain> {
-    let mut succ: HashMap<&str, Vec<&CarriedEdge>> = HashMap::new();
+fn longest_chains(edges: &[TriggeredEdge]) -> Vec<Chain> {
+    let mut succ: HashMap<&str, Vec<&TriggeredEdge>> = HashMap::new();
     let mut has_parent: HashSet<&str> = HashSet::new();
     for e in edges.iter().filter(|e| e.samples >= CHAIN_MIN_SAMPLES) {
         succ.entry(e.from.as_str()).or_default().push(e);
@@ -750,17 +776,17 @@ fn longest_chains(edges: &[CarriedEdge]) -> Vec<Chain> {
     }
     roots.sort();
 
-    let mut found: Vec<Vec<&CarriedEdge>> = Vec::new();
+    let mut found: Vec<Vec<&TriggeredEdge>> = Vec::new();
     let mut walked = 0usize;
     fn walk<'a>(
         at: &'a str,
-        succ: &HashMap<&'a str, Vec<&'a CarriedEdge>>,
-        path: &mut Vec<&'a CarriedEdge>,
+        succ: &HashMap<&'a str, Vec<&'a TriggeredEdge>>,
+        path: &mut Vec<&'a TriggeredEdge>,
         seen: &mut HashSet<&'a str>,
-        found: &mut Vec<Vec<&'a CarriedEdge>>,
+        found: &mut Vec<Vec<&'a TriggeredEdge>>,
         walked: &mut usize,
     ) {
-        let next: Vec<&&CarriedEdge> = succ
+        let next: Vec<&&TriggeredEdge> = succ
             .get(at)
             .map(|v| v.iter().filter(|e| !seen.contains(e.to.as_str())).collect())
             .unwrap_or_default();
@@ -905,7 +931,7 @@ mod tests {
     }
 
     #[test]
-    fn a_timer_node_with_two_inputs_is_sampled_from_both_never_carried() {
+    fn a_timer_node_with_two_inputs_is_sampled_from_both_never_triggered() {
         // Node 1 takes /a and /b on thread 7 and publishes /c from a timer
         // with stamps of its own: /c is attributed to whichever came last.
         let mut b = ChainBook::default();
@@ -916,7 +942,7 @@ mod tests {
             b.publish((0, 1), 7, 3, Some(10_000 + i), t + 2 * MS);
         }
         let s = b.snapshot(10_000 * MS, &names(), label);
-        assert!(s.edges.is_empty(), "nothing carried: {:?}", s.edges);
+        assert!(s.edges.is_empty(), "nothing triggered: {:?}", s.edges);
         let got: Vec<(&str, &str, u64)> = s
             .sampled
             .iter()
@@ -928,7 +954,7 @@ mod tests {
     }
 
     #[test]
-    fn a_carried_publish_is_not_also_sampled_and_threads_are_apart() {
+    fn a_triggered_publish_is_not_also_sampled_and_threads_are_apart() {
         let mut b = ChainBook::default();
         for i in 1..=CHAIN_MIN_SAMPLES {
             let t = i * 100 * MS;
@@ -979,7 +1005,7 @@ mod tests {
     }
 
     #[test]
-    fn age_runs_from_the_first_publish_along_carried_hops() {
+    fn age_runs_from_the_first_publish_along_triggered_hops() {
         // /a published by node 1, carried by node 2 to /b and node 3 to /c.
         let mut b = ChainBook::default();
         for i in 1..=CHAIN_MIN_SAMPLES {
@@ -1054,8 +1080,8 @@ mod tests {
     }
 
     #[test]
-    fn paths_join_carried_and_sampled_hops_fewest_first() {
-        // /a -carried-> /b -sampled-> /c, and a longer /a -> /d -> /b too.
+    fn paths_join_triggered_and_sampled_hops_fewest_first() {
+        // /a -triggered-> /b -sampled-> /c, and a longer /a -> /d -> /b too.
         let mut b = ChainBook::default();
         for i in 1..=CHAIN_MIN_SAMPLES {
             let t = i * 100 * MS;
@@ -1073,8 +1099,8 @@ mod tests {
         assert!(!truncated);
         assert_eq!(paths.len(), 2, "{paths:?}");
         let kinds: Vec<&str> = paths[0].hops.iter().map(|h| h.kind).collect();
-        assert_eq!(kinds, ["carried", "sampled"]);
-        assert_eq!((paths[0].carried_hops, paths[0].sampled_hops), (1, 1));
+        assert_eq!(kinds, ["triggered", "sampled"]);
+        assert_eq!((paths[0].triggered_hops, paths[0].sampled_hops), (1, 1));
         assert_eq!(paths[0].hops[1].node, "n2");
         assert_eq!(paths[1].hops.len(), 3);
         assert!(s.paths("/c", "/a").0.is_empty());

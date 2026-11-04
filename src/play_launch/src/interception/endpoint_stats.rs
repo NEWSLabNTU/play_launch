@@ -462,7 +462,7 @@ impl EndpointTracker {
             .collect()
     }
 
-    /// Carried edges, each node named by its FQN, else by its process.
+    /// Triggered edges, each node named by its FQN, else by its process.
     pub(crate) fn chains_snapshot(
         &self,
         now_ns: u64,

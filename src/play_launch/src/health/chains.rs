@@ -1,5 +1,5 @@
 //! Chains on the Health page (`docs/design/data-flow-chains.md`, phase 88
-//! C1): from the carried edges the interception consumer finds
+//! C1): from the triggered edges the interception consumer finds
 //! (`interception::ChainSnapshot`).
 //!
 //! - `stale_stamp` (info): a node keeps publishing a stamp it took long ago
@@ -70,10 +70,10 @@ pub fn chain_conditions(snap: &ChainSnapshot) -> Vec<Condition> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interception::CarriedEdge;
+    use crate::interception::TriggeredEdge;
 
-    fn edge(rate_hz: f64, recent_p50_ms: f64, last_ms: f64) -> CarriedEdge {
-        CarriedEdge {
+    fn edge(rate_hz: f64, recent_p50_ms: f64, last_ms: f64) -> TriggeredEdge {
+        TriggeredEdge {
             from: "/system/emergency/gear_cmd".into(),
             node: "/control/vehicle_cmd_gate".into(),
             to: "/control/command/gear_cmd".into(),

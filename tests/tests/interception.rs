@@ -1262,7 +1262,7 @@ fn test_delivery_latency_separates_a_slow_subscriber_from_a_fast_one() {
 /// stamp it took once is reported as `stale_stamp`, and `chains.json` lands
 /// in the bundle.
 #[test]
-fn test_carried_edges_form_a_chain_and_an_old_stamp_is_reported() {
+fn test_triggered_edges_form_a_chain_and_an_old_stamp_is_reported() {
     // Also phase 88 C2: a timer node's inputs are sampled edges, never
     // carried ones; and C3: each topic's data age, from where its data began.
     let env = fixtures::install_env();
@@ -1440,14 +1440,20 @@ fn test_carried_edges_form_a_chain_and_an_old_stamp_is_reported() {
         hops,
         [
             ("sampled".to_string(), "/chain_restamp".to_string()),
-            ("carried".to_string(), "/chain_actuate".to_string())
+            ("triggered".to_string(), "/chain_actuate".to_string())
         ],
         "{answer}"
     );
     assert_eq!(
-        (path["carried_hops"].as_u64(), path["sampled_hops"].as_u64()),
+        (
+            path["triggered_hops"].as_u64(),
+            path["sampled_hops"].as_u64()
+        ),
         (Some(1), Some(1))
     );
+    assert_eq!(answer["version"], 2, "{answer}");
+    // Format 1's name, kept for one release (phase 98 M6).
+    assert_eq!(path["carried_hops"].as_u64(), Some(1));
     assert_eq!(answer["sink_age"]["source"], "/chain/raw", "{answer}");
     assert!(answer["budget"].is_null(), "no contract here: {answer}");
 
@@ -1472,6 +1478,7 @@ fn test_carried_edges_form_a_chain_and_an_old_stamp_is_reported() {
         !written["edges"].as_array().unwrap().is_empty(),
         "{written}"
     );
+    assert_eq!(written["version"], 2, "phase 98 M6 format: {written}");
 }
 
 /// Run `graph_probe.launch.xml` with a node started outside it on the same

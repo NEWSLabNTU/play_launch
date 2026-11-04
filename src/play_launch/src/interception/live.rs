@@ -310,7 +310,7 @@ pub struct EntitySnapshot {
     /// TF edges as published; for the Health page, not sent with Entities.
     #[serde(skip)]
     pub(crate) tf: Option<super::tf::TfSnapshot>,
-    /// Carried edges and the chains they form (`chains.rs`); served by
+    /// Triggered edges and the chains they form (`chains.rs`); served by
     /// `/api/chains` and read by Health, not sent with Entities.
     #[serde(skip)]
     pub(crate) chains: Option<super::chains::ChainSnapshot>,

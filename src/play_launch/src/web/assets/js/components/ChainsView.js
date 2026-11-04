@@ -1,10 +1,10 @@
 // ChainsView component — data-flow chains found in the running system, with
 // no contract (phase 88): pick a source topic and a sink topic and see the
 // paths between them over observed hops, per hop p50/p99 and whether the hop
-// is carried (the stamp crossed the node: measured) or sampled (the node's
+// is triggered (the stamp crossed the node: measured) or sampled (the node's
 // latest input on that thread: the data flowed, the time is a lower bound),
-// the sink's data age, and the budget a contract's scope path puts on the
-// pair. With nothing picked, the longest carried chains and their sinks'
+// the sink's data age, and the budget a contract's event chain puts on the
+// pair. With nothing picked, the longest triggered chains and their sinks'
 // ages.
 
 import { h } from '../vendor/preact.module.js';
@@ -56,7 +56,7 @@ function usePoll(url, ms) {
 }
 
 function KindBadge({ kind }) {
-    const title = kind === 'carried'
+    const title = kind === 'triggered'
         ? 'The stamp crossed the node: take to publish, measured'
         : "The node's latest input on the publishing thread: the data flowed, "
           + 'the trigger is unknown, and the time (since its latest take) is a lower bound';
@@ -92,7 +92,7 @@ function BudgetBar({ path, budget }) {
     const w = (v) => Math.min(100, (v / scale) * 100) + '%';
     const over = path.p99_ms > b;
     return html`
-        <div class="chain-budget" title=${'Contract scope path ' + budget.name + ': ' + fmtMs(b)}>
+        <div class="chain-budget" title=${'Contract event chain ' + budget.name + ': ' + fmtMs(b)}>
             <div class="chain-budget-p99 ${over ? 'chain-over' : ''}" style=${{ width: w(path.p99_ms) }}></div>
             <div class="chain-budget-p50" style=${{ width: w(path.p50_ms) }}></div>
             <div class="chain-budget-line" style=${{ left: w(b) }}></div>
@@ -107,7 +107,7 @@ function PathCard({ path, index, budget }) {
                 <b>Path ${index + 1}</b>
                 <span>${path.hops.length} hop${path.hops.length > 1 ? 's' : ''}</span>
                 <span class="ent-sep">·</span>
-                <span>${path.carried_hops} carried, ${path.sampled_hops} sampled</span>
+                <span>${path.triggered_hops} triggered, ${path.sampled_hops} sampled</span>
                 <span class="ent-sep">·</span>
                 <span title="Sum of the hops' medians">Σp50 <b>${fmtMs(path.p50_ms)}</b></span>
                 <span title="Sum of the hops' 99th percentiles">Σp99 <b>${fmtMs(path.p99_ms)}</b></span>
@@ -197,7 +197,7 @@ export function ChainsView() {
         <div class="entities-view chains-view">
             <div class="ent-summary">
                 ${snap ? html`
-                    <b>${snap.edges.length}</b> carried hops
+                    <b>${snap.edges.length}</b> triggered hops
                     <span class="ent-sep">·</span>
                     <b>${snap.sampled.length}</b> sampled
                     <span class="ent-sep">·</span>
@@ -218,8 +218,8 @@ export function ChainsView() {
             </div>
 
             ${from && to ? html`<${Paths} from=${from} to=${to} />` : snap && html`
-                <h3 class="chain-heading">Longest carried chains</h3>
-                ${snap.chains.length === 0 ? html`<div class="ent-empty">No chain yet: carried hops need 20 observations.</div>` : html`
+                <h3 class="chain-heading">Longest triggered chains</h3>
+                ${snap.chains.length === 0 ? html`<div class="ent-empty">No chain yet: triggered hops need 20 observations.</div>` : html`
                     <table class="ent-table">
                         <thead><tr>
                             <th>Topics</th><th class="ent-num">Hops</th><th class="ent-num">Σp50</th>
