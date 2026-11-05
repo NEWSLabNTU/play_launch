@@ -182,11 +182,11 @@ impl ComposableSupervisor {
         // Phase 38.9: apply resolved Linux scheduling to this composable's
         // own process, now that the load report carries its pid. Observable/
         // stock mode and failure reports carry pid 0, hence the guard.
-        let sched_tier = self
+        let sched_task = self
             .composable_nodes
             .get(&composable_name)
             .and_then(|e| e.metadata.sched.clone());
-        // Phase 80 (issue #0035): pid 0 with a tier present is not a failure
+        // Phase 80 (issue #0035): pid 0 with a task present is not a failure
         // and not a surprise — under `observable`/`stock` a composable has no
         // process of its own — but it used to be entirely silent. It stays
         // silent for the USER, because `commands::up` already refused or
@@ -197,20 +197,20 @@ impl ComposableSupervisor {
         // path had discovered something the early one missed.
         if config.sched_mode != crate::execution::sched_apply::SchedApplyMode::Off
             && pid == 0
-            && let Some(tier) = sched_tier.as_ref()
+            && let Some(task) = sched_task.as_ref()
         {
             debug!(
-                "{}: composable '{}' reported no pid of its own; tier '{}' not applied here \
+                "{}: composable '{}' reported no pid of its own; task '{}' not applied here \
                  (either a non-isolated container, reported before spawn by the \
                  `scheduling: composable ...` warning, or a failure report)",
                 self.name(),
                 composable_name,
-                tier.tier_name
+                task.task_name
             );
         }
         if config.sched_mode != crate::execution::sched_apply::SchedApplyMode::Off
             && pid > 0
-            && let Some(tier) = sched_tier.as_ref()
+            && let Some(task) = sched_task.as_ref()
         {
             if !pid_identity_ok(pid, start_time) {
                 // The pid no longer matches the start_time captured at
@@ -229,14 +229,14 @@ impl ComposableSupervisor {
                 match crate::execution::rt_helper_client::apply_sched(
                     config.sched_helper.as_ref(),
                     pid as u32,
-                    tier,
+                    task,
                 )
                 .await
                 {
                     Ok(()) => debug!(
-                        "{}: applied tier '{}' to composable '{}' (pid {})",
+                        "{}: applied task '{}' to composable '{}' (pid {})",
                         self.name(),
-                        tier.tier_name,
+                        task.task_name,
                         composable_name,
                         pid
                     ),

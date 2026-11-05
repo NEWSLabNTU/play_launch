@@ -58,8 +58,8 @@ pub fn handle_up(args: &cli::options::UpArgs) -> eyre::Result<()> {
     }
     let system_model = std::sync::Arc::new(load_system_model(model_path)?);
 
-    // `--explain` on `replay --model`: renders a TIER-BASED table from the
-    // model's `tiers`+`bindings` (the applied schedule) — Phase 45.10 removed
+    // `--explain` on `replay --model`: renders a TASK-BASED table from the
+    // model's `tasks`+`bindings` (the applied schedule) — Phase 45.10 removed
     // the embedded `execution.sched`, so the chain-aware ranks / override
     // classification are NOT available here (they need a fresh derive). This is
     // the accepted degradation (Phase 49.B3): the applied priorities are
@@ -796,7 +796,7 @@ pub(crate) async fn play(
 
     // Issue #0062: per-composable scheduling needs `isolated` (one process per
     // composable). `observable` became the default in 0.15, and `strict` then
-    // refused every launch whose composables carry a tier, for a mode the user
+    // refused every launch whose composables carry a task, for a mode the user
     // never chose. Strict means "deliver the plan or do not start", and
     // isolated is the mode that can deliver it, so when the mode was not given
     // and the plan needs it, use it and say so. An explicit
@@ -975,7 +975,7 @@ pub(crate) async fn play(
         }
 
         // Phase 80 (issue #0035) — decide BEFORE spawning whether the
-        // container mode in force can apply the tiers the model binds to
+        // container mode in force can apply the tasks the model binds to
         // composables. Under `observable`/`stock`/`clone-vm` a composable is
         // a thread pool inside the container's process, so the LOADED handler
         // is handed pid 0 and correctly declines to apply; it used to decline
@@ -984,7 +984,7 @@ pub(crate) async fn play(
         // fixed on the command line, so the decision is knowable here, once
         // per composable, rather than a message per LOADED event interleaved
         // with startup after the fact.
-        let unapplied = crate::execution::sched_plan::composable_tiers_not_applied(
+        let unapplied = crate::execution::sched_plan::composable_tasks_not_applied(
             &plan,
             container_mode,
             &load_node_contexts
@@ -1018,7 +1018,7 @@ pub(crate) async fn play(
             {
                 let lines: Vec<String> = unapplied.iter().map(|u| u.message()).collect();
                 eyre::bail!(
-                    "--sched-apply strict: {} composable tier(s) cannot be applied under \
+                    "--sched-apply strict: {} composable task(s) cannot be applied under \
                      --container-mode {}:\n  {}",
                     unapplied.len(),
                     crate::execution::sched_plan::container_mode_flag(container_mode),
@@ -1424,9 +1424,9 @@ pub(crate) async fn play(
         // Use the composable node name from record.json directly
         let member_name = context.record.node_name.clone();
 
-        // Phase 38.9: resolve this composable's tier at the builder (Option B) —
+        // Phase 38.9: resolve this composable's task at the builder (Option B) —
         // no FQN recompute at apply time, no C++/Rust FQN-format dependency.
-        let composable_tier = sched_plan.as_ref().and_then(|p| {
+        let composable_task = sched_plan.as_ref().and_then(|p| {
             let fqn = context.model_fqn.clone().unwrap_or_else(|| {
                 ros_launch_resolve::ros::sched_loader::fqn_for(
                     &launch_dump,
@@ -1452,7 +1452,7 @@ pub(crate) async fn play(
             member_name,
             context,
             true,
-            composable_tier,
+            composable_task,
             composable_start_after,
         );
     }
@@ -2153,7 +2153,7 @@ pub(super) fn interception_identity_path(log_dir: &std::path::Path) -> Option<Pa
 ///
 /// The flag's own value, except in one case: `--sched-apply strict`, no
 /// `--container-mode` on the command line, and a composable that the plan gives
-/// a tier. Only `isolated` gives a composable a process of its own to schedule,
+/// a task. Only `isolated` gives a composable a process of its own to schedule,
 /// so strict would otherwise refuse a mode the user did not choose. Then the run
 /// uses `isolated`, and says so.
 fn effective_container_mode(
@@ -2171,24 +2171,24 @@ fn effective_container_mode(
     let Some(plan) = plan else {
         return flag;
     };
-    let tiered: Vec<&str> = model
+    let with_task: Vec<&str> = model
         .structure
         .nodes
         .iter()
         .filter(|(fqn, inst)| inst.plugin.is_some() && plan.for_fqn(fqn).is_some())
         .map(|(fqn, _)| fqn.as_str())
         .collect();
-    if tiered.is_empty() {
+    if with_task.is_empty() {
         return flag;
     }
     info!(
-        "--sched-apply strict: {} composable(s) carry a scheduling tier, which only \
+        "--sched-apply strict: {} composable(s) carry a scheduling task, which only \
          --container-mode isolated can apply; using isolated (the default is {}). Pass \
          --container-mode to choose: an explicit mode is never overridden.",
-        tiered.len(),
+        with_task.len(),
         crate::execution::sched_plan::container_mode_flag(flag),
     );
-    debug!("tiered composables: {tiered:?}");
+    debug!("composables with a task: {with_task:?}");
     ContainerMode::Isolated
 }
 

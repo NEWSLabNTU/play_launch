@@ -1,10 +1,10 @@
 //! Resolve the shared scheduling spec against a launch dump and invert the
 //! result into a per-FQN lookup the actor system consumes.
 //!
-//! `SchedPlan::build` is the bridge between the crate's tier-centric
-//! `ResolvedTierTable` (tier -> members) and the actor system's node-centric
+//! `SchedPlan::build` is the bridge between the crate's task-centric
+//! `ResolvedTaskTable` (task -> members) and the actor system's node-centric
 //! view (FQN -> knobs). It also surfaces a "not applied in v1" warning for
-//! `time_triggered` tiers (no `SCHED_DEADLINE` support yet). Composable
+//! `time_triggered` tasks (no `SCHED_DEADLINE` support yet). Composable
 //! (load_node) members ARE scheduled (phase 38.9) — they're resolved into
 //! `by_fqn` like any other member, with no warning.
 //!
@@ -19,12 +19,12 @@ use std::{
 };
 
 use eyre::Result;
-use ros_launch_manifest_sched::DEFAULT_TIER;
+use ros_launch_manifest_sched::DEFAULT_TASK;
 
 use crate::{
     cli::options::ContainerMode,
     execution::sched_apply::{
-        AppliedTier, CpuSet, Reservation, SchedApplyMode, SchedPolicy, Uclamp,
+        AppliedTask, CpuSet, Reservation, SchedApplyMode, SchedPolicy, Uclamp,
     },
 };
 use ros_launch_resolve::ros::{
@@ -37,7 +37,7 @@ use ros_launch_resolve::ros::{
 /// as processes come up.
 #[derive(Debug)]
 pub struct SchedPlan {
-    by_fqn: HashMap<String, AppliedTier>,
+    by_fqn: HashMap<String, AppliedTask>,
     pub mode: SchedApplyMode,
     /// User-facing warnings emitted at build (also logged). Kept for testability.
     pub warnings: Vec<String>,
@@ -51,29 +51,29 @@ pub struct SchedPlan {
     pub chain_member_nodes: BTreeSet<String>,
 }
 
-/// Lower a resolved tier into the apply layer's [`AppliedTier`].
+/// Lower a resolved task into the apply layer's [`AppliedTask`].
 ///
-/// Prefers the typed `posix` placement when the tier carries one, because it
+/// Prefers the typed `posix` placement when the task carries one, because it
 /// is the only form that can express a nice value, a multi-CPU mask or a
 /// uclamp range. Falls back to the deprecated `sched_class`/`priority`/`core`
-/// trio otherwise, so a tier resolved by an older path still applies exactly
+/// trio otherwise, so a task resolved by an older path still applies exactly
 /// as it did before.
-fn applied_from_tier(
-    tier: &ros_launch_manifest_sched::ResolvedTier,
+fn applied_from_task(
+    task: &ros_launch_manifest_sched::ResolvedTask,
     policy: SchedPolicy,
     priority: i32,
-) -> AppliedTier {
+) -> AppliedTask {
     use ros_launch_manifest_sched::{PosixAffinity, PosixSched};
 
-    let Some(placement) = &tier.posix else {
-        return AppliedTier {
+    let Some(placement) = &task.posix else {
+        return AppliedTask {
             policy,
             priority,
             nice: 0,
-            cpus: tier.core.map(CpuSet::single),
+            cpus: task.core.map(CpuSet::single),
             uclamp: None,
             reservation: None,
-            tier_name: tier.name.clone(),
+            task_name: task.name.clone(),
         };
     };
 
@@ -111,10 +111,10 @@ fn applied_from_tier(
         PosixAffinity::Cpus { cpus } => Some(CpuSet::new(cpus.iter().copied())),
         // A cpuset partition is joined by cgroup membership, never by
         // sched_setaffinity — that is the whole reason the two are distinct.
-        PosixAffinity::Cpuset { .. } | PosixAffinity::Inherit => tier.core.map(CpuSet::single),
+        PosixAffinity::Cpuset { .. } | PosixAffinity::Inherit => task.core.map(CpuSet::single),
     };
 
-    AppliedTier {
+    AppliedTask {
         policy,
         priority,
         nice,
@@ -123,7 +123,7 @@ fn applied_from_tier(
         cpus: if reservation.is_some() { None } else { cpus },
         uclamp: placement.uclamp.map(|(min, max)| Uclamp { min, max }),
         reservation,
-        tier_name: tier.name.clone(),
+        task_name: task.name.clone(),
     }
 }
 
@@ -132,7 +132,7 @@ impl SchedPlan {
     /// legacy `.toml` is refused since rlm v0.3.0), run the full
     /// derive→override→validate pipeline
     /// (`ros_launch_resolve::ros::sched_loader::derive_sched_plan`) for `target`, and invert the
-    /// resulting tier membership into a per-FQN lookup.
+    /// resulting task membership into a per-FQN lookup.
     ///
     /// `index` is the resolved contract index (if any manifests were
     /// loaded) — passed straight through to the derive stage, which uses it
@@ -171,22 +171,22 @@ impl SchedPlan {
 
         let mut by_fqn = HashMap::new();
 
-        for tier in &table.tiers {
-            // The default tier's members have no meaningful scheduling assignment.
-            if tier.name == DEFAULT_TIER {
+        for task in &table.tasks {
+            // The default task's members have no meaningful scheduling assignment.
+            if task.name == DEFAULT_TASK {
                 continue;
             }
 
-            if tier.class.as_deref() == Some("time_triggered") {
+            if task.class.as_deref() == Some("time_triggered") {
                 let msg = format!(
-                    "tier `{}`: SCHED_DEADLINE not applied in v1 (time_triggered)",
-                    tier.name
+                    "task `{}`: SCHED_DEADLINE not applied in v1 (time_triggered)",
+                    task.name
                 );
                 tracing::warn!("{msg}");
                 warnings.push(msg);
             }
 
-            let policy = SchedPolicy::from_sched_class(tier.sched_class.as_deref());
+            let policy = SchedPolicy::from_sched_class(task.sched_class.as_deref());
 
             // Deterministic config validation, done here (build time) rather
             // than at apply time (actor hook, after spawn): a malformed spec
@@ -198,27 +198,27 @@ impl SchedPlan {
             // narrowing to `i32`, so a pathological value can't slip through
             // via truncation.
             if matches!(policy, SchedPolicy::Fifo | SchedPolicy::Rr)
-                && !(1..=99).contains(&tier.priority)
+                && !(1..=99).contains(&task.priority)
             {
                 eyre::bail!(
-                    "tier '{}': RT priority {} out of range 1..=99",
-                    tier.name,
-                    tier.priority
+                    "task '{}': RT priority {} out of range 1..=99",
+                    task.name,
+                    task.priority
                 );
             }
 
             // Safe: validated to 1..=99 for RT policies; Other ignores priority.
-            let priority = tier.priority as i32;
+            let priority = task.priority as i32;
 
-            if let Some(c) = tier.core
+            if let Some(c) = task.core
                 && c as usize >= ncpu
             {
-                eyre::bail!("tier '{}': core {c} >= available CPUs ({ncpu})", tier.name);
+                eyre::bail!("task '{}': core {c} >= available CPUs ({ncpu})", task.name);
             }
 
-            let applied = applied_from_tier(tier, policy, priority);
+            let applied = applied_from_task(task, policy, priority);
 
-            for fqn in &tier.members {
+            for fqn in &task.members {
                 by_fqn.insert(fqn.clone(), applied.clone());
             }
         }
@@ -232,7 +232,7 @@ impl SchedPlan {
     }
 
     /// Look up the resolved scheduling knobs for a fully-qualified node name.
-    pub fn for_fqn(&self, fqn: &str) -> Option<&AppliedTier> {
+    pub fn for_fqn(&self, fqn: &str) -> Option<&AppliedTask> {
         self.by_fqn.get(fqn)
     }
 
@@ -244,7 +244,7 @@ impl SchedPlan {
 
     /// Phase 43.3 — build the per-FQN plan from a checked SystemModel's
     /// execution layer instead of re-deriving from the platform file:
-    /// `bindings` (FQN → tier name) + `tiers[name].<target>` placement.
+    /// `bindings` (FQN → task name) + `tasks[name].<target>` placement.
     /// Mapper derivation, overrides, and band validation already happened
     /// at resolve time; this only re-checks platform applicability and the
     /// deterministic spec invariants (RT priority range, core bounds) —
@@ -260,22 +260,22 @@ impl SchedPlan {
             .unwrap_or(1);
         let mut by_fqn = HashMap::new();
 
-        for (fqn, tier_name) in &model.execution.bindings {
-            let Some(tier) = model.execution.tiers.get(tier_name) else {
+        for (fqn, task_name) in &model.execution.bindings {
+            let Some(task) = model.execution.tiers.get(task_name) else {
                 eyre::bail!(
-                    "SystemModel: binding '{fqn}' references undeclared tier '{tier_name}'"
+                    "SystemModel: binding '{fqn}' references undeclared task '{task_name}'"
                 );
             };
-            let Some(spec) = tier.platform(target) else {
+            let Some(spec) = task.platform(target) else {
                 eyre::bail!(
-                    "SystemModel: tier '{tier_name}' has no `{target}` placement sub-table — \
+                    "SystemModel: task '{task_name}' has no `{target}` placement sub-table — \
                      the model was resolved for a different target; re-run \
                      `play_launch resolve --target {target}`"
                 );
             };
-            if tier.class.as_deref() == Some("time_triggered") {
+            if task.class.as_deref() == Some("time_triggered") {
                 let msg = format!(
-                    "tier `{tier_name}`: SCHED_DEADLINE not applied in v1 (time_triggered)"
+                    "task `{task_name}`: SCHED_DEADLINE not applied in v1 (time_triggered)"
                 );
                 tracing::warn!("{msg}");
                 warnings.push(msg);
@@ -285,25 +285,25 @@ impl SchedPlan {
                 && !(1..=99).contains(&spec.priority)
             {
                 eyre::bail!(
-                    "tier '{tier_name}': RT priority {} out of range 1..=99",
+                    "task '{task_name}': RT priority {} out of range 1..=99",
                     spec.priority
                 );
             }
             if let Some(c) = spec.core
                 && c as usize >= ncpu
             {
-                eyre::bail!("tier '{tier_name}': core {c} >= available CPUs ({ncpu})");
+                eyre::bail!("task '{task_name}': core {c} >= available CPUs ({ncpu})");
             }
-            // Rebuild a reservation from the portable tier head. `up` reads
+            // Rebuild a reservation from the portable task head. `up` reads
             // the model, never the platform file, so this is the only path by
             // which runtime/deadline/period reach the apply layer — and a
             // SCHED_DEADLINE policy without them is refused rather than
             // silently downgraded.
             let reservation = if matches!(policy, SchedPolicy::Deadline) {
-                let (Some(budget), Some(period)) = (tier.budget, tier.period) else {
+                let (Some(budget), Some(period)) = (task.budget, task.period) else {
                     eyre::bail!(
-                        "tier '{tier_name}': sched_class SCHED_DEADLINE but the model carries no {}",
-                        match (tier.budget, tier.period) {
+                        "task '{task_name}': sched_class SCHED_DEADLINE but the model carries no {}",
+                        match (task.budget, task.period) {
                             (None, None) => "budget or period",
                             (None, _) => "budget",
                             _ => "period",
@@ -318,9 +318,9 @@ impl SchedPlan {
                     // hands numbers to sched_setattr(2).
                     runtime_ns: budget.as_nanos() as u64,
                     // Implicit deadline when none was decomposed.
-                    deadline_ns: tier.deadline.unwrap_or(period).as_nanos() as u64,
+                    deadline_ns: task.deadline.unwrap_or(period).as_nanos() as u64,
                     period_ns: period.as_nanos() as u64,
-                    overrun: tier.deadline_policy.as_deref() == Some("fault"),
+                    overrun: task.deadline_policy.as_deref() == Some("fault"),
                 })
             } else {
                 None
@@ -328,7 +328,7 @@ impl SchedPlan {
 
             by_fqn.insert(
                 fqn.clone(),
-                AppliedTier {
+                AppliedTask {
                     policy,
                     priority: spec.priority as i32,
                     nice: 0,
@@ -341,7 +341,7 @@ impl SchedPlan {
                     },
                     uclamp: None,
                     reservation,
-                    tier_name: tier_name.clone(),
+                    task_name: task_name.clone(),
                 },
             );
         }
@@ -473,7 +473,7 @@ pub fn container_mode_flag(mode: ContainerMode) -> &'static str {
     }
 }
 
-/// The tier's policy as its `sched_class` spelling, so a report names what a
+/// The task's policy as its `sched_class` spelling, so a report names what a
 /// platform file would have written.
 fn policy_name(policy: SchedPolicy) -> &'static str {
     match policy {
@@ -486,45 +486,50 @@ fn policy_name(policy: SchedPolicy) -> &'static str {
     }
 }
 
-/// One composable node whose derived tier the container mode in force cannot
+/// One composable node whose derived task the container mode in force cannot
 /// apply (issue #0035, phase 80).
 ///
 /// Serialized into `run_info.json` so a later reader — `play_launch measure`
 /// above all — can tell a priority that was set on a thread from one that was
-/// only ever derived. The model's `execution.bindings` still binds the tier;
+/// only ever derived. The model's `execution.bindings` still binds the task;
 /// this is the record of what happened to it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct UnappliedComposableTier {
+pub struct UnappliedComposableTask {
     /// The composable's model FQN — the same key `execution.bindings` uses.
     pub node: String,
     /// The container it is loaded into, as an FQN when one matched, else the
     /// target name the launch file wrote.
     pub container: String,
+    /// The task's name (`run_info.json` `sched_unapplied[].task`).
+    pub task: String,
+    /// The same name under its pre-phase-99 key, `tier`, written beside
+    /// `task` for one release (play_launch 0.27) so a reader of
+    /// `run_info.json` can move; gone in the release after.
     pub tier: String,
-    /// `sched_class` spelling of the tier's policy.
+    /// `sched_class` spelling of the task's policy.
     pub policy: String,
     pub priority: i32,
     /// The `--container-mode` value in force, as spelled on the command line.
     pub container_mode: String,
 }
 
-impl UnappliedComposableTier {
-    /// The one line the user reads. Names the node, the tier it was given, the
+impl UnappliedComposableTask {
+    /// The one line the user reads. Names the node, the task it was given, the
     /// container that swallows it, the mode that decided this, and the mode
     /// that would not.
     pub fn message(&self) -> String {
         format!(
-            "scheduling: composable '{}' has tier '{}' ({} priority {}) but is loaded into \
+            "scheduling: composable '{}' has task '{}' ({} priority {}) but is loaded into \
              container '{}' under --container-mode {} — a composable there is a thread pool \
-             inside the container's process, not a process of its own, so the tier is NOT \
-             applied (the container's own tier is what its threads run at); use \
+             inside the container's process, not a process of its own, so the task is NOT \
+             applied (the container's own task is what its threads run at); use \
              --container-mode isolated to schedule it independently",
-            self.node, self.tier, self.policy, self.priority, self.container, self.container_mode
+            self.node, self.task, self.policy, self.priority, self.container, self.container_mode
         )
     }
 }
 
-/// Every composable that carries a tier the container mode in force cannot
+/// Every composable that carries a task the container mode in force cannot
 /// apply — the decision made BEFORE anything is spawned (issue #0035).
 ///
 /// This is the general case of [`chain_container_colocation_warnings`], which
@@ -540,26 +545,26 @@ impl UnappliedComposableTier {
 /// Container membership resolution mirrors `builder.rs`'s composable-node
 /// target matching: exact FQN first, then a suffix match for a relative
 /// target. A target that matches no container is still reported, naming the
-/// target as written: the tier is dropped either way, and an unresolvable
+/// target as written: the task is dropped either way, and an unresolvable
 /// target is its own problem rather than a reason to say nothing.
 ///
 /// `composables` is `(model FQN, target container name)` per composable, in
 /// spawn order; `container_fqns` is every container's model FQN.
-pub fn composable_tiers_not_applied(
+pub fn composable_tasks_not_applied(
     plan: &SchedPlan,
     container_mode: ContainerMode,
     composables: &[(String, String)],
     container_fqns: &[String],
-) -> Vec<UnappliedComposableTier> {
+) -> Vec<UnappliedComposableTask> {
     // `isolated` fork+execs every composable into its own process, so every
-    // tier reaches a pid. Nothing to report.
+    // task reaches a pid. Nothing to report.
     if container_mode == ContainerMode::Isolated {
         return Vec::new();
     }
 
     let mut out = Vec::new();
     for (fqn, target) in composables {
-        let Some(tier) = plan.for_fqn(fqn) else {
+        let Some(task) = plan.for_fqn(fqn) else {
             continue;
         };
         let target = target.trim();
@@ -570,12 +575,13 @@ pub fn composable_tiers_not_applied(
             .or_else(|| container_fqns.iter().find(|c| c.ends_with(&suffix)))
             .cloned()
             .unwrap_or_else(|| target.to_string());
-        out.push(UnappliedComposableTier {
+        out.push(UnappliedComposableTask {
             node: fqn.clone(),
             container,
-            tier: tier.tier_name.clone(),
-            policy: policy_name(tier.policy).to_string(),
-            priority: tier.priority,
+            task: task.task_name.clone(),
+            tier: task.task_name.clone(),
+            policy: policy_name(task.policy).to_string(),
+            priority: task.priority,
             container_mode: container_mode_flag(container_mode).to_string(),
         });
     }
@@ -644,7 +650,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_regular_node_and_composable_into_applied_tier_with_no_warning() {
+    fn resolves_regular_node_and_composable_into_applied_task_with_no_warning() {
         let dump = dump_with_node_and_composable();
         let yaml = r#"
 target: posix
@@ -662,8 +668,8 @@ overrides:
                 .expect("regular node should be in plan");
             assert_eq!(applied.policy, SchedPolicy::Fifo);
             assert_eq!(applied.priority, 80);
-            // An override places the node in a tier of its own name.
-            assert_eq!(applied.tier_name, "/control/ndt_localizer");
+            // An override places the node in a task of its own name.
+            assert_eq!(applied.task_name, "/control/ndt_localizer");
 
             // Composables are now scheduled like any other member (phase
             // 38.9): present in the plan, no "not applied" warning.
@@ -682,9 +688,9 @@ overrides:
     }
 
     #[test]
-    fn unassigned_node_in_default_tier_has_no_applied_entry() {
+    fn unassigned_node_in_default_task_has_no_applied_entry() {
         let dump = dump_with_node_and_composable();
-        // No overrides: `manual` derives nothing, so everything lands in the default tier.
+        // No overrides: `manual` derives nothing, so everything lands in the default task.
         let yaml = "target: posix\npriority_assignment: manual\n";
         with_temp_yaml(yaml, |path| {
             let plan = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Off)
@@ -712,7 +718,7 @@ overrides:
             let msg = err.to_string();
             assert!(
                 msg.contains("control") && msg.contains("priority") && msg.contains("0"),
-                "expected a message naming the tier and the bad priority, got: {msg}"
+                "expected a message naming the task and the bad priority, got: {msg}"
             );
         });
     }
@@ -750,7 +756,7 @@ overrides:
             let msg = err.to_string();
             assert!(
                 msg.contains("control") && msg.contains("100"),
-                "expected a message naming the tier and the bad priority, got: {msg}"
+                "expected a message naming the task and the bad priority, got: {msg}"
             );
         });
     }
@@ -774,13 +780,13 @@ overrides:
             let msg = err.to_string();
             assert!(
                 msg.contains("control") && msg.contains("999"),
-                "expected a message naming the tier and the bad core, got: {msg}"
+                "expected a message naming the task and the bad core, got: {msg}"
             );
         });
     }
 
     #[test]
-    fn valid_tier_builds_successfully() {
+    fn valid_task_builds_successfully() {
         let dump = dump_with_node_and_composable();
         let yaml = r#"
 target: posix
@@ -790,7 +796,7 @@ overrides:
 "#;
         with_temp_yaml(yaml, |path| {
             let plan = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Strict)
-                .expect("valid tier (prio 20, core 0) should build fine");
+                .expect("valid task (prio 20, core 0) should build fine");
             let applied = plan
                 .for_fqn("/control/ndt_localizer")
                 .expect("node should be in plan");
@@ -806,12 +812,12 @@ mod model_tests {
 
     fn model_with_binding(target_table: bool) -> ros_launch_manifest_model::SystemModel {
         let mut m = ros_launch_manifest_model::SystemModel::default();
-        let mut tier = ros_launch_manifest_sched::TierDef {
+        let mut task = ros_launch_manifest_sched::TaskDef {
             class: Some("real_time".to_string()),
             ..Default::default()
         };
         if target_table {
-            tier.posix = Some(ros_launch_manifest_sched::TierPlatformSpec {
+            task.posix = Some(ros_launch_manifest_sched::TaskPlatformSpec {
                 priority: 40,
                 stack_bytes: None,
                 core: Some(0),
@@ -823,7 +829,7 @@ mod model_tests {
                 time_slice: None,
             });
         }
-        m.execution.tiers.insert("ctrl".to_string(), tier);
+        m.execution.tiers.insert("ctrl".to_string(), task);
         m.execution
             .bindings
             .insert("/a/control_node".to_string(), "ctrl".to_string());
@@ -831,21 +837,21 @@ mod model_tests {
     }
 
     #[test]
-    fn from_model_binds_applied_tier() {
+    fn from_model_binds_applied_task() {
         let plan = SchedPlan::from_model(&model_with_binding(true), "posix", SchedApplyMode::Warn)
             .expect("plan");
         let t = plan.for_fqn("/a/control_node").expect("bound");
         assert_eq!(t.priority, 40);
         assert_eq!(t.cpus, Some(CpuSet::single(0)));
-        assert_eq!(t.tier_name, "ctrl");
+        assert_eq!(t.task_name, "ctrl");
         assert!(matches!(t.policy, SchedPolicy::Fifo));
     }
 
-    /// A `time_triggered` tier reaches the plan only through a model's
+    /// A `time_triggered` task reaches the plan only through a model's
     /// `execution.tiers` since the legacy `.toml` bridge is gone (rlm
     /// v0.3.0); it is applied as its placement says and warned about.
     #[test]
-    fn from_model_time_triggered_tier_warns() {
+    fn from_model_time_triggered_task_warns() {
         let mut m = model_with_binding(true);
         m.execution.tiers.get_mut("ctrl").unwrap().class = Some("time_triggered".to_string());
         let plan = SchedPlan::from_model(&m, "posix", SchedApplyMode::Warn).expect("plan");
@@ -1013,16 +1019,16 @@ mod model_tests {
         assert!(plan.chain_member_nodes.is_empty());
     }
 
-    // ── Phase 80 / issue #0035: a tier the container mode cannot apply ──
+    // ── Phase 80 / issue #0035: a task the container mode cannot apply ──
 
-    /// Two composables and a bystander with no tier, all in one container.
+    /// Two composables and a bystander with no task, all in one container.
     fn model_with_composable_bindings() -> ros_launch_manifest_model::SystemModel {
         let mut m = ros_launch_manifest_model::SystemModel::default();
-        let mut tier = ros_launch_manifest_sched::TierDef {
+        let mut task = ros_launch_manifest_sched::TaskDef {
             class: Some("real_time".to_string()),
             ..Default::default()
         };
-        tier.posix = Some(ros_launch_manifest_sched::TierPlatformSpec {
+        task.posix = Some(ros_launch_manifest_sched::TaskPlatformSpec {
             priority: 39,
             stack_bytes: None,
             core: None,
@@ -1033,7 +1039,7 @@ mod model_tests {
             period: None,
             time_slice: None,
         });
-        m.execution.tiers.insert("rt".to_string(), tier);
+        m.execution.tiers.insert("rt".to_string(), task);
         for fqn in ["/perception/chain_a", "/perception/chain_b"] {
             m.execution
                 .bindings
@@ -1061,7 +1067,7 @@ mod model_tests {
     }
 
     #[test]
-    fn unapplied_composable_tiers_named_under_stock() {
+    fn unapplied_composable_tasks_named_under_stock() {
         let plan = SchedPlan::from_model(
             &model_with_composable_bindings(),
             "posix",
@@ -1070,19 +1076,19 @@ mod model_tests {
         .expect("plan");
         let containers = vec!["/perception/shared_container".to_string()];
         let mut got =
-            composable_tiers_not_applied(&plan, ContainerMode::Stock, &composables(), &containers);
+            composable_tasks_not_applied(&plan, ContainerMode::Stock, &composables(), &containers);
         got.sort_by(|a, b| a.node.cmp(&b.node));
         assert_eq!(got.len(), 2, "got: {got:?}");
         assert_eq!(got[0].node, "/perception/chain_a");
         // Suffix match resolved the relative target to the container's FQN.
         assert_eq!(got[0].container, "/perception/shared_container");
-        assert_eq!(got[0].tier, "rt");
+        assert_eq!(got[0].task, "rt");
         assert_eq!(got[0].policy, "SCHED_FIFO");
         assert_eq!(got[0].priority, 39);
         assert_eq!(got[0].container_mode, "stock");
         assert!(
             got.iter().all(|u| u.node != "/perception/bystander"),
-            "a composable with no tier has nothing to drop: {got:?}"
+            "a composable with no task has nothing to drop: {got:?}"
         );
         let msg = got[0].message();
         assert!(msg.contains("/perception/chain_a"), "{msg}");
@@ -1092,14 +1098,14 @@ mod model_tests {
     /// The single-composable case the co-location warning misses by design
     /// (`members.len() >= 2`) — this one must still report it.
     #[test]
-    fn unapplied_composable_tiers_report_a_lone_composable() {
+    fn unapplied_composable_tasks_report_a_lone_composable() {
         let plan = SchedPlan::from_model(
             &model_with_composable_bindings(),
             "posix",
             SchedApplyMode::Warn,
         )
         .expect("plan");
-        let got = composable_tiers_not_applied(
+        let got = composable_tasks_not_applied(
             &plan,
             ContainerMode::Observable,
             &composables()[..1],
@@ -1109,19 +1115,19 @@ mod model_tests {
         assert_eq!(got[0].container_mode, "observable");
     }
 
-    /// Under `isolated` every composable is fork+exec'd and gets its tier, so
+    /// Under `isolated` every composable is fork+exec'd and gets its task, so
     /// there is nothing to report. This is the assertion that stops the
     /// silent regression: a future change that warns here would warn on the
-    /// default path, for a tier that IS applied.
+    /// default path, for a task that IS applied.
     #[test]
-    fn unapplied_composable_tiers_empty_under_isolated() {
+    fn unapplied_composable_tasks_empty_under_isolated() {
         let plan = SchedPlan::from_model(
             &model_with_composable_bindings(),
             "posix",
             SchedApplyMode::Warn,
         )
         .expect("plan");
-        let got = composable_tiers_not_applied(
+        let got = composable_tasks_not_applied(
             &plan,
             ContainerMode::Isolated,
             &composables(),
@@ -1130,17 +1136,17 @@ mod model_tests {
         assert!(got.is_empty(), "got: {got:?}");
     }
 
-    /// A target that resolves to no container is still reported — the tier is
+    /// A target that resolves to no container is still reported — the task is
     /// dropped either way — naming the target as the launch file wrote it.
     #[test]
-    fn unapplied_composable_tiers_report_unresolvable_target() {
+    fn unapplied_composable_tasks_report_unresolvable_target() {
         let plan = SchedPlan::from_model(
             &model_with_composable_bindings(),
             "posix",
             SchedApplyMode::Warn,
         )
         .expect("plan");
-        let got = composable_tiers_not_applied(&plan, ContainerMode::Stock, &composables(), &[]);
+        let got = composable_tasks_not_applied(&plan, ContainerMode::Stock, &composables(), &[]);
         assert_eq!(got.len(), 2, "got: {got:?}");
         assert_eq!(got[0].container, "shared_container");
     }

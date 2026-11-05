@@ -6,6 +6,25 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## 0.27.0 - 2026-11-05
+
+- **Changed (rlm v0.3.10, phase 99 T1/T2): a scheduling tier is a task.**
+  Every message says task: the `--explain` scheduling block (`N task(s)`,
+  `  task <name> prio=...`), a node's evidence (`derived((applied): task
+  ...)`), the resolve summary, the apply log (`applied task '<name>'`), the
+  `--sched-apply strict` refusals and the composable note. The model keeps
+  its key `execution.tiers` (schema 4).
+- **Deprecated (`resolve --system`):** a nano-ros `system.toml` that writes
+  `[tiers.<name>]` or `[[component]] group_tiers` still resolves, with one
+  `warning[deprecated-spelling]` per old key naming `[tasks.<name>]` /
+  `group_tasks` and `migrate`; the next release refuses them.
+- **Added (`migrate`):** a file named `*system.toml` (given, or found by a
+  directory walk) gets the `system.toml` rewrites `tiers-tasks` and
+  `group-tiers-group-tasks`; `--list` shows them. The summary line counts
+  `file(s)`.
+- **Changed (`run_info.json`):** `sched_unapplied[]` rows carry `task`; the
+  old key `tier` is written beside it for this release only.
+
 ## 0.26.0 - 2026-11-05
 
 - **Removed (`check`; rlm v0.3.9, phase 98 N6 at R+1):** the spellings

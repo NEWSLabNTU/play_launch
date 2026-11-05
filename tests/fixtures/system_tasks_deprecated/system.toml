@@ -1,0 +1,25 @@
+# Phase 99 (rlm v0.3.10): a system.toml in the pre-rename spelling,
+# `[tiers.*]` and `group_tiers`. It still reads this release, with one
+# `deprecated-spelling` warning per key; `play_launch migrate` rewrites it to
+# `[tasks.*]` and `group_tasks`, and the model is the same either way.
+# Used by tests/tests/system_tasks_deprecated.rs with
+# tests/fixtures/multihost/launch/multihost.launch.xml host:=all.
+
+[[component]]
+name = "hub"
+group_tiers = { main = "ctrl" }   # the hub's one group
+
+[[component]]
+name = "talker1"
+group_tiers = { main = "telem" }
+
+[tiers.ctrl]
+spin_period = "10ms"
+[tiers.ctrl.posix]
+priority = 40
+sched_class = "SCHED_FIFO"
+
+[tiers.telem]
+spin_period = "100ms"
+[tiers.telem.posix]
+priority = 10

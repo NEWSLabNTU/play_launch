@@ -10,7 +10,7 @@
 //!
 //! "Engages" is asserted tolerant of host privilege:
 //! - On a host with `CAP_SYS_NICE`/root, `play_launch` actually applies the
-//!   tier and logs `applied tier '<node>'` (debug-level — hence `RUST_LOG=play_launch=debug`
+//!   task and logs `applied task '<node>'` (debug-level — hence `RUST_LOG=play_launch=debug`
 //!   in the test env).
 //! - On an unprivileged host (the common CI case), the preflight hint
 //!   containing `cap_sys_nice` is logged instead (warn-level, always visible).
@@ -76,7 +76,7 @@ fn spawn_sched_launch_for(
 
 /// [`spawn_sched_launch_for`] with an explicit `--container-mode` (phase 80):
 /// the flag decides whether a composable is a process of its own, and
-/// therefore whether the tier the model binds to it can be applied at all.
+/// therefore whether the task the model binds to it can be applied at all.
 fn spawn_sched_launch_in_mode(
     env: &std::collections::HashMap<String, String>,
     work_dir: &std::path::Path,
@@ -108,7 +108,7 @@ fn spawn_sched_launch_in_mode(
     cmd.arg(launch.to_str().unwrap());
     cmd.stdout(Stdio::from(stdout_file));
     cmd.stderr(Stdio::from(stderr_file));
-    // The success-path evidence ("applied tier '<name>'") is logged at
+    // The success-path evidence ("applied task '<name>'") is logged at
     // debug level — raise RUST_LOG so it's visible. Never rely on info!
     // being promoted for test convenience.
     cmd.env("RUST_LOG", "play_launch=debug");
@@ -157,7 +157,7 @@ fn wait_for_pattern(
 /// `--sched-apply warn`: the run must reach steady state (same process count
 /// as a plain `simple_workspace` launch — the apply-layer never blocks or
 /// crashes node startup), and stderr/stdout together must contain evidence
-/// the apply-layer engaged: either the resolved tier (`applied tier
+/// the apply-layer engaged: either the resolved task (`applied task
 /// '<node>'`, privileged host) or the `cap_sys_nice` preflight hint (unprivileged
 /// host).
 #[test]
@@ -195,11 +195,11 @@ fn sched_apply_warn_engages_and_launch_succeeds() {
     let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
     let combined = format!("{stdout}\n{stderr}").to_lowercase();
 
-    let engaged = combined.contains("applied tier") || combined.contains("cap_sys_nice");
+    let engaged = combined.contains("applied task") || combined.contains("cap_sys_nice");
     assert!(
         engaged,
         "expected evidence the sched apply-layer engaged (either \
-         \"applied tier\" on a privileged host, or a cap_sys_nice \
+         \"applied task\" on a privileged host, or a cap_sys_nice \
          preflight hint on an unprivileged host) in combined output:\n{combined}"
     );
 
@@ -252,17 +252,17 @@ fn sched_apply_strict_aborts_before_spawn_when_unprivileged() {
 /// (Talker, Listener); each composable is its own fork+exec'd process with
 /// its own pid, delivered via `ComponentEvent::LOADED`. On LOADED, the
 /// container actor (`container_actor/component_events.rs`) looks up the
-/// composable's resolved tier and calls `apply_tier(event.pid, tier)`:
+/// composable's resolved task and calls `apply_task(event.pid, task)`:
 /// - unprivileged host (EPERM): `warn!("{name}: sched apply failed for
 ///   composable '{composable}' (pid {pid}): {err}")`
-/// - privileged host: `debug!("{name}: applied tier '{tier}' to composable
+/// - privileged host: `debug!("{name}: applied task '{task}' to composable
 ///   '{composable}' (pid {pid})")` — hence `RUST_LOG=play_launch=debug` in
 ///   `spawn_sched_launch_for`.
 ///
 /// Asserting on either line (tolerant of host privilege, same pattern as
 /// `sched_apply_warn_engages_and_launch_succeeds` above) proves a
-/// per-composable pid was delivered, a tier was resolved for it via
-/// its override, and `apply_tier` was actually invoked for that composable
+/// per-composable pid was delivered, a task was resolved for it via
+/// its override, and `apply_task` was actually invoked for that composable
 /// — the thing that is new in 38.9, as opposed to the pre-38.9 behavior of
 /// only scheduling the container process itself.
 #[test]
@@ -285,7 +285,7 @@ fn composable_scheduling_engages_on_isolated_container() {
     );
 
     // Wait for both composables to report LOADED before inspecting the
-    // apply-layer evidence — the ComponentEvent (and thus the apply_tier
+    // apply-layer evidence — the ComponentEvent (and thus the apply_task
     // call) fires as part of handling that event.
     let loaded = wait_for_pattern(
         &stdout_path,
@@ -309,13 +309,13 @@ fn composable_scheduling_engages_on_isolated_container() {
     // per-composable apply attempt was actually logged.
     let composable_line = combined.lines().find(|l| {
         let ll = l.to_lowercase();
-        (ll.contains("applied tier") && ll.contains("to composable"))
+        (ll.contains("applied task") && ll.contains("to composable"))
             || ll.contains("sched apply failed for composable")
     });
 
     assert!(
         composable_line.is_some(),
-        "expected a per-composable sched apply line (either \"applied tier \
+        "expected a per-composable sched apply line (either \"applied task \
          '...' to composable '...'\" on a privileged host, or \"sched apply \
          failed for composable '...'\" on an unprivileged host) in combined \
          output:\n{combined}"
@@ -328,13 +328,13 @@ fn composable_scheduling_engages_on_isolated_container() {
     // _proc dropped here — ManagedProcess::drop kills the process group.
 }
 
-// ── Phase 80 / issue #0035: a tier the container mode cannot apply ──
+// ── Phase 80 / issue #0035: a task the container mode cannot apply ──
 //
-// `resolve --sched` derives a tier for every node carrying a timing fact,
+// `resolve --sched` derives a task for every node carrying a timing fact,
 // composables included, and `check --explain` prints it. Under
 // `--container-mode observable` or `stock` a composable is a thread pool
 // inside the container's process, so the LOADED handler is handed pid 0 and
-// correctly declines to apply the tier — and used to decline in complete
+// correctly declines to apply the task — and used to decline in complete
 // silence, leaving the model's `execution.bindings` promising a priority
 // that `ps -eLo tid,cls,rtprio` would never show.
 //
@@ -346,10 +346,10 @@ fn composable_scheduling_engages_on_isolated_container() {
 /// declare `namespace=""`, so they sit at the root.
 const FIXTURE_COMPOSABLES: [&str; 2] = ["/talker", "/listener"];
 
-/// Under `--container-mode stock` every tiered composable must be named,
+/// Under `--container-mode stock` every composable with a task must be named,
 /// once, before anything is spawned.
 #[test]
-fn composable_tier_unapplied_under_stock_is_named() {
+fn composable_task_unapplied_under_stock_is_named() {
     let env = fixtures::install_env();
     let launch = fixtures::test_workspace_path("container_events")
         .join("launch/container_events.launch.xml");
@@ -381,7 +381,7 @@ fn composable_tier_unapplied_under_stock_is_named() {
     assert_eq!(
         named,
         FIXTURE_COMPOSABLES.len(),
-        "expected one warning per tiered composable, found {named}"
+        "expected one warning per composable with a task, found {named}"
     );
 
     let stdout = std::fs::read_to_string(&stdout_path).unwrap_or_default();
@@ -398,12 +398,12 @@ fn composable_tier_unapplied_under_stock_is_named() {
              --container-mode stock, in:\n{combined}"
         );
         let line = named.unwrap();
-        // The message has to carry the three things a user needs: the tier it
-        // was given (an override's tier is named after the node), the mode
+        // The message has to carry the three things a user needs: the task it
+        // was given (an override's task is named after the node), the mode
         // that dropped it, and the mode that would not.
         assert!(
-            line.contains(&format!("tier '{fqn}'")),
-            "tier not named: {line}"
+            line.contains(&format!("task '{fqn}'")),
+            "task not named: {line}"
         );
         assert!(
             line.contains("--container-mode stock"),
@@ -427,6 +427,12 @@ fn composable_tier_unapplied_under_stock_is_named() {
         .unwrap_or_else(|| panic!("run_info.json carries no sched_unapplied: {run_info}"));
     assert_eq!(rows.len(), 2, "{run_info}");
     let nodes: Vec<&str> = rows.iter().filter_map(|r| r["node"].as_str()).collect();
+    // Each row names its task, and under the pre-phase-99 key `tier` too
+    // for one release (0.27).
+    for r in rows {
+        assert!(r["task"].is_string(), "{r}");
+        assert_eq!(r["tier"], r["task"], "{r}");
+    }
     for fqn in FIXTURE_COMPOSABLES {
         assert!(nodes.contains(&fqn), "{run_info}");
     }
@@ -434,13 +440,13 @@ fn composable_tier_unapplied_under_stock_is_named() {
     // _proc dropped here — ManagedProcess::drop kills the process group.
 }
 
-/// `--sched-apply strict` under a mode that cannot apply a composable's tier
+/// `--sched-apply strict` under a mode that cannot apply a composable's task
 /// refuses at the start boundary — non-zero exit, and no node directory ever
 /// written. Unlike the CAP_SYS_NICE strict test above, this one does not
 /// depend on host privilege: the refusal is decided from the container mode
 /// and the plan alone, before the privilege check is reached.
 #[test]
-fn composable_tier_strict_refuses_before_spawn_under_stock() {
+fn composable_task_strict_refuses_before_spawn_under_stock() {
     let env = fixtures::install_env();
     let launch = fixtures::test_workspace_path("container_events")
         .join("launch/container_events.launch.xml");
@@ -463,12 +469,12 @@ fn composable_tier_strict_refuses_before_spawn_under_stock() {
 
     assert!(
         !status.success(),
-        "expected --sched-apply strict to refuse a run whose composable tiers \
+        "expected --sched-apply strict to refuse a run whose composable tasks \
          cannot be applied (exit status: {status:?})\nstderr:\n{stderr}"
     );
     assert!(
         stderr.contains("--sched-apply strict") && stderr.contains("composable"),
-        "expected the refusal to name the composable tiers:\n{stderr}"
+        "expected the refusal to name the composable tasks:\n{stderr}"
     );
     for fqn in FIXTURE_COMPOSABLES {
         assert!(
@@ -490,14 +496,14 @@ fn composable_tier_strict_refuses_before_spawn_under_stock() {
 }
 
 /// Issue #0062: with NO `--container-mode`, strict uses `isolated` when a
-/// composable carries a tier, and says so, instead of refusing a mode the user
+/// composable carries a task, and says so, instead of refusing a mode the user
 /// never chose. `observable` became the default in 0.15, and until this fix
 /// the same command that worked on 0.14 exited before spawning anything.
 ///
 /// The run may still stop later on an unprivileged host (strict also refuses
 /// without `CAP_SYS_NICE`), so this asserts the decision, not a full start.
 #[test]
-fn composable_tier_strict_without_a_mode_uses_isolated() {
+fn composable_task_strict_without_a_mode_uses_isolated() {
     let env = fixtures::install_env();
     let launch = fixtures::test_workspace_path("container_events")
         .join("launch/container_events.launch.xml");
@@ -523,18 +529,18 @@ fn composable_tier_strict_without_a_mode_uses_isolated() {
 
     assert_eq!(
         decided, 1,
-        "expected strict to choose isolated for the tiered composables:\n{combined}"
+        "expected strict to choose isolated for the composables with a task:\n{combined}"
     );
     assert!(
         !combined.contains("cannot be applied under --container-mode"),
-        "strict refused the composable tiers although no mode was given:\n{combined}"
+        "strict refused the composable tasks although no mode was given:\n{combined}"
     );
 }
 
 /// The other half of #0062: an EXPLICIT mode is never overridden. Strict with
 /// `--container-mode observable` written out still refuses.
 #[test]
-fn composable_tier_strict_with_explicit_observable_still_refuses() {
+fn composable_task_strict_with_explicit_observable_still_refuses() {
     let env = fixtures::install_env();
     let launch = fixtures::test_workspace_path("container_events")
         .join("launch/container_events.launch.xml");
@@ -573,12 +579,12 @@ fn composable_tier_strict_with_explicit_observable_still_refuses() {
 /// side: under `--container-mode isolated` (no longer the default since
 /// 615d0de2 made it `observable`, but the mode composable scheduling needs)
 /// the same model must produce NO such warning,
-/// because every composable is fork+exec'd and its tier IS applied.
+/// because every composable is fork+exec'd and its task IS applied.
 /// `composable_scheduling_engages_on_isolated_container` above asserts the
 /// apply itself; this asserts the absence of the report, and that
 /// `run_info.json` says "asked, none" rather than staying silent.
 #[test]
-fn composable_tier_silent_under_isolated() {
+fn composable_task_silent_under_isolated() {
     let env = fixtures::install_env();
     let launch = fixtures::test_workspace_path("container_events")
         .join("launch/container_events.launch.xml");
@@ -619,7 +625,7 @@ fn composable_tier_silent_under_isolated() {
     );
     assert!(
         !combined.contains("scheduling: composable"),
-        "isolated applies every composable tier — no unapplied-tier warning \
+        "isolated applies every composable task — no unapplied-task warning \
          may be printed:\n{combined}"
     );
 
@@ -639,12 +645,12 @@ fn composable_tier_silent_under_isolated() {
     // _proc dropped here — ManagedProcess::drop kills the process group.
 }
 
-/// Phase 80's `check` gate: `check --sched --explain` derives a tier for each
+/// Phase 80's `check` gate: `check --sched --explain` derives a task for each
 /// composable and, having no `--container-mode`, says beside the table which
 /// modes cannot apply it. Without the note a user reads `SCHED_FIFO 20`
 /// against `/talker` and then finds the thread at the container's priority.
 #[test]
-fn composable_tier_check_explain_names_the_modes_that_cannot_apply_it() {
+fn composable_task_check_explain_names_the_modes_that_cannot_apply_it() {
     let env = fixtures::install_env();
     let launch = fixtures::test_workspace_path("container_events")
         .join("launch/container_events.launch.xml");
@@ -666,7 +672,7 @@ fn composable_tier_check_explain_names_the_modes_that_cannot_apply_it() {
     );
 
     assert!(
-        text.contains("note: 2 composable(s) carry a tier only --container-mode isolated applies"),
+        text.contains("note: 2 composable(s) carry a task only --container-mode isolated applies"),
         "{text}"
     );
     assert!(
@@ -677,6 +683,6 @@ fn composable_tier_check_explain_names_the_modes_that_cannot_apply_it() {
         text.contains("  /listener: /listener SCHED_FIFO 20 in /event_container"),
         "{text}"
     );
-    // The container is a process of its own; its tier is applied in every mode.
+    // The container is a process of its own; its task is applied in every mode.
     assert!(!text.contains("  /event_container: "), "{text}");
 }

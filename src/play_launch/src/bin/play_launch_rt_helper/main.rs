@@ -18,7 +18,7 @@
 use eyre::{Context, Result};
 use play_launch::{
     ipc::{SchedRequest, SchedResponse, decode_message, encode_message},
-    sched::apply_tier,
+    sched::apply_task,
 };
 use std::os::unix::io::{FromRawFd, RawFd};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -153,8 +153,8 @@ async fn handle_client(
 
         // Process request
         let response = match request {
-            SchedRequest::ApplySched { pid, tier } => {
-                SchedResponse::Applied(apply_tier(pid, &tier))
+            SchedRequest::ApplySched { pid, task } => {
+                SchedResponse::Applied(apply_task(pid, &task))
             }
             SchedRequest::Ping => SchedResponse::Pong,
             SchedRequest::Shutdown => {

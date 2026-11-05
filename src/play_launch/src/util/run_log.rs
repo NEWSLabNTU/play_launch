@@ -178,9 +178,9 @@ pub struct RunInfo {
     pub config_copy: Option<String>,
     /// The filter the log file was written under.
     pub log_filter: String,
-    /// Composable nodes whose derived scheduling tier the container mode in
+    /// Composable nodes whose derived scheduling task the container mode in
     /// force could not apply (issue #0035, phase 80), as
-    /// `execution::sched_plan::UnappliedComposableTier` rows.
+    /// `execution::sched_plan::UnappliedComposableTask` rows.
     ///
     /// Absent means the question was never asked (no scheduling layer in the
     /// model, or the run never got that far); `[]` means it was asked and the
@@ -327,7 +327,7 @@ fn write_run_info(path: &Path, info: &RunInfo) {
     }
 }
 
-/// Record the composable tiers the container mode could not apply (issue
+/// Record the composable tasks the container mode could not apply (issue
 /// #0035) in `run_info.json`, rewriting the file in full.
 ///
 /// A SECOND write rather than a deferred single one. `attach` cannot wait:
@@ -431,7 +431,7 @@ mod tests {
 
         // The second write (issue #0035): the file is rewritten in full,
         // keeping everything `attach` captured.
-        record_sched_unapplied(serde_json::json!([{ "node": "/a/b", "tier": "rt" }]));
+        record_sched_unapplied(serde_json::json!([{ "node": "/a/b", "task": "rt" }]));
         let info: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(dir.path().join(RUN_INFO_FILE_NAME)).unwrap(),
         )

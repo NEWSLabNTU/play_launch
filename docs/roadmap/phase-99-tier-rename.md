@@ -2,7 +2,26 @@
 
 **Status (2026-11-05): planned. Decided (user, 2026-11-05): `tier` is
 renamed, in its own phase on both sides (phase 98 N7); T0 decided
-(user, 2026-11-05): the new word is **task** (option A). T1 not started.** Design of record: rlm
+(user, 2026-11-05): the new word is **task** (option A).**
+
+**Progress (2026-11-05): T1 done, rlm `v0.3.10` (`a7580de`); T2 done,
+play_launch 0.27.0.** rlm reads `[tasks.*]` / `group_tasks`, warns once per
+old key (`system config: deprecated-spelling: ...`, naming the new key, the
+tasks or components, and `migrate`), and `migrate` rewrites a `system.toml`
+(`system_config::migrate_system_toml_str`; the verb picks it for any file
+named `*system.toml`, and a directory walk finds them). The sched types are
+renamed with `#[deprecated]` aliases for the type names, `DEFAULT_TIER` and
+`is_single_tier`. A field or a variant cannot be aliased:
+`ResolvedTaskTable.tasks`, `AssignRule.task`, the `SchedError` variants and
+`BandViolation.task` move with the tag, so nano-ros's two
+`ResolvedTierTable { tiers }` literals (`rtos_realizer.rs`) move in its W1.
+play_launch says task in every message, the `--explain` block (`N task(s)`,
+`  task <name> prio=...`), the evidence (`derived((applied): task ...)`), the
+apply log (`applied task '<name>'`), the IPC (`AppliedTask`, `apply_task`)
+and `run_info.json` `sched_unapplied[].task`, with `tier` beside it for
+0.27 only; `resolve --system` prints `warning[deprecated-spelling]` per old
+key. `tests/fixtures/system_tasks_deprecated` proves the old file warns and
+migrates to the same execution layer. T3 next. Design of record: rlm
 `docs/design/standard-names.md` M7 (design issue 57); the release schedule
 is that document's section 6, as phase 98 ran it. Spans rlm, play_launch,
 the safety island and nano-ros (its own phase: "follow rlm's tier rename").
@@ -163,8 +182,8 @@ templates), 10 `system.toml` files authoring `[tiers.*]`, and docs (about
 | Unit | Work | Acceptance |
 |---|---|---|
 | T0 | The user picks the word (decision slot) | the slot and the design doc's M7 row say "decided: <new>" |
-| T1 | **Release R in rlm.** `system_config`: `[<News>.<name>]` and `group_<News>` read; `[tiers.*]` and `group_tiers` read for one release with one `deprecated-spelling` warning each naming the new key; `migrate` rewrites a `system.toml` (a TOML rewrite: it edits YAML contracts today). `sched` types renamed (`<New>Def`, `<New>PlatformSpec`, `Resolved<New>`, `Resolved<New>Table`, `DEFAULT_<NEW>`, the `SchedError` variants, `AssignRule.<new>`), each old name kept as a `#[deprecated] pub type` / `pub use` alias for this release so a consumer can bump the tag before renaming. Messages and docs say the new word. The model is unchanged (schema 4), as M1-M5 kept theirs at R | rlm release; a test per old key showing it warns and resolves to the same table; `migrate` turns a `[tiers.*]` `system.toml` into one that reads clean; nano-ros compiles unchanged against R (the aliases) |
-| T2 | **play_launch at R.** `just bump-manifest`; the 59 user-facing strings, the `--explain` scheduling block and evidence text, `run_info.json` `sched_unapplied[].<new>` (with `tier` written beside it for one release, as M6 did with `carried_hops`); its own types (`AppliedTier`, `apply_tier`, `UnappliedComposableTier`; the IPC is between two binaries of one wheel, so no compatibility is needed); `rt-scheduling.md`, CLAUDE.md, `--help` text | `just check`, `just test-all` green; `--explain` on `rt_workspace` reads the new word with the same plan; `check-terms` unchanged (the word is not retired yet) |
+| T1 (done, rlm v0.3.10) | **Release R in rlm.** `system_config`: `[<News>.<name>]` and `group_<News>` read; `[tiers.*]` and `group_tiers` read for one release with one `deprecated-spelling` warning each naming the new key; `migrate` rewrites a `system.toml` (a TOML rewrite: it edits YAML contracts today). `sched` types renamed (`<New>Def`, `<New>PlatformSpec`, `Resolved<New>`, `Resolved<New>Table`, `DEFAULT_<NEW>`, the `SchedError` variants, `AssignRule.<new>`), each old name kept as a `#[deprecated] pub type` / `pub use` alias for this release so a consumer can bump the tag before renaming. Messages and docs say the new word. The model is unchanged (schema 4), as M1-M5 kept theirs at R | rlm release; a test per old key showing it warns and resolves to the same table; `migrate` turns a `[tiers.*]` `system.toml` into one that reads clean; nano-ros compiles unchanged against R (the aliases) |
+| T2 (done, 0.27.0) | **play_launch at R.** `just bump-manifest`; the 59 user-facing strings, the `--explain` scheduling block and evidence text, `run_info.json` `sched_unapplied[].<new>` (with `tier` written beside it for one release, as M6 did with `carried_hops`); its own types (`AppliedTier`, `apply_tier`, `UnappliedComposableTier`; the IPC is between two binaries of one wheel, so no compatibility is needed); `rt-scheduling.md`, CLAUDE.md, `--help` text | `just check`, `just test-all` green; `--explain` on `rt_workspace` reads the new word with the same plan; `check-terms` unchanged (the word is not retired yet) |
 | T3 | **Island, demo, nano-ros at R.** Island: docs and comments when it bumps its play_launch pin to the release carrying R (nothing parsed changes). nano-ros: its phase's W1 (bump to R, migrate its ten `system.toml` files) | island `check` verdicts and totals unchanged; nano-ros W1 merged |
 | T4 | **Release R+1 (refuse)**, only after R is on PyPI and nano-ros W1 is merged: `[tiers.*]` and `group_tiers` are refused naming the new key and `migrate` (`removed` rows; `system.toml` keeps `deny_unknown_fields` as the backstop); **model schema 5**: `execution.<News>` written, `execution.tiers` rewritten on read for good (`SystemModel::from_yaml_str`, beside `upgrade_legacy_tier_keys`); the deprecated type aliases deleted; `run_info.json` drops `tier`. nano-ros follows in the same window (its W3: the model field read and the alias-free build) | one negative test per old key; a schema-4 model loads and resolves to the same table as its schema-5 twin; nano-ros builds against R+1 |
 | T5 | **Release R+2 (purge)**: `tier` in both `check-terms` gates, with `tier4` (TIER IV packages) excluded by pattern, not by file | the gate lists `tier`; a negative control injects it; no `tier4_*` launch name trips it |

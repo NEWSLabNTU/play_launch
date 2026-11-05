@@ -43,8 +43,8 @@ struct ComposableNodeDefinition {
     auto_load: bool,
     target_container_name: String, // Will be matched with container during spawn()
     metadata: MemberMetadata,
-    /// Phase 38.9: resolved posix scheduling for this composable (None = no tier).
-    sched: Option<crate::execution::sched_apply::AppliedTier>,
+    /// Phase 38.9: resolved posix scheduling for this composable (None = no task).
+    sched: Option<crate::execution::sched_apply::AppliedTask>,
     /// The launch `<timer>` deadline for this composable's load, if one
     /// enclosed it (`crate::execution::start_delay::deadline`).
     start_after: Option<tokio::time::Instant>,
@@ -164,7 +164,7 @@ impl MemberCoordinatorBuilder {
         name: String,
         context: crate::execution::context::ComposableNodeContext,
         auto_load: bool,
-        sched: Option<crate::execution::sched_apply::AppliedTier>,
+        sched: Option<crate::execution::sched_apply::AppliedTask>,
         start_after: Option<tokio::time::Instant>,
     ) {
         let target_container_name = context.record.target_container_name.clone();

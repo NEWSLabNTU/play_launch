@@ -98,7 +98,7 @@ pub fn run(inputs: ResolveInputs) -> Result<()> {
         let acknowledged = count("] acknowledged:");
         eprintln!(
             "SystemModel: {} ({} nodes, {} topics, {} contracts-carrying endpoints, \
-             {} tier(s), {} warning(s){})",
+             {} task(s), {} warning(s){})",
             inputs.out,
             model.structure.nodes.len(),
             model.structure.topics.len(),

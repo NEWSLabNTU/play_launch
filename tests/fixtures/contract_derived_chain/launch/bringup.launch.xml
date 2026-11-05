@@ -1,11 +1,11 @@
 <?xml version="1.0"?>
 <launch>
   <!-- rt_demo bringup: the runnable example behind docs/guide/rt-scheduling.md.
-       Namespaces mirror system.toml's control/perception tiers:
+       Namespaces mirror system.toml's control/perception tasks:
          /perception : sensor_node + perception_container (filter_component)
          /control    : control_node (the FIFO 20 / core 0 node)
        See bringup.contract.yaml (provider sidecar) and system.toml
-       (RT tiers + bindings) next to / above this file. -->
+       (RT tasks + bindings) next to / above this file. -->
 
   <node pkg="rt_demo" exec="sensor_node" name="sensor_node" namespace="/perception"/>
 

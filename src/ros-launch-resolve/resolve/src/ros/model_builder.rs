@@ -14,7 +14,7 @@ use std::{
 };
 
 use ros_launch_manifest_model as model;
-use ros_launch_manifest_sched::{DEFAULT_TIER, EffectiveTrigger, TierDef, TierPlatformSpec};
+use ros_launch_manifest_sched::{DEFAULT_TASK, EffectiveTrigger, TaskDef, TaskPlatformSpec};
 use ros_launch_manifest_types::{Bound, DropSpec, EndpointProps, OptBound, ParamBinding, QosDecl};
 use sha2::{Digest, Sha256};
 
@@ -26,7 +26,7 @@ use crate::ros::{
 
 /// Scheduling inputs for the execution layer.
 pub struct SchedInputs<'a> {
-    /// The derived, override-applied, flattened plan. Tier definitions are
+    /// The derived, override-applied, flattened plan. Task definitions are
     /// synthesized from it (the legacy bridge that declared them is gone,
     /// rlm v0.3.0).
     pub derived: &'a DerivedSchedPlan,
@@ -769,17 +769,17 @@ fn hash_inputs(
     out
 }
 
-/// Synthesize a `TierDef` table from the resolved plan when the platform
+/// Synthesize a `TaskDef` table from the resolved plan when the platform
 /// file declared none (mapper-derived plans): one entry per distinct
-/// non-default tier name, with the placement recorded under the resolve
+/// non-default task name, with the placement recorded under the resolve
 /// target's platform sub-table.
-fn synthesize_tiers(derived: &DerivedSchedPlan) -> BTreeMap<String, TierDef> {
-    let mut tiers = BTreeMap::new();
-    for t in &derived.plan.tiers {
-        if t.name == DEFAULT_TIER || tiers.contains_key(&t.name) {
+fn synthesize_tasks(derived: &DerivedSchedPlan) -> BTreeMap<String, TaskDef> {
+    let mut tasks = BTreeMap::new();
+    for t in &derived.plan.tasks {
+        if t.name == DEFAULT_TASK || tasks.contains_key(&t.name) {
             continue;
         }
-        let spec = TierPlatformSpec {
+        let spec = TaskPlatformSpec {
             priority: t.priority,
             stack_bytes: t.stack_bytes,
             core: t.core,
@@ -787,16 +787,16 @@ fn synthesize_tiers(derived: &DerivedSchedPlan) -> BTreeMap<String, TierDef> {
             preempt_threshold: t.preempt_threshold,
             deadline: None,
             // rlm 6a8e287 — per-platform sporadic overrides; the legacy
-            // derived-tier lowering has only tier-level budget/period (set
-            // on TierDef below), no sub-table split.
+            // derived-task lowering has only task-level budget/period (set
+            // on TaskDef below), no sub-table split.
             budget: None,
             period: None,
             time_slice: None,
         };
-        let mut def = TierDef {
+        let mut def = TaskDef {
             class: t.class.clone(),
-            // `t` is play_launch's own tier view, which still speaks
-            // microseconds; the manifest's TierDef now carries durations.
+            // `t` is play_launch's own task view, which still speaks
+            // microseconds; the manifest's TaskDef now carries durations.
             deadline: t
                 .deadline_us
                 .map(|us| ros_launch_manifest_types::duration::Duration::from_micros(us as i64)),
@@ -820,9 +820,9 @@ fn synthesize_tiers(derived: &DerivedSchedPlan) -> BTreeMap<String, TierDef> {
             "nuttx" => def.nuttx = Some(spec),
             _ => {}
         }
-        tiers.insert(t.name.clone(), def);
+        tasks.insert(t.name.clone(), def);
     }
-    tiers
+    tasks
 }
 
 /// Map the pipeline outputs into a `SystemModel`.
@@ -1911,9 +1911,9 @@ pub fn build_system_model(
     // --- execution ---------------------------------------------------------
     let mut execution = model::Execution::default();
     if let Some(s) = sched {
-        execution.tiers = synthesize_tiers(s.derived);
-        for t in &s.derived.plan.tiers {
-            if t.name == DEFAULT_TIER {
+        execution.tiers = synthesize_tasks(s.derived);
+        for t in &s.derived.plan.tasks {
+            if t.name == DEFAULT_TASK {
                 continue;
             }
             for m in &t.members {
@@ -1925,7 +1925,7 @@ pub fn build_system_model(
         // Phase 45.10 — the resolved sched PLAN is NOT embedded in the model
         // (`model.execution.sched` was removed, rlm f090400: the model is
         // INPUT only; each consumer derives its own realization). The mapper's
-        // output IS already reflected in `tiers`/`bindings` above (the applied
+        // output IS already reflected in `tasks`/`bindings` above (the applied
         // Linux schedule reads those). Chain structure + provenance that
         // `--explain` and the composable co-location warning used to read back
         // from `execution.sched` are re-derived at the point of use from the

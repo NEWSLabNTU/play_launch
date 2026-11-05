@@ -3,10 +3,10 @@
 //!
 //! The scheduling spec has two stages:
 //! - **validate-now** (`ros-launch-resolve check --sched <file>`): parses and
-//!   resolves the tier table for the `posix` platform, checking that the
+//!   resolves the task table for the `posix` platform, checking that the
 //!   schema is internally consistent. No syscalls, no process interaction.
 //! - **apply** (this module, phase 2): given an already-spawned PID and a
-//!   pre-resolved [`AppliedTier`], actually sets the Linux scheduling policy,
+//!   pre-resolved [`AppliedTask`], actually sets the Linux scheduling policy,
 //!   real-time priority, utilization clamp, and CPU affinity via
 //!   `sched_setattr(2)` / `sched_setaffinity(2)`.
 //!
@@ -17,7 +17,7 @@
 //! at all.
 //!
 //! This module is intentionally self-contained: it does not know about
-//! `ResolvedTierTable`, launch dumps, or the actor system. It is pure,
+//! `ResolvedTaskTable`, launch dumps, or the actor system. It is pure,
 //! PID-in / result-out, and unit-testable in isolation. Higher-level phase-38
 //! work (plan building, actor wiring) is layered on top in the `play_launch`
 //! binary's `execution` module tree.
@@ -35,7 +35,7 @@
 //! default `PTHREAD_INHERIT_SCHED`). A ROS node/composable can go from 1
 //! thread to ~11 threads within half a second of exec (DDS spawns most of
 //! them), so applying scheduling to only the "pid" misses every thread
-//! spawned before the call. [`apply_tier`] therefore sweeps every TID under
+//! spawned before the call. [`apply_task`] therefore sweeps every TID under
 //! `/proc/<pid>/task/` and applies to each individually.
 //!
 //! Public items here are not yet called outside this module (later phase-38
@@ -257,7 +257,7 @@ impl std::fmt::Display for CpuSet {
     }
 }
 
-/// Linux scheduling policy derived from a tier's `sched_class`.
+/// Linux scheduling policy derived from a task's `sched_class`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SchedPolicy {
     Fifo,
@@ -276,7 +276,7 @@ pub enum SchedPolicy {
 }
 
 impl SchedPolicy {
-    /// Map a tier `sched_class` string. Unknown / None → Other.
+    /// Map a task `sched_class` string. Unknown / None → Other.
     pub fn from_sched_class(s: Option<&str>) -> Self {
         match s {
             Some("SCHED_FIFO") => SchedPolicy::Fifo,
@@ -302,7 +302,7 @@ impl SchedPolicy {
 
 /// Pre-resolved, platform-lowered knobs for one node.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AppliedTier {
+pub struct AppliedTask {
     pub policy: SchedPolicy,
     /// RT priority for Fifo/Rr; ignored for the CFS policies.
     pub priority: i32,
@@ -319,8 +319,8 @@ pub struct AppliedTier {
     /// `SCHED_DEADLINE` reservation, in nanoseconds. `Some` only when
     /// `policy == Deadline`.
     pub reservation: Option<Reservation>,
-    /// Diagnostics only (tier name from the resolved spec).
-    pub tier_name: String,
+    /// Diagnostics only (task name from the resolved spec).
+    pub task_name: String,
 }
 
 /// A CBS reservation: `runtime` every `period`, to be completed within
@@ -596,8 +596,8 @@ fn reset_on_fork_flag(policy: SchedPolicy) -> u64 {
     }
 }
 
-fn apply_to_tid(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
-    match tier.policy {
+fn apply_to_tid(tid: u32, task: &AppliedTask) -> Result<(), SchedApplyError> {
+    match task.policy {
         SchedPolicy::Fifo | SchedPolicy::Rr => {
             // NOTE: `SCHED_FLAG_RESET_ON_FORK` is deliberately NOT set here.
             //
@@ -621,12 +621,12 @@ fn apply_to_tid(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
             // `SCHED_DEADLINE`, whose threads cannot `fork(2)` at all without
             // it (`EAGAIN`). It belongs there and nowhere else, so it is set
             // per-policy rather than uniformly for "RT".
-            let mut flags = reset_on_fork_flag(tier.policy);
+            let mut flags = reset_on_fork_flag(task.policy);
             let mut size = SCHED_ATTR_SIZE_VER0;
             let mut util_min = 0;
             let mut util_max = 0;
 
-            if let Some(uclamp) = &tier.uclamp {
+            if let Some(uclamp) = &task.uclamp {
                 flags |= (libc::SCHED_FLAG_UTIL_CLAMP_MIN | libc::SCHED_FLAG_UTIL_CLAMP_MAX) as u64;
                 size = SCHED_ATTR_SIZE_VER1;
                 util_min = uclamp.min;
@@ -635,9 +635,9 @@ fn apply_to_tid(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
 
             let attr = SchedAttr {
                 size,
-                sched_policy: tier.policy.as_libc() as u32,
+                sched_policy: task.policy.as_libc() as u32,
                 sched_flags: flags,
-                sched_priority: tier.priority as u32,
+                sched_priority: task.priority as u32,
                 sched_util_min: util_min,
                 sched_util_max: util_max,
                 ..Default::default()
@@ -647,22 +647,22 @@ fn apply_to_tid(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
             // never larger than the struct itself.
             let ret = unsafe { sched_setattr(tid as libc::pid_t, &attr, 0) };
             if ret == -1 {
-                return Err(map_setattr_errno(tid, tier.uclamp.is_some(), tier.priority));
+                return Err(map_setattr_errno(tid, task.uclamp.is_some(), task.priority));
             }
         }
         SchedPolicy::Deadline => {
-            let Some(res) = &tier.reservation else {
+            let Some(res) = &task.reservation else {
                 return Err(SchedApplyError::MissingReservation { pid: tid });
             };
 
-            let mut flags = reset_on_fork_flag(tier.policy);
+            let mut flags = reset_on_fork_flag(task.policy);
             if res.overrun {
                 flags |= libc::SCHED_FLAG_DL_OVERRUN as u64;
             }
             let mut size = SCHED_ATTR_SIZE_VER0;
             let mut util_min = 0;
             let mut util_max = 0;
-            if let Some(uclamp) = &tier.uclamp {
+            if let Some(uclamp) = &task.uclamp {
                 flags |= (libc::SCHED_FLAG_UTIL_CLAMP_MIN | libc::SCHED_FLAG_UTIL_CLAMP_MAX) as u64;
                 size = SCHED_ATTR_SIZE_VER1;
                 util_min = uclamp.min;
@@ -671,7 +671,7 @@ fn apply_to_tid(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
 
             let attr = SchedAttr {
                 size,
-                sched_policy: tier.policy.as_libc() as u32,
+                sched_policy: task.policy.as_libc() as u32,
                 sched_flags: flags,
                 sched_runtime: res.runtime_ns,
                 sched_deadline: res.deadline_ns,
@@ -685,7 +685,7 @@ fn apply_to_tid(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
             // struct's real size.
             let ret = unsafe { sched_setattr(tid as libc::pid_t, &attr, 0) };
             if ret == -1 {
-                return Err(map_deadline_errno(tid, res, tier.uclamp.is_some()));
+                return Err(map_deadline_errno(tid, res, task.uclamp.is_some()));
             }
             // No `sched_setaffinity` for a reservation, ever: a deadline
             // thread's affinity may not be narrower than the root domain it
@@ -699,25 +699,25 @@ fn apply_to_tid(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
             // adding a failure mode — and would *reset* a nice value somebody
             // else set. Skip it, exactly as before the override vocabulary
             // existed.
-            let is_no_op = matches!(tier.policy, SchedPolicy::Other)
-                && tier.nice == 0
-                && tier.uclamp.is_none();
+            let is_no_op = matches!(task.policy, SchedPolicy::Other)
+                && task.nice == 0
+                && task.uclamp.is_none();
             if is_no_op {
-                if tier.priority != 0 {
+                if task.priority != 0 {
                     tracing::debug!(
                         tid,
-                        priority = tier.priority,
+                        priority = task.priority,
                         "priority ignored for SCHED_OTHER"
                     );
                 }
-                return affinity_only(tid, tier);
+                return affinity_only(tid, task);
             }
 
             let mut flags = 0u64;
             let mut size = SCHED_ATTR_SIZE_VER0;
             let mut util_min = 0;
             let mut util_max = 0;
-            if let Some(uclamp) = &tier.uclamp {
+            if let Some(uclamp) = &task.uclamp {
                 flags |= (libc::SCHED_FLAG_UTIL_CLAMP_MIN | libc::SCHED_FLAG_UTIL_CLAMP_MAX) as u64;
                 size = SCHED_ATTR_SIZE_VER1;
                 util_min = uclamp.min;
@@ -726,15 +726,15 @@ fn apply_to_tid(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
 
             let attr = SchedAttr {
                 size,
-                sched_policy: tier.policy.as_libc() as u32,
+                sched_policy: task.policy.as_libc() as u32,
                 sched_flags: flags,
                 // `SCHED_IDLE` has no nice of its own — the kernel pins it to
                 // the weakest weight — so it is sent as 0 rather than
                 // whatever an override happened to carry.
-                sched_nice: if matches!(tier.policy, SchedPolicy::Idle) {
+                sched_nice: if matches!(task.policy, SchedPolicy::Idle) {
                     0
                 } else {
-                    tier.nice
+                    task.nice
                 },
                 sched_util_min: util_min,
                 sched_util_max: util_max,
@@ -745,17 +745,17 @@ fn apply_to_tid(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
             // never larger than the struct itself.
             let ret = unsafe { sched_setattr(tid as libc::pid_t, &attr, 0) };
             if ret == -1 {
-                return Err(map_setattr_errno(tid, tier.uclamp.is_some(), tier.priority));
+                return Err(map_setattr_errno(tid, task.uclamp.is_some(), task.priority));
             }
         }
     }
 
-    affinity_only(tid, tier)
+    affinity_only(tid, task)
 }
 
-/// Apply just the CPU affinity part of a tier to one TID.
-fn affinity_only(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
-    if let Some(cpus) = &tier.cpus {
+/// Apply just the CPU affinity part of a task to one TID.
+fn affinity_only(tid: u32, task: &AppliedTask) -> Result<(), SchedApplyError> {
+    if let Some(cpus) = &task.cpus {
         let Some(set) = cpus.to_cpu_set_t() else {
             return Err(SchedApplyError::InvalidCpuSet {
                 pid: tid,
@@ -796,20 +796,20 @@ fn affinity_only(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
 /// Priority is validated before any syscall (including before the
 /// `/proc` walk), so an invalid priority never touches the filesystem or
 /// the kernel.
-pub fn apply_tier(pid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
-    if matches!(tier.policy, SchedPolicy::Fifo | SchedPolicy::Rr)
-        && !(1..=99).contains(&tier.priority)
+pub fn apply_task(pid: u32, task: &AppliedTask) -> Result<(), SchedApplyError> {
+    if matches!(task.policy, SchedPolicy::Fifo | SchedPolicy::Rr)
+        && !(1..=99).contains(&task.priority)
     {
         return Err(SchedApplyError::InvalidPriority {
             pid,
-            priority: tier.priority,
+            priority: task.priority,
         });
     }
 
     // An empty CpuSet is `Some` but names no CPU. `sched_setaffinity` with an
     // empty mask fails EINVAL deep in the sweep; rejecting it here keeps the
     // error at the level where the caller can say which node is misconfigured.
-    if let Some(cpus) = &tier.cpus
+    if let Some(cpus) = &task.cpus
         && cpus.is_empty()
     {
         return Err(SchedApplyError::InvalidCpuSet {
@@ -819,7 +819,7 @@ pub fn apply_tier(pid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
         });
     }
 
-    if let Some(uclamp) = &tier.uclamp
+    if let Some(uclamp) = &task.uclamp
         && (uclamp.min > uclamp.max || uclamp.max > UCLAMP_MAX)
     {
         return Err(SchedApplyError::InvalidUclamp {
@@ -853,12 +853,12 @@ pub fn apply_tier(pid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
     // of several executor threads and the guarantee is unsound. That is
     // refused where it can be detected (a container's
     // `--use_multi_threaded_executor`) and documented where it cannot.
-    if matches!(tier.policy, SchedPolicy::Deadline) {
-        return apply_reservation(pid, &tids, tier);
+    if matches!(task.policy, SchedPolicy::Deadline) {
+        return apply_reservation(pid, &tids, task);
     }
 
     for tid in tids {
-        match apply_to_tid(tid, tier) {
+        match apply_to_tid(tid, task) {
             Ok(()) => {}
             Err(SchedApplyError::Syscall {
                 errno: libc::ESRCH, ..
@@ -875,21 +875,21 @@ pub fn apply_tier(pid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
 }
 
 /// Apply a reservation to `pid`: the leader is reserved, siblings take
-/// `SCHED_FIFO`. See the comment in [`apply_tier`] for why.
-fn apply_reservation(pid: u32, tids: &[u32], tier: &AppliedTier) -> Result<(), SchedApplyError> {
+/// `SCHED_FIFO`. See the comment in [`apply_task`] for why.
+fn apply_reservation(pid: u32, tids: &[u32], task: &AppliedTask) -> Result<(), SchedApplyError> {
     // Siblings first. If admission control then rejects the reservation the
     // node is left entirely at fixed priority — a coherent, if weaker, state —
     // rather than with a reserved leader and best-effort DDS threads, which
     // would be worse than either.
-    if (1..=99).contains(&tier.priority) {
-        let sibling = AppliedTier {
+    if (1..=99).contains(&task.priority) {
+        let sibling = AppliedTask {
             policy: SchedPolicy::Fifo,
             reservation: None,
             // Affinity is untouched for every thread of a reserved node: its
             // CPUs come from the cpuset partition, and narrowing a deadline
             // thread's mask is exactly what the kernel forbids.
             cpus: None,
-            ..tier.clone()
+            ..task.clone()
         };
         for &tid in tids {
             if tid == pid {
@@ -906,12 +906,12 @@ fn apply_reservation(pid: u32, tids: &[u32], tier: &AppliedTier) -> Result<(), S
     } else {
         tracing::debug!(
             pid,
-            priority = tier.priority,
+            priority = task.priority,
             "no derived RT priority for a reserved node's sibling threads; leaving them alone"
         );
     }
 
-    apply_to_tid(pid, tier)
+    apply_to_tid(pid, task)
 }
 
 /// Preflight: can this process set RT scheduling at all?
@@ -925,7 +925,7 @@ fn apply_reservation(pid: u32, tids: &[u32], tier: &AppliedTier) -> Result<(), S
 /// so a root process there passes a uid test and then gets `EPERM` from
 /// `sched_setattr(2)` anyway. That is not hypothetical — it is why
 /// `privileged_self_apply_roundtrip` and `fifo_apply_must_not_set_reset_on_fork`
-/// failed in CI (`apply_tier should succeed when privileged: PermissionDenied`)
+/// failed in CI (`apply_task should succeed when privileged: PermissionDenied`)
 /// while skipping cleanly on an unprivileged developer machine.
 ///
 /// It also mattered at runtime, not only in tests: this function decides
@@ -959,27 +959,27 @@ mod tests {
     use super::*;
     use std::process::Command;
 
-    fn other_tier(cpus: Option<CpuSet>) -> AppliedTier {
-        AppliedTier {
+    fn other_task(cpus: Option<CpuSet>) -> AppliedTask {
+        AppliedTask {
             policy: SchedPolicy::Other,
             priority: 0,
             nice: 0,
             cpus,
             uclamp: None,
             reservation: None,
-            tier_name: "test".to_string(),
+            task_name: "test".to_string(),
         }
     }
 
-    fn fifo_tier(priority: i32) -> AppliedTier {
-        AppliedTier {
+    fn fifo_task(priority: i32) -> AppliedTask {
+        AppliedTask {
             policy: SchedPolicy::Fifo,
             priority,
             nice: 0,
             cpus: None,
             uclamp: None,
             reservation: None,
-            tier_name: "test".to_string(),
+            task_name: "test".to_string(),
         }
     }
 
@@ -1018,7 +1018,7 @@ mod tests {
         // the /proc/<pid>/task walk).
         let bogus_pid = u32::MAX;
 
-        let err = apply_tier(bogus_pid, &fifo_tier(0)).unwrap_err();
+        let err = apply_task(bogus_pid, &fifo_task(0)).unwrap_err();
         assert_eq!(
             err,
             SchedApplyError::InvalidPriority {
@@ -1027,7 +1027,7 @@ mod tests {
             }
         );
 
-        let err = apply_tier(bogus_pid, &fifo_tier(100)).unwrap_err();
+        let err = apply_task(bogus_pid, &fifo_task(100)).unwrap_err();
         assert_eq!(
             err,
             SchedApplyError::InvalidPriority {
@@ -1061,11 +1061,11 @@ mod tests {
     #[test]
     fn privileged_self_apply_roundtrip() {
         with_sleep_child(|pid| {
-            let tier = fifo_tier(10);
-            let result = apply_tier(pid, &tier);
+            let task = fifo_task(10);
+            let result = apply_task(pid, &task);
 
             if has_sched_privilege() {
-                result.expect("apply_tier should succeed when privileged");
+                result.expect("apply_task should succeed when privileged");
 
                 // SAFETY: pid is a valid child pid we just spawned.
                 let policy = unsafe { libc::sched_getscheduler(pid as libc::pid_t) };
@@ -1086,8 +1086,8 @@ mod tests {
     fn other_policy_applies_affinity_only() {
         let cpu = available_cpus()[0];
         with_sleep_child(|pid| {
-            let tier = other_tier(Some(CpuSet::single(cpu)));
-            let result = apply_tier(pid, &tier);
+            let task = other_task(Some(CpuSet::single(cpu)));
+            let result = apply_task(pid, &task);
             assert_eq!(result, Ok(()));
         });
     }
@@ -1099,8 +1099,8 @@ mod tests {
         // set and add a failure mode for no gain.
         with_sleep_child(|pid| {
             let before = read_attr(pid).expect("getattr");
-            let tier = other_tier(None);
-            apply_tier(pid, &tier).expect("no-op apply should succeed");
+            let task = other_task(None);
+            apply_task(pid, &task).expect("no-op apply should succeed");
             let after = read_attr(pid).expect("getattr");
             assert_eq!(before.sched_policy, after.sched_policy);
             assert_eq!(before.sched_nice, after.sched_nice);
@@ -1116,24 +1116,24 @@ mod tests {
             return;
         }
         with_sleep_child(|pid| {
-            let tier = AppliedTier {
+            let task = AppliedTask {
                 policy: SchedPolicy::Batch,
                 priority: 0,
                 nice: 7,
                 cpus: None,
                 uclamp: None,
                 reservation: None,
-                tier_name: "test".to_string(),
+                task_name: "test".to_string(),
             };
-            apply_tier(pid, &tier).expect("batch apply should succeed");
+            apply_task(pid, &task).expect("batch apply should succeed");
             let attr = read_attr(pid).expect("getattr");
             assert_eq!(attr.sched_policy, libc::SCHED_BATCH as u32);
             assert_eq!(attr.sched_nice, 7);
         });
     }
 
-    fn deadline_tier(priority: i32) -> AppliedTier {
-        AppliedTier {
+    fn deadline_task(priority: i32) -> AppliedTask {
+        AppliedTask {
             policy: SchedPolicy::Deadline,
             // The siblings' FIFO priority, not the reservation's — a
             // reservation has none.
@@ -1147,7 +1147,7 @@ mod tests {
                 period_ns: 100_000_000,
                 overrun: false,
             }),
-            tier_name: "test".to_string(),
+            task_name: "test".to_string(),
         }
     }
 
@@ -1168,10 +1168,10 @@ mod tests {
     #[test]
     fn deadline_without_reservation_parameters_is_refused() {
         with_sleep_child(|pid| {
-            let mut tier = deadline_tier(0);
-            tier.reservation = None;
+            let mut task = deadline_task(0);
+            task.reservation = None;
             assert_eq!(
-                apply_tier(pid, &tier),
+                apply_task(pid, &task),
                 Err(SchedApplyError::MissingReservation { pid })
             );
         });
@@ -1191,7 +1191,7 @@ mod tests {
         assert!(readiness.setattr, "sched_setattr must exist to run this");
 
         with_sleep_child(|pid| {
-            match apply_tier(pid, &deadline_tier(40)) {
+            match apply_task(pid, &deadline_task(40)) {
                 Err(SchedApplyError::DeadlineNeedsPartition { .. }) => {}
                 // On a host that IS partitioned (a container running the
                 // suite), the apply legitimately succeeds.
@@ -1236,7 +1236,7 @@ mod tests {
         // An earlier version asked for 40% and was worthless: 40+40 = 80% fits
         // under the ceiling, so it would have passed whether or not the
         // release happened. A test that passes either way measures nothing.
-        let tier = AppliedTier {
+        let task = AppliedTask {
             policy: SchedPolicy::Deadline,
             priority: 0,
             nice: 0,
@@ -1248,14 +1248,14 @@ mod tests {
                 period_ns: 1_000_000_000,
                 overrun: false,
             }),
-            tier_name: "respawn".to_string(),
+            task_name: "respawn".to_string(),
         };
 
         let mut first = Command::new("sleep").arg("30").spawn().expect("spawn");
         std::thread::sleep(std::time::Duration::from_millis(50));
         let first_pid = first.id();
 
-        match apply_tier(first_pid, &tier) {
+        match apply_task(first_pid, &task) {
             Ok(()) => {}
             Err(SchedApplyError::DeadlineNeedsPartition { .. }) => {
                 let _ = first.kill();
@@ -1282,7 +1282,7 @@ mod tests {
         let mut second = Command::new("sleep").arg("30").spawn().expect("spawn");
         std::thread::sleep(std::time::Duration::from_millis(50));
         let second_pid = second.id();
-        let result = apply_tier(second_pid, &tier);
+        let result = apply_task(second_pid, &task);
         let _ = second.kill();
         let _ = second.wait();
 
@@ -1372,7 +1372,7 @@ mod tests {
             return;
         }
         with_sleep_child(|pid| {
-            apply_tier(pid, &fifo_tier(10)).expect("privileged apply should succeed");
+            apply_task(pid, &fifo_task(10)).expect("privileged apply should succeed");
             let attr = read_attr(pid).expect("sched_getattr on a live child");
             assert_eq!(attr.sched_policy, libc::SCHED_FIFO as u32);
             assert_eq!(attr.sched_priority, 10);
@@ -1406,8 +1406,8 @@ mod tests {
         }
         let (a, b) = (cpus[0], cpus[1]);
         with_sleep_child(|pid| {
-            let tier = other_tier(Some(CpuSet::new([a, b])));
-            apply_tier(pid, &tier).expect("affinity apply should succeed");
+            let task = other_task(Some(CpuSet::new([a, b])));
+            apply_task(pid, &task).expect("affinity apply should succeed");
 
             // SAFETY: zeroed cpu_set_t is valid; sched_getaffinity fills it.
             let mut set: libc::cpu_set_t = unsafe { std::mem::zeroed() };
@@ -1461,9 +1461,9 @@ mod tests {
     #[test]
     fn empty_cpuset_is_rejected_before_any_syscall() {
         let bogus_pid = u32::MAX;
-        let mut tier = other_tier(Some(CpuSet::new([])));
-        tier.policy = SchedPolicy::Other;
-        let err = apply_tier(bogus_pid, &tier).unwrap_err();
+        let mut task = other_task(Some(CpuSet::new([])));
+        task.policy = SchedPolicy::Other;
+        let err = apply_task(bogus_pid, &task).unwrap_err();
         assert!(
             matches!(err, SchedApplyError::InvalidCpuSet { .. }),
             "expected InvalidCpuSet, got {err:?}"
@@ -1473,13 +1473,13 @@ mod tests {
     #[test]
     fn out_of_range_uclamp_is_rejected_before_any_syscall() {
         let bogus_pid = u32::MAX;
-        let mut tier = fifo_tier(10);
-        tier.uclamp = Some(Uclamp {
+        let mut task = fifo_task(10);
+        task.uclamp = Some(Uclamp {
             min: 0,
             max: UCLAMP_MAX + 1,
         });
         assert_eq!(
-            apply_tier(bogus_pid, &tier).unwrap_err(),
+            apply_task(bogus_pid, &task).unwrap_err(),
             SchedApplyError::InvalidUclamp {
                 pid: bogus_pid,
                 min: 0,
@@ -1487,10 +1487,10 @@ mod tests {
             }
         );
 
-        let mut tier = fifo_tier(10);
-        tier.uclamp = Some(Uclamp { min: 800, max: 100 });
+        let mut task = fifo_task(10);
+        task.uclamp = Some(Uclamp { min: 800, max: 100 });
         assert!(matches!(
-            apply_tier(bogus_pid, &tier).unwrap_err(),
+            apply_task(bogus_pid, &task).unwrap_err(),
             SchedApplyError::InvalidUclamp { .. }
         ));
     }
@@ -1505,10 +1505,10 @@ mod tests {
 
     #[test]
     fn affinity_failure_never_reports_invalid_priority() {
-        // `AppliedTier` is constructed directly (not via `SchedPlan::build`)
+        // `AppliedTask` is constructed directly (not via `SchedPlan::build`)
         // because the FIX-1 build-time validation added in `sched_plan.rs`
         // would reject an out-of-range core before this could reach
-        // `apply_tier` at all. This test targets `apply_tier` in isolation.
+        // `apply_task` at all. This test targets `apply_task` in isolation.
         //
         // `core = CPU_SETSIZE - 1` (1023) is within the fixed-size
         // `cpu_set_t` bitmask (so `CPU_SET` itself can't panic on an
@@ -1516,17 +1516,17 @@ mod tests {
         // real machine, so the kernel rejects the resulting mask (no bits
         // corresponding to an online CPU) with `EINVAL`.
         with_sleep_child(|pid| {
-            let tier = AppliedTier {
+            let task = AppliedTask {
                 policy: SchedPolicy::Other,
                 priority: 0,
                 nice: 0,
                 cpus: Some(CpuSet::single(1023)),
                 uclamp: None,
                 reservation: None,
-                tier_name: "test".to_string(),
+                task_name: "test".to_string(),
             };
 
-            let err = apply_tier(pid, &tier)
+            let err = apply_task(pid, &task)
                 .expect_err("setting affinity to a nonexistent CPU should fail");
 
             match err {
@@ -1593,7 +1593,7 @@ mod tests {
 
         with_sleep_child(|pid| {
             // `sleep` is single-threaded, but the point of this test is that
-            // apply_tier reaches the per-TID syscall path (not that it
+            // apply_task reaches the per-TID syscall path (not that it
             // no-ops for a bogus/gone target): a real, live TID must yield
             // PermissionDenied, proving the sweep actually dispatched a
             // syscall for that TID rather than silently skipping it.
@@ -1603,7 +1603,7 @@ mod tests {
                 "expected at least one TID for live child pid {pid}"
             );
 
-            let result = apply_tier(pid, &fifo_tier(10));
+            let result = apply_task(pid, &fifo_task(10));
             assert_eq!(result, Err(SchedApplyError::PermissionDenied { pid }));
         });
     }

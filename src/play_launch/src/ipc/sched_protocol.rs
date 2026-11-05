@@ -9,15 +9,15 @@
 //!
 //! Framing is shared: see `ipc::{encode_message, decode_message}`.
 
-use crate::sched::{AppliedTier, SchedApplyError};
+use crate::sched::{AppliedTask, SchedApplyError};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SchedRequest {
-    /// Apply the tier to EVERY thread of `pid` (see `sched::apply_tier`).
+    /// Apply the task to EVERY thread of `pid` (see `sched::apply_task`).
     ApplySched {
         pid: u32,
-        tier: AppliedTier,
+        task: AppliedTask,
     },
     Ping,
     Shutdown,
@@ -55,14 +55,14 @@ mod tests {
     fn apply_sched_request_roundtrips() {
         roundtrip_request(&SchedRequest::ApplySched {
             pid: 1234,
-            tier: AppliedTier {
+            task: AppliedTask {
                 policy: SchedPolicy::Fifo,
                 priority: 42,
                 nice: 0,
                 cpus: Some(CpuSet::new([2, 3])),
                 uclamp: Some(Uclamp { min: 0, max: 1024 }),
                 reservation: None,
-                tier_name: "rt-critical".to_string(),
+                task_name: "rt-critical".to_string(),
             },
         });
     }

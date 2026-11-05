@@ -72,7 +72,7 @@ What's compared
    Phase 40.1, so a plain resolve with no `--contracts`/`--sched` and no
    sidecar leaves both empty — trivially equivalent). When present,
    checked for matching endpoint/path/topic-contract key sets and the
-   resolved chain/binding/tier counts.
+   resolved chain/binding/task counts.
 
 `meta` (args/inputs/resolver/diagnostics) is intentionally NOT compared —
 it's provenance (file hashes, resolver tool name/version), not structure.
@@ -356,7 +356,7 @@ def node_diffs(rust: Dict, python: Dict) -> List[str]:
     Structural identity fields are checked for every entity kind. The
     deeper spawn-input comparison (params/remaps/env/...) is applied to
     PLAIN nodes only — see `spawn_input_diffs` for why containers/
-    composables are intentionally excluded from that tier in this wave.
+    composables are intentionally excluded from that task table in this wave.
     """
     diffs = structural_diffs(rust, python)
     if node_kind(rust) == 'node':

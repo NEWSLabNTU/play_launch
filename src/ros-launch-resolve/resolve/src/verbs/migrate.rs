@@ -8,6 +8,11 @@
 //! a rewrite names: comments, quoting, key order and layout survive.
 //!
 //! Every deprecated-spelling diagnostic the checker prints names this verb.
+//!
+//! A `system.toml` (any file whose name ends in `system.toml`) takes the
+//! integrator-file rewrites instead,
+//! `ros_launch_manifest_model::system_config::migrate_system_toml_str`
+//! (phase 99: `[tiers.*]` / `group_tiers` to `[tasks.*]` / `group_tasks`).
 
 use std::path::{Path, PathBuf};
 
@@ -17,7 +22,8 @@ use ros_launch_manifest_types::migrate::{self, Migration, REWRITES};
 /// Everything `migrate` reads. Owned plain values -- see [`crate::verbs`].
 #[derive(Debug, Clone, Default)]
 pub struct MigrateInputs {
-    /// Contract files, or directories searched for `*.contract.yaml`.
+    /// Contract files and `system.toml` files, or directories searched for
+    /// `*.contract.yaml` and `system.toml`.
     pub paths: Vec<PathBuf>,
     /// Rewrite the files in place. Without it nothing is written and the
     /// diff is printed.
@@ -51,7 +57,10 @@ pub fn run(inputs: MigrateInputs) -> Result<i32> {
         return Ok(0);
     }
     if inputs.paths.is_empty() {
-        eyre::bail!("name a contract file or a directory to search for *.contract.yaml");
+        eyre::bail!(
+            "name a contract or system.toml file, or a directory to search for \
+             *.contract.yaml and system.toml"
+        );
     }
     let mut files = Vec::new();
     for p in &inputs.paths {
@@ -70,7 +79,12 @@ pub fn run(inputs: MigrateInputs) -> Result<i32> {
     for f in &files {
         let src =
             std::fs::read_to_string(f).wrap_err_with(|| format!("reading {}", f.display()))?;
-        let m = match migrate::migrate_str(&src) {
+        let migrated = if is_system_toml(f) {
+            ros_launch_manifest_model::system_config::migrate_system_toml_str(&src)
+        } else {
+            migrate::migrate_str(&src)
+        };
+        let m = match migrated {
             Ok(m) => m,
             Err(e) => {
                 eprintln!("error: {}: {e}", f.display());
@@ -103,7 +117,7 @@ pub fn run(inputs: MigrateInputs) -> Result<i32> {
         "to rewrite"
     };
     println!(
-        "{} contract(s) scanned, {changed} {verb} ({edits} edit(s)){}",
+        "{} file(s) scanned, {changed} {verb} ({edits} edit(s)){}",
         files.len(),
         if changed > 0 && !inputs.write {
             "; run with --write to apply"
@@ -135,7 +149,9 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
                 continue;
             }
             walk(&e.path(), out)?;
-        } else if ft.is_file() && name.ends_with(".contract.yaml") {
+        } else if ft.is_file()
+            && (name.ends_with(".contract.yaml") || name.ends_with("system.toml"))
+        {
             out.push(e.path());
         }
     }
@@ -167,10 +183,24 @@ fn brief(text: &str) -> String {
     }
 }
 
+/// A `system.toml` takes the integrator-file rewrites, not the contract ones.
+fn is_system_toml(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with("system.toml"))
+}
+
 /// The rewrite table, as `--list` prints it.
 pub fn rewrite_table() -> String {
     let mut out = String::from("rewrites, applied in this order:\n");
     for r in REWRITES {
+        out.push_str(&format!(
+            "  {:<26} {} (v{}): {}  ->  {}\n  {:<26} when {}\n",
+            r.id, r.unit, r.since, r.from, r.to, "", r.when
+        ));
+    }
+    out.push_str("system.toml rewrites:\n");
+    for r in ros_launch_manifest_model::system_config::SYSTEM_TOML_REWRITES {
         out.push_str(&format!(
             "  {:<26} {} (v{}): {}  ->  {}\n  {:<26} when {}\n",
             r.id, r.unit, r.since, r.from, r.to, "", r.when
@@ -267,6 +297,40 @@ mod tests {
         for r in REWRITES {
             assert!(t.contains(r.id), "{t}");
         }
+        for r in ros_launch_manifest_model::system_config::SYSTEM_TOML_REWRITES {
+            assert!(t.contains(r.id), "{t}");
+        }
+    }
+
+    /// Phase 99: a directory walk finds a `system.toml` too and rewrites
+    /// `[tiers.*]` / `group_tiers`; the result reads clean.
+    #[test]
+    fn migrate_rewrites_a_system_toml_from_tiers_to_tasks() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("system.toml");
+        let old = "[[component]]\nname = \"n\"\ngroup_tiers = { g = \"rt\" }  # bound\n\
+                   [tiers.rt]\nspin_period = \"1ms\"\n[tiers.rt.zephyr]\npriority = 3\n";
+        std::fs::write(&f, old).unwrap();
+        let run_with = |write: bool, check: bool| {
+            run(MigrateInputs {
+                paths: vec![dir.path().to_path_buf()],
+                write,
+                check,
+                ..Default::default()
+            })
+            .unwrap()
+        };
+        assert_eq!(run_with(false, true), 1);
+        assert_eq!(run_with(true, false), 0);
+        let new = std::fs::read_to_string(&f).unwrap();
+        assert_eq!(
+            new,
+            "[[component]]\nname = \"n\"\ngroup_tasks = { g = \"rt\" }  # bound\n\
+             [tasks.rt]\nspin_period = \"1ms\"\n[tasks.rt.zephyr]\npriority = 3\n"
+        );
+        let cfg = ros_launch_manifest_model::system_config::parse_system_config(&new).unwrap();
+        assert!(cfg.deprecated_spellings().is_empty());
+        assert_eq!(run_with(false, true), 0);
     }
 
     /// A directory walk finds contracts and skips build trees.

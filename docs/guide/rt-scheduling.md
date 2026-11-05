@@ -27,7 +27,7 @@ you write                          play_launch resolves          the kernel sees
 launch file + contract   ──┐
   (rates, deadlines)        ├──►  mapper derives  ──┐
 platform file: resources ──┘                        ├──► SchedPlan ──► per-THREAD
-platform file: overrides ───────────beats derived────┘   FQN → tier      SCHED_FIFO/RR
+platform file: overrides ───────────beats derived────┘   FQN → task      SCHED_FIFO/RR
                                                                         + priority + affinity
 ```
 
@@ -42,9 +42,17 @@ platform file into one `system_model.yaml` — structure, contracts, and the
 input-plus-applied-outcome — it does not embed the mapper's full resolved
 plan, a direction that landed and was deliberately reverted, see §1.3).
 `play_launch up --model system_model.yaml` spawns and applies scheduling straight
-from those tiers/bindings; nothing is re-derived at runtime. `record.json`
+from those tasks/bindings; nothing is re-derived at runtime. `record.json`
 is no longer produced by anything (Phase 47.B2) and plays no role in the
 scheduling apply-layer this guide describes.
+
+A **task** is one named set of scheduling parameters (policy, priority,
+core, budget) and the nodes bound to it; on Linux play_launch applies a
+node's task to every thread of its process. Before 0.27 (rlm v0.3.10) it
+was called a *tier*; the model still stores the tasks under
+`execution.tiers`, and a nano-ros `system.toml` that writes `[tiers.*]` or
+`group_tiers` still reads, with a `deprecated-spelling` warning that
+`play_launch migrate <system.toml> --write` fixes.
 
 ## Quick start
 
@@ -98,7 +106,7 @@ rates the graph propagates from it); under the committed `chain_aware`, from
 their position on the derived `points_to_cmd` route (§1.7). `control_node`
 is **overridden** to an explicit pin (overrides always beat derived values).
 A node with no rate/deadline facts and no override — `perception_container`,
-the empty container shell — lands in the non-RT default tier automatically.
+the empty container shell — lands in the non-RT default task automatically.
 
 No `sudo` anywhere. Nothing runs as root.
 
@@ -141,7 +149,7 @@ Built-in mappers:
 | `rate_monotonic` | the node's fastest timer trigger (`trigger: { timer: { rate_hz } }` on one of its paths); a topic's `rate_hz` or a publisher's `min_rate_hz` is a promise the runtime monitors read, never a rate the mapper ranks by (Phase 78) | higher rate → higher priority |
 | `deadline_monotonic` | the node's tightest declared path `max_latency` | tighter deadline → higher priority |
 | `chain_aware` (Phase 44, routes derived since Phase 68) | the routes **derived** for each scope `paths:` entry (§1.7) plus the same rate/deadline facts as a fallback for everything not on a route | route members ranked by criticality + drain-toward-sink; everything else falls back to criticality-bucketed RM/DM |
-| `manual` | nothing: every node starts in the default tier | `overrides:` alone place nodes (§4) |
+| `manual` | nothing: every node starts in the default task | `overrides:` alone place nodes (§4) |
 
 `rate_monotonic`/`deadline_monotonic` rank each node from **its own**
 declared facts in isolation — a good fit when nodes don't need end-to-end
@@ -158,13 +166,13 @@ declared, `chain_aware` degrades to exactly the criticality-RM/DM fallback
 All derived mappers spread the ranking linearly across
 `resources.rt_priority_band`; a node with no matching fact (no timer path
 for `rate_monotonic`, no declared path for `deadline_monotonic`, not on a
-chain and fact-less for `chain_aware`) falls into the **default tier** —
+chain and fact-less for `chain_aware`) falls into the **default task** —
 `SCHED_OTHER`, unscheduled, reported as such by `--explain`.
 
 **The band is spread over distinct FACTS, not over nodes** (the tie-collapse
 rule; since manifest `v0.1.38` this is how the simple mappers behave too).
 Nodes whose ranking fact is *exactly* equal — two 100 Hz timers, two 20 ms
-deadlines — collapse into **one tier at one priority**, named after the fact
+deadlines — collapse into **one task at one priority**, named after the fact
 they share (`rate_hz=100`) rather than after one member. Four nodes at two
 rates therefore take two levels of the band, not four. Equality is exact and on
 the value as declared: 30 Hz and 30.000001 Hz do not tie, and nothing is
@@ -173,9 +181,9 @@ a tolerance would invent one it does not. The earlier behaviour spread equal
 periods to *unequal* priorities broken by node name, which is an ordering
 rate-monotonic theory does not license and the contract never stated.
 
-A tier holding more than one node then needs an answer to what a tie *means*
+A task holding more than one node then needs an answer to what a tie *means*
 under Linux. Under `SCHED_FIFO` equal priority means one node can starve the
-others, so a tied tier takes `SCHED_RR` where the host's global timeslice is
+others, so a tied task takes `SCHED_RR` where the host's global timeslice is
 actually shorter than the tied nodes' shortest period — and where it is not, it
 stays `SCHED_FIFO` and `check` warns, naming both numbers and why round-robin
 was declined. The slice is a platform fact you declare, because on Linux it is
@@ -288,7 +296,7 @@ paths are the common case: they have no input take to measure from.
 ### 1.2.2 `reservations:` — `SCHED_DEADLINE`, and why you probably don't want it
 
 Phase 60 made the reservation policy real: with `reservations: required` beside
-`priority_assignment:` in the platform file, the resolver turns the real-time band's tiers
+`priority_assignment:` in the platform file, the resolver turns the real-time band's tasks
 into `SCHED_DEADLINE` reservations instead of fixed priorities.
 
 ```yaml
@@ -419,8 +427,8 @@ not something that should fail `check`).
   that invocation just performed — byte-identical to `check --sched
   --explain` on the same inputs.
 - `up --model <model.yaml> --explain` is **degraded by design**: the
-  model carries only the applied tiers/bindings, not the mapper's
-  diagnostics, so every row reads `derived((applied): tier '<name>' → prio
+  model carries only the applied tasks/bindings, not the mapper's
+  diagnostics, so every row reads `derived((applied): task '<name>' → prio
   <p>)` (or `default (no timing facts)`) with a generic footer. Run
   `play_launch check --sched --explain` when you need full mapper
   provenance.
@@ -453,7 +461,7 @@ channels, first-hit-wins, **no merging across channels**:
 (and `run`) resolve the platform file through these channels and **apply
 it** — the provider sidecar is the vendor's trusted default, so RT works
 out of the box on an installed system with zero flags. (`up
-<model.yaml>` does *not* consult the channels — it applies the tiers
+<model.yaml>` does *not* consult the channels — it applies the tasks
 already baked into the model at resolve time.) The overlay
 exists to fill gaps (no vendor config, or none for your target) or tweak
 numbers that don't fit. `--sched-apply off` disables all applying;
@@ -497,7 +505,7 @@ play_launch measure <run-dir> --model <model.yaml>              # observed cost 
 
 | `--sched-apply` | behavior |
 |---|---|
-| `off` | resolve + report the tier table; **no syscalls** |
+| `off` | resolve + report the task table; **no syscalls** |
 | `warn` *(default)* | apply; on failure log a warning, node keeps default scheduling |
 | `strict` | any privilege or apply failure **aborts the run** — all-or-nothing RT |
 
@@ -690,7 +698,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    ```
 
    ```
-   Scheduling (posix, priority_assignment=chain_aware): 4 tier(s)
+   Scheduling (posix, priority_assignment=chain_aware): 4 task(s)
    ...
    FQN                               CLASS        PRIO  CORE  PROVENANCE
    /perception/filter_component      SCHED_FIFO     39     -  derived(chain_aware: points_to_cmd segment drain 2/2) -> prio 39
@@ -764,11 +772,11 @@ unit a platform-file `overrides` selector targets:
 | launch entity | OS process | scheduled? |
 |---|---|---|
 | `<node>` | one process per node | ✅ |
-| `<node_container>` | one container process | ✅ (its own tier) |
-| composable node (`isolated` mode) | one `component_node` process, fork+exec'd by the container | ✅ (its own tier) |
+| `<node_container>` | one container process | ✅ (its own task) |
+| composable node (`isolated` mode) | one `component_node` process, fork+exec'd by the container | ✅ (its own task) |
 | composable node (`observable` mode, the default, or `stock`) | a *thread group inside* the container — no process of its own | ❌ only the container is schedulable |
 
-A tier aimed at a composable node is therefore applied only under
+A task aimed at a composable node is therefore applied only under
 `--container-mode isolated`. The default is `observable` (one process per
 container, as `ros2 launch` runs it), so pass `--container-mode isolated` when
 a platform file schedules composables individually.
@@ -799,7 +807,7 @@ at runtime.
 
 Linux scheduling attributes belong to **threads**, not processes. A ROS node
 starts as one thread and grows to ~11 (DDS/rmw spawn ~10) within half a second
-of exec. `play_launch` therefore applies the tier to **every thread**
+of exec. `play_launch` therefore applies the task to **every thread**
 (`/proc/<pid>/task/*`), and threads created afterwards inherit the policy from
 their creator (glibc `PTHREAD_INHERIT_SCHED`):
 
@@ -826,7 +834,7 @@ normal users). `play_launch` solves this without running anything as root:
 
 ```
 play_launch  (uncapped, links ROS, runs as you)
-    │  ApplySched{pid, tier}   — pipe IPC, once per process at spawn/load
+    │  ApplySched{pid, task}   — pipe IPC, once per process at spawn/load
     ▼
 play_launch_rt_helper  (ROS-free, holds CAP_SYS_NICE only)
     → sched_setattr(2) / sched_setaffinity(2) on every thread of that pid
@@ -907,7 +915,7 @@ For a node overridden to `{ priority: 20, sched_class: "SCHED_FIFO", core: 0
   `SCHED_OTHER` work on its CPU; among RT threads, higher priority wins;
   `SCHED_RR` additionally time-slices equal priorities
 - every thread: affinity mask `{0}` — the whole process is pinned to CPU 0
-- unassigned (default-tier) nodes: untouched — normal `SCHED_OTHER`
+- unassigned (default-task) nodes: untouched — normal `SCHED_OTHER`
 
 Kernel-level notes:
 - **RT throttling**: by default Linux caps RT execution at 95% of each second
@@ -961,7 +969,7 @@ taskset -cp $pid                                        # affinity
 
 ## 4. Hand-placed schedules: `priority_assignment: manual`
 
-`manual` derives nothing: every node starts in the default (non-RT) tier,
+`manual` derives nothing: every node starts in the default (non-RT) task,
 and the platform file's `overrides:` place the nodes you name. It is the
 form for a schedule you want to state by hand:
 
@@ -1002,7 +1010,7 @@ never `budget_us: 8000`.
 | `--explain` prints a no-op note | no platform file resolved (no `--sched`, nothing on the overlay/provider channels) | pass `--sched <path>`, or ship one via the overlay/provider channels |
 | `the legacy system.toml scheduling schema ... was removed` | a `.toml` platform file | rewrite it as `priority_assignment: manual` with `overrides:` (§4) |
 | composable skipped: `pid no longer matches its start_time` | the composable died right after loading; its PID may have been recycled | benign — nothing to schedule |
-| `chrt -p <pid>` shows `SCHED_OTHER` but the node "should" be RT | `chrt -p` reads only the main thread — or the node is in the default tier (no fact, no override) | check all TIDs; check contract facts / overrides coverage |
+| `chrt -p <pid>` shows `SCHED_OTHER` but the node "should" be RT | `chrt -p` reads only the main thread — or the node is in the default task (no fact, no override) | check all TIDs; check contract facts / overrides coverage |
 | EPERM with caps correct, inside a container/slice | cgroup `rt_runtime = 0` gate (`CONFIG_RT_GROUP_SCHED`) | provision RT bandwidth for the cgroup |
 | strict run aborts at startup | that's strict working: no privilege or bad spec = no launch | `play_launch setcap`, or use `warn` |
 

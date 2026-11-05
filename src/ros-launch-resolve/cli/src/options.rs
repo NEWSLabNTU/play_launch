@@ -108,11 +108,13 @@ pub enum Command {
     /// hazard's `reaction: <mode>` to `enters:`, `exit.on` to `exit.holds`,
     /// a path's `input:` to `trigger: { input }`, `external_topics:` into
     /// `topics:`, an inline `all_of` guard into `functions:`; `--list` has
-    /// them all). Prints the diff; `--write` applies it. Comments and layout
-    /// are kept.
+    /// them all), and a `system.toml` from `[tiers.*]` / `group_tiers` to
+    /// `[tasks.*]` / `group_tasks`. Prints the diff; `--write` applies it.
+    /// Comments and layout are kept.
     #[command(after_help = "Examples:\n  \
         ros-launch-resolve migrate --list\n  \
         ros-launch-resolve migrate bringup.contract.yaml\n  \
+        ros-launch-resolve migrate src/my_bringup/system.toml\n  \
         ros-launch-resolve migrate src/ --write\n  \
         ros-launch-resolve migrate . --check\n\n\
         Exit status:\n  \
@@ -132,8 +134,9 @@ pub enum Command {
 /// Arguments for `migrate` (phase 90 G8).
 #[derive(Args)]
 pub struct MigrateArgs {
-    /// Contract files, or directories to search for `*.contract.yaml`
-    /// (build, install, log and hidden directories are skipped).
+    /// Contract files and `system.toml` files, or directories to search for
+    /// `*.contract.yaml` and `system.toml` (build, install, log and hidden
+    /// directories are skipped).
     #[arg(value_name = "CONTRACT_OR_DIR")]
     pub paths: Vec<std::path::PathBuf>,
     /// Rewrite the files in place. Without it nothing is written and the

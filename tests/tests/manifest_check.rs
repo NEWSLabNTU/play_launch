@@ -823,7 +823,7 @@ fn check_promise_rates_agreeing_with_the_priority_table_stay_silent() {
 /// Phase 78's actual ruling, asserted end to end: a promise is not a period, so
 /// `rate_monotonic` must not rank by one. The same promise-only contract that
 /// DOES produce a contradiction warning above must leave both nodes in the
-/// synthesized default tier at priority 0 — if a promise ever reaches
+/// synthesized default task at priority 0 — if a promise ever reaches
 /// `MapperNode.rate_hz` (the tempting one-line "fix" for issue #0056), talker
 /// lands in the RT band above listener and this fails.
 #[test]
@@ -864,10 +864,10 @@ fn check_promise_rates_are_not_ranked_by_rate_monotonic() {
         output.status.success(),
         "check --explain must succeed: {combined}"
     );
-    // One tier, holding both nodes: nothing was ranked.
+    // One task, holding both nodes: nothing was ranked.
     assert!(
-        combined.contains("priority_assignment=rate_monotonic): 1 tier(s)"),
-        "expected rate_monotonic to derive a single (default) tier from \
+        combined.contains("priority_assignment=rate_monotonic): 1 task(s)"),
+        "expected rate_monotonic to derive a single (default) task from \
          promise-only rates, got: {combined}"
     );
     for node in ["/pure_test/talker", "/pure_test/listener"] {
@@ -3421,7 +3421,7 @@ fn migrate_rewrites_the_deprecated_spellings_in_place() {
         "exit-on-holds: `on` -> `holds` (modes.takeover.exit.on)",
         "-    reaction: engaged",
         "+    enters: engaged",
-        "1 contract(s) scanned, 1 to rewrite (7 edit(s))",
+        "1 file(s) scanned, 1 to rewrite (7 edit(s))",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }

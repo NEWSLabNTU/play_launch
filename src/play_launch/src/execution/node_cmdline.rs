@@ -418,7 +418,7 @@ pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeR
         start_delay_secs: inst.start_delay_secs,
         // Already merged into `params` at model-build time (GAP-4).
         global_params: None,
-        // Model-path sched-tier lookups use the already-known model FQN
+        // Model-path sched-task lookups use the already-known model FQN
         // directly (`NodeContext::model_fqn`), not this numeric scope id —
         // there is no equivalent to recover from the model alone.
         scope: None,

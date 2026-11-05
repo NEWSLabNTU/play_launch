@@ -319,7 +319,7 @@ fn check_channel_resolution_overlay_platform_file_beats_provider() {
     assert!(
         combined.contains("prio=22") && combined.contains("control_node"),
         "expected the overlay's control_node pin (priority 22, not the \
-         provider's 20) in the tier table:\n{combined}"
+         provider's 20) in the task table:\n{combined}"
     );
 }
 
@@ -614,7 +614,7 @@ fn check_target_zephyr_platform_file_parses_but_derive_is_posix_only() {
 /// Spawn `play_launch launch rt_demo bringup.launch.xml --sched manual.system.posix.yaml
 /// --sched-apply warn` and assert the apply path engages for the standalone
 /// nodes, the container, and the composable — tolerant of host privilege
-/// (reused pattern from `sched_apply.rs`): either the resolved-tier debug
+/// (reused pattern from `sched_apply.rs`): either the resolved-task debug
 /// line (privileged host) or the `sched apply failed` / `cap_sys_nice`
 /// warning (unprivileged host, the expected case on this environment).
 #[test]
@@ -642,9 +642,9 @@ fn sched_apply_warn_smoke_launch() {
         sched.to_str().unwrap(),
         "--sched-apply",
         "warn",
-        // A composable's tier applies only where the composable is a process
+        // A composable's task applies only where the composable is a process
         // of its own; under the default `observable` it is a thread pool in
-        // the container and the tier is reported unapplied (#0062).
+        // the container and the task is reported unapplied (#0062).
         "--container-mode",
         "isolated",
         "rt_demo",
@@ -652,7 +652,7 @@ fn sched_apply_warn_smoke_launch() {
     ]);
     cmd.stdout(Stdio::from(stdout_file));
     cmd.stderr(Stdio::from(stderr_file));
-    // "applied tier '<name>' ..." success-path evidence is logged at debug
+    // "applied task '<name>' ..." success-path evidence is logged at debug
     // level — raise RUST_LOG so it's visible if this host is privileged.
     // Never rely on info! being promoted for test convenience.
     cmd.env("RUST_LOG", "play_launch=debug");
@@ -676,30 +676,30 @@ fn sched_apply_warn_smoke_launch() {
     let stderr = fs::read_to_string(&stderr_path).unwrap_or_default();
     let combined = format!("{stdout}\n{stderr}").to_lowercase();
 
-    // Standalone node (sensor_node or control_node): "[<name>] applied tier
+    // Standalone node (sensor_node or control_node): "[<name>] applied task
     // '...' (pid ...)" (privileged) or "[<name>] sched apply failed (pid
     // ...): ..." (unprivileged) — excluding the composable-specific variants
     // of the same phrases.
     let standalone_engaged = combined.lines().any(|l| {
-        (l.contains("applied tier") || l.contains("sched apply failed"))
+        (l.contains("applied task") || l.contains("sched apply failed"))
             && !l.contains("composable")
     });
     assert!(
         standalone_engaged,
-        "expected a standalone-node sched apply line (applied tier / sched \
+        "expected a standalone-node sched apply line (applied task / sched \
          apply failed, not composable-scoped) in combined output:\n{combined}"
     );
 
     // Composable (filter_component, loaded into perception_container):
-    // "applied tier '...' to composable '...' (pid ...)" (privileged) or
+    // "applied task '...' to composable '...' (pid ...)" (privileged) or
     // "sched apply failed for composable '...' (pid ...): ..." (unprivileged).
     let composable_engaged = combined.lines().any(|l| {
-        (l.contains("applied tier") && l.contains("composable"))
+        (l.contains("applied task") && l.contains("composable"))
             || l.contains("sched apply failed for composable")
     });
     assert!(
         composable_engaged,
-        "expected a per-composable sched apply line (applied tier '...' to \
+        "expected a per-composable sched apply line (applied task '...' to \
          composable '...', or sched apply failed for composable '...') in \
          combined output:\n{combined}"
     );
@@ -982,16 +982,16 @@ fn resolve_omits_sched_but_check_explain_shows_chain_aware() {
         model["execution"]["sched"].is_null(),
         "execution.sched must not be embedded (model is input only): {model}"
     );
-    // But the applied Linux realization (tiers + bindings) IS carried — that's
+    // But the applied Linux realization (tasks + bindings) IS carried — that's
     // what the RT apply layer reads.
     assert!(
         model["execution"]["tiers"].is_object() && model["execution"]["bindings"].is_object(),
-        "tiers + bindings carry the applied schedule: {model}"
+        "tasks + bindings carry the applied schedule: {model}"
     );
     let bindings = model["execution"]["bindings"]
         .as_object()
         .expect("execution.bindings");
-    // Every rt_demo node is bound to a tier (the mapper's projected outcome).
+    // Every rt_demo node is bound to a task (the mapper's projected outcome).
     assert!(!bindings.is_empty(), "bindings must be populated: {model}");
 
     // The known points_to_cmd members (from the fixture's scope path).
@@ -1031,7 +1031,7 @@ fn resolve_omits_sched_but_check_explain_shows_chain_aware() {
     );
     for fqn in &chain_member_fqns {
         // `combined` has more than one line mentioning `fqn` (the plain
-        // tier-table dump prints it too, with no provenance) — scan every
+        // task-table dump prints it too, with no provenance) — scan every
         // matching line for the `--explain` FQN-table row.
         let matched = combined
             .lines()
@@ -1082,7 +1082,7 @@ fn resolve_without_platform_file_omits_execution_sched() {
 
     let yaml = std::fs::read_to_string(&out).expect("read system_model.yaml");
     // Match the `sched:` map key at execution-nesting depth, not the
-    // `sched_class:` inside a tier platform spec.
+    // `sched_class:` inside a task platform spec.
     assert!(
         !yaml
             .lines()

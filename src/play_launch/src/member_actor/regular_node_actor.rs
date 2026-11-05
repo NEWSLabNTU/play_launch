@@ -260,18 +260,18 @@ impl RegularNodeActor {
         // Phase 38: apply resolved Linux scheduling (policy/priority/affinity) to
         // the freshly spawned PID. Strictly post-spawn — never touches exec/spawn.
         if self.config.sched_mode != crate::execution::sched_apply::SchedApplyMode::Off
-            && let Some(tier) = &self.config.sched
+            && let Some(task) = &self.config.sched
         {
             match crate::execution::rt_helper_client::apply_sched(
                 self.config.sched_helper.as_ref(),
                 pid,
-                tier,
+                task,
             )
             .await
             {
                 Ok(()) => debug!(
-                    "[{}] applied tier '{}' (pid {})",
-                    self.name, tier.tier_name, pid
+                    "[{}] applied task '{}' (pid {})",
+                    self.name, task.task_name, pid
                 ),
                 Err(e) => {
                     if self.config.sched_mode

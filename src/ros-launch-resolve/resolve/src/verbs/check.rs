@@ -261,7 +261,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
         )?;
         if inputs.explain {
             crate::ros::sched_loader::print_explain(&derived, resolved, Some(&index));
-            let note = crate::ros::sched_loader::render_composable_tier_note(
+            let note = crate::ros::sched_loader::render_composable_task_note(
                 &derived,
                 &crate::ros::sched_loader::composable_containers(&dump),
             );

@@ -13,7 +13,7 @@ use std::{
 use eyre::Result;
 use ros_launch_manifest_sched::{
     ChainAwareDetail, ChainElement, Contradiction, MapError, MapWarning, MapperInput,
-    MapperRegistry, PlatformResources, ResolvedChain, ResolvedTier, ResolvedTierTable, SchedNode,
+    MapperRegistry, PlatformResources, ResolvedChain, ResolvedTask, ResolvedTaskTable, SchedNode,
     band_violations, deadline_priority_contradictions, parse_platform_file,
     rate_priority_contradictions,
 };
@@ -107,7 +107,7 @@ fn fqn_with(
 ///
 /// This is the single source of truth for FQN computation: both
 /// `sched_nodes_from_dump` (building the resolver's node view) and the
-/// actor-wiring build sites (looking up a member's resolved tier in
+/// actor-wiring build sites (looking up a member's resolved task in
 /// `SchedPlan`) must agree on the same FQN for the same record, or lookups
 /// silently miss. Callers pass the record's own `namespace` (may be `None`
 /// or empty), its bare `name`, and its `scope` id; the scope's namespace is
@@ -286,26 +286,26 @@ pub(crate) fn composable_containers(dump: &LaunchDump) -> BTreeMap<String, Strin
         .collect()
 }
 
-/// `check --explain`'s note on composable tiers (phase 80, issue #0035):
-/// every composable the plan gives a non-default tier, with its container.
+/// `check --explain`'s note on composable tasks (phase 80, issue #0035):
+/// every composable the plan gives a non-default task, with its container.
 /// Only `--container-mode isolated` gives a composable a process of its own;
 /// under `observable` (the default) and `stock` it is a thread pool inside
-/// its container and runs at the container's tier. `check` has no
+/// its container and runs at the container's task. `check` has no
 /// `--container-mode`, so the note names the default and the modes that
-/// cannot apply the tier; `up` makes the same decision with the mode in
-/// force (`execution::sched_plan::composable_tiers_not_applied`). Empty when
-/// no composable carries a tier.
-pub fn render_composable_tier_note(
+/// cannot apply the task; `up` makes the same decision with the mode in
+/// force (`execution::sched_plan::composable_tasks_not_applied`). Empty when
+/// no composable carries a task.
+pub fn render_composable_task_note(
     derived: &DerivedSchedPlan,
     containers: &BTreeMap<String, String>,
 ) -> String {
     use std::fmt::Write as _;
 
-    let mut rows: Vec<(&str, &ResolvedTier, &str)> = derived
+    let mut rows: Vec<(&str, &ResolvedTask, &str)> = derived
         .plan
-        .tiers
+        .tasks
         .iter()
-        .filter(|t| t.name != ros_launch_manifest_sched::DEFAULT_TIER)
+        .filter(|t| t.name != ros_launch_manifest_sched::DEFAULT_TASK)
         .flat_map(|t| {
             t.members
                 .iter()
@@ -318,36 +318,36 @@ pub fn render_composable_tier_note(
     rows.sort_by(|a, b| a.0.cmp(b.0));
 
     let mut out = format!(
-        "note: {} composable(s) carry a tier only --container-mode isolated applies;\n  \
+        "note: {} composable(s) carry a task only --container-mode isolated applies;\n  \
          under observable (the default) and stock a composable is a thread pool in its\n  \
-         container and runs at the container's tier:\n",
+         container and runs at the container's task:\n",
         rows.len()
     );
-    for (fqn, tier, container) in rows {
-        let class = tier.sched_class.as_deref().unwrap_or("SCHED_OTHER");
+    for (fqn, task, container) in rows {
+        let class = task.sched_class.as_deref().unwrap_or("SCHED_OTHER");
         let _ = writeln!(
             out,
             "  {fqn}: {} {} {} in {container}",
-            tier.name, class, tier.priority
+            task.name, class, task.priority
         );
     }
     out
 }
 
 /// Result of the v2 derive→override→validate pipeline (design §5, §6):
-/// the final per-node plan (one [`ResolvedTier`] per node, except the
-/// synthesized default tier which stays grouped — see
-/// [`flatten_to_one_tier_per_node`]), plus which target/mapper produced it
+/// the final per-node plan (one [`ResolvedTask`] per node, except the
+/// synthesized default task which stays grouped — see
+/// [`flatten_to_one_task_per_node`]), plus which target/mapper produced it
 /// and any non-fatal warnings collected along the way (band clamps,
 /// unknown-override names, rate/deadline-vs-priority contradictions).
 #[derive(Debug)]
 pub struct DerivedSchedPlan {
-    pub plan: ResolvedTierTable,
+    pub plan: ResolvedTaskTable,
     pub target: String,
     pub mapper: String,
     pub warnings: Vec<String>,
     /// Per-node fqn -> why it ended up with its final priority/class (Phase
-    /// 41.4, `--explain`). Every member of every tier in `plan` has an entry.
+    /// 41.4, `--explain`). Every member of every task in `plan` has an entry.
     pub provenance: BTreeMap<String, Provenance>,
     /// Every node FQN that participates in at least one resolved `chains:`
     /// declaration (Phase 44.4) — populated straight from
@@ -379,7 +379,7 @@ pub struct DerivedSchedPlan {
 pub enum Provenance {
     /// An explicit `overrides.<selector>` entry in the platform file beat
     /// whatever the mapper derived (or promoted the node out of the
-    /// non-RT default tier). `selector` is the exact key used in the
+    /// non-RT default task). `selector` is the exact key used in the
     /// platform file's `overrides:` map.
     Override { selector: String },
     /// The mapper derived this placement from a timing fact. `fact` is a
@@ -398,7 +398,7 @@ pub enum Provenance {
     /// as `Derived::fact` would double-wrap under this type's `Display`
     /// impl (`derived(chain_aware: derived(chain_aware: ...))`).
     ChainAware { line: String },
-    /// No timing fact and no override — landed in the non-RT default tier.
+    /// No timing fact and no override — landed in the non-RT default task.
     Default,
 }
 
@@ -421,46 +421,46 @@ fn selector_matches(selector: &str, fqn: &str) -> bool {
     fqn == selector || fqn.rsplit('/').next() == Some(selector)
 }
 
-/// Explode every non-default tier into one tier per member, preserving all
+/// Explode every non-default task into one task per member, preserving all
 /// other fields (priority/sched_class/core/class/...). The synthesized
-/// default tier is left grouped, matching the convention the built-in
+/// default task is left grouped, matching the convention the built-in
 /// derived mappers (`rate_monotonic`/`deadline_monotonic`) already use for
 /// fact-less nodes.
 ///
 /// This gives `apply_overrides` (and the validation helpers, which key off
-/// `tier.priority`/`tier.members`) a uniform one-node-per-tier shape to work
+/// `task.priority`/`task.members`) a uniform one-node-per-task shape to work
 /// against, regardless of whether the plan came from a derived mapper
 /// (already one-per-node) or the `manual` mapper (grouped by declared
-/// tier). Downstream consumers (`execution::sched_plan::SchedPlan::build`)
-/// already invert every tier's `members` into a per-FQN lookup, so this
+/// task). Downstream consumers (`execution::sched_plan::SchedPlan::build`)
+/// already invert every task's `members` into a per-FQN lookup, so this
 /// reshaping is transparent to them — the resulting per-FQN knobs
-/// (`priority`/`sched_class`/`core`/`tier_name`) are identical either way.
-fn flatten_to_one_tier_per_node(table: &ResolvedTierTable) -> ResolvedTierTable {
-    let mut tiers = Vec::with_capacity(table.tiers.len());
-    for t in &table.tiers {
-        if t.name == ros_launch_manifest_sched::DEFAULT_TIER {
-            tiers.push(t.clone());
+/// (`priority`/`sched_class`/`core`/`task_name`) are identical either way.
+fn flatten_to_one_task_per_node(table: &ResolvedTaskTable) -> ResolvedTaskTable {
+    let mut tasks = Vec::with_capacity(table.tasks.len());
+    for t in &table.tasks {
+        if t.name == ros_launch_manifest_sched::DEFAULT_TASK {
+            tasks.push(t.clone());
             continue;
         }
         for m in &t.members {
-            tiers.push(ResolvedTier {
+            tasks.push(ResolvedTask {
                 members: vec![m.clone()],
                 ..t.clone()
             });
         }
     }
-    ResolvedTierTable { tiers }
+    ResolvedTaskTable { tasks }
 }
 
 /// Apply a platform file's explicit `overrides` on top of an
-/// already-flattened (one-tier-per-node) derived plan — "override beats
+/// already-flattened (one-task-per-node) derived plan — "override beats
 /// derived, always" (design §5/§6). A selector matching no node anywhere in
-/// the plan (including the default tier) is a warning, not an error (the
+/// the plan (including the default task) is a warning, not an error (the
 /// spec may simply be ahead of the launch tree, e.g. authored for a node
 /// that was since removed).
 /// Scheduling classes for which `sched_setscheduler(2)` requires
 /// `sched_priority == 0`. Any other value is not merely ignored — the syscall
-/// rejects it with `EINVAL` — so a tier carrying both a non-RT class and a
+/// rejects it with `EINVAL` — so a task carrying both a non-RT class and a
 /// non-zero priority describes a state the kernel cannot be in.
 ///
 /// Delegates to the manifest crate's typed policy rather than matching string
@@ -485,7 +485,7 @@ fn is_explicitly_non_rt(sched_class: Option<&str>) -> bool {
 }
 
 fn apply_overrides(
-    table: &mut ResolvedTierTable,
+    table: &mut ResolvedTaskTable,
     overrides: &std::collections::BTreeMap<
         String,
         ros_launch_manifest_sched::PlatformOverrideEntry,
@@ -502,24 +502,24 @@ fn apply_overrides(
             continue;
         };
 
-        if let Some(tier) = table.tiers.iter_mut().find(|t| {
-            t.name != ros_launch_manifest_sched::DEFAULT_TIER
+        if let Some(task) = table.tasks.iter_mut().find(|t| {
+            t.name != ros_launch_manifest_sched::DEFAULT_TASK
                 && t.members
                     .first()
                     .is_some_and(|m| selector_matches(selector, m))
         }) {
             if let Some(p) = posix.priority {
-                tier.priority = p;
+                task.priority = p;
             }
             if let Some(c) = posix.core {
-                tier.core = Some(c);
+                task.core = Some(c);
             }
             if let Some(sc) = &posix.sched_class {
-                tier.sched_class = Some(sc.clone());
-                // Demoting a tier out of the RT classes must drop its priority
+                task.sched_class = Some(sc.clone());
+                // Demoting a task out of the RT classes must drop its priority
                 // with it. The mapper may already have derived an RT priority
                 // for this node from its rate/deadline; leaving that in place
-                // produces a tier like `SCHED_OTHER 10`, which the kernel
+                // produces a task like `SCHED_OTHER 10`, which the kernel
                 // cannot represent — `sched_setscheduler(2)` requires priority
                 // 0 for SCHED_OTHER/BATCH/IDLE. The apply path ignores the
                 // priority for those classes, so the process ends up at 0 and
@@ -527,7 +527,7 @@ fn apply_overrides(
                 // `priority:` in the same override still wins, below.
                 if is_explicitly_non_rt(Some(sc)) {
                     match posix.priority {
-                        None => tier.priority = 0,
+                        None => task.priority = 0,
                         Some(p) if p != 0 => {
                             warnings.push(format!(
                                 "scheduling: override for `{selector}` sets {sc} with priority \
@@ -539,15 +539,15 @@ fn apply_overrides(
                     }
                 }
             }
-            // An override marks a tier as deliberately managed, which for an
-            // RT class means `real_time`. Do NOT apply that label to a tier
+            // An override marks a task as deliberately managed, which for an
+            // RT class means `real_time`. Do NOT apply that label to a task
             // the same override just pinned to SCHED_OTHER/BATCH/IDLE — it
             // reaches the user in `system_model.yaml`'s execution layer, where
             // `class: real_time` next to `sched_class: SCHED_OTHER` reads as a
             // contradiction. Nothing branches on `real_time` (only
             // `time_triggered` is ever tested), so leaving it unset is inert.
-            if is_explicitly_non_rt(tier.sched_class.as_deref()) {
-                // The mapper already labelled this tier `real_time` before the
+            if is_explicitly_non_rt(task.sched_class.as_deref()) {
+                // The mapper already labelled this task `real_time` before the
                 // override demoted it to SCHED_OTHER/BATCH/IDLE. Leaving the
                 // label would ship `class: real_time` beside
                 // `sched_class: SCHED_OTHER` in `system_model.yaml`'s execution
@@ -555,43 +555,43 @@ fn apply_overrides(
                 // cleared: `time_triggered` carries v1 semantics this override
                 // does not speak to. Nothing branches on `real_time`, so this
                 // is inert beyond the artifact.
-                if tier.class.as_deref() == Some("real_time") {
-                    tier.class = None;
+                if task.class.as_deref() == Some("real_time") {
+                    task.class = None;
                 }
-            } else if tier.class.is_none() {
-                tier.class = Some("real_time".to_string());
+            } else if task.class.is_none() {
+                task.class = Some("real_time".to_string());
             }
-            rebuild_posix_placement(tier, posix, selector, warnings);
-            if let Some(member) = tier.members.first() {
+            rebuild_posix_placement(task, posix, selector, warnings);
+            if let Some(member) = task.members.first() {
                 overridden.insert(member.clone(), selector.clone());
             }
             continue;
         }
 
-        // Not found in any per-node tier — check the default (non-RT)
-        // tier and promote the node out of it if present there.
+        // Not found in any per-node task — check the default (non-RT)
+        // task and promote the node out of it if present there.
         let promoted = table
-            .tiers
+            .tasks
             .iter_mut()
-            .find(|t| t.name == ros_launch_manifest_sched::DEFAULT_TIER)
-            .and_then(|default_tier| {
-                let idx = default_tier
+            .find(|t| t.name == ros_launch_manifest_sched::DEFAULT_TASK)
+            .and_then(|default_task| {
+                let idx = default_task
                     .members
                     .iter()
                     .position(|m| selector_matches(selector, m))?;
-                Some(default_tier.members.remove(idx))
+                Some(default_task.members.remove(idx))
             });
 
         if let Some(node_fqn) = promoted {
             // A priority-only override (no explicit sched_class) on a
             // previously non-RT node is assumed to mean "make this RT" —
-            // SCHED_FIFO is the crate's own default for derived RT tiers.
+            // SCHED_FIFO is the crate's own default for derived RT tasks.
             let sched_class = posix
                 .sched_class
                 .clone()
                 .or_else(|| posix.priority.map(|_| "SCHED_FIFO".to_string()));
             overridden.insert(node_fqn.clone(), selector.clone());
-            tiers_push_override(
+            tasks_push_override(
                 table,
                 node_fqn.clone(),
                 posix.priority.unwrap_or(0),
@@ -612,22 +612,22 @@ fn apply_overrides(
     }
 }
 
-/// Re-derive a tier's typed `posix` placement after an override has been
+/// Re-derive a task's typed `posix` placement after an override has been
 /// applied, folding in the fields the stringly-typed trio cannot express:
 /// `nice`, a multi-CPU `cpus` mask, and `uclamp`.
 ///
 /// Called after `priority`/`core`/`sched_class` have already been merged, so
-/// the tier's own fields are the source of truth for policy and priority and
+/// the task's own fields are the source of truth for policy and priority and
 /// this only adds what they cannot carry.
 fn rebuild_posix_placement(
-    tier: &mut ResolvedTier,
+    task: &mut ResolvedTask,
     ov: &ros_launch_manifest_sched::PosixOverride,
     selector: &str,
     warnings: &mut Vec<String>,
 ) {
     use ros_launch_manifest_sched::{PosixAffinity, PosixPlacement, PosixPolicyKind, PosixSched};
 
-    let kind = match tier.sched_class.as_deref() {
+    let kind = match task.sched_class.as_deref() {
         Some(sc) => match PosixPolicyKind::parse(sc) {
             Ok(k) => k,
             // Unparseable classes are rejected at parse time; if one reaches
@@ -638,7 +638,7 @@ fn rebuild_posix_placement(
         None => PosixPolicyKind::Other,
     };
 
-    let priority = tier.priority.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    let priority = task.priority.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
     let nice = ov.nice.unwrap_or(0);
 
     let sched = match kind {
@@ -677,7 +677,7 @@ fn rebuild_posix_placement(
         PosixAffinity::Cpus {
             cpus: ov.cpus.clone(),
         }
-    } else if let Some(c) = tier.core {
+    } else if let Some(c) = task.core {
         PosixAffinity::Cpus { cpus: vec![c] }
     } else {
         PosixAffinity::Inherit
@@ -697,27 +697,27 @@ fn rebuild_posix_placement(
     }
 
     match placement.validate() {
-        Ok(()) => tier.posix = Some(placement),
+        Ok(()) => task.posix = Some(placement),
         Err(e) => warnings.push(format!(
             "scheduling: override for `{selector}` produced an invalid posix placement: {e}"
         )),
     }
 }
 
-fn tiers_push_override(
-    table: &mut ResolvedTierTable,
+fn tasks_push_override(
+    table: &mut ResolvedTaskTable,
     node_fqn: String,
     priority: i64,
     sched_class: Option<String>,
     core: Option<u32>,
 ) {
-    // `real_time` describes a tier the override promoted INTO the RT classes.
+    // `real_time` describes a task the override promoted INTO the RT classes.
     // An override that names SCHED_OTHER/BATCH/IDLE is doing the opposite —
     // pinning a node out of them — and labelling that `real_time` ships a
     // self-contradicting pair (`class: real_time` beside
     // `sched_class: SCHED_OTHER`) into `system_model.yaml`'s execution layer.
     let class = (!is_explicitly_non_rt(sched_class.as_deref())).then(|| "real_time".to_string());
-    table.tiers.push(ResolvedTier {
+    table.tasks.push(ResolvedTask {
         name: node_fqn.clone(),
         priority,
         sched_class,
@@ -771,7 +771,7 @@ pub fn chain_member_nodes_from_chains(chains: &[ResolvedChain]) -> BTreeSet<Stri
 ///
 /// `index` is the resolved contract index (if any manifests were loaded) —
 /// `None` means every node gets a bare `MapperNode` (no timing facts), which
-/// built-in mappers already default to the non-RT tier.
+/// built-in mappers already default to the non-RT task.
 pub fn derive_sched_plan(
     dump: &LaunchDump,
     index: Option<&ManifestIndex>,
@@ -844,8 +844,8 @@ pub fn derive_sched_plan(
     // wins over scope namespace). These diverge for nodes using a bare
     // `namespace=` attribute outside a `<group>`/`<include>` boundary —
     // and a chain-resolved FQN missing from the plan's node set means the
-    // chain_aware mapper would emit a phantom tier no process ever matches
-    // (the real node silently falls to the default tier). Warn loudly
+    // chain_aware mapper would emit a phantom task no process ever matches
+    // (the real node silently falls to the default task). Warn loudly
     // instead of letting that be a silent no-op. Full FQN unification is a
     // tracked follow-up (W4 report, "notes for W5").
     let mut warnings = Vec::new();
@@ -878,13 +878,13 @@ pub fn derive_sched_plan(
             )
         })?;
 
-    let mut plan = flatten_to_one_tier_per_node(&derived);
+    let mut plan = flatten_to_one_task_per_node(&derived);
     // Snapshot chain members' derived priorities so an override that lowers
     // one can be called out: "overrides win, always" stands, but a pin that
     // drops a chain member below its derived rank silently defeats the
     // chain's drain-toward-sink ordering — the integrator should hear that.
     let derived_chain_prio: BTreeMap<String, i64> = plan
-        .tiers
+        .tasks
         .iter()
         .flat_map(|t| t.members.iter().map(move |m| (m.clone(), t.priority)))
         .filter(|(m, _)| chain_member_nodes.contains(m))
@@ -922,17 +922,17 @@ pub fn derive_sched_plan(
     // "should lead" side is a mechanical, already-explained downstream
     // consequence of THIS warning — see `should_suppress_contradiction`.
     let mut override_pinned_below_chain_rank: BTreeSet<String> = BTreeSet::new();
-    for tier in &plan.tiers {
-        for member in &tier.members {
+    for task in &plan.tasks {
+        for member in &task.members {
             if let Some(derived_prio) = derived_chain_prio.get(member)
                 && overridden.contains_key(member)
-                && tier.priority < *derived_prio
+                && task.priority < *derived_prio
             {
                 let msg = format!(
                     "override pins chain member `{member}` to priority {} (derived {}) — \
                      below its chain-derived rank; drain-toward-sink ordering within its \
                      chain is no longer guaranteed",
-                    tier.priority, derived_prio
+                    task.priority, derived_prio
                 );
                 // Collect only (45.1a) — see `apply_overrides`.
                 warnings.push(msg);
@@ -968,9 +968,9 @@ pub fn derive_sched_plan(
     if let PlatformResources::Posix(res) = &file.resources
         && let Some(band) = res.rt_priority_band
     {
-        // `band_violations` compares every tier's priority against the band
+        // `band_violations` compares every task's priority against the band
         // without looking at its scheduling class. `rt_priority_band` is a
-        // REAL-TIME priority range, and a SCHED_OTHER tier necessarily carries
+        // REAL-TIME priority range, and a SCHED_OTHER task necessarily carries
         // priority 0 — `sched_setscheduler(2)` requires `sched_priority == 0`
         // for SCHED_OTHER/BATCH/IDLE. Passing those to the band check reported
         // every deliberately-best-effort node as a violation and then "clamped"
@@ -982,16 +982,16 @@ pub fn derive_sched_plan(
         // best-effort work out of the RT band — exactly what `overrides` are
         // for.
         //
-        // Only explicitly non-RT classes are skipped. A tier with no
+        // Only explicitly non-RT classes are skipped. A task with no
         // `sched_class` keeps its band check: absent an explicit class the
         // intent is unknown, and silently exempting it would hide real
         // violations.
         let violations: Vec<_> = band_violations(&plan, &band)
             .into_iter()
             .filter(|v| {
-                plan.tiers
+                plan.tasks
                     .iter()
-                    .find(|t| t.name == v.tier)
+                    .find(|t| t.name == v.task)
                     .is_none_or(|t| !is_explicitly_non_rt(t.sched_class.as_deref()))
             })
             .collect();
@@ -1003,7 +1003,7 @@ pub fn derive_sched_plan(
                         .map(|v| {
                             format!(
                                 "`{}` priority {} outside [{}, {}]",
-                                v.tier, v.priority, v.band.min, v.band.max
+                                v.task, v.priority, v.band.min, v.band.max
                             )
                         })
                         .collect::<Vec<_>>()
@@ -1015,11 +1015,11 @@ pub fn derive_sched_plan(
                         let clamped = v.priority.clamp(v.band.min, v.band.max);
                         let msg = format!(
                             "scheduling: `{}` priority {} outside band [{}, {}], clamping to {}",
-                            v.tier, v.priority, v.band.min, v.band.max, clamped
+                            v.task, v.priority, v.band.min, v.band.max, clamped
                         );
                         // Collect only (45.1a) — see `apply_overrides`.
                         warnings.push(msg);
-                        if let Some(t) = plan.tiers.iter_mut().find(|t| t.name == v.tier) {
+                        if let Some(t) = plan.tasks.iter_mut().find(|t| t.name == v.task) {
                             t.priority = clamped;
                         }
                     }
@@ -1219,7 +1219,7 @@ fn input_with_declared_rates(input: &MapperInput, index: Option<&ManifestIndex>)
     view
 }
 
-/// Turn fixed-priority tiers into `SCHED_DEADLINE` reservations, under
+/// Turn fixed-priority tasks into `SCHED_DEADLINE` reservations, under
 /// `reservations: required`.
 ///
 /// # Why this is all-or-nothing, and why it is scoped
@@ -1262,13 +1262,13 @@ fn input_with_declared_rates(input: &MapperInput, index: Option<&ManifestIndex>)
 /// it is a decision for whoever owns the platform file — the mapper's job is
 /// to make sure the contradiction is visible, not to resolve it silently.
 fn report_jitter_placement(
-    plan: &ros_launch_manifest_sched::ResolvedTierTable,
+    plan: &ros_launch_manifest_sched::ResolvedTaskTable,
     input: &ros_launch_manifest_sched::MapperInput,
     warnings: &mut Vec<String>,
 ) {
     let mut offenders: Vec<(String, f64)> = Vec::new();
-    for tier in &plan.tiers {
-        let is_rt = tier
+    for task in &plan.tasks {
+        let is_rt = task
             .posix
             .as_ref()
             .map(|p| p.sched.is_real_time())
@@ -1276,7 +1276,7 @@ fn report_jitter_placement(
         if is_rt {
             continue;
         }
-        for member in &tier.members {
+        for member in &task.members {
             let tightest = input
                 .nodes
                 .iter()
@@ -1309,7 +1309,7 @@ fn report_jitter_placement(
 }
 
 fn derive_reservations(
-    plan: &mut ResolvedTierTable,
+    plan: &mut ResolvedTaskTable,
     file: &ros_launch_manifest_sched::PlatformFile,
     input: &ros_launch_manifest_sched::MapperInput,
     container_fqns: &BTreeSet<String>,
@@ -1327,13 +1327,13 @@ fn derive_reservations(
     let mut exempt_containers: Vec<String> = Vec::new();
     let mut concurrent_nodes: Vec<String> = Vec::new();
 
-    for (idx, tier) in plan.tiers.iter().enumerate() {
-        if tier.name == ros_launch_manifest_sched::DEFAULT_TIER {
+    for (idx, task) in plan.tasks.iter().enumerate() {
+        if task.name == ros_launch_manifest_sched::DEFAULT_TASK {
             continue;
         }
-        // Only fixed-priority tiers are candidates; a best-effort tier was
+        // Only fixed-priority tasks are candidates; a best-effort task was
         // never in the RT band to begin with.
-        let is_rt = tier
+        let is_rt = task
             .posix
             .as_ref()
             .map(|p| p.sched.is_real_time())
@@ -1342,7 +1342,7 @@ fn derive_reservations(
             continue;
         }
 
-        let Some(node) = tier.members.first() else {
+        let Some(node) = task.members.first() else {
             continue;
         };
 
@@ -1419,10 +1419,10 @@ fn derive_reservations(
     }
 
     for (idx, runtime_ns_us, deadline_ns_us, period_ns_us) in eligible {
-        let tier = &mut plan.tiers[idx];
+        let task = &mut plan.tasks[idx];
         // `SCHED_FLAG_DL_OVERRUN` delivers SIGXCPU when the reservation is
         // exceeded. It was wired in phase 60 and always off, because
-        // `deadline_policy` is a v1 `[tiers.<name>]` field the v2 schema had
+        // `deadline_policy` is a v1 `[tasks.<name>]` field the v2 schema had
         // no way to author.
         //
         // Phase 67's `miss:` is that missing declaration, and it lives on the
@@ -1431,7 +1431,7 @@ fn derive_reservations(
         // control law, not of the board. Any form of the declaration implies
         // detection: tolerating n per w means counting them, acting on one
         // means noticing it.
-        let node_name = tier.members.first().cloned().unwrap_or_default();
+        let node_name = task.members.first().cloned().unwrap_or_default();
         let miss_facts: Vec<&ros_launch_manifest_sched::MapperMiss> = input
             .nodes
             .iter()
@@ -1440,7 +1440,7 @@ fn derive_reservations(
             .filter_map(|p| p.miss.as_ref())
             .collect();
         let derived_overrun = miss_facts.iter().any(|m| m.requires_detection());
-        let overrun = tier.deadline_policy.as_deref() == Some("fault") || derived_overrun;
+        let overrun = task.deadline_policy.as_deref() == Some("fault") || derived_overrun;
 
         // An action Linux cannot deliver is reported, never silently
         // downgraded to what CBS happens to do.
@@ -1469,7 +1469,7 @@ fn derive_reservations(
             period_ns: period_ns_us * 1_000,
             overrun,
         };
-        let affinity = tier
+        let affinity = task
             .posix
             .as_ref()
             .map(|p| p.affinity.clone())
@@ -1484,7 +1484,7 @@ fn derive_reservations(
                      ({cpus:?}) is dropped — a deadline thread's affinity may not be narrower \
                      than the root domain it was created on (sched_setattr returns EPERM). Its \
                      CPUs come from the cpuset partition it is launched inside.",
-                    tier.name
+                    task.name
                 ));
                 ros_launch_manifest_sched::PosixAffinity::Inherit
             }
@@ -1492,40 +1492,40 @@ fn derive_reservations(
         };
         // The flag has to survive the MODEL boundary, not just this plan.
         // `up` reads the model and never the platform file, and rebuilds the
-        // reservation from the portable tier head — where it reads `overrun`
+        // reservation from the portable task head — where it reads `overrun`
         // back out of `deadline_policy`. Setting only `PosixSched::Deadline`'s
         // flag here would derive a reservation that silently loses its
         // overrun notification the moment it round-trips, which is the same
         // shape as phase 60's defect where the model carried SCHED_DEADLINE
         // with no runtime or period.
-        if derived_overrun && tier.deadline_policy.is_none() {
-            tier.deadline_policy = Some("fault".to_string());
+        if derived_overrun && task.deadline_policy.is_none() {
+            task.deadline_policy = Some("fault".to_string());
         }
 
         let placement = PosixPlacement {
             sched,
             affinity,
-            uclamp: tier.posix.as_ref().and_then(|p| p.uclamp),
+            uclamp: task.posix.as_ref().and_then(|p| p.uclamp),
         };
         placement.validate().map_err(|e| {
             eyre::eyre!(
                 "`{}`: derived reservation is invalid: {e} (runtime {runtime_ns_us}us, \
                  deadline {deadline_ns_us}us, period {period_ns_us}us)",
-                tier.name
+                task.name
             )
         })?;
-        tier.posix = Some(placement);
-        tier.sched_class = Some("SCHED_DEADLINE".to_string());
-        tier.class = Some("real_time".to_string());
+        task.posix = Some(placement);
+        task.sched_class = Some("SCHED_DEADLINE".to_string());
+        task.class = Some("real_time".to_string());
         // The portable head carries the reservation so it survives into
         // `system_model.yaml` and back out again. `up` reads the model, not the
         // platform file, so without these three a reserved node would resolve
         // to a policy with no parameters — which the apply layer rightly
         // refuses. The fields already existed for exactly this ("execution-time
         // budget — EDF/sporadic"); nothing populated them on a v2 path.
-        tier.budget_us = Some(runtime_ns_us);
-        tier.deadline_us = Some(deadline_ns_us);
-        tier.period_us = Some(period_ns_us);
+        task.budget_us = Some(runtime_ns_us);
+        task.deadline_us = Some(deadline_ns_us);
+        task.period_us = Some(period_ns_us);
     }
 
     if !exempt_containers.is_empty() {
@@ -1883,13 +1883,13 @@ fn fqn_to_scope_id(dump: &LaunchDump) -> HashMap<String, Option<usize>> {
 /// under `mapper`, for a node's `Provenance::Derived` line (design §7, e.g.
 /// `"100 Hz → prio 38"`). The `manual` mapper (and any future mapper that
 /// doesn't derive from a single rate/deadline fact) is described by the
-/// tier that placed the node instead — `Display` already prefixes the
+/// task that placed the node instead — `Display` already prefixes the
 /// mapper name (`derived(<mapper>: <fact>)`), so repeating it here would be
 /// redundant (W4 review, Cosmetic #2).
 fn describe_derived_fact(
     mapper: &str,
     node: Option<&ros_launch_manifest_sched::MapperNode>,
-    tier_name: &str,
+    task_name: &str,
     priority: i64,
 ) -> String {
     let fmt_num = |v: f64| {
@@ -1908,19 +1908,19 @@ fn describe_derived_fact(
         ("deadline_monotonic", _, Some(deadline_us)) => {
             format!("{deadline_us} us deadline → prio {priority}")
         }
-        _ => format!("tier '{tier_name}' → prio {priority}"),
+        _ => format!("task '{task_name}' → prio {priority}"),
     }
 }
 
 /// Build the per-node provenance map (design §7) from the final plan: an
 /// override always wins the label; failing that, membership in the
-/// synthesized default tier means no timing facts; failing that, a node
+/// synthesized default task means no timing facts; failing that, a node
 /// ranked by the `chain_aware` mapper (present in `details`, Phase 44.4 §5)
 /// gets its winning path's pre-formatted provenance line; anything else is
 /// the generic mapper-derived placement (`rate_monotonic`/`deadline_monotonic`/
 /// `manual`).
 fn build_provenance(
-    plan: &ResolvedTierTable,
+    plan: &ResolvedTaskTable,
     input: &ros_launch_manifest_sched::MapperInput,
     mapper: &str,
     overridden: &BTreeMap<String, String>,
@@ -1940,13 +1940,13 @@ fn build_provenance(
     }
 
     let mut out = BTreeMap::new();
-    for tier in &plan.tiers {
-        for member in &tier.members {
+    for task in &plan.tasks {
+        for member in &task.members {
             let provenance = if let Some(selector) = overridden.get(member) {
                 Provenance::Override {
                     selector: selector.clone(),
                 }
-            } else if tier.name == ros_launch_manifest_sched::DEFAULT_TIER {
+            } else if task.name == ros_launch_manifest_sched::DEFAULT_TASK {
                 Provenance::Default
             } else if let Some(ds) = by_node.get(member.as_str()) {
                 let winner = ds
@@ -1966,7 +1966,7 @@ fn build_provenance(
                 let node = input.nodes.iter().find(|n| &n.name == member);
                 Provenance::Derived {
                     mapper: mapper.to_string(),
-                    fact: describe_derived_fact(mapper, node, &tier.name, tier.priority),
+                    fact: describe_derived_fact(mapper, node, &task.name, task.priority),
                 }
             };
             out.insert(member.clone(), provenance);
@@ -1991,14 +1991,14 @@ pub fn check_sched(
     let derived = derive_sched_plan(dump, index, sched_path, target, SchedApplyMode::Warn)?;
 
     crate::say!(
-        "Scheduling ({}, priority_assignment={}): {} tier(s)",
+        "Scheduling ({}, priority_assignment={}): {} task(s)",
         derived.target,
         derived.mapper,
-        derived.plan.tiers.len()
+        derived.plan.tasks.len()
     );
-    for t in &derived.plan.tiers {
+    for t in &derived.plan.tasks {
         crate::say!(
-            "  tier {:<16} prio={:<4} sched_class={:<10} core={:<4} members={}",
+            "  task {:<16} prio={:<4} sched_class={:<10} core={:<4} members={}",
             t.name,
             t.priority,
             t.sched_class.as_deref().unwrap_or("-"),
@@ -2059,7 +2059,7 @@ pub(crate) struct ExplainRow {
 fn explain_rows_from_derived(derived: &DerivedSchedPlan) -> Vec<ExplainRow> {
     derived
         .plan
-        .tiers
+        .tasks
         .iter()
         .flat_map(|t| {
             t.members.iter().map(move |m| ExplainRow {
@@ -2081,12 +2081,12 @@ fn explain_rows_from_derived(derived: &DerivedSchedPlan) -> Vec<ExplainRow> {
 }
 
 /// Phase 45.6 — build `--explain`'s rows directly from a `SystemModel`'s
-/// ALREADY-RESOLVED `execution` layer: `tiers`+`bindings` for every
+/// ALREADY-RESOLVED `execution` layer: `tasks`+`bindings` for every
 /// RT-scheduled node's final class/priority/core (the exact representation
 /// [`crate::sched::plan::SchedPlan::from_model`] applies at
 /// runtime), `structure.nodes` for the full schedulable-node identity set
 /// (RT nodes AND non-RT ones — Phase 45.4's `execution.bindings` only ever
-/// carries non-default tiers, so a plain binding lookup alone would silently
+/// carries non-default tasks, so a plain binding lookup alone would silently
 /// drop every non-RT node the `check` path still lists as `default`),
 /// and `execution.sched.ranks` for chain-aware provenance. No mapper
 /// re-run: every value here is a field read.
@@ -2097,7 +2097,7 @@ fn explain_rows_from_derived(derived: &DerivedSchedPlan) -> Vec<ExplainRow> {
 /// non-RT default — which is what Phase 45.6's parity test exercises:
 ///
 /// - No binding at all → [`Provenance::Default`] (byte-for-byte identical
-///   to the `check` path's default-tier row).
+///   to the `check` path's default-task row).
 /// - The FQN is in `execution.sched.overrides` (the exact set of overridden
 ///   nodes `resolve` embedded, Phase 45.6 review) → [`Provenance::Override`],
 ///   checked FIRST, unconditionally — the same ordering [`build_provenance`]
@@ -2123,9 +2123,9 @@ fn explain_rows_from_derived(derived: &DerivedSchedPlan) -> Vec<ExplainRow> {
 ///   fastest timer trigger among the node's paths (phase 78, "Rates");
 ///   `requirements` carries the per-path `EffectiveTrigger::Timer{rate_hz}`
 ///   but not that aggregate, and this row does not re-derive it, so it
-///   falls back to the same tier-name
+///   falls back to the same task-name
 ///   description [`describe_derived_fact`] uses for `manual`
-///   (`"tier '<name>' → prio <p>"`): honest about the applied outcome without
+///   (`"task '<name>' → prio <p>"`): honest about the applied outcome without
 ///   inventing a fact. That `rate_monotonic` fallback is the one genuine
 ///   provenance-text gap; chain_aware (45.6's target) and now
 ///   `deadline_monotonic` are exact.
@@ -2135,14 +2135,14 @@ pub(crate) fn explain_rows_from_model(
 ) -> Vec<ExplainRow> {
     // Phase 45.10 — the resolved sched plan (mapper/ranks/chains/requirements/
     // overrides) is no longer embedded in the model, so a model-only caller
-    // (`replay --model`) renders the APPLIED tier assignment it still carries:
-    // class/priority/core from `tiers`+`bindings`, provenance = "tier '<name>'
+    // (`replay --model`) renders the APPLIED task assignment it still carries:
+    // class/priority/core from `tasks`+`bindings`, provenance = "task '<name>'
     // → prio <p>". Full mapper provenance (chain-aware ranks, override
     // classification) needs a fresh derive — `check`/`resolve --explain` show
     // it via `explain_rows_from_derived`.
     let mut rows = Vec::new();
     for fqn in model.structure.nodes.keys() {
-        let Some(tier_name) = model.execution.bindings.get(fqn) else {
+        let Some(task_name) = model.execution.bindings.get(fqn) else {
             rows.push(ExplainRow {
                 fqn: fqn.clone(),
                 class: "SCHED_OTHER".to_string(),
@@ -2152,10 +2152,10 @@ pub(crate) fn explain_rows_from_model(
             });
             continue;
         };
-        let Some(tier) = model.execution.tiers.get(tier_name) else {
+        let Some(task) = model.execution.tiers.get(task_name) else {
             continue;
         };
-        let Some(spec) = tier.platform(target) else {
+        let Some(spec) = task.platform(target) else {
             continue;
         };
 
@@ -2169,7 +2169,7 @@ pub(crate) fn explain_rows_from_model(
             core: spec.core,
             provenance: Provenance::Derived {
                 mapper: "(applied)".to_string(),
-                fact: format!("tier '{tier_name}' → prio {}", spec.priority),
+                fact: format!("task '{task_name}' → prio {}", spec.priority),
             },
         });
     }
@@ -2262,7 +2262,7 @@ pub fn explain_footer_from_model(model: &ros_launch_manifest_model::SystemModel)
 
     // Phase 45.10 — the resolved sched plan (mapper/ranks/chains) is no longer
     // embedded in the model; a model-only caller (`replay --model`) can only
-    // report the applied tier assignments it still carries, so the footer is
+    // report the applied task assignments it still carries, so the footer is
     // generic. A fresh-derive caller (`resolve`/`check`) uses `explain_footer`
     // with the real platform file instead.
     let mut out = String::new();
@@ -2271,7 +2271,7 @@ pub fn explain_footer_from_model(model: &ros_launch_manifest_model::SystemModel)
     } else {
         writeln!(
             out,
-            "system file: (applied tiers embedded in model; run `check --sched --explain` \
+            "system file: (applied tasks embedded in model; run `check --sched --explain` \
              for full mapper provenance)"
         )
     };
@@ -2922,16 +2922,16 @@ resources:
             assert_eq!(derived.target, "posix");
             let fast = derived
                 .plan
-                .tiers
+                .tasks
                 .iter()
                 .find(|t| t.members == vec!["/fast_node".to_string()])
-                .expect("fast_node tier");
+                .expect("fast_node task");
             let slow = derived
                 .plan
-                .tiers
+                .tasks
                 .iter()
                 .find(|t| t.members == vec!["/slow_node".to_string()])
-                .expect("slow_node tier");
+                .expect("slow_node task");
             assert_eq!(fast.priority, 40, "100 Hz → band max");
             assert_eq!(slow.priority, 10, "10 Hz → band min");
             assert!(derived.warnings.is_empty(), "{:?}", derived.warnings);
@@ -2987,10 +2987,10 @@ overrides:
                     .expect("derive");
             let slow = derived
                 .plan
-                .tiers
+                .tasks
                 .iter()
                 .find(|t| t.members == vec!["/slow_node".to_string()])
-                .expect("slow_node tier");
+                .expect("slow_node task");
             assert_eq!(slow.priority, 39, "override beats derived (10)");
             assert_eq!(slow.core, Some(0));
             assert!(
@@ -3009,9 +3009,9 @@ overrides:
     }
 
     #[test]
-    fn derive_override_promotes_factless_node_out_of_default_tier() {
+    fn derive_override_promotes_factless_node_out_of_default_task() {
         let dump = dump_two_plain_nodes();
-        // No contract index at all: both nodes are fact-less (default tier).
+        // No contract index at all: both nodes are fact-less (default task).
         let yaml = "\
 target: posix
 priority_assignment: rate_monotonic
@@ -3025,19 +3025,19 @@ overrides:
                 .expect("derive");
             let fast = derived
                 .plan
-                .tiers
+                .tasks
                 .iter()
                 .find(|t| t.members == vec!["/fast_node".to_string()])
                 .expect("fast_node promoted out of default");
             assert_eq!(fast.priority, 20);
             assert_eq!(fast.sched_class.as_deref(), Some("SCHED_FIFO"));
-            let default_tier = derived
+            let default_task = derived
                 .plan
-                .tiers
+                .tasks
                 .iter()
-                .find(|t| t.name == ros_launch_manifest_sched::DEFAULT_TIER)
-                .expect("default tier still present");
-            assert_eq!(default_tier.members, vec!["/slow_node".to_string()]);
+                .find(|t| t.name == ros_launch_manifest_sched::DEFAULT_TASK)
+                .expect("default task still present");
+            assert_eq!(default_task.members, vec!["/slow_node".to_string()]);
         });
     }
 
@@ -3060,7 +3060,7 @@ overrides:
                     .expect("warn mode clamps, not errors");
             let slow = derived
                 .plan
-                .tiers
+                .tasks
                 .iter()
                 .find(|t| t.members == vec!["/slow_node".to_string()])
                 .unwrap();
@@ -3081,7 +3081,7 @@ overrides:
     /// A node pinned to SCHED_OTHER is not a band violation.
     ///
     /// `sched_setscheduler(2)` requires `sched_priority == 0` for
-    /// SCHED_OTHER, so such a tier always sits below any RT band. Treating
+    /// SCHED_OTHER, so such a task always sits below any RT band. Treating
     /// that as a violation clamped it INTO the band, making `check --explain`
     /// print `SCHED_OTHER 10` — a combination Linux cannot represent and not
     /// what gets applied — and made strict mode reject a platform file for
@@ -3104,7 +3104,7 @@ overrides:
                     .expect("SCHED_OTHER override must not be a violation");
             let slow = derived
                 .plan
-                .tiers
+                .tasks
                 .iter()
                 .find(|t| t.members == vec!["/slow_node".to_string()])
                 .unwrap();
@@ -3286,7 +3286,7 @@ overrides:
             assert_eq!(derived.mapper, "manual");
             let fast = derived
                 .plan
-                .tiers
+                .tasks
                 .iter()
                 .find(|t| t.members.contains(&"/fast_node".to_string()))
                 .expect("fast_node placed");
@@ -3296,15 +3296,15 @@ overrides:
                 derived.provenance.get("/fast_node"),
                 Some(Provenance::Override { .. })
             ));
-            let default_tier = derived
+            let default_task = derived
                 .plan
-                .tiers
+                .tasks
                 .iter()
-                .find(|t| t.name == ros_launch_manifest_sched::DEFAULT_TIER)
-                .expect("default tier");
-            assert_eq!(default_tier.members, vec!["/slow_node".to_string()]);
+                .find(|t| t.name == ros_launch_manifest_sched::DEFAULT_TASK)
+                .expect("default task");
+            assert_eq!(default_task.members, vec!["/slow_node".to_string()]);
         });
-        with_temp_file("toml", "[tiers.rt]\n", |path| {
+        with_temp_file("toml", "[tasks.rt]\n", |path| {
             let err = derive_sched_plan(&dump, None, path, "posix", SchedApplyMode::Warn)
                 .expect_err("the legacy schema is refused");
             let msg = format!("{err:#}");
@@ -3313,11 +3313,11 @@ overrides:
         });
     }
 
-    // ── Phase 80: a composable tier `check` cannot promise ──
+    // ── Phase 80: a composable task `check` cannot promise ──
 
-    fn derived_of(tiers: Vec<ResolvedTier>) -> DerivedSchedPlan {
+    fn derived_of(tasks: Vec<ResolvedTask>) -> DerivedSchedPlan {
         DerivedSchedPlan {
-            plan: ResolvedTierTable { tiers },
+            plan: ResolvedTaskTable { tasks },
             target: "linux".into(),
             mapper: "rate_monotonic".into(),
             warnings: vec![],
@@ -3328,42 +3328,42 @@ overrides:
     }
 
     #[test]
-    fn the_composable_tier_note_names_each_tiered_composable() {
-        let mut default_tier = rt_tier(ros_launch_manifest_sched::DEFAULT_TIER, 0);
-        default_tier.sched_class = None;
-        default_tier.members = vec!["/idle_composable".into()];
+    fn the_composable_task_note_names_each_tasked_composable() {
+        let mut default_task = rt_task(ros_launch_manifest_sched::DEFAULT_TASK, 0);
+        default_task.sched_class = None;
+        default_task.members = vec!["/idle_composable".into()];
         let derived = derived_of(vec![
-            rt_tier("/cv/detect", 39),
-            rt_tier("/plain", 38),
-            default_tier,
+            rt_task("/cv/detect", 39),
+            rt_task("/plain", 38),
+            default_task,
         ]);
         let containers = BTreeMap::from([
             ("/cv/detect".to_string(), "/cv/container".to_string()),
             ("/idle_composable".to_string(), "/cv/container".to_string()),
         ]);
-        let note = render_composable_tier_note(&derived, &containers);
+        let note = render_composable_task_note(&derived, &containers);
         assert!(note.starts_with("note: 1 composable(s)"), "{note}");
         assert!(
             note.contains("  /cv/detect: /cv/detect SCHED_FIFO 39 in /cv/container"),
             "{note}"
         );
-        // A standalone node is its own process, and a default tier is
+        // A standalone node is its own process, and a default task is
         // nothing to apply.
         assert!(!note.contains("/plain"), "{note}");
         assert!(!note.contains("/idle_composable"), "{note}");
     }
 
     #[test]
-    fn the_composable_tier_note_is_empty_without_a_tiered_composable() {
-        let derived = derived_of(vec![rt_tier("/plain", 38)]);
+    fn the_composable_task_note_is_empty_without_a_tasked_composable() {
+        let derived = derived_of(vec![rt_task("/plain", 38)]);
         let containers = BTreeMap::from([("/c/x".to_string(), "/c/container".to_string())]);
-        assert_eq!(render_composable_tier_note(&derived, &containers), "");
+        assert_eq!(render_composable_task_note(&derived, &containers), "");
     }
 
     // ── Phase 60: SCHED_DEADLINE derivation ──
 
-    fn rt_tier(name: &str, priority: i64) -> ResolvedTier {
-        ResolvedTier {
+    fn rt_task(name: &str, priority: i64) -> ResolvedTask {
+        ResolvedTask {
             name: name.to_string(),
             priority,
             sched_class: Some("SCHED_FIFO".to_string()),
@@ -3402,11 +3402,11 @@ overrides:
     }
 
     #[test]
-    fn reservations_off_leaves_every_tier_at_fixed_priority() {
+    fn reservations_off_leaves_every_task_at_fixed_priority() {
         // Budgets are still parsed and carried; they simply do not select a
         // policy. Adding one budget must never change scheduling on its own.
-        let mut plan = ResolvedTierTable {
-            tiers: vec![rt_tier("/a", 40)],
+        let mut plan = ResolvedTaskTable {
+            tasks: vec![rt_task("/a", 40)],
         };
         let input = ros_launch_manifest_sched::MapperInput {
             nodes: vec![mapper_node("/a", Some(10.0))],
@@ -3422,13 +3422,13 @@ overrides:
             &mut Vec::new(),
         )
         .expect("off is never an error");
-        assert_eq!(plan.tiers[0].sched_class.as_deref(), Some("SCHED_FIFO"));
+        assert_eq!(plan.tasks[0].sched_class.as_deref(), Some("SCHED_FIFO"));
     }
 
     #[test]
     fn a_declared_budget_and_rate_become_a_reservation() {
-        let mut plan = ResolvedTierTable {
-            tiers: vec![rt_tier("/a", 40)],
+        let mut plan = ResolvedTaskTable {
+            tasks: vec![rt_task("/a", 40)],
         };
         let input = ros_launch_manifest_sched::MapperInput {
             nodes: vec![mapper_node("/a", Some(10.0))],
@@ -3445,7 +3445,7 @@ overrides:
         )
         .expect("a budget plus a rate is everything a reservation needs");
 
-        let posix = plan.tiers[0].posix.as_ref().expect("typed placement");
+        let posix = plan.tasks[0].posix.as_ref().expect("typed placement");
         let ros_launch_manifest_sched::PosixSched::Deadline {
             runtime_ns,
             deadline_ns,
@@ -3461,18 +3461,18 @@ overrides:
         assert_eq!(deadline_ns, period_ns);
         // v2 has no way to author `deadline_policy`, so SIGXCPU stays off.
         assert!(!overrun);
-        assert_eq!(plan.tiers[0].sched_class.as_deref(), Some("SCHED_DEADLINE"));
+        assert_eq!(plan.tasks[0].sched_class.as_deref(), Some("SCHED_DEADLINE"));
         // The priority the mapper derived survives — the apply layer gives it
         // to the node's sibling threads, since only the leader is reserved.
-        assert_eq!(plan.tiers[0].priority, 40);
+        assert_eq!(plan.tasks[0].priority, 40);
     }
 
     #[test]
     fn a_missing_budget_is_refused_naming_every_node() {
         // All-or-nothing: a band holding both a reservation and a fixed
         // priority loses the order the mapper computed, invisibly.
-        let mut plan = ResolvedTierTable {
-            tiers: vec![rt_tier("/a", 40), rt_tier("/b", 30)],
+        let mut plan = ResolvedTaskTable {
+            tasks: vec![rt_task("/a", 40), rt_task("/b", 30)],
         };
         let input = ros_launch_manifest_sched::MapperInput {
             nodes: vec![mapper_node("/a", Some(10.0)), mapper_node("/b", Some(20.0))],
@@ -3508,8 +3508,8 @@ overrides:
         // Without this, every launch with composable nodes (and so a container
         // process, in any `--container-mode`) would be a hard error its author
         // could not fix.
-        let mut plan = ResolvedTierTable {
-            tiers: vec![rt_tier("/a", 40), rt_tier("/container", 30)],
+        let mut plan = ResolvedTaskTable {
+            tasks: vec![rt_task("/a", 40), rt_task("/container", 30)],
         };
         let input = ros_launch_manifest_sched::MapperInput {
             nodes: vec![
@@ -3531,7 +3531,7 @@ overrides:
         )
         .expect("a container needs no budget");
 
-        let by_name = |n: &str| plan.tiers.iter().find(|t| t.name == n).unwrap();
+        let by_name = |n: &str| plan.tasks.iter().find(|t| t.name == n).unwrap();
         assert_eq!(by_name("/a").sched_class.as_deref(), Some("SCHED_DEADLINE"));
         assert_eq!(
             by_name("/container").sched_class.as_deref(),
@@ -3546,8 +3546,8 @@ overrides:
     fn a_node_with_no_timing_fact_is_outside_the_rule() {
         // Nothing to build a period from, so it is not a candidate and its
         // missing budget is not a violation.
-        let mut plan = ResolvedTierTable {
-            tiers: vec![rt_tier("/a", 40)],
+        let mut plan = ResolvedTaskTable {
+            tasks: vec![rt_task("/a", 40)],
         };
         let input = ros_launch_manifest_sched::MapperInput {
             nodes: vec![mapper_node("/a", None)],
@@ -3562,7 +3562,7 @@ overrides:
             &mut Vec::new(),
         )
         .expect("no timing fact means no reservation and no violation");
-        assert_eq!(plan.tiers[0].sched_class.as_deref(), Some("SCHED_FIFO"));
+        assert_eq!(plan.tasks[0].sched_class.as_deref(), Some("SCHED_FIFO"));
     }
 
     #[test]
@@ -3570,14 +3570,14 @@ overrides:
         // A deadline thread's affinity may not be narrower than its root
         // domain, so a pin is not merely ignored - it would make the apply
         // fail with EPERM.
-        let mut plan = ResolvedTierTable {
-            tiers: vec![ResolvedTier {
+        let mut plan = ResolvedTaskTable {
+            tasks: vec![ResolvedTask {
                 posix: Some(ros_launch_manifest_sched::PosixPlacement {
                     sched: ros_launch_manifest_sched::PosixSched::Fifo { priority: 40 },
                     affinity: ros_launch_manifest_sched::PosixAffinity::Cpus { cpus: vec![3] },
                     uclamp: None,
                 }),
-                ..rt_tier("/a", 40)
+                ..rt_task("/a", 40)
             }],
         };
         let input = ros_launch_manifest_sched::MapperInput {
@@ -3596,7 +3596,7 @@ overrides:
         )
         .expect("derives");
         assert_eq!(
-            plan.tiers[0].posix.as_ref().unwrap().affinity,
+            plan.tasks[0].posix.as_ref().unwrap().affinity,
             ros_launch_manifest_sched::PosixAffinity::Inherit
         );
         assert_eq!(warnings.len(), 1);
@@ -3606,14 +3606,14 @@ overrides:
     // ── Phase 60: the posix override vocabulary ──
 
     /// Build a one-node plan and apply a single override to it, returning the
-    /// resulting tier and any warnings.
+    /// resulting task and any warnings.
     fn apply_one_override(
         derived_class: Option<&str>,
         derived_priority: i64,
         yaml_body: &str,
-    ) -> (ResolvedTier, Vec<String>) {
-        let mut table = ResolvedTierTable {
-            tiers: vec![ResolvedTier {
+    ) -> (ResolvedTask, Vec<String>) {
+        let mut table = ResolvedTaskTable {
+            tasks: vec![ResolvedTask {
                 name: "/n".to_string(),
                 priority: derived_priority,
                 sched_class: derived_class.map(str::to_string),
@@ -3629,31 +3629,31 @@ overrides:
         let mut warnings = Vec::new();
         let mut overridden = BTreeMap::new();
         apply_overrides(&mut table, &file.overrides, &mut warnings, &mut overridden);
-        (table.tiers.remove(0), warnings)
+        (table.tasks.remove(0), warnings)
     }
 
     #[test]
     fn a_batch_override_reaches_the_typed_placement_with_its_nice_value() {
-        let (tier, warnings) = apply_one_override(
+        let (task, warnings) = apply_one_override(
             Some("SCHED_FIFO"),
             40,
             "    sched_class: SCHED_BATCH\n    nice: 10\n",
         );
         assert_eq!(
-            tier.posix.as_ref().map(|p| p.sched),
+            task.posix.as_ref().map(|p| p.sched),
             Some(ros_launch_manifest_sched::PosixSched::Batch { nice: 10 })
         );
         // Demoted out of RT, so the contradictory `class: real_time` label
         // must be gone too.
-        assert_eq!(tier.class, None);
+        assert_eq!(task.class, None);
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]
     fn a_cpus_override_produces_a_multi_cpu_mask() {
-        let (tier, warnings) = apply_one_override(Some("SCHED_FIFO"), 40, "    cpus: [2, 3]\n");
+        let (task, warnings) = apply_one_override(Some("SCHED_FIFO"), 40, "    cpus: [2, 3]\n");
         assert_eq!(
-            tier.posix.as_ref().map(|p| p.affinity.clone()),
+            task.posix.as_ref().map(|p| p.affinity.clone()),
             Some(ros_launch_manifest_sched::PosixAffinity::Cpus { cpus: vec![2, 3] })
         );
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -3661,7 +3661,7 @@ overrides:
 
     #[test]
     fn uclamp_min_on_an_rt_policy_warns_that_it_does_nothing() {
-        let (tier, warnings) = apply_one_override(Some("SCHED_FIFO"), 40, "    uclamp_min: 512\n");
+        let (task, warnings) = apply_one_override(Some("SCHED_FIFO"), 40, "    uclamp_min: 512\n");
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("no-op"), "{}", warnings[0]);
         assert!(
@@ -3671,7 +3671,7 @@ overrides:
         );
         // Still applied — warned about, not silently dropped.
         assert_eq!(
-            tier.posix.as_ref().and_then(|p| p.uclamp),
+            task.posix.as_ref().and_then(|p| p.uclamp),
             Some((512, 1024))
         );
     }
@@ -3691,12 +3691,12 @@ overrides:
 
     #[test]
     fn a_deadline_override_without_a_budget_is_refused_with_a_reason() {
-        let (tier, warnings) =
+        let (task, warnings) =
             apply_one_override(Some("SCHED_FIFO"), 40, "    sched_class: SCHED_DEADLINE\n");
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("budget_us"), "{}", warnings[0]);
         // Left as derived rather than half-built from invented numbers.
-        assert!(tier.posix.is_none() || tier.posix.as_ref().unwrap().sched.priority().is_some());
+        assert!(task.posix.is_none() || task.posix.as_ref().unwrap().sched.priority().is_some());
     }
 
     // ── Phase 44.4: chain_aware pipeline wiring ──
@@ -3736,16 +3736,16 @@ overrides:
             // downstream — it IS the sink) outranks the Boundary (tick).
             let fast = derived
                 .plan
-                .tiers
+                .tasks
                 .iter()
                 .find(|t| t.members == vec!["/fast_node".to_string()])
-                .expect("fast_node tier");
+                .expect("fast_node task");
             let slow = derived
                 .plan
-                .tiers
+                .tasks
                 .iter()
                 .find(|t| t.members == vec!["/slow_node".to_string()])
-                .expect("slow_node tier");
+                .expect("slow_node task");
             assert!(
                 slow.priority > fast.priority,
                 "segment (sink) must outrank boundary: slow={} fast={}",
@@ -3992,7 +3992,7 @@ resources:
         let dump = dump_two_plain_nodes();
         let index = index_with_rates();
         // fast_node/slow_node both have rate facts (derived); pin slow_node
-        // via an override; a third fact-less node lands in the default tier.
+        // via an override; a third fact-less node lands in the default task.
         let yaml = "\
 target: posix
 priority_assignment: rate_monotonic

@@ -21,7 +21,7 @@
 use eyre::{Context, Result};
 use play_launch::{
     ipc::{SchedRequest, SchedResponse, decode_message, encode_message},
-    sched::{AppliedTier, SchedApplyError, SchedPolicy},
+    sched::{AppliedTask, SchedApplyError, SchedPolicy},
 };
 use std::{os::unix::io::FromRawFd, path::PathBuf, process::Stdio, time::Duration};
 use tokio::{
@@ -127,7 +127,7 @@ impl RtHelperClient {
         }
     }
 
-    /// Apply `tier` to every thread of `pid` via the helper.
+    /// Apply `task` to every thread of `pid` via the helper.
     ///
     /// IPC-level failures (encode/decode errors, broken pipe, timeout) are
     /// mapped to `SchedApplyError::Syscall` with a synthetic `rt_helper_ipc`
@@ -135,10 +135,10 @@ impl RtHelperClient {
     /// didn't answer", but callers only branch on the variant shape (Warn
     /// logs and continues, Strict aborts), so this is sufficient without
     /// growing the shared error enum for a helper-transport-only condition.
-    pub async fn apply(&mut self, pid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
+    pub async fn apply(&mut self, pid: u32, task: &AppliedTask) -> Result<(), SchedApplyError> {
         let request = SchedRequest::ApplySched {
             pid,
-            tier: tier.clone(),
+            task: task.clone(),
         };
 
         match self.send_request(request).await {
@@ -259,7 +259,7 @@ fn ipc_error(pid: u32) -> SchedApplyError {
 /// task.
 struct SchedJob {
     pid: u32,
-    tier: AppliedTier,
+    task: AppliedTask,
     reply: oneshot::Sender<Result<(), SchedApplyError>>,
 }
 
@@ -300,7 +300,7 @@ impl SchedHelper {
 
         let owner = tokio::spawn(async move {
             while let Some(job) = rx.recv().await {
-                let result = client.apply(job.pid, &job.tier).await;
+                let result = client.apply(job.pid, &job.task).await;
                 // Ignore send errors: the caller may have given up waiting
                 // (e.g. its own timeout elapsed first), which is fine.
                 let _ = job.reply.send(result);
@@ -319,17 +319,17 @@ impl SchedHelper {
         Ok((SchedHelper(tx), owner))
     }
 
-    /// Apply `tier` to every thread of `pid`, routed through the owner task.
+    /// Apply `task` to every thread of `pid`, routed through the owner task.
     ///
     /// If the owner task has already exited (channel closed, or it dropped
     /// our reply `oneshot` without answering — which shouldn't happen but is
     /// handled defensively), this returns a [`SchedApplyError`] rather than
     /// panicking.
-    pub async fn apply(&self, pid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
+    pub async fn apply(&self, pid: u32, task: &AppliedTask) -> Result<(), SchedApplyError> {
         let (reply_tx, reply_rx) = oneshot::channel();
         let job = SchedJob {
             pid,
-            tier: tier.clone(),
+            task: task.clone(),
             reply: reply_tx,
         };
 
@@ -350,8 +350,8 @@ impl SchedHelper {
     }
 }
 
-/// Apply `tier` to `pid`, preferring the RT helper (non-root path) and
-/// falling back to a direct in-process `apply_tier` call when no helper is
+/// Apply `task` to `pid`, preferring the RT helper (non-root path) and
+/// falling back to a direct in-process `apply_task` call when no helper is
 /// configured (keeps `sudo -E play_launch ...` working exactly as before).
 ///
 /// Used by all three phase-38 apply sites (regular node, container,
@@ -378,11 +378,11 @@ fn policy_name(policy: SchedPolicy) -> &'static str {
 pub async fn apply_sched(
     helper: Option<&SchedHelper>,
     pid: u32,
-    tier: &AppliedTier,
+    task: &AppliedTask,
 ) -> Result<(), SchedApplyError> {
     let result = match helper {
-        Some(h) => h.apply(pid, tier).await,
-        None => crate::execution::sched_apply::apply_tier(pid, tier),
+        Some(h) => h.apply(pid, task).await,
+        None => crate::execution::sched_apply::apply_task(pid, task),
     };
 
     // Report what was actually applied, not merely that a plan existed.
@@ -400,19 +400,19 @@ pub async fn apply_sched(
     // priority 0 is what every process already gets, so logging it for each
     // node would be noise that buries the RT lines.
     if result.is_ok() {
-        let core = tier
+        let core = task
             .cpus
             .as_ref()
             .map(|c| c.to_string())
             .unwrap_or_else(|| "-".to_string());
-        match tier.policy {
+        match task.policy {
             SchedPolicy::Fifo | SchedPolicy::Rr => info!(
-                "sched: pid {} -> {} priority {} cpu {} (tier '{}')",
+                "sched: pid {} -> {} priority {} cpu {} (task '{}')",
                 pid,
-                policy_name(tier.policy),
-                tier.priority,
+                policy_name(task.policy),
+                task.priority,
                 core,
-                tier.tier_name
+                task.task_name
             ),
             // Best-effort placement stays `debug!`: SCHED_OTHER at nice 0 is
             // what every process already gets, so logging it per node would
@@ -422,36 +422,36 @@ pub async fn apply_sched(
             // A reservation is the outcome a user most wants confirmed, and
             // `chrt -p` is otherwise the only way to see it, so print the
             // numbers rather than just the policy name.
-            SchedPolicy::Deadline => match &tier.reservation {
+            SchedPolicy::Deadline => match &task.reservation {
                 Some(r) => info!(
-                    "sched: pid {} -> SCHED_DEADLINE runtime {}us / deadline {}us / period {}us overrun={} (tier '{}')",
+                    "sched: pid {} -> SCHED_DEADLINE runtime {}us / deadline {}us / period {}us overrun={} (task '{}')",
                     pid,
                     r.runtime_ns / 1_000,
                     r.deadline_ns / 1_000,
                     r.period_ns / 1_000,
                     r.overrun,
-                    tier.tier_name
+                    task.task_name
                 ),
                 None => warn!(
-                    "sched: pid {} -> SCHED_DEADLINE with no reservation parameters (tier '{}')",
-                    pid, tier.tier_name
+                    "sched: pid {} -> SCHED_DEADLINE with no reservation parameters (task '{}')",
+                    pid, task.task_name
                 ),
             },
             SchedPolicy::Batch | SchedPolicy::Idle => info!(
-                "sched: pid {} -> {} nice {} cpu {} (tier '{}')",
+                "sched: pid {} -> {} nice {} cpu {} (task '{}')",
                 pid,
-                policy_name(tier.policy),
-                tier.nice,
+                policy_name(task.policy),
+                task.nice,
                 core,
-                tier.tier_name
+                task.task_name
             ),
-            SchedPolicy::Other if tier.nice != 0 => info!(
-                "sched: pid {} -> SCHED_OTHER nice {} cpu {} (tier '{}')",
-                pid, tier.nice, core, tier.tier_name
+            SchedPolicy::Other if task.nice != 0 => info!(
+                "sched: pid {} -> SCHED_OTHER nice {} cpu {} (task '{}')",
+                pid, task.nice, core, task.task_name
             ),
             SchedPolicy::Other => debug!(
-                "sched: pid {} -> SCHED_OTHER cpu {} (tier '{}')",
-                pid, core, tier.tier_name
+                "sched: pid {} -> SCHED_OTHER cpu {} (task '{}')",
+                pid, core, task.task_name
             ),
         }
     }
@@ -569,15 +569,15 @@ mod tests {
         }
     }
 
-    fn fifo_tier(priority: i32) -> AppliedTier {
-        AppliedTier {
+    fn fifo_task(priority: i32) -> AppliedTask {
+        AppliedTask {
             policy: play_launch::sched::SchedPolicy::Fifo,
             priority,
             nice: 0,
             cpus: None,
             uclamp: None,
             reservation: None,
-            tier_name: "test".to_string(),
+            task_name: "test".to_string(),
         }
     }
 
@@ -619,7 +619,7 @@ mod tests {
         // Give the kernel a moment to finish exec() before poking at it.
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let result = helper.apply(pid, &fifo_tier(10)).await;
+        let result = helper.apply(pid, &fifo_task(10)).await;
         assert_eq!(result, Err(SchedApplyError::PermissionDenied { pid }));
 
         // Reap the child so no orphan leaks regardless of test outcome.

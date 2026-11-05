@@ -42,8 +42,8 @@ pub struct ComposableNodeMetadata {
     pub auto_load: bool,
     /// Output directory for per-node logging (isolated mode)
     pub output_dir: PathBuf,
-    /// Phase 38.9: resolved posix scheduling for this composable (None = no tier).
-    pub sched: Option<crate::execution::sched_apply::AppliedTier>,
+    /// Phase 38.9: resolved posix scheduling for this composable (None = no task).
+    pub sched: Option<crate::execution::sched_apply::AppliedTask>,
     /// The launch `<timer>` deadline: this composable's LoadNode request is
     /// not issued before this instant. `None` — the usual case — means no
     /// enclosing timer.
