@@ -6,6 +6,15 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## 0.29.0 - 2026-11-05
+
+- **Changed (`check-terms`; rlm v0.3.12, phase 99 T5 at R+2):** `tier` is
+  a retired word in user-facing text (write task). TIER IV's `tier4_*`
+  packages and the company's name are left out by the pattern, not by
+  file; the self-test holds them as a negative control. The `migrate` help
+  text of both CLIs and `rt-scheduling.md`'s legacy-schema section say
+  task.
+
 ## 0.28.0 - 2026-11-05
 
 - **Removed (`resolve --system`; rlm v0.3.11, phase 99 T4 at R+1):** a

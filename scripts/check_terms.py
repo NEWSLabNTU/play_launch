@@ -70,6 +70,12 @@ RETIRED: list[tuple[str, str]] = [
     (r"\bbudget-overflow\b", "latency-bound-overflow"),
     (r"\bon_demand\b", "aperiodic"),
     (r"\bspontaneous\b", "aperiodic"),
+    # Phase 99 T5 (rlm v0.3.12, R+2): the scheduling unit is a task. TIER
+    # IV's packages (`tier4_*`, in every Autoware launch) and the company's
+    # name ("TIER IV") are another word spelled the same; the pattern itself
+    # leaves them out (no word boundary before a digit or `_`, a lookahead
+    # for ` IV`), so no file is excluded for carrying them.
+    (r"\btiers?\b(?![ \t]+IV\b)", "task"),
 ]
 # Markdown only: a mode's `window:` key in an example block.
 MD_ONLY: list[tuple[str, str]] = [
@@ -242,6 +248,16 @@ def self_test() -> int:
         "src/ros-launch-resolve/resolve/src/b.rs": (
             'const M: &str = r#"the ladder ends"#;\n',
             'const M: &str = r#"the fallback sequence ends"#; // a ladder in a comment\n',
+        ),
+        "src/play_launch/src/g.rs": (
+            'const M: &str = "applied tier {name}";\n',
+            'const M: &str = "applied task {name}";\n',
+        ),
+        "docs/guide/t.md": ("A tier is a scheduling unit.\n", "A task is a scheduling unit.\n"),
+        # TIER IV's packages and name: never a hit.
+        "docs/guide/t4.md": (
+            "Each tier is applied.\n",
+            "`ros2 launch tier4_system_launch system.launch.xml` (TIER IV's tier4_* packages).\n",
         ),
         "src/play_launch/src/cli/c.rs": ("/// Print each scope path.\nstruct A;\n", "/// Print each event chain.\nstruct A;\n"),
         "src/play_launch/src/web/assets/js/d.js": (

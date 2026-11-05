@@ -43,7 +43,7 @@ are in the design doc. This phase is the work and its order.
 | N4 | **Release R+1 (refuse)**, only after R is on PyPI and N3 is merged: each alias row becomes a `removed` row with its own message naming the new key; an old rule id in `acknowledged:` is an error naming the new id; alias handling deleted from the parser | one negative test per old key and per old rule id (a removal that forgot one fails); the model rewrite still loads an R-1 model |
 | N5 | **Release R+2 (purge)**: `check-terms` gate (fails on a retired word in user-facing text, allowlisted by file) in `just check` and rlm's gate; old-id message dropped | the gate lists every S1–S5 old word; it was checked by injecting one (a negative control) |
 | N6 | M1–M6 (mapper, guards, budget-as-limit, ingress, on_demand, carried edges), each through its own R / R+1 / R+2 when its area is next touched; M6 is play_launch only (`chains.json` with a version field, `/api/chains`, the Chains page) | per name, as N1–N5 |
-| N7 | Decide M7 (tier): rename, or only gloss it in the docs' prose ("a tier, i.e. a scheduling context") | **decided (user, 2026-11-05): rename, in its own phase on both sides -- play_launch [phase 99](./phase-99-tier-rename.md), nano-ros "follow rlm's tier rename"** |
+| N7 | Decide M7 (tier): rename, or only gloss it in the docs' prose ("a tier, i.e. a scheduling context") | **decided (user, 2026-11-05): rename, in its own phase on both sides -- play_launch [phase 99](./phase-99-tier-rename.md), nano-ros "follow rlm's tier rename"; done in phase 99 (the word is task; R rlm v0.3.10 / 0.27.0, R+1 v0.3.11 / 0.28.0, R+2 v0.3.12 / 0.29.0)** |
 
 ## Retiring the old names
 
@@ -174,7 +174,8 @@ Here R+1 waits until R has been published and nano-ros has followed.
   above (rlm v0.3.9). nano-ros follows in its phase 534 W3.
 - **N7** (2026-11-05): decided -- `tier` is renamed, in its own phase:
   [phase 99](./phase-99-tier-rename.md) (rlm, play_launch, the island) and
-  a nano-ros phase following it. The word itself is phase 99's T0.
+  a nano-ros phase following it. The word itself is phase 99's T0. Done (2026-11-05): the word is task, and phase 99 ran R, R+1 and
+  R+2 (rlm v0.3.10-v0.3.12, play_launch 0.27.0-0.29.0).
 
 ## Follow-ups
 

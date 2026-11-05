@@ -49,9 +49,9 @@ scheduling apply-layer this guide describes.
 A **task** is one named set of scheduling parameters (policy, priority,
 core, budget) and the nodes bound to it; on Linux play_launch applies a
 node's task to every thread of its process. Before 0.27 (rlm v0.3.10) it
-was called a *tier*. Since 0.28 (rlm v0.3.11) the model stores the tasks
-under `execution.tasks` (schema 5; an older model's `execution.tiers` is
-read for good), and a nano-ros `system.toml` that writes `[tiers.*]` or
+was called a *tier*. Since 0.28 (rlm v0.3.11) the model stores the tasks <!-- terms: allow -->
+under `execution.tasks` (schema 5; an older model's `execution.tiers` is <!-- terms: allow -->
+read for good), and a nano-ros `system.toml` that writes `[tiers.*]` or <!-- terms: allow -->
 `group_tiers` is refused, naming the new key;
 `play_launch migrate <system.toml> --write` rewrites it.
 
@@ -987,10 +987,10 @@ play_launch launch rt_demo bringup.launch.xml --sched manual.system.posix.yaml -
 ```
 
 **The legacy `system.toml` scheduling schema is gone** (0.22, phase 41.6).
-Hand-written tiers with `[[assign]]` bindings used to reach the `manual`
+Hand-written tasks with `[[assign]]` bindings used to reach the `manual`
 mapper through a `.toml` bridge; a `.toml` platform file is now refused with
 a message naming this form. To migrate one, write an override per node with
-the priority, `sched_class` and core its tier gave it. An `[[assign]] scope =
+the priority, `sched_class` and core its task gave it. An `[[assign]] scope =
 "/ns"` rule becomes one override per node in that namespace (resolve the
 model to list them: `play_launch resolve <pkg> <file> -o model.yaml`, then
 `structure.nodes`). Every duration is written with a unit: `budget: 8ms`,
