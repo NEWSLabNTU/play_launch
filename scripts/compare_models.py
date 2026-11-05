@@ -426,8 +426,13 @@ def sched_diffs(rust: Dict, python: Dict) -> List[str]:
     diffs: List[str] = []
     r_sched = (rust or {}).get('sched') or {}
     p_sched = (python or {}).get('sched') or {}
-    r_empty = not r_sched and not (rust or {}).get('bindings') and not (rust or {}).get('tiers')
-    p_empty = not p_sched and not (python or {}).get('bindings') and not (python or {}).get('tiers')
+    # `tasks` since model schema 5 (phase 99 T4); `tiers` in an older dump.
+    def tasks(e: Dict) -> Dict:
+        e = e or {}
+        return e.get('tasks') or e.get('tiers') or {}
+
+    r_empty = not r_sched and not (rust or {}).get('bindings') and not tasks(rust)
+    p_empty = not p_sched and not (python or {}).get('bindings') and not tasks(python)
     if r_empty and p_empty:
         return diffs
 
@@ -438,10 +443,10 @@ def sched_diffs(rust: Dict, python: Dict) -> List[str]:
             f"execution.bindings differ: {len(r_bindings)} vs {len(p_bindings)} entries"
         )
 
-    r_tiers = set((rust or {}).get('tiers', {}) or {})
-    p_tiers = set((python or {}).get('tiers', {}) or {})
-    if r_tiers != p_tiers:
-        diffs.append(f"execution.tiers key sets differ: rust={sorted(r_tiers)} python={sorted(p_tiers)}")
+    r_tasks = set(tasks(rust))
+    p_tasks = set(tasks(python))
+    if r_tasks != p_tasks:
+        diffs.append(f"execution.tasks key sets differ: rust={sorted(r_tasks)} python={sorted(p_tasks)}")
 
     r_chains = len(r_sched.get('chains', []) or [])
     p_chains = len(p_sched.get('chains', []) or [])

@@ -1,6 +1,6 @@
 # Phase 99 - tier rename: the scheduling unit in the standards' word
 
-**Status (2026-11-05): planned. Decided (user, 2026-11-05): `tier` is
+**Status (2026-11-05): in progress (T0-T4 done, T5 next). Decided (user, 2026-11-05): `tier` is
 renamed, in its own phase on both sides (phase 98 N7); T0 decided
 (user, 2026-11-05): the new word is **task** (option A).**
 
@@ -21,7 +21,25 @@ apply log (`applied task '<name>'`), the IPC (`AppliedTask`, `apply_task`)
 and `run_info.json` `sched_unapplied[].task`, with `tier` beside it for
 0.27 only; `resolve --system` prints `warning[deprecated-spelling]` per old
 key. `tests/fixtures/system_tasks_deprecated` proves the old file warns and
-migrates to the same execution layer. T3 next. Design of record: rlm
+migrates to the same execution layer. T3 done (nano-ros W1 #3127,
+island `536777a`, demo `0d90f08`).
+
+**Progress (2026-11-05): T4 done, rlm `v0.3.11` (`dd3763f`), play_launch
+0.28.0.** rlm refuses `[tiers.*]` and `group_tiers` in `parse_system_config`
+(`system_config::SYSTEM_TOML_REMOVED`, one row per key, each message naming
+the new key, what the file wrote under the old one and `migrate` with its
+rewrite id; kept for good, since the reader is lenient and would otherwise
+ignore the key in silence). The model is schema 5: `Execution::tasks`
+(`execution.tasks`), a schema-4 model's `execution.tiers` rewritten on read
+for good in `SystemModel::from_yaml_str` (`upgrade_tiers_to_tasks`, before
+`upgrade_legacy_duration_keys`); both keys at once is
+`ModelError::BothSpellings`. The deprecated aliases, the old config fields,
+`deprecated_spellings` and `SystemDeprecatedSpelling` are gone (crate
+0.7.0). play_launch: `resolve --system` refuses the old keys (the 0.27
+warning is gone), `run_info.json` rows carry `task` only, and
+`tests/fixtures/system_tasks_deprecated` proves the refusal of each key and
+that `migrate` turns the file into its twin `twin.system.toml`'s execution
+layer. Design of record: rlm
 `docs/design/standard-names.md` M7 (design issue 57); the release schedule
 is that document's section 6, as phase 98 ran it. Spans rlm, play_launch,
 the safety island and nano-ros (its own phase: "follow rlm's tier rename").
@@ -184,8 +202,8 @@ templates), 10 `system.toml` files authoring `[tiers.*]`, and docs (about
 | T0 | The user picks the word (decision slot) | the slot and the design doc's M7 row say "decided: <new>" |
 | T1 (done, rlm v0.3.10) | **Release R in rlm.** `system_config`: `[<News>.<name>]` and `group_<News>` read; `[tiers.*]` and `group_tiers` read for one release with one `deprecated-spelling` warning each naming the new key; `migrate` rewrites a `system.toml` (a TOML rewrite: it edits YAML contracts today). `sched` types renamed (`<New>Def`, `<New>PlatformSpec`, `Resolved<New>`, `Resolved<New>Table`, `DEFAULT_<NEW>`, the `SchedError` variants, `AssignRule.<new>`), each old name kept as a `#[deprecated] pub type` / `pub use` alias for this release so a consumer can bump the tag before renaming. Messages and docs say the new word. The model is unchanged (schema 4), as M1-M5 kept theirs at R | rlm release; a test per old key showing it warns and resolves to the same table; `migrate` turns a `[tiers.*]` `system.toml` into one that reads clean; nano-ros compiles unchanged against R (the aliases) |
 | T2 (done, 0.27.0) | **play_launch at R.** `just bump-manifest`; the 59 user-facing strings, the `--explain` scheduling block and evidence text, `run_info.json` `sched_unapplied[].<new>` (with `tier` written beside it for one release, as M6 did with `carried_hops`); its own types (`AppliedTier`, `apply_tier`, `UnappliedComposableTier`; the IPC is between two binaries of one wheel, so no compatibility is needed); `rt-scheduling.md`, CLAUDE.md, `--help` text | `just check`, `just test-all` green; `--explain` on `rt_workspace` reads the new word with the same plan; `check-terms` unchanged (the word is not retired yet) |
-| T3 | **Island, demo, nano-ros at R.** Island: docs and comments when it bumps its play_launch pin to the release carrying R (nothing parsed changes). nano-ros: its phase's W1 (bump to R, migrate its ten `system.toml` files) | island `check` verdicts and totals unchanged; nano-ros W1 merged |
-| T4 | **Release R+1 (refuse)**, only after R is on PyPI and nano-ros W1 is merged: `[tiers.*]` and `group_tiers` are refused naming the new key and `migrate` (`removed` rows; `system.toml` keeps `deny_unknown_fields` as the backstop); **model schema 5**: `execution.<News>` written, `execution.tiers` rewritten on read for good (`SystemModel::from_yaml_str`, beside `upgrade_legacy_tier_keys`); the deprecated type aliases deleted; `run_info.json` drops `tier`. nano-ros follows in the same window (its W3: the model field read and the alias-free build) | one negative test per old key; a schema-4 model loads and resolves to the same table as its schema-5 twin; nano-ros builds against R+1 |
+| T3 (done) | **Island, demo, nano-ros at R.** Island: docs and comments when it bumps its play_launch pin to the release carrying R (nothing parsed changes). nano-ros: its phase's W1 (bump to R, migrate its ten `system.toml` files) | island `check` verdicts and totals unchanged; nano-ros W1 merged |
+| T4 (done, rlm v0.3.11, 0.28.0) | **Release R+1 (refuse)**, only after R is on PyPI and nano-ros W1 is merged: `[tiers.*]` and `group_tiers` are refused naming the new key and `migrate` (`removed` rows; `system.toml` keeps `deny_unknown_fields` as the backstop); **model schema 5**: `execution.<News>` written, `execution.tiers` rewritten on read for good (`SystemModel::from_yaml_str`, beside `upgrade_legacy_tier_keys`); the deprecated type aliases deleted; `run_info.json` drops `tier`. nano-ros follows in the same window (its W3: the model field read and the alias-free build) | one negative test per old key; a schema-4 model loads and resolves to the same table as its schema-5 twin; nano-ros builds against R+1 |
 | T5 | **Release R+2 (purge)**: `tier` in both `check-terms` gates, with `tier4` (TIER IV packages) excluded by pattern, not by file | the gate lists `tier`; a negative control injects it; no `tier4_*` launch name trips it |
 
 No rule id or contract key carries the word, so the `acknowledged:` and

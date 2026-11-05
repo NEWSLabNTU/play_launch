@@ -1,7 +1,9 @@
-# Phase 99 (rlm v0.3.10): a system.toml in the pre-rename spelling,
-# `[tiers.*]` and `group_tiers`. It still reads this release, with one
-# `deprecated-spelling` warning per key; `play_launch migrate` rewrites it to
-# `[tasks.*]` and `group_tasks`, and the model is the same either way.
+# Phase 99 (rlm v0.3.10 renamed, v0.3.11 refuses): a system.toml in the
+# pre-rename spelling, `[tiers.*]` and `group_tiers`. `resolve --system`
+# refuses it, naming the new keys and `migrate`; `play_launch migrate`
+# rewrites it to `[tasks.*]` and `group_tasks`, and the result resolves to
+# the same execution layer as its twin `twin.system.toml`, written in the new
+# spelling.
 # Used by tests/tests/system_tasks_deprecated.rs with
 # tests/fixtures/multihost/launch/multihost.launch.xml host:=all.
 

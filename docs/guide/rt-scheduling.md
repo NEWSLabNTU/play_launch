@@ -38,7 +38,7 @@ actually schedules.
 **One artifact (Phase 46, hard-removed the alternative in Phase 47):**
 `play_launch resolve`/`dump` merge the launch file, contract, and
 platform file into one `system_model.yaml` — structure, contracts, and the
-**applied schedule** (`execution.tiers` + `execution.bindings`; the model is
+**applied schedule** (`execution.tasks` + `execution.bindings`; the model is
 input-plus-applied-outcome — it does not embed the mapper's full resolved
 plan, a direction that landed and was deliberately reverted, see §1.3).
 `play_launch up --model system_model.yaml` spawns and applies scheduling straight
@@ -49,10 +49,11 @@ scheduling apply-layer this guide describes.
 A **task** is one named set of scheduling parameters (policy, priority,
 core, budget) and the nodes bound to it; on Linux play_launch applies a
 node's task to every thread of its process. Before 0.27 (rlm v0.3.10) it
-was called a *tier*; the model still stores the tasks under
-`execution.tiers`, and a nano-ros `system.toml` that writes `[tiers.*]` or
-`group_tiers` still reads, with a `deprecated-spelling` warning that
-`play_launch migrate <system.toml> --write` fixes.
+was called a *tier*. Since 0.28 (rlm v0.3.11) the model stores the tasks
+under `execution.tasks` (schema 5; an older model's `execution.tiers` is
+read for good), and a nano-ros `system.toml` that writes `[tiers.*]` or
+`group_tiers` is refused, naming the new key;
+`play_launch migrate <system.toml> --write` rewrites it.
 
 ## Quick start
 

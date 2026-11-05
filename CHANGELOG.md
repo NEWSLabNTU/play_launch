@@ -6,6 +6,20 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## 0.28.0 - 2026-11-05
+
+- **Removed (`resolve --system`; rlm v0.3.11, phase 99 T4 at R+1):** a
+  nano-ros `system.toml` that writes `[tiers.<name>]` or `[[component]]
+  group_tiers` is refused, naming `[tasks.<name>]` / `group_tasks`, what
+  the file wrote under the old key, and `migrate` (which still rewrites
+  it). The 0.27 `warning[deprecated-spelling]` is gone.
+- **Changed (model schema 5):** `system_model.yaml` writes the task table
+  as `execution.tasks`; a model written before (schema 4, `execution.tiers`)
+  still loads, through rlm's read-side rewrite. `scripts/compare_models.py`
+  reads either.
+- **Removed (`run_info.json`):** `sched_unapplied[]` rows carry `task` only;
+  the key `tier` written beside it in 0.27 is gone.
+
 ## 0.27.0 - 2026-11-05
 
 - **Changed (rlm v0.3.10, phase 99 T1/T2): a scheduling tier is a task.**

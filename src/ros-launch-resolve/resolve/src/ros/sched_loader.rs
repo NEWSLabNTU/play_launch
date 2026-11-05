@@ -2152,7 +2152,7 @@ pub(crate) fn explain_rows_from_model(
             });
             continue;
         };
-        let Some(task) = model.execution.tiers.get(task_name) else {
+        let Some(task) = model.execution.tasks.get(task_name) else {
             continue;
         };
         let Some(spec) = task.platform(target) else {

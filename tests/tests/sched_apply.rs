@@ -427,11 +427,11 @@ fn composable_task_unapplied_under_stock_is_named() {
         .unwrap_or_else(|| panic!("run_info.json carries no sched_unapplied: {run_info}"));
     assert_eq!(rows.len(), 2, "{run_info}");
     let nodes: Vec<&str> = rows.iter().filter_map(|r| r["node"].as_str()).collect();
-    // Each row names its task, and under the pre-phase-99 key `tier` too
-    // for one release (0.27).
+    // Each row names its task; the pre-phase-99 key `tier`, written beside
+    // it in 0.27 only, is gone (0.28).
     for r in rows {
         assert!(r["task"].is_string(), "{r}");
-        assert_eq!(r["tier"], r["task"], "{r}");
+        assert!(r.get("tier").is_none(), "{r}");
     }
     for fqn in FIXTURE_COMPOSABLES {
         assert!(nodes.contains(&fqn), "{run_info}");

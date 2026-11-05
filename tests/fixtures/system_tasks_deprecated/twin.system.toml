@@ -1,0 +1,21 @@
+# The twin of system.toml, written in the current spelling (phase 99):
+# the same tasks and bindings under `[tasks.*]` and `group_tasks`.
+
+[[component]]
+name = "hub"
+group_tasks = { main = "ctrl" }
+
+[[component]]
+name = "talker1"
+group_tasks = { main = "telem" }
+
+[tasks.ctrl]
+spin_period = "10ms"
+[tasks.ctrl.posix]
+priority = 40
+sched_class = "SCHED_FIFO"
+
+[tasks.telem]
+spin_period = "100ms"
+[tasks.telem.posix]
+priority = 10

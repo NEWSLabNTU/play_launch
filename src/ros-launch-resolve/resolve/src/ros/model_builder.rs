@@ -1911,7 +1911,7 @@ pub fn build_system_model(
     // --- execution ---------------------------------------------------------
     let mut execution = model::Execution::default();
     if let Some(s) = sched {
-        execution.tiers = synthesize_tasks(s.derived);
+        execution.tasks = synthesize_tasks(s.derived);
         for t in &s.derived.plan.tasks {
             if t.name == DEFAULT_TASK {
                 continue;

@@ -261,7 +261,7 @@ impl SchedPlan {
         let mut by_fqn = HashMap::new();
 
         for (fqn, task_name) in &model.execution.bindings {
-            let Some(task) = model.execution.tiers.get(task_name) else {
+            let Some(task) = model.execution.tasks.get(task_name) else {
                 eyre::bail!(
                     "SystemModel: binding '{fqn}' references undeclared task '{task_name}'"
                 );
@@ -502,10 +502,6 @@ pub struct UnappliedComposableTask {
     pub container: String,
     /// The task's name (`run_info.json` `sched_unapplied[].task`).
     pub task: String,
-    /// The same name under its pre-phase-99 key, `tier`, written beside
-    /// `task` for one release (play_launch 0.27) so a reader of
-    /// `run_info.json` can move; gone in the release after.
-    pub tier: String,
     /// `sched_class` spelling of the task's policy.
     pub policy: String,
     pub priority: i32,
@@ -579,7 +575,6 @@ pub fn composable_tasks_not_applied(
             node: fqn.clone(),
             container,
             task: task.task_name.clone(),
-            tier: task.task_name.clone(),
             policy: policy_name(task.policy).to_string(),
             priority: task.priority,
             container_mode: container_mode_flag(container_mode).to_string(),
@@ -829,7 +824,7 @@ mod model_tests {
                 time_slice: None,
             });
         }
-        m.execution.tiers.insert("ctrl".to_string(), task);
+        m.execution.tasks.insert("ctrl".to_string(), task);
         m.execution
             .bindings
             .insert("/a/control_node".to_string(), "ctrl".to_string());
@@ -848,12 +843,12 @@ mod model_tests {
     }
 
     /// A `time_triggered` task reaches the plan only through a model's
-    /// `execution.tiers` since the legacy `.toml` bridge is gone (rlm
+    /// `execution.tasks` since the legacy `.toml` bridge is gone (rlm
     /// v0.3.0); it is applied as its placement says and warned about.
     #[test]
     fn from_model_time_triggered_task_warns() {
         let mut m = model_with_binding(true);
-        m.execution.tiers.get_mut("ctrl").unwrap().class = Some("time_triggered".to_string());
+        m.execution.tasks.get_mut("ctrl").unwrap().class = Some("time_triggered".to_string());
         let plan = SchedPlan::from_model(&m, "posix", SchedApplyMode::Warn).expect("plan");
         assert!(
             plan.warnings
@@ -1039,7 +1034,7 @@ mod model_tests {
             period: None,
             time_slice: None,
         });
-        m.execution.tiers.insert("rt".to_string(), task);
+        m.execution.tasks.insert("rt".to_string(), task);
         for fqn in ["/perception/chain_a", "/perception/chain_b"] {
             m.execution
                 .bindings

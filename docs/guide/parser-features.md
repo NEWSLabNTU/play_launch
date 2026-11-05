@@ -343,7 +343,7 @@ $ ros2 launch gap.launch.xml
  - TypeError: '<' not supported between instances of 'str' and 'float'
 
 $ play_launch dump launch gap.launch.xml
-SystemModel: system_model.yaml (1 nodes, 0 topics, 0 tier(s), 0 warning(s))
+SystemModel: system_model.yaml (1 nodes, 0 topics, 0 task(s), 0 warning(s))
   respawn_delay: 2.0        # evaluated correctly, as a float
 
 $ play_launch check gap.launch.xml ; echo $?

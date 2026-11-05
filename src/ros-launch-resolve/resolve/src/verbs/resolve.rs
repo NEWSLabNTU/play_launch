@@ -105,7 +105,7 @@ pub fn run(inputs: ResolveInputs) -> Result<()> {
             model.contracts.pub_endpoints.len()
                 + model.contracts.sub_endpoints.len()
                 + model.contracts.srv_endpoints.len(),
-            model.execution.tiers.len(),
+            model.execution.tasks.len(),
             model.meta.diagnostics.len() - acknowledged - count("] info:"),
             if acknowledged > 0 {
                 format!(", {acknowledged} acknowledged")

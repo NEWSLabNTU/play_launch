@@ -937,7 +937,7 @@ fn serde_yaml_value(yaml: &str) -> serde_json::Value {
 /// Phase 45.10 — `resolve` with the `chain_aware` platform file
 /// (`bringup.system.posix.yaml`, the `points_to_cmd` chain showcase) does NOT
 /// embed the resolved sched plan (`execution.sched` was removed — the model is
-/// INPUT only). The mapper's OUTPUT is still applied via `execution.tiers` +
+/// INPUT only). The mapper's OUTPUT is still applied via `execution.tasks` +
 /// `execution.bindings` (the Linux realization), and the full chain-aware
 /// provenance is available on demand from a fresh derive — `check --sched
 /// --explain` must show every `points_to_cmd` chain member with `chain_aware`
@@ -985,7 +985,7 @@ fn resolve_omits_sched_but_check_explain_shows_chain_aware() {
     // But the applied Linux realization (tasks + bindings) IS carried — that's
     // what the RT apply layer reads.
     assert!(
-        model["execution"]["tiers"].is_object() && model["execution"]["bindings"].is_object(),
+        model["execution"]["tasks"].is_object() && model["execution"]["bindings"].is_object(),
         "tasks + bindings carry the applied schedule: {model}"
     );
     let bindings = model["execution"]["bindings"]

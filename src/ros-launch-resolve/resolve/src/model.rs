@@ -279,20 +279,8 @@ pub fn build_checked_model(
             .wrap_err_with(|| format!("reading system config {}", sys_path.display()))?;
         let cfg = ros_launch_manifest_model::system_config::parse_system_config(&text)
             .map_err(|e| eyre::eyre!("parsing {}: {e}", sys_path.display()))?;
-        // Phase 99 (rlm v0.3.10): `[tiers.*]` / `group_tiers` read this
-        // release under their new names, one warning per old key. The same
-        // text also rides in `meta.diagnostics` (from `apply_to_launch`).
-        for d in cfg.deprecated_spellings() {
-            eprintln!(
-                "warning[deprecated-spelling]: {}: `{}` is now `{}` ({}); the old spelling is \
-                 refused in the next release; `migrate {}` rewrites it",
-                sys_path.display(),
-                d.old,
-                d.new,
-                d.at.join(", "),
-                sys_path.display(),
-            );
-        }
+        // Phase 99 (rlm v0.3.11): `[tiers.*]` / `group_tiers` are refused
+        // by the parse above, naming the new key and `migrate`.
         let node_fqns: Vec<&str> = model.structure.nodes.keys().map(|s| s.as_str()).collect();
         // nano-ros issue 0291 — tell placement WHICH launch file this is, so
         // `[deploy.*]` blocks scoped with `launch = "…"` are filtered out when

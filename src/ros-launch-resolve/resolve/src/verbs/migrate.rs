@@ -328,8 +328,8 @@ mod tests {
             "[[component]]\nname = \"n\"\ngroup_tasks = { g = \"rt\" }  # bound\n\
              [tasks.rt]\nspin_period = \"1ms\"\n[tasks.rt.zephyr]\npriority = 3\n"
         );
-        let cfg = ros_launch_manifest_model::system_config::parse_system_config(&new).unwrap();
-        assert!(cfg.deprecated_spellings().is_empty());
+        ros_launch_manifest_model::system_config::parse_system_config(&new)
+            .expect("the migrated file reads");
         assert_eq!(run_with(false, true), 0);
     }
 
