@@ -922,7 +922,11 @@ impl RuleEngine {
         let Some(declared) = declared_type else {
             return;
         };
-        if declared.starts_with("TODO/") {
+        // A topic the model derived from a launch file's remaps (phase 76)
+        // carries no type: nothing was declared, so there is nothing to
+        // disagree with. Hashing the empty string reported every such topic
+        // as a mismatch (#0079: 100 errors on Autoware).
+        if declared.is_empty() || declared.starts_with("TODO/") {
             return;
         }
         let declared_hash = fnv1a(declared.as_bytes());
@@ -1997,8 +2001,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    #[test]
-    fn consistency_runtime_fires_on_type_mismatch() {
+    /// Declares `/chatter` with `msg_type` (derived from remaps when empty),
+    /// sends a publisher init with a type hash that matches nothing, and
+    /// returns how many violations the engine counted and the violations file.
+    fn consistency_run(msg_type: &str, tag: &str) -> (u64, String) {
         use crate::interception::{EventKind, InterceptionEvent};
         use ros_launch_resolve::ros::manifest_loader::ResolvedTopic;
 
@@ -2007,9 +2013,9 @@ mod tests {
         index.topics.insert(
             fqn.clone(),
             ResolvedTopic {
-                derived_from_remaps: false,
+                derived_from_remaps: msg_type.is_empty(),
                 fqn: fqn.clone(),
-                msg_type: "std_msgs/msg/String".to_string(),
+                msg_type: msg_type.to_string(),
                 publishers: vec!["/talker/out".to_string()],
                 subscribers: vec![],
                 rate_hz: None,
@@ -2022,7 +2028,7 @@ mod tests {
         );
 
         let tmp = std::env::temp_dir().join(format!(
-            "play_launch_consistency_test_{}",
+            "play_launch_consistency_test_{tag}_{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&tmp).unwrap();
@@ -2051,11 +2057,26 @@ mod tests {
         re.observe(&event);
         re.flush();
 
-        assert!(re.violation_count >= 1);
-        let contents = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
-        assert!(contents.contains("consistency-runtime"), "{contents}");
-
+        let count = re.violation_count;
+        let contents =
+            std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap_or_default();
         let _ = std::fs::remove_dir_all(&tmp);
+        (count, contents)
+    }
+
+    #[test]
+    fn consistency_runtime_fires_on_type_mismatch() {
+        let (count, contents) = consistency_run("std_msgs/msg/String", "mismatch");
+        assert!(count >= 1);
+        assert!(contents.contains("consistency-runtime"), "{contents}");
+    }
+
+    #[test]
+    fn consistency_runtime_ignores_a_topic_with_no_declared_type() {
+        // #0079: a topic derived from remaps has an empty type; the engine
+        // must not compare the runtime type against the empty string.
+        let (_, contents) = consistency_run("", "untyped");
+        assert!(!contents.contains("consistency-runtime"), "{contents}");
     }
 
     #[test]

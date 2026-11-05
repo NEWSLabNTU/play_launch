@@ -24,6 +24,11 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0079** -- `consistency-runtime` reported every topic the model derives
+from remaps as a type mismatch: those topics carry no type, and the rule
+hashed the empty string as the declared one (100 errors on Autoware in
+three minutes). An empty type is now undeclared. See `archived/0079-*`.
+
 **#0078** -- the Rust parser could not load `nav2_bringup`'s launch files on
 Jazzy: the mock `LaunchDescription` required an `actions` list and had no
 `add_action`, and a `PythonExpression` joined its parts when built, so one
