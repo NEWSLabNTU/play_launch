@@ -882,8 +882,8 @@ fn resolve_emits_joined_system_model() {
 
     // meta: schema version + provenance hashes present
     assert_eq!(
-        model["meta"]["version"], 3,
-        "SystemModel schema 3 (phase 98)"
+        model["meta"]["version"], 5,
+        "SystemModel schema 5 (phase 99 T4)"
     );
     assert!(
         model["meta"]["inputs"]
