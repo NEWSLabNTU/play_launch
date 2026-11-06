@@ -18,7 +18,7 @@
 //! sub-phases.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::File,
     io::{BufWriter, Write},
     path::PathBuf,
@@ -205,6 +205,12 @@ pub struct RuleEngine {
     violations_path: PathBuf,
     /// Count of violations seen, of every severity.
     pub violation_count: u64,
+    /// Hashes of the node FQNs a contract describes
+    /// (`ContractView::contracted_nodes`), as `EndpointOwner` carries them.
+    contracted_node_hashes: HashSet<u64>,
+    /// Endpoint handle -> owning node's hash, from the `EndpointOwner`
+    /// event that precedes the endpoint's init; taken at the init.
+    endpoint_owner: HashMap<u64, u64>,
     /// Shared flag flipped on the first violation at or above
     /// `strict_threshold` in Strict mode. Owners hold a `clone()` of the
     /// `Arc` and poll it to trigger shutdown. Below the threshold a
@@ -279,6 +285,12 @@ impl RuleEngine {
             .map(|f| (f.clone(), true))
             .collect();
 
+        let contracted_node_hashes = view
+            .contracted_nodes
+            .iter()
+            .map(|n| fnv1a(n.as_bytes()))
+            .collect();
+
         Self {
             hazards: view
                 .hazards
@@ -296,6 +308,8 @@ impl RuleEngine {
             violations_out: None,
             violations_path: log_dir.join("runtime_violations.jsonl"),
             violation_count: 0,
+            contracted_node_hashes,
+            endpoint_owner: HashMap::new(),
             strict_violated: Arc::new(AtomicBool::new(false)),
             strict_threshold: Severity::Error,
             first_strict_violation: Arc::new(Mutex::new(None)),
@@ -366,6 +380,9 @@ impl RuleEngine {
         }
         // Per-endpoint attribution for `endpoint_stats.json`. These carry a
         // NODE hash in `topic_hash`, which must not create topic state below.
+        if matches!(event.kind, EventKind::EndpointOwner) {
+            self.endpoint_owner.insert(event.handle, event.topic_hash);
+        }
         if matches!(
             event.kind,
             EventKind::EndpointOwner
@@ -576,7 +593,14 @@ impl RuleEngine {
                 // The endpoint is still created — this is the warn-only
                 // half. Blocking (36.7) lives in the .so via
                 // `rcl_publisher_init` hook returning RCL_RET_ERROR.
-                if !self.topic_hash_to_fqn.contains_key(&event.topic_hash) {
+                // #0080: only a node some contract describes is under a
+                // claim. An endpoint whose owner is known and is not such a
+                // node is outside every contract, so its topic deviates
+                // from nothing. An unknown owner (an interceptor that sends
+                // no `EndpointOwner`) is still judged, as before.
+                let owner = self.endpoint_owner.remove(&event.handle);
+                let uncontracted = owner.is_some_and(|o| !self.contracted_node_hashes.contains(&o));
+                if !uncontracted && !self.topic_hash_to_fqn.contains_key(&event.topic_hash) {
                     let kind = if matches!(event.kind, EventKind::PublisherInit) {
                         "publisher"
                     } else {
@@ -1847,6 +1871,53 @@ mod tests {
 
         // Clean up
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Sends an `EndpointOwner` for node `owner`, then a publisher init on
+    /// an undeclared topic, to an engine whose contracts describe
+    /// `/described`. Returns the violations file.
+    fn graph_deviation_with_owner(owner: &str, tag: &str) -> String {
+        use crate::interception::{EventKind, InterceptionEvent};
+
+        let view = ContractView {
+            contracted_nodes: ["/described".to_string()].into_iter().collect(),
+            ..ContractView::default()
+        };
+        let tmp = std::env::temp_dir().join(format!(
+            "play_launch_graph_dev_owner_{tag}_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut re = RuleEngine::new(Arc::new(view), EnforceMode::Warn, &tmp);
+        let event = |kind, topic_hash| InterceptionEvent {
+            kind,
+            _pad: [0; 3],
+            topic_hash,
+            stamp_sec: 0,
+            stamp_nanosec: 0,
+            handle: 0x7,
+            monotonic_ns: 1_000_000,
+            cpu_ns: 0,
+            tid: 0,
+            payload_bytes: 0,
+        };
+        re.observe(&event(EventKind::EndpointOwner, fnv1a(owner.as_bytes())));
+        re.observe(&event(EventKind::PublisherInit, 0xDEADBEEFu64));
+        re.flush();
+        let contents =
+            std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&tmp);
+        contents
+    }
+
+    #[test]
+    fn graph_deviation_judges_only_a_node_a_contract_describes() {
+        // #0080: a described node's undeclared topic is a deviation; an
+        // undescribed node's is not, since no contract makes a claim on it.
+        let described = graph_deviation_with_owner("/described", "described");
+        assert!(described.contains("graph-deviation-runtime"), "{described}");
+        let other = graph_deviation_with_owner("/elsewhere/node", "other");
+        assert!(!other.contains("graph-deviation-runtime"), "{other}");
     }
 
     #[test]

@@ -24,6 +24,13 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0080** -- `graph-deviation-runtime` judged every node's topics against the
+contracts, so a system with partial contract coverage drew a warning for each
+topic of each uncontracted node (481 on Autoware with 4 of 83 scopes
+contracted). It now judges only nodes a contract describes, by the endpoint's
+owner, counting every node of a contracted launch file: 39 remain, all from
+those files. See `archived/0080-*`.
+
 **#0079** -- `consistency-runtime` reported every topic the model derives
 from remaps as a type mismatch: those topics carry no type, and the rule
 hashed the empty string as the declared one (100 errors on Autoware in

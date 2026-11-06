@@ -51,6 +51,21 @@ pub struct ContractView {
     pub hazards: Vec<HazardWatch>,
     /// Modes to derive availability for (phase 75).
     pub modes: Vec<ModeWatch>,
+    /// Node FQNs some contract describes: every node of a launch scope that
+    /// has a contract (`ScopeInfo.manifest`), plus the owner of any endpoint,
+    /// path, concurrency or parameter entry a contract states about a node
+    /// in another scope. `graph-deviation-runtime` judges
+    /// only these nodes' endpoints. A node no contract describes is under
+    /// no claim, so an undeclared topic of its is not a deviation (#0080:
+    /// 481 warnings on an Autoware run where 4 of 83 scopes had a contract).
+    pub contracted_nodes: BTreeSet<String>,
+}
+
+/// The node FQN of a `"<node FQN>/<entry>"` contract key.
+fn key_node(key: &str) -> Option<&str> {
+    key.rsplit_once('/')
+        .map(|(n, _)| n)
+        .filter(|n| !n.is_empty())
 }
 
 /// One mode, as the live observer needs it (phase 75): the topic groups it
@@ -341,6 +356,33 @@ impl ContractView {
             );
         }
         view.externals = m.contracts.externals.keys().cloned().collect();
+        let c = &m.contracts;
+        let endpoint_keys = c
+            .pub_endpoints
+            .keys()
+            .chain(c.sub_endpoints.keys())
+            .chain(c.srv_endpoints.keys())
+            .chain(c.cli_endpoints.keys())
+            .chain(c.action_cli_endpoints.keys())
+            .chain(c.node_paths.keys());
+        view.contracted_nodes = endpoint_keys
+            .filter_map(|k| key_node(k))
+            .map(str::to_string)
+            .chain(c.node_concurrency.keys().cloned())
+            .chain(c.node_params.keys().cloned())
+            .chain(
+                m.structure
+                    .nodes
+                    .iter()
+                    .filter(|(_, n)| {
+                        m.structure
+                            .scopes
+                            .get(&n.scope)
+                            .is_some_and(|s| s.manifest.is_some())
+                    })
+                    .map(|(fqn, _)| fqn.clone()),
+            )
+            .collect();
 
         for (ep_ref, c) in &m.contracts.pub_endpoints {
             if let Some(min) = c.min_rate_hz {
