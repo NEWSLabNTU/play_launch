@@ -105,11 +105,19 @@ pub fn play_launch_bin() -> PathBuf {
 /// right and is not the one just built.
 ///
 /// So: scan both roots and take the NEWEST, rather than the first found.
+///
+/// The colcon target dir is named after the checkout's directory
+/// (`build/.cargo_target/<dir>`), so a clone not named `play_launch` writes
+/// elsewhere; every directory under `build/.cargo_target` is a root.
 pub fn resolve_cli_bin() -> Option<PathBuf> {
-    let roots = [
-        repo_root().join("build/.cargo_target/play_launch"),
-        repo_root().join("src/ros-launch-resolve/target"),
-    ];
+    let mut roots: Vec<PathBuf> = std::fs::read_dir(repo_root().join("build/.cargo_target"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    roots.push(repo_root().join("src/ros-launch-resolve/target"));
 
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
     for root in &roots {
