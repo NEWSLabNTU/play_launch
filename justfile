@@ -665,6 +665,15 @@ test-all:
     (cd tests/fixtures/rt_workspace && just build)
     (cd tests/fixtures/io_stress && just build)
     echo ""
+    echo "=== ros-launch-resolve CLI (the binary ~20 integration tests drive) ==="
+    # `fixtures::resolve_cli_bin` runs the NEWEST `ros-launch-resolve` it
+    # finds, and nothing else here rebuilds it, so a suite can assert
+    # against an older resolver and pass (`rt_workspace`'s model check still
+    # expected schema 3 after the schema-5 release, and a `test-all` on the
+    # release branch did not catch it; an old binary writing an old schema is
+    # the likely way). Building it here makes the newest one this checkout's.
+    (cd src/ros-launch-resolve && cargo build -p ros-launch-resolve-cli --bin ros-launch-resolve 2>&1 | tail -1)
+    echo ""
     # Collect the parity result rather than aborting on it (`set -e` is on),
     # so a parity failure does not hide the test suites behind it — and vice
     # versa. Both are reported, and either one fails the recipe.
