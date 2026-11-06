@@ -175,7 +175,8 @@ pub fn reservation_readiness() -> ReservationReadiness {
     let Some(start) = self_cgroup_dir() else {
         return ReservationReadiness::NotReady {
             reason: "this process is not in a cgroup v2 hierarchy (no `0::` line in \
-                     /proc/self/cgroup) — reservations need cgroup v2 unified mode"
+                     /proc/self/cgroup) — reservations need cgroup v2 unified mode, where a \
+                     cpuset partition root (`cpuset.cpus.partition`) owns the reserved CPUs"
                 .to_string(),
         };
     };
@@ -184,7 +185,8 @@ pub fn reservation_readiness() -> ReservationReadiness {
         return ReservationReadiness::NotReady {
             reason: format!(
                 "this process's cgroup ({}) is not readable at {CGROUP_ROOT} — is the unified \
-                 hierarchy mounted there?",
+                 hierarchy mounted there? A reservation needs a cpuset partition root \
+                 (`cpuset.cpus.partition`) in that hierarchy; a hybrid (v1 + v2) host has none.",
                 start.display()
             ),
         };
