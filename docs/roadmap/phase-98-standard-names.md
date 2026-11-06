@@ -188,6 +188,13 @@ Here R+1 waits until R has been published and nano-ros has followed.
   "ladder" in its doc comments. Renaming them changes the JSON shape, so it
   needs its own format version (3), with the same one-release overlap M6
   gave `chains.json` if any reader outside this repository consumes it.
+  **Done (2026-11-06):** version 3 writes `event_chains`
+  (`EventChainOut`), a hazard's `monitors` (`MonitorOut`), a mode's
+  `min_dwell_ms`, a publisher edge's `aperiodic` and the `"aperiodic"`
+  trigger; the doc comments say monitor group, degradation level and
+  fallback sequence. No reader outside this repository (nano-ros, the
+  island, the demo) consumes the export, so there was no overlap release.
+  `docs/design/causal-graph-export.md` documents version 3.
 
 ## Order
 

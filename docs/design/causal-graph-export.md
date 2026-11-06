@@ -6,8 +6,8 @@ Q1 (cycles), W2 (measured-model join), W4 (report).
 
 `ros-launch-resolve check --export-graph <path>` walks the already-loaded
 `ManifestIndex` (the same data the `check` rules consult) and serializes the
-**declared** causal graph: ROS nodes, topics, pub/sub wiring, node-level and
-scope-level `paths:`, and a cycle catalogue computed *before* `state:` cuts
+**declared** causal graph: ROS nodes, topics, pub/sub wiring, node-level
+paths and event chains (`paths:`), and a cycle catalogue computed *before* `state:` cuts
 are applied. This is an export, not a validation step — existing rules and
 exit codes are unaffected; `--export-graph` composes with `--contracts`,
 `--sched`, `--rule`, etc. as usual.
@@ -26,7 +26,22 @@ ros-launch-resolve check <pkg> <launch> --export-graph <path> [--contracts <dir>
 Format is picked by extension: `.dot` (case-insensitive) writes a Graphviz
 digraph; anything else (including no extension) writes pretty-printed JSON.
 
-## JSON schema (`version: 2`)
+## JSON schema (`version: 3`)
+
+Version 3 (phase 98 follow-up, 2026-11-06) writes the standard names
+(phase 98, rlm `docs/design/standard-names.md`); the shape is otherwise
+version 2's:
+
+| version 2 | version 3 |
+|---|---|
+| `scope_paths` (`ScopePathOut`) | `event_chains` (`EventChainOut`) |
+| a hazard's `guards` (`GuardOut`) | `monitors` (`MonitorOut`) |
+| a mode's `window_ms` | `min_dwell_ms` |
+| a publisher edge's `on_demand` | `aperiodic` |
+| the trigger `"spontaneous"` | `"aperiodic"` |
+
+No reader outside this repository consumes the export, so version 3
+replaced version 2 without an overlap release.
 
 Version 2 (phase 85 I6) carries everything the fault-reaction walk reads, so
 a figure or a report can be drawn from the export alone: services and their
@@ -46,12 +61,12 @@ Top level:
 | `pub_edges` | `PubEdgeOut[]` | node → topic |
 | `sub_edges` | `SubEdgeOut[]` | topic → node, tagged causal/state/required |
 | `node_paths` | `NodePathOut[]` | intra-node `paths:` (endpoint → endpoint) |
-| `scope_paths` | `ScopePathOut[]` | cross-node `paths:` (topic → topic) |
+| `event_chains` | `EventChainOut[]` | event chains: cross-node `paths:` (topic → topic) (v3) |
 | `cycles` | `CycleOut[]` | cycle catalogue, computed before `state:` cuts |
 | `services` | `ServiceOut[]` | client -> service -> server (v2) |
-| `hazards` | `HazardOut[]` | guards, fault classes, interval, reaction (v2) |
-| `functions` | `FunctionOut[]` | named guard groups (v2) |
-| `modes` | `ModeOut[]` | operational modes and the ladder (v2) |
+| `hazards` | `HazardOut[]` | monitors, fault classes, interval, reaction (v2) |
+| `functions` | `FunctionOut[]` | named monitor groups (v2) |
+| `modes` | `ModeOut[]` | operational modes and the fallback sequence (v2) |
 
 `NodeOut`: `fqn`, `scope_id`, `pkg` (optional), `criticality` (optional,
 `high`\|`medium`\|`low` string as authored -- advisory, not validated here),
@@ -65,8 +80,8 @@ outside the tree).
 
 `PubEdgeOut`: `node`, `topic`, `endpoint`, `rate_hz` (topic-level — the
 primary "declared rate fact"), `min_rate_hz`/`max_rate_hz` (optional,
-endpoint-level overrides), `on_demand` (v2, present when `true`: the
-publisher promises no rate).
+endpoint-level overrides), `aperiodic` (v3, was v2's `on_demand`; present
+when `true`: the publisher promises no rate).
 
 `SubEdgeOut`: `topic`, `node`, `endpoint`, `causal` (bool, `!state`),
 `state` (bool, the endpoint's `state: true`), `required` (bool, orthogonal
@@ -78,28 +93,30 @@ of a detector).
 `NodePathOut`: `node`, `path_name`, `input`/`output` (the node's own
 endpoint names, not topic FQNs; `input` is the effective trigger's inputs),
 `trigger` (v2: `{"timer": {"rate_hz", "jitter_ms"?}}`, `{"input": [...]}`,
-`"once"`, `"spontaneous"` or `"unclassified"`), `safe_state` (optional, v2:
-`{emits, settle_ms?, derived}`), `max_latency_ms`, `tolerance_ms` (both
-optional), `scope_id`, `cross_node: false` (always -- node paths are
-intra-node by construction).
+`"once"`, `"aperiodic"` (v3; v2 wrote `"spontaneous"`) or
+`"unclassified"`), `safe_state` (optional, v2: `{emits, settle_ms?,
+derived}`), `max_latency_ms`, `tolerance_ms` (both optional), `scope_id`,
+`cross_node: false` (always -- node paths are intra-node by construction).
 
 `ServiceOut` (v2): `fqn`, `type`, `servers`/`clients` (`[{node,
 endpoint}]`), `external` (optional: `server`\|`client`\|`both`).
 
-`HazardOut` (v2): `name`, `scope_id`, `severity` (optional), `guards`
-(`[{members: [topic FQN], all_of}]`, one per group), `on` (the fault
-classes claimed; empty when none is named), `ftti_ms`, `reaction` (a scope
-path or a mode), `entry_speed_mps` (all optional but `guards` and `on`).
+`HazardOut` (v2): `name`, `scope_id`, `integrity` (optional), `monitors`
+(v3, was `guards`: `[{members: [topic FQN], all_of}]`, one per group), `on`
+(the fault classes claimed; empty when none is named), `ftti_ms`,
+`reaction` (an event chain or a mode), `entry_speed_mps` (all optional but
+`monitors` and `on`).
 
 `FunctionOut` (v2): `name`, `scope_id`, `members`, `all_of`.
 
 `ModeOut` (v2): `name`, `scope_id`, `requires` (functions), `fallback` (the
-ladder, in order), `reaction` (the rung's scope path), `window_ms` (a
-windowed rung's least duration), `exit` (`{on, to}`) (the last three
-optional). A hazard's ladder is its `reaction` mode's `fallback`, each rung's
-`reaction` the scope path that reaches it.
+fallback sequence, in order), `reaction` (the degradation level's event
+chain), `min_dwell_ms` (v3, was `window_ms`: the level's minimum dwell
+time), `exit` (`{on, to}`) (the last three optional). A hazard's fallback
+sequence is its `reaction` mode's `fallback`, each degradation level's
+`reaction` the event chain that reaches it.
 
-`ScopePathOut`: `scope_id`, `path_name`, `input_topics`/`output_topics`
+`EventChainOut` (v3, was `ScopePathOut`): `scope_id`, `path_name`, `input_topics`/`output_topics`
 (resolved topic FQNs, potentially spanning many nodes), `max_latency_ms`,
 `tolerance_ms`, `correlation` (all optional), `cross_node: true` (always).
 

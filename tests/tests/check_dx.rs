@@ -379,7 +379,7 @@ fn the_graph_export_carries_what_the_walk_reads() {
     let g: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&json).expect("export written"))
             .expect("export is JSON");
-    assert_eq!(g["version"], 2);
+    assert_eq!(g["version"], 3);
     let find = |list: &str, key: &str, value: &str| -> serde_json::Value {
         g[list]
             .as_array()
@@ -395,7 +395,7 @@ fn the_graph_export_carries_what_the_walk_reads() {
     assert_eq!(find("topics", "fqn", "/availability")["external"], "pub");
     assert_eq!(find("topics", "fqn", "/estop_cmd")["external"], "sub");
     let hpc = find("hazards", "name", "hpc_loss");
-    assert_eq!(hpc["guards"][0]["members"][0], "/availability");
+    assert_eq!(hpc["monitors"][0]["members"][0], "/availability");
     assert_eq!(hpc["on"][0], "omission");
     assert_eq!(hpc["reaction"], "engaged");
     assert_eq!(find("hazards", "name", "odd_exit")["on"][0], "reported");
@@ -404,7 +404,7 @@ fn the_graph_export_carries_what_the_walk_reads() {
         engaged["fallback"],
         serde_json::json!(["takeover", "comfortable", "estop"])
     );
-    assert_eq!(find("modes", "name", "takeover")["window_ms"], 10000.0);
+    assert_eq!(find("modes", "name", "takeover")["min_dwell_ms"], 10000.0);
     let detector = g["sub_edges"]
         .as_array()
         .unwrap()

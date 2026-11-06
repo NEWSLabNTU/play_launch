@@ -6,6 +6,15 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Visible:** `--export-graph` schema version 3: the phase 98 standard
+  names. `scope_paths` is `event_chains`, a hazard's `guards` is
+  `monitors`, a mode's `window_ms` is `min_dwell_ms`, a publisher edge's
+  `on_demand` is `aperiodic`, and a path's `"spontaneous"` trigger is
+  `"aperiodic"`; the shape is otherwise version 2's. A reader that
+  required `version == 2` must accept 3.
+
 ## 0.29.0 - 2026-11-05
 
 - **Changed (`check-terms`; rlm v0.3.12, phase 99 T5 at R+2):** `tier` is

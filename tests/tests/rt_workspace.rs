@@ -1310,7 +1310,7 @@ fn check_export_graph_json_matches_contract() {
     let data = fs::read_to_string(&export_path).expect("failed to read export JSON");
     let graph: serde_json::Value = serde_json::from_str(&data).expect("export JSON should parse");
 
-    assert_eq!(graph["version"], 2);
+    assert_eq!(graph["version"], 3);
     assert_eq!(
         array_len(&graph, "nodes"),
         3,
@@ -1328,7 +1328,7 @@ fn check_export_graph_json_matches_contract() {
          filter_component.filter, control_node.control): {graph}"
     );
     assert_eq!(
-        array_len(&graph, "scope_paths"),
+        array_len(&graph, "event_chains"),
         1,
         "phase 68 W4: bringup.contract.yaml states its end-to-end requirement \
          as the event chain `points_to_cmd`, where it used to write the route \

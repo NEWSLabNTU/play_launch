@@ -4,7 +4,7 @@
 //! **export**, not a validation step: it walks the already-loaded
 //! `ManifestIndex` (same data the `check` rules consult) and serializes the
 //! declared graph — ROS nodes, topics, pub/sub wiring (tagged causal / state
-//! / required), node-level and scope-level `paths:`, and a cycle catalogue
+//! / required), node-level paths and event chains (`paths:`), a cycle catalogue
 //! computed BEFORE `state:` cuts are applied — so downstream tooling (Phase
 //! 42 W2's measured-model join, W4's report) can consume a stable JSON
 //! shape without re-deriving it from the manifests.
@@ -36,7 +36,12 @@ use std::{
 /// [...] }` path read `input: []`, the same as a timer), and the export
 /// carries everything the fault walk reads: `trigger`, `safe_state`,
 /// services, externals, `on_violation`, hazards, functions and modes.
-const SCHEMA_VERSION: u32 = 2;
+///
+/// 3 (phase 98 follow-up): the standard names -- `event_chains` (was
+/// `scope_paths`), a hazard's `monitors` (was `guards`), a mode's
+/// `min_dwell_ms` (was `window_ms`), a publisher edge's `aperiodic` (was
+/// `on_demand`) and the `"aperiodic"` trigger (was `"spontaneous"`).
+const SCHEMA_VERSION: u32 = 3;
 
 /// Top-level export payload.
 #[derive(Debug, Serialize)]
@@ -47,17 +52,17 @@ pub struct GraphExport {
     pub pub_edges: Vec<PubEdgeOut>,
     pub sub_edges: Vec<SubEdgeOut>,
     pub node_paths: Vec<NodePathOut>,
-    pub scope_paths: Vec<ScopePathOut>,
+    pub event_chains: Vec<EventChainOut>,
     pub cycles: Vec<CycleOut>,
     /// Services with their server and client endpoints (version 2).
     pub services: Vec<ServiceOut>,
-    /// Hazards: guards, the fault classes claimed, the interval and the
-    /// reaction (a scope path or a mode) (version 2).
+    /// Hazards: monitored signals, the fault classes claimed, the interval
+    /// and the reaction (an event chain or a mode) (version 2).
     pub hazards: Vec<HazardOut>,
-    /// Named guard groups (version 2).
+    /// Named monitor groups (version 2).
     pub functions: Vec<FunctionOut>,
-    /// Operational modes: what each requires, its rung's reaction, and the
-    /// ladder below it (`fallback`) (version 2).
+    /// Operational modes: what each requires, its degradation level's
+    /// reaction, and the fallback sequence below it (`fallback`) (version 2).
     pub modes: Vec<ModeOut>,
 }
 
@@ -81,10 +86,10 @@ pub struct ServiceOut {
     pub external: Option<&'static str>,
 }
 
-/// A guard group: a bare list is any-of (losing any member is the fault),
+/// A monitor group: a bare list is any-of (losing any member is the fault),
 /// `all_of` a redundant set (lost only when every member is).
 #[derive(Debug, Serialize)]
-pub struct GuardOut {
+pub struct MonitorOut {
     pub members: Vec<String>,
     pub all_of: bool,
 }
@@ -96,21 +101,23 @@ pub struct HazardOut {
     pub scope_id: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub integrity: Option<String>,
-    /// Resolved guard topic FQNs, one entry per group.
-    pub guards: Vec<GuardOut>,
+    /// Resolved monitored topic FQNs, one entry per group (version 3; was
+    /// `guards`).
+    pub monitors: Vec<MonitorOut>,
     /// The fault classes claimed (`omission`, `late`, `loss`, `reported`);
     /// empty when the contract names none.
     pub on: Vec<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ftti_ms: Option<f64>,
-    /// A scope path name, or a mode whose `fallback` is the ladder.
+    /// An event chain name, or a mode whose `fallback` is the fallback
+    /// sequence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reaction: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entry_speed_mps: Option<f64>,
 }
 
-/// A named guard group (version 2).
+/// A named monitor group (version 2).
 #[derive(Debug, Serialize)]
 pub struct FunctionOut {
     pub name: String,
@@ -125,15 +132,16 @@ pub struct ModeOut {
     pub name: String,
     pub scope_id: usize,
     pub requires: Vec<String>,
-    /// The ladder: the rungs to fall to, in order.
+    /// The fallback sequence: the degradation levels to fall to, in order.
     pub fallback: Vec<String>,
-    /// The scope path that reaches this rung's state.
+    /// The event chain that reaches this degradation level's state.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reaction: Option<String>,
-    /// A windowed rung's least duration.
+    /// The level's minimum dwell time (version 3; was `window_ms`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub window_ms: Option<f64>,
-    /// `{on: <function>, to: <mode>}`: how a windowed rung is left early.
+    pub min_dwell_ms: Option<f64>,
+    /// `{on: <function>, to: <mode>}`: how a level with a dwell time is left
+    /// early.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit: Option<ExitOut>,
 }
@@ -145,7 +153,8 @@ pub struct ExitOut {
 }
 
 /// What fires a node path (version 2): `{"timer": {"rate_hz", "jitter_ms"}}`,
-/// `{"input": [...]}`, or `"once"` / `"spontaneous"` / `"unclassified"`.
+/// `{"input": [...]}`, or `"once"` / `"aperiodic"` / `"unclassified"`
+/// (version 3; version 2 wrote `"spontaneous"`).
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TriggerOut {
@@ -156,7 +165,7 @@ pub enum TriggerOut {
     },
     Input(Vec<String>),
     Once,
-    Spontaneous,
+    Aperiodic,
     Unclassified,
 }
 
@@ -235,9 +244,10 @@ pub struct PubEdgeOut {
     pub min_rate_hz: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_rate_hz: Option<f64>,
-    /// `on_demand: true`: the publisher promises no rate (version 2).
+    /// `aperiodic: true`: the publisher promises no rate (version 3; was
+    /// `on_demand`).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub on_demand: bool,
+    pub aperiodic: bool,
 }
 
 /// A subscriber edge: topic → node, tagged causal / state / required.
@@ -288,10 +298,11 @@ pub struct NodePathOut {
     pub cross_node: bool,
 }
 
-/// A scope-level path: input/output are resolved topic FQNs, spanning
-/// potentially many nodes across the scope's subtree.
+/// An event chain (a manifest-level `paths:` entry): input/output are
+/// resolved topic FQNs, spanning potentially many nodes across the scope's
+/// subtree (version 3; was `scope_paths`).
 #[derive(Debug, Serialize)]
-pub struct ScopePathOut {
+pub struct EventChainOut {
     pub scope_id: usize,
     pub path_name: String,
     pub input_topics: Vec<String>,
@@ -300,7 +311,7 @@ pub struct ScopePathOut {
     pub max_latency_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tolerance_ms: Option<f64>,
-    /// Always `true` — scope paths cross node boundaries by construction.
+    /// Always `true` — event chains cross node boundaries by construction.
     pub cross_node: bool,
 }
 
@@ -423,7 +434,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
                 rate_hz: topic.rate_hz,
                 min_rate_hz: props.and_then(|p| p.min_rate_hz.hz()),
                 max_rate_hz: props.and_then(|p| p.max_rate_hz.hz()),
-                on_demand: props.is_some_and(|p| p.aperiodic == Some(true)),
+                aperiodic: props.is_some_and(|p| p.aperiodic == Some(true)),
             });
         }
         for sref in &topic.subscribers {
@@ -486,10 +497,10 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
         (a.scope_id, &a.node, &a.path_name).cmp(&(b.scope_id, &b.node, &b.path_name))
     });
 
-    let mut scope_paths: Vec<ScopePathOut> = index
+    let mut event_chains: Vec<EventChainOut> = index
         .scope_paths
         .iter()
-        .map(|p| ScopePathOut {
+        .map(|p| EventChainOut {
             scope_id: p.scope_id,
             path_name: p.path_name.clone(),
             input_topics: p.input_topics.clone(),
@@ -499,7 +510,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             cross_node: true,
         })
         .collect();
-    scope_paths.sort_by(|a, b| (a.scope_id, &a.path_name).cmp(&(b.scope_id, &b.path_name)));
+    event_chains.sort_by(|a, b| (a.scope_id, &a.path_name).cmp(&(b.scope_id, &b.path_name)));
 
     let cycles = find_cycles(&global);
 
@@ -534,10 +545,10 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             name: h.name.clone(),
             scope_id: h.scope_id,
             integrity: h.decl.integrity.clone(),
-            guards: h
+            monitors: h
                 .guards
                 .iter()
-                .map(|g| GuardOut {
+                .map(|g| MonitorOut {
                     members: g.members.clone(),
                     all_of: g.all_of,
                 })
@@ -567,7 +578,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             requires: m.decl.requires.clone(),
             fallback: m.decl.fallback.clone(),
             reaction: m.decl.reaction.clone(),
-            window_ms: m
+            min_dwell_ms: m
                 .decl
                 .min_dwell
                 .as_ref()
@@ -586,7 +597,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
         pub_edges,
         sub_edges,
         node_paths,
-        scope_paths,
+        event_chains,
         cycles,
         services,
         hazards,
@@ -595,7 +606,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
     }
 }
 
-/// A path's trigger as the export writes it (version 2).
+/// A path's trigger as the export writes it (version 3).
 fn trigger_out(path: &ros_launch_manifest_types::PathDecl) -> TriggerOut {
     use ros_launch_manifest_types::EffectiveTrigger as T;
     match path.effective_trigger() {
@@ -607,7 +618,7 @@ fn trigger_out(path: &ros_launch_manifest_types::PathDecl) -> TriggerOut {
         },
         T::Input(eps) => TriggerOut::Input(eps),
         T::Once => TriggerOut::Once,
-        T::Aperiodic => TriggerOut::Spontaneous,
+        T::Aperiodic => TriggerOut::Aperiodic,
         T::Unclassified => TriggerOut::Unclassified,
     }
 }
@@ -1001,7 +1012,7 @@ paths:
     }
 
     #[test]
-    fn node_and_scope_paths_exported() {
+    fn node_paths_and_event_chains_exported() {
         let index = synthetic_index();
         let export = build_export(&index);
 
@@ -1012,12 +1023,32 @@ paths:
         assert_eq!(np.max_latency_ms, Some(20.0));
         assert!(!np.cross_node);
 
-        assert_eq!(export.scope_paths.len(), 1);
-        let sp = &export.scope_paths[0];
+        assert_eq!(export.event_chains.len(), 1);
+        let sp = &export.event_chains[0];
         assert_eq!(sp.path_name, "end_to_end");
         assert_eq!(sp.input_topics, vec!["/scan".to_string()]);
         assert_eq!(sp.output_topics, vec!["/filtered".to_string()]);
         assert!(sp.cross_node);
+    }
+
+    /// Version 3 writes the phase-98 standard names: the `aperiodic` trigger
+    /// and a publisher edge's `aperiodic` flag.
+    #[test]
+    fn aperiodic_is_written_under_its_standard_name() {
+        assert_eq!(
+            serde_json::to_value(TriggerOut::Aperiodic).unwrap(),
+            serde_json::json!("aperiodic")
+        );
+        let edge = PubEdgeOut {
+            node: "/n".into(),
+            topic: "/t".into(),
+            endpoint: "out".into(),
+            rate_hz: None,
+            min_rate_hz: None,
+            max_rate_hz: None,
+            aperiodic: true,
+        };
+        assert_eq!(serde_json::to_value(&edge).unwrap()["aperiodic"], true);
     }
 
     #[test]
