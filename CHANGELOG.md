@@ -8,12 +8,31 @@ allowance heavily.
 
 ## Unreleased
 
+## 0.30.0 - 2026-11-07
+
 - **Visible:** `--export-graph` schema version 3: the phase 98 standard
   names. `scope_paths` is `event_chains`, a hazard's `guards` is
   `monitors`, a mode's `window_ms` is `min_dwell_ms`, a publisher edge's
   `on_demand` is `aperiodic`, and a path's `"spontaneous"` trigger is
   `"aperiodic"`; the shape is otherwise version 2's. A reader that
   required `version == 2` must accept 3.
+- **Fixed (`consistency-runtime`, #0079):** a topic the model derives from
+  a remap carries `type: ''`; the rule hashed the empty string as the
+  declared type and reported every endpoint of such a topic as a
+  mismatch (100 errors on Autoware's planning simulator in three
+  minutes). An empty type is now undeclared, like an absent one.
+- **Fixed (`graph-deviation-runtime`, #0080):** the rule judges only
+  endpoints whose node a contract describes (in a contracted launch scope
+  or named by a contract entry); an endpoint of a known, undescribed node
+  is skipped, an unknown owner is judged as before. Autoware with 4 of 83
+  launch scopes contracted: 481 warnings before, 39 after.
+- **Changed (cpuset readiness):** on a cgroup v1 + v2 hybrid host both
+  early not-ready reasons name the cpuset partition root
+  (`cpuset.cpus.partition`) a reservation needs.
+- **Tests:** `test-all` builds the `ros-launch-resolve` CLI before the
+  suites, and the fixtures find the CLI in any colcon target directory,
+  so a clone not named `play_launch` no longer skips the CLI tests and no
+  suite runs an older resolver.
 
 ## 0.29.0 - 2026-11-05
 
