@@ -1,6 +1,6 @@
 # Phase 102 - the contract safety model: build order and evaluation
 
-**Status (2026-11-07): planned; nothing started.** Puts phases 100 and
+**Status (2026-11-07): M0 in progress; M0a done (F0's verdict: F4 is needed).** Puts phases 100 and
 101 (the work) into one build order and adds the evaluation that decides
 whether the model is right. Design of record: rlm
 `docs/design/safety-functions.md` (issue 58) and

@@ -2684,6 +2684,52 @@ RankedPlan {
     ],
     warnings: [],
 }
+== contract_safe_ros/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/cmd_vel_interceptor",
+            path: "gate",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=2)",
+        },
+        RankItem {
+            node: "/safety_node",
+            path: "judge",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/lidar",
+            path: "sample",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/planner",
+            path: "plan",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=100)",
+        },
+    ],
+    warnings: [],
+}
 == contract_settle_written_response/launch/bringup.launch.xml
 RankedPlan {
     items: [

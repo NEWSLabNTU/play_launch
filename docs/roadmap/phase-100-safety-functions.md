@@ -39,7 +39,7 @@ All keys are additive, so no unit here follows phase 98's rename schedule.
 
 | Unit | Work | Acceptance |
 |---|---|---|
-| F0 | **A Safe-ROS fixture.** A contract and launch file shaped like Safe-ROS's system: a LiDAR, a safety node publishing a stop flag, an interceptor whose only path is triggered by `/cmd_vel` and which reads the flag as `state: true`, and the base. Record what `check` says today about the reaction route. | The fixture is in rlm's `tests/fixtures`. The phase doc records today's verdict on the route, which decides F4. |
+| F0 | ~~**A Safe-ROS fixture.**~~ Done 2026-11-07: `tests/fixtures/contract_safe_ros` (play_launch, beside the other fault-reaction fixtures; rlm's fixtures hold no launch files), test `safe_ros_interceptor_waits_on_command_traffic`. Verdict below. | The fixture is in the tree. The phase doc records today's verdict on the route, which decides F4. |
 | F1 | **`modes.<m>.commands` (S1).** rlm: grammar and model (`ModeContract.commands`), predicates in the `when:` shape checked against `.msg` (`commands-field-unknown`). Derived static rules on every commanded topic: `arbiter-bypass` (more than one publisher in the resolved graph; a single publisher also means every route reaches the topic through it, so no separate bypass-route rule), `commands-unreached` (the topic is not the level's reaction sink or downstream of it). | One fixture per rule, each with a negative control. The island's and Autoware's minimal risk condition levels state `commands` on the vehicle command topic and check clean, or each finding is recorded. |
 | F2 | **The invariant at run time (S1).** Needs phase 102 M0's field reader: the interceptor reads only the declared scalar fields, by introspection, as `tf.rs` does for TF. play_launch's observer: from the reaction's derived bound until the level is left, every message on a commanded topic satisfies the level's predicates (`safe-state-violated`); silence is judged by the consumer's own silence behaviour, its `sub.max_age` + `on_violation` or an external side's `on_silence` (phase 101), else `final-element-silent`; a publisher created on the topic by another node is runtime `arbiter-bypass`. | `rt_av_demo`'s `just fault` checks the invariant through the whole emergency stop. Fixtures: a gate that sends one safe message and then forwards commands again (fails), a stop that never releases after `exit:` (fails), a correct gate (passes). |
 | F3 | **`hazards.<h>.requirement` (S2).** rlm: grammar row `{ id, source }`, model field, the id in every diagnostic about the hazard. play_launch: `check --explain` prints each hazard as one sentence, with its bound and its level's `commands`. | The Autoware and island contracts carry requirement ids. A golden test pins the sentence for one hazard. |
@@ -48,6 +48,31 @@ All keys are additive, so no unit here follows phase 98's rename schedule.
 | F6 | **Guide.** `docs/guide/safety-function.md`, linked from `first-contract.md`: a mobile robot's protective stop built from F0 to F5, showing what each part catches that the Safe-ROS design misses, and the safety function's own monitor as a hazard. | The example's contract is F0's fixture. `check-terms` passes. |
 | F7 | **nano-ros.** `ModeContract.commands` and the requirement in a pull request; whether the image checks the invariant is recorded here. | nano-ros pins the rlm tag that carries the fields and its CI is green. |
 | F8 | **Investigate a nuclear I&C profile (S5).** Whether IEC 61513 / IEC 61226 classification fits a profile's `integrity_scale` and `criticality` map. | A recorded yes (then a profile proposal) or no (and why) in the design doc. |
+
+### F0's verdict (2026-11-07)
+
+The fixture: a 10 Hz LiDAR, a safety node judging each scan into
+`/too_close`, a 10 Hz planner, and an interceptor whose only path, `gate`,
+is triggered by `/cmd_vel_in` and reads `/too_close` as `state: true`. The
+hazard is `on: reported` with `when: { field: data, equals: true }`, a 1 s
+FTTI, a 300 ms settle.
+
+- **With `on_violation: { reaction: gate }` on the flag's subscriber**,
+  `reaction-unreachable` refuses it (the path's trigger does not include
+  the flag). Right. But `fault-reaction-time` still reports *fits, 407 ms*:
+  detection 105 + route 2 (the gate) + settle 300, with nothing charged for
+  the up to 100 ms the stop waits for the planner's next command, and no
+  bound at all if the planner stops publishing.
+- **Without `on_violation`**, which is how Safe-ROS reads, the system checks
+  **clean** (`0 errors, 2 warnings`): the route is unknown, charged 0 ms,
+  and `reaction-unbudgeted` is only a warning.
+
+So the walk charges nothing for waiting on traffic, and F4 is needed. Its
+shape follows the latching-server case (phase 82 W4), which charges a timer
+the request waits for as a sampling hop: here the hop waits on another
+input, charged at that input's derived period, and unbounded (an error)
+when the input's rate is unknown or it can stop. The `fits` line beside an
+error should also not print as a fit.
 
 Order: the design doc's §7 questions are decided (2026-11-07). The build
 order across phases 100 and 101, and the evaluation, are phase 102.

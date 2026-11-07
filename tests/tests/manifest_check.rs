@@ -1447,6 +1447,25 @@ fn a_server_that_latches_the_request_is_a_sampling_hop() {
     assert!(!check_fixture("contract_fault_service").contains("sampling)"));
 }
 
+/// Phase 100 F0: Safe-ROS's interceptor, written as it is built. It reads
+/// the too-close flag as state and publishes only from its command callback,
+/// so a stop reaches the base only when the planner's next command arrives.
+///
+/// What holds today: the reaction edge names a path the flag does not
+/// trigger, and `reaction-unreachable` refuses it. What does not, and is
+/// deliberately not pinned here: `fault-reaction-time` still reports the
+/// hazard as fitting, charging the gate's 2 ms with no wait for the
+/// planner's traffic (and without the `on_violation`, the same system checks
+/// clean with a 0 ms reaction). That is phase 100 F4's case.
+#[test]
+fn safe_ros_interceptor_waits_on_command_traffic() {
+    let out = check_fixture("contract_safe_ros");
+    assert!(
+        out.contains("error[reaction-unreachable]: subscriber '/cmd_vel_interceptor/too_close' declares reaction 'gate'"),
+        "{out}"
+    );
+}
+
 /// Phase 82: a detector counts only for the fault classes it can see, and a
 /// hazard is timed by the SLOWEST class it claims. `contract_fault_kinds` is
 /// `contract_fault`'s chain with three guard topics into one detector; every
