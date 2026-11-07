@@ -351,6 +351,15 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     (#0042), P2 `links:`, P3 `measure` proposals, P4 `check --against`
     transport; P5 (a runtime link monitor) not adopted.
     [phase-97-links.md](./phase-97-links.md).
+  - **Phase 101** - planned (2026-11-07): fault tolerance, when most of the
+    system is safety critical (rlm `docs/design/fault-tolerance.md`, design
+    issue 59; twelve case studies from aircraft, spacecraft, nuclear,
+    driving and medical systems). `independent:` checked against the
+    deployment facts, with freedom from interference derived; an ordered
+    `recovery:` (restart, switchover) credited before degradation when it
+    fits the FTTI; `functions.<f>.k_of`; `fail_operational:` modes; `on:`
+    gains repetition, resequencing and insertion.
+    [phase-101-fault-tolerance.md](./phase-101-fault-tolerance.md).
   - **Phase 100** - planned (2026-11-07, revised after a use-case survey):
     safety functions, from Safe-ROS (FMAS 2025; rlm
     `docs/design/safety-functions.md`, design issue 58). A safety function
