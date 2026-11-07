@@ -1,8 +1,12 @@
 # Phase 100 - safety functions: what Safe-ROS teaches the contract
 
-**Status (2026-11-07): planned. Nothing started.** Design of record: rlm
-`docs/design/safety-functions.md` (design issue 58), which has the
-analysis of Safe-ROS, the proposed keys S1-S6 and what is not adopted.
+**Status (2026-11-07): planned, revised the same day; nothing started.
+F0 and the decision on the design doc's §7 open questions come before any
+code.** Design of record: rlm `docs/design/safety-functions.md` (design
+issue 58): the analysis of Safe-ROS, seven use cases (§4), the model they
+led to (§5, a final element per actuator channel), the proposals S1-S5 and
+what is not adopted. The first plan had a per-path value and a per-topic
+arbiter; the use cases replaced both with `final_elements:`.
 Spans rlm (grammar, model, checker rules), play_launch (the runtime
 observer, `--explain`, fixtures, the guide) and nano-ros (the model fields,
 pull requests from `~/repos/nano-ros-pl`).
@@ -36,24 +40,27 @@ All keys are additive, so no unit here follows phase 98's rename schedule.
 | Unit | Work | Acceptance |
 |---|---|---|
 | F0 | **A Safe-ROS fixture.** A contract and launch file shaped like Safe-ROS's system: a LiDAR, a safety node publishing a stop flag, an interceptor whose only path is triggered by `/cmd_vel` and which reads the flag as `state: true`, and the base. Record what `check` says today about the reaction route. | The fixture is in rlm's `tests/fixtures`. The phase doc records today's verdict on the route, which decides F4. |
-| F1 | **`safe_state.value` (S1).** rlm: grammar row, parse with the `when:` predicate shape, `value-field-unknown` against `.msg`, model field. play_launch: the runtime observer checks the first post-fault publish on `emits` and reports `safe-state-value` (error) naming field and value. The interceptor needs a field read by introspection for the declared paths only, as it already does for TF and `/clock`. | A fixture whose gate publishes the right value passes. One that publishes a nonzero `linear.x` fails with `safe-state-value`, verified by a negative control. `rt_av_demo`'s `just fault` reports the value as checked. |
-| F2 | **`topics.<t>.arbiter` (S2).** rlm: grammar row, model field, `arbiter-bypass` (error: another publisher in the resolved graph) and `arbiter-unused` (warning: no reaction route reaches the topic through the arbiter). play_launch: the runtime observer reports `arbiter-bypass` when a publisher is created on the topic by any other node, using `EndpointOwner` (#0080 keeps it per endpoint). | Static and runtime bypass each have a fixture and a negative control. Autoware's control contract states `vehicle_cmd_gate` as the arbiter of `/control/command/control_cmd` and checks clean, or the finding is recorded. |
-| F3 | **`hazards.<h>.requirement` (S3).** rlm: grammar row `{ id, source }`, model field, the id in every diagnostic about the hazard. play_launch: `check --explain` prints each hazard as one sentence with its numbers and id. | The Autoware and island contracts carry requirement ids. `--explain` prints one sentence per hazard. A golden test pins the sentence for one hazard. |
-| F4 | **`reaction-waits-on-traffic` (S5).** Only if F0 shows the walk charges nothing, or charges the input's rate without saying so. rlm rule, error, naming the fix (a timer path, or a path triggered by the reaction topic). | F0's fixture is refused with the new rule. The same fixture with a timer path on the interceptor checks clean. No existing fixture's verdict moves, or each move is explained. |
-| F5 | **`mobile.protective_stop` reference extension (S4).** rlm, illustrative like the other reference extensions: `threshold >= v * reaction_total + v^2/(2*decel) + margin`, worst case proved, threshold read with `$(param ...) m`. | F0's fixture with this extension refuses 5 cm at any speed and nonzero reaction time, and accepts a threshold sized by the formula. The extension reference regenerates. |
-| F6 | **Guide.** A worked example, `docs/guide/safety-function.md`, linked from `first-contract.md`: a mobile robot's protective stop, built from F0 to F5, showing what each key catches that the Safe-ROS design misses: the SIF's own silence, the traffic-dependent reaction, the bypass, the speed. | The example's contract is F0's fixture, so `play_launch check` on it is the test. `check-terms` passes. |
-| F7 | **nano-ros.** The model fields from F1 to F3 in a pull request. nano-ros may generate a value check and an arbiter check in the image's route monitors. Its decision is recorded here. | nano-ros pins the rlm tag that carries the fields and its CI is green. |
-| F8 | **Investigate a nuclear I&C profile (S6).** Whether IEC 61513 / IEC 61226 classification fits a profile's `integrity_scale` and `criticality` map. | A recorded yes (then a profile proposal) or no (and why) in the design doc. |
+| F1 | **`final_elements:` (S1).** rlm: grammar for `final_elements.<e>: { channel, arbiter, safe }` and `modes.<m>.commands`, predicates in the `when:` shape checked against `.msg` (`safe-field-unknown`), model fields. Static rules: `arbiter-bypass` (another publisher of the channel in the resolved graph), `reaction-bypasses-arbiter` (a reaction route reaches the channel without passing the arbiter), `final-element-unreached` (warning). | One fixture per rule, each with a negative control. The island's and Autoware's contracts declare `vehicle_cmd_gate`'s output as a final element and check clean, or each finding is recorded. |
+| F2 | **The invariant at run time (S1).** play_launch's observer: from the reaction's derived bound until the level is left, every message on the channel satisfies the active level's predicate (`safe-state-violated`); silence on the channel while a level holds is `final-element-silent`; a publisher created on the channel by another node is `arbiter-bypass` (by `EndpointOwner`, as #0080 tracks it). The interceptor reads only the declared fields, by introspection, as it already does for TF and `/clock`. | `rt_av_demo`'s `just fault` checks the invariant through the whole emergency stop. Fixtures for a gate that sends one safe message and then forwards commands again (must fail), a stop that never releases after `exit:` (must fail) and a correct gate (must pass). |
+| F3 | **`hazards.<h>.requirement` (S2).** rlm: grammar row `{ id, source }`, model field, the id in every diagnostic about the hazard. play_launch: `check --explain` prints each hazard as one sentence, with its bound and its final element's predicate. | The Autoware and island contracts carry requirement ids. A golden test pins the sentence for one hazard. |
+| F4 | **`reaction-waits-on-traffic` (S3).** Only if F0 shows the walk charges nothing, or charges the input's rate without saying so. rlm rule, error, naming the fix (a timer path, or a path triggered by the reaction topic). | F0's fixture is refused with the new rule. The same fixture with a timer path on the interceptor checks clean. No existing fixture's verdict moves, or each move is explained. |
+| F5 | **`mobile.protective_stop` reference extension (S4).** rlm, illustrative like the other reference extensions: `field >= v * reaction_total + v^2/(2*decel) + margin`, worst case proved, field read with `$(param ...) m`; speed-dependent field sets are degradation levels, one check each. | F0's fixture refuses 5 cm at any speed and nonzero reaction time, and accepts a field sized by the formula. The extension reference regenerates. |
+| F6 | **Guide.** A worked example, `docs/guide/safety-function.md`, linked from `first-contract.md`: a mobile robot's protective stop built from F0 to F5, showing what each part catches that the Safe-ROS design misses (the safety function's own silence, the traffic-dependent reaction, the bypass, the release, the speed), and the safety function's own monitor as a hazard. | The example's contract is F0's fixture, so `play_launch check` on it is the test. `check-terms` passes. |
+| F7 | **nano-ros.** The model fields from F1 and F3 in a pull request. nano-ros may generate the invariant and bypass monitors in the image. Its decision is recorded here. | nano-ros pins the rlm tag that carries the fields and its CI is green. |
+| F8 | **Investigate a nuclear I&C profile (S5).** Whether IEC 61513 / IEC 61226 classification fits a profile's `integrity_scale` and `criticality` map. | A recorded yes (then a profile proposal) or no (and why) in the design doc. |
 
-Order: F0 first, since it decides F4. F1, F2 and F3 are independent and
-can ship in one rlm release. F5 and F6 follow. F7 follows the rlm release
-that carries F1 to F3.
+Order: decide the design doc's §7 questions (the key's name, where the
+invariant starts, whether `commands` sits on modes only); F0, which
+decides F4; then F1 and F3 in one rlm release, F2 on it, F5 and F6, and
+F7 after the rlm release.
 
 ## Not in scope
 
 - Proving a node's code (Safe-ROS's Dafny and AJPF work). A contract
   checks the running system against what it states. `requirement.source`
   can name a proof as evidence.
+- A relational predicate (a speed limit that is a function of a measured
+  distance). Discrete zones as degradation levels cover the practice.
 - Independence of the safety layer from the function it guards. `arbiter`
   is dominance only. Separate process, container, host and sensors remain
   the R6 review's question (`docs/design/r6-mitigation-barriers-review.md`).

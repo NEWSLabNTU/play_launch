@@ -351,14 +351,15 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     (#0042), P2 `links:`, P3 `measure` proposals, P4 `check --against`
     transport; P5 (a runtime link monitor) not adopted.
     [phase-97-links.md](./phase-97-links.md).
-  - **Phase 100** - planned (2026-11-07): safety functions, from Safe-ROS
-    (FMAS 2025; rlm `docs/design/safety-functions.md`, design issue 58).
-    Additive keys: `safe_state.value` (what the safe state must command,
-    checked at run time), `topics.<t>.arbiter` (the only node allowed to
-    publish an actuator topic), `hazards.<h>.requirement` (`{ id, source }`,
-    a sentence per hazard in `--explain`); a `reaction-waits-on-traffic`
-    rule if the walk misses that shape; a moving robot's protective-stop
-    reference extension; a guide example.
+  - **Phase 100** - planned (2026-11-07, revised after a use-case survey):
+    safety functions, from Safe-ROS (FMAS 2025; rlm
+    `docs/design/safety-functions.md`, design issue 58). A safety function
+    ends at a final element (IEC 61511): `final_elements:` names the
+    actuator channel, its arbiter and the minimal risk condition's
+    predicate there, `modes.<m>.commands` a predicate per degradation
+    level, and the run checks it as an invariant for as long as the level
+    lasts; `hazards.<h>.requirement` traces a hazard to the hazard
+    analysis. Open questions decided before any code.
     [phase-100-safety-functions.md](./phase-100-safety-functions.md).
   - **Phase 99** - planned (2026-11-05): tier rename (phase 98 N7,
     decided: rename, own phase). `tier` (rlm `TierDef`/`ResolvedTier`,
