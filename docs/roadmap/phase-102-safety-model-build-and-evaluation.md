@@ -21,8 +21,8 @@ would extend. Six findings:
 2. **`host` is not in the model.** `Deploy.host` was removed on
    2026-07-31 (multi-host launches partition at resolve time), so every
    node of one resolved model is on one host and `not_sharing: [host]`
-   would always fail. Proposed amendment to decision 5: accept `process`,
-   `container`, `cpus` only; independence across hosts is the separation
+   would always fail. Decided 2026-11-07: `host` is dropped; `process`,
+   `container`, `cpus` remain. Independence across hosts is the separation
    of two models, which no single check sees.
 3. **`process` depends on the container mode.** Composables in one
    container are one process under `observable` and `stock` and separate
@@ -50,7 +50,7 @@ bumps once.
 
 | Milestone | Units | Size | Depends on |
 |---|---|---|---|
-| **M0 foundations** | (a) phase 100 F0: the Safe-ROS-shaped fixture and today's walk verdict on it. (b) The interceptor's field reader: per declared `(topic, field path)`, resolve the offset once by introspection, emit the scalar on each publish; measure its cost. (c) Settle finding 2 (`host`). | M | - |
+| **M0 foundations** | (a) phase 100 F0: the Safe-ROS-shaped fixture and today's walk verdict on it. (b) The interceptor's field reader: per declared `(topic, field path)`, resolve the offset once by introspection, emit the scalar on each publish; measure its cost. | M | - |
 | **M1 grammar and static checks** | rlm, one release: `modes.<m>.commands`, `hazards.<h>.requirement`, `functions.<f>.m`, `independence:`, `external.on_silence`, `on:` + three classes; model fields. Resolver: `arbiter-bypass`, `commands-field-unknown`, `commands-unreached` (the commanded topic is not the level's reaction sink or downstream of it), `independence-violated` (shared container assumed), `interference-shared-process`, `recovery-unfit` (with `--against`), F4 only if F0 asks for it. | L | M0a |
 | **M2 runtime checks** | play_launch observer: the `commands` invariant from the reaction's bound until the level is left (`safe-state-violated`), silence judged by the consumer (`final-element-silent`), runtime `arbiter-bypass`, `m` member counting, repetition / resequencing / insertion, the recovery a run took. `launch`/`up` re-check `independence` with the real container mode. | L | M0b, M1 |
 | **M3 explain, extensions, guides** | `--explain` sentence per hazard with its `requirement` and `commands`; `mobile.protective_stop`; guides (safety function, fault tolerance, Simplex as a pattern). | M | M1 |

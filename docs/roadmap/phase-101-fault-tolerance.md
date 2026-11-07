@@ -20,14 +20,14 @@ redundant group is lost only when every member is (`all_of`) and nothing
 else of this. Three things play_launch already has make the additions
 checkable rather than declarative: `respawn` and the measured startup
 timeline (a restart's time), the deployment facts (process, container,
-host, CPU set, memory group), and the interceptor's per-endpoint owner and
+CPU set, memory group), and the interceptor's per-endpoint owner and
 stamps (repetition, resequencing, insertion).
 
 ## Units
 
 | Unit | Work | Acceptance |
 |---|---|---|
-| T0 | ~~**Decide** the design doc's §6 questions.~~ Decided 2026-11-07: the count is `m`; a startup time comes only from a run; `independence` counts `process`, `container`, `cpus` (`host` proposed for removal, phase 102 finding 2: it is not in the model). | Recorded in the design doc's §6. |
+| T0 | ~~**Decide** the design doc's §6 questions.~~ Decided 2026-11-07: the count is `m`; a startup time comes only from a run; `independence` counts `process`, `container`, `cpus` (`host` dropped: it is not in the model, phase 102 finding 2). | Recorded in the design doc's §6. |
 | T1 | **`independence:` and freedom from interference (§4.5).** rlm: top-level `independence: [{ of, not_sharing }]`, model field; resolver rule `independence-violated` from process, container and CPU set, assuming composables in one container share a process (the model does not carry the container mode; `launch`/`up` re-check with the real one, phase 102 finding 3); derived `interference-shared-process` (warning) for nodes of different derived integrity in one process. | Fixtures for each shared fact with negative controls. Autoware under `observable` reports its shared-process cases or they are recorded; under `isolated` the rule is silent. |
 | T2 | **Recovery credit (§4.2), no key.** The checker credits a node's `respawn` when detection + `respawn_delay` + its startup (from `check --against <run>`'s `startup_timeline.json`) fits the FTTI; `recovery-unfit` (warning) otherwise. A redundant group at or above `m` after a loss keeps the mode. The observer reports which recovery the run took and how long. | `rt_av_demo`: a killed detector with `respawn` is credited when its restart fits and degrades when it does not, both measured. Without a run the restart is not credited and the output says so. |
 | T3 | **`functions.<f>.m` (§4.1).** rlm grammar and model; members may be value functions. The observer counts held members. | A 2-of-3 fixture: one silent member keeps the function, two lose it; a member lost by value counts as lost. |
