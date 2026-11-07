@@ -353,7 +353,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     [phase-97-links.md](./phase-97-links.md).
   - **Phase 101** - planned (2026-11-07): fault tolerance, when most of the
     system is safety critical (rlm `docs/design/fault-tolerance.md`, design
-    issue 59; twelve case studies). Core: `k` on a redundant group, one
+    issue 59; twelve case studies). Core: `m` on a redundant group (MooN), one
     `independence:` form, `on_silence` on an external subscriber, three
     `on:` classes. Derived: restart credit from `respawn`, standby,
     fail-operational, freedom from interference.

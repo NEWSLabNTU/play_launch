@@ -49,10 +49,10 @@ All keys are additive, so no unit here follows phase 98's rename schedule.
 | F7 | **nano-ros.** `ModeContract.commands` and the requirement in a pull request; whether the image checks the invariant is recorded here. | nano-ros pins the rlm tag that carries the fields and its CI is green. |
 | F8 | **Investigate a nuclear I&C profile (S5).** Whether IEC 61513 / IEC 61226 classification fits a profile's `integrity_scale` and `criticality` map. | A recorded yes (then a profile proposal) or no (and why) in the design doc. |
 
-Order: decide the design doc's §7 questions (where the invariant starts,
-whether `commands` sits on modes only); F0, which
-decides F4; then F1 and F3 in one rlm release, F2 on it, F5 and F6, and
-F7 after the rlm release.
+Order: the design doc's §7 questions are decided (2026-11-07: the
+invariant starts at the reaction's derived bound; `commands` is on modes
+only). F0 first, since it decides F4; then F1 and F3 in one rlm release,
+F2 on it, F5 and F6, and F7 after the rlm release.
 
 ## Not in scope
 
