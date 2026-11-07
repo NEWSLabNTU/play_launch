@@ -65,10 +65,9 @@ impl OnProcessStart {
 #[pyclass(module = "launch.event_handlers", from_py_object)]
 #[derive(Clone)]
 pub struct OnProcessExit {
-    #[allow(dead_code)] // Keep for API compatibility
     target_action: Option<Py<PyAny>>,
-    #[allow(dead_code)] // Keep for API compatibility
-    on_exit: Option<Vec<Py<PyAny>>>,
+    /// One action, a list of them, or a callable -- as `launch` accepts.
+    on_exit: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -77,14 +76,9 @@ impl OnProcessExit {
     #[pyo3(signature = (*, target_action=None, on_exit=None, **_kwargs))]
     fn new(
         target_action: Option<Py<PyAny>>,
-        on_exit: Option<Vec<Py<PyAny>>>,
+        on_exit: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
-        let action_count = on_exit.as_ref().map_or(0, |v| v.len());
-        log::debug!(
-            "Python Launch OnProcessExit created with {} actions (limited support)",
-            action_count
-        );
         Self {
             target_action,
             on_exit,
@@ -92,10 +86,7 @@ impl OnProcessExit {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "OnProcessExit({} actions)",
-            self.on_exit.as_ref().map_or(0, |v| v.len())
-        )
+        "OnProcessExit(...)".to_string()
     }
 }
 
@@ -190,6 +181,39 @@ impl OnShutdown {
             "OnShutdown({} actions)",
             self.on_shutdown.as_ref().map_or(0, |v| v.len())
         )
+    }
+}
+
+/// What an `OnProcessExit` handler makes of its target's exit (#0081): the
+/// target, when the handler names one and its `on_exit` shuts the launch
+/// down (`Shutdown()`, or an `EmitEvent` of `launch.events.Shutdown`).
+/// `launch` then ends when that process exits, exactly as for
+/// `X(on_exit=Shutdown())`. Anything else is `None`: other exit actions are
+/// not modelled, and an untargeted handler is reported by the caller.
+pub(crate) enum ExitHandler {
+    /// Not an `OnProcessExit`, or one whose `on_exit` does not shut down.
+    Other,
+    /// Shuts down when this action's process exits.
+    ShutdownOn(Py<PyAny>),
+    /// Shuts down when ANY process exits: no `target_action`.
+    ShutdownOnAny,
+}
+
+pub(crate) fn exit_handler(py: Python, handler: &Bound<'_, PyAny>) -> ExitHandler {
+    let Ok(h) = handler.cast::<OnProcessExit>() else {
+        return ExitHandler::Other;
+    };
+    let h = h.borrow();
+    let shuts_down = h.on_exit.as_ref().is_some_and(|e| {
+        let e = e.bind(py);
+        !e.is_callable() && crate::api::launch_ros::on_exit_shuts_down(e)
+    });
+    if !shuts_down {
+        return ExitHandler::Other;
+    }
+    match &h.target_action {
+        Some(t) if !t.bind(py).is_none() => ExitHandler::ShutdownOn(t.clone_ref(py)),
+        _ => ExitHandler::ShutdownOnAny,
     }
 }
 

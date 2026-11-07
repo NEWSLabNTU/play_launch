@@ -1,3 +1,4 @@
+import launch.logging
 from launch.action import Action
 from launch.actions import (
     DeclareLaunchArgument,
@@ -5,10 +6,12 @@ from launch.actions import (
     GroupAction,
     PopLaunchConfigurations,
     PushLaunchConfigurations,
+    RegisterEventHandler,
     SetLaunchConfiguration,
     UnsetLaunchConfiguration,
 )
 from launch.actions.include_launch_description import IncludeLaunchDescription
+from launch.event_handlers import OnProcessExit
 from launch.events import ExecutionComplete  # noqa
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
@@ -24,7 +27,7 @@ from .composable_node_container import visit_composable_node_container
 from .include_launch_description import visit_include_launch_description
 from .lifecycle_node import visit_lifecycle_node
 from .load_composable_nodes import visit_load_composable_nodes
-from .node import visit_node
+from .node import _classify_on_exit, visit_node
 
 
 def visit_action(
@@ -66,6 +69,36 @@ def visit_action_by_class(
             for record in records[mark:]:
                 if record.config_seq is None:
                     record.config_seq = seq
+        if is_a(action, ExecuteProcess):
+            # Node, LifecycleNode and ComposableNodeContainer are ExecuteProcess.
+            dump.note_process(action, dump.node[marks[0] :] + dump.container[marks[1] :])
+        elif is_a(action, RegisterEventHandler):
+            _note_exit_shutdown_handler(action.event_handler, dump)
+
+
+def _note_exit_shutdown_handler(handler, dump: LaunchDump) -> None:
+    """`OnProcessExit(target_action=X, on_exit=<shutdown>)` makes X required (#0081).
+
+    `ros2 launch` ends when X exits, exactly as for `X(on_exit=Shutdown())`.
+    Other exit actions, and a callable `on_exit`, are not modelled.
+    """
+    if not isinstance(handler, OnProcessExit):
+        return
+    actions = getattr(handler, "_OnActionEventBase__actions_on_event", None)
+    target = getattr(handler, "_OnActionEventBase__action_matcher", None)
+    if not actions:
+        return
+    shutdown, _others = _classify_on_exit(actions)
+    if not shutdown:
+        return
+    if isinstance(target, ExecuteProcess):
+        dump.shutdown_on_exit_of(target)
+    else:
+        launch.logging.get_logger("dump_launch").warning(
+            "An OnProcessExit handler without an ExecuteProcess/Node target_action shuts "
+            "the launch down when any process exits; play_launch does not model that, so "
+            "no exit ends this launch. Give the handler a target_action."
+        )
 
 
 def _execute_logging_configurations(

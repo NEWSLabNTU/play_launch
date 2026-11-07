@@ -118,6 +118,9 @@ class ComposableNodeContainerRecord:
     env: list[tuple[str, str]] | None = None
     respawn: bool | None = None
     respawn_delay: float | None = None
+    # A container is a Node: on_exit=Shutdown(), or an OnProcessExit shutdown
+    # handler targeting it (#0081), makes it required.
+    on_exit_shutdown: bool | None = None
     global_params: list[tuple[str, str]] | None = None
     scope: int | None = None
     # Phase 94: how many `config_log` entries had happened where this member
@@ -138,6 +141,31 @@ class LaunchDump:
     _scope_stack: list[int] = field(default_factory=list, repr=False)
     # The dumper's own environment, before any `<set_env>` ran (#0077).
     _base_env: dict[str, str] = field(default_factory=lambda: dict(os.environ), repr=False)
+
+    # #0081: `RegisterEventHandler(OnProcessExit(target_action=X, on_exit=
+    # Shutdown()))` makes X required, as `X(on_exit=Shutdown())` does. The
+    # handler may run before or after X, so both sides are remembered, keyed
+    # by object identity. Plain attributes, not fields: `dataclasses.asdict`
+    # would deep-copy the launch actions they hold.
+    def note_process(self, action, records) -> None:
+        """`action` (a process) produced `records`; mark them if a handler wants it."""
+        processes = self.__dict__.setdefault("_process_records", {})
+        targets = self.__dict__.setdefault("_exit_shutdown_targets", {})
+        processes[id(action)] = (action, records)
+        if targets.pop(id(action), None) is not None:
+            for record in records:
+                record.on_exit_shutdown = True
+
+    def shutdown_on_exit_of(self, action) -> None:
+        """An OnProcessExit handler shuts the launch down when `action` exits."""
+        processes = self.__dict__.setdefault("_process_records", {})
+        targets = self.__dict__.setdefault("_exit_shutdown_targets", {})
+        entry = processes.get(id(action))
+        if entry is None:
+            targets[id(action)] = action
+            return
+        for record in entry[1]:
+            record.on_exit_shutdown = True
 
     def set_env_in_scope(self, context) -> dict[str, str]:
         """The variables `<set_env>` (`SetEnvironmentVariable`) set in scope (#0077).

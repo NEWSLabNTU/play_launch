@@ -24,6 +24,12 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0081** -- `RegisterEventHandler(OnProcessExit(target_action=X,
+on_exit=[EmitEvent(event=Shutdown())]))` was ignored by both parsers, so the
+launch kept running after X exited where `ros2 launch` ends. Such a handler
+now makes X required, as `X(on_exit=Shutdown())` does, whichever of the two
+is executed first. GitHub #19. See `archived/0081-*`.
+
 **#0080** -- `graph-deviation-runtime` judged every node's topics against the
 contracts, so a system with partial contract coverage drew a warning for each
 topic of each uncontracted node (481 on Autoware with 4 of 83 scopes

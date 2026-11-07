@@ -66,6 +66,29 @@ def generate_launch_description():
     ])
 "#;
 
+/// #0081: the same requirement spelled as an event handler. `ros2 launch`
+/// ends when `required` exits; play_launch used to ignore the handler and
+/// ran until the bystander did. HANDLER_FIRST puts the registration before
+/// its target, so both orders of execution are covered.
+const LAUNCH_HANDLER_PY: &str = r#"
+from launch import LaunchDescription
+from launch.actions import EmitEvent, ExecuteProcess, RegisterEventHandler
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
+
+
+def generate_launch_description():
+    required = ExecuteProcess(cmd=['sleep', '2'], name='required')
+    handler = RegisterEventHandler(OnProcessExit(
+        target_action=required,
+        on_exit=[EmitEvent(event=Shutdown(reason='required ended'))],
+    ))
+    entities = [ExecuteProcess(cmd=['sleep', '300'], name='bystander'), required, handler]
+    if HANDLER_FIRST:
+        entities = [handler] + entities[:2]
+    return LaunchDescription(entities)
+"#;
+
 /// How the system is started.
 #[derive(Clone, Copy)]
 enum Start {
@@ -318,4 +341,46 @@ fn a_same_stem_bystander_does_not_end_the_launch() {
         // The second unnamed `sleep`: the id allocator numbers collisions `#N`.
         required_member: "node:/sleep#2",
     });
+}
+
+fn ends_on_handler(parser: &str, handler_first: bool) {
+    let content = LAUNCH_HANDLER_PY.replace(
+        "HANDLER_FIRST",
+        if handler_first { "True" } else { "False" },
+    );
+    let label = format!("--parser {parser}, OnProcessExit handler, handler_first={handler_first}");
+    run_case(py_case(&label, &content, parser, Start::Launch));
+}
+
+/// #0081: `RegisterEventHandler(OnProcessExit(target_action=X, on_exit=[EmitEvent(Shutdown())]))`.
+#[test]
+fn rust_parser_on_process_exit_handler() {
+    ends_on_handler("rust", false);
+}
+
+#[test]
+fn rust_parser_on_process_exit_handler_registered_first() {
+    ends_on_handler("rust", true);
+}
+
+#[test]
+fn python_parser_on_process_exit_handler() {
+    ends_on_handler("python", false);
+}
+
+#[test]
+fn python_parser_on_process_exit_handler_registered_first() {
+    ends_on_handler("python", true);
+}
+
+/// #0081 through the model: `resolve` then `up`.
+#[test]
+fn up_from_a_resolved_on_process_exit_handler() {
+    let content = LAUNCH_HANDLER_PY.replace("HANDLER_FIRST", "False");
+    run_case(py_case(
+        "OnProcessExit handler, resolve then up",
+        &content,
+        "rust",
+        Start::ResolveThenUp,
+    ));
 }

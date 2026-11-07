@@ -88,8 +88,11 @@ impl UnsetLaunchConfiguration {
 ///
 /// The handlers whose events a running launch produces as it comes up —
 /// `OnProcessStart`, `OnStateTransition` — run their actions in a real launch,
-/// so the walk executes them, in place. `OnProcessExit` and `OnShutdown` run
-/// only when something stops, which is not part of the system being modelled.
+/// so the walk executes them, in place. `OnShutdown`, and an `OnProcessExit`
+/// that does anything but shut down, run only when something stops, which is
+/// not part of the system being modelled. An `OnProcessExit` whose `on_exit`
+/// shuts the launch down makes its target required, as `on_exit=Shutdown()`
+/// on the target does (#0081).
 #[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct RegisterEventHandler {
@@ -121,6 +124,22 @@ impl RegisterEventHandler {
 impl RegisterEventHandler {
     pub(crate) fn execute(this: &Bound<'_, Self>, py: Python) -> PyResult<()> {
         let handler = this.borrow().event_handler.clone_ref(py);
+        use crate::api::event_handlers::{ExitHandler, exit_handler};
+        match exit_handler(py, handler.bind(py)) {
+            ExitHandler::ShutdownOn(target) => {
+                crate::api::visit::shutdown_on_exit_of(target.bind(py));
+                return Ok(());
+            }
+            ExitHandler::ShutdownOnAny => {
+                log::warn!(
+                    "An OnProcessExit handler with no target_action shuts the launch down when \
+                     ANY process exits; play_launch does not model that, so no exit ends this \
+                     launch. Give the handler a target_action."
+                );
+                return Ok(());
+            }
+            ExitHandler::Other => {}
+        }
         let entities = crate::api::event_handlers::startup_entities(py, handler.bind(py))?;
         if let Some(entities) = entities {
             crate::api::visit::visit_any(py, entities.bind(py))?;

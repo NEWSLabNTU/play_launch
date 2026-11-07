@@ -49,6 +49,16 @@ struct Frame {
     /// What standalone `PushLaunchConfigurations` / `PushEnvironment` saved.
     config_stack: Vec<ConfigurationSnapshot>,
     env_stack: Vec<HashMap<String, String>>,
+    /// How many times this frame's captures were handed to the traverser
+    /// (each include drains them). A capture range recorded under an older
+    /// epoch no longer indexes the context's lists.
+    epoch: u64,
+    /// The captures each process action (by object identity) produced: the
+    /// epoch, and the lens before and after it executed (#0081).
+    process_captures: HashMap<usize, (u64, Lens, Lens)>,
+    /// Actions an `OnProcessExit` shutdown handler targets that have not
+    /// executed yet, by object identity (#0081).
+    exit_shutdown_targets: std::collections::HashSet<usize>,
 }
 
 thread_local! {
@@ -83,6 +93,9 @@ pub(crate) fn with_frame<R>(
             executed: HashMap::new(),
             config_stack: Vec::new(),
             env_stack: Vec::new(),
+            epoch: 0,
+            process_captures: HashMap::new(),
+            exit_shutdown_targets: Default::default(),
         })
     });
     struct Pop;
@@ -248,6 +261,71 @@ pub(crate) fn lens() -> Lens {
     })
 }
 
+/// Mark the process captures in `from..to` as required: their exit ends
+/// the launch (`on_exit_shutdown`).
+fn mark_required(from: Lens, to: Lens) {
+    with_launch_context(|ctx| {
+        for n in &mut ctx.captured_nodes_mut()[from.nodes..to.nodes] {
+            n.on_exit_shutdown = Some(true);
+        }
+        for c in &mut ctx.captured_containers_mut()[from.containers..to.containers] {
+            c.on_exit_shutdown = Some(true);
+        }
+    });
+}
+
+/// Execute a process action (`ExecuteProcess`, `Node`, `LifecycleNode`,
+/// `ComposableNodeContainer`), noting the captures it produced so a later
+/// `OnProcessExit` handler can find them, and marking them required now if an
+/// earlier one already targets it (#0081).
+fn execute_process(entity: &Bound<'_, PyAny>, f: impl FnOnce() -> PyResult<()>) -> PyResult<()> {
+    let before = lens();
+    f()?;
+    let after = lens();
+    let id = entity.as_ptr() as usize;
+    let targeted = FRAMES.with(|fr| {
+        let mut fr = fr.borrow_mut();
+        let Some(fr) = fr.last_mut() else {
+            return false;
+        };
+        fr.process_captures.insert(id, (fr.epoch, before, after));
+        fr.exit_shutdown_targets.remove(&id)
+    });
+    if targeted {
+        mark_required(before, after);
+    }
+    Ok(())
+}
+
+/// `RegisterEventHandler(OnProcessExit(target_action=X, on_exit=<shutdown>))`:
+/// `launch` ends when X's process exits, as for `X(on_exit=Shutdown())`
+/// (#0081). X may have executed already -- the usual order, the handler
+/// listed after its target -- or may be yet to.
+pub(crate) fn shutdown_on_exit_of(target: &Bound<'_, PyAny>) {
+    let id = target.as_ptr() as usize;
+    let seen = FRAMES.with(|fr| {
+        let mut fr = fr.borrow_mut();
+        let fr = fr.last_mut()?;
+        match fr.process_captures.get(&id) {
+            Some(&(epoch, before, after)) => Some(Some((epoch == fr.epoch, before, after))),
+            None => {
+                fr.exit_shutdown_targets.insert(id);
+                Some(None)
+            }
+        }
+    });
+    match seen {
+        Some(Some((true, before, after))) => mark_required(before, after),
+        Some(Some((false, _, _))) => log::warn!(
+            "An OnProcessExit handler shuts the launch down when a process exits, but an \
+             include came between that process and the handler, so this model cannot mark \
+             it required: its exit will not end the launch. Register the handler before \
+             the include, or give the process on_exit=Shutdown()."
+        ),
+        _ => {}
+    }
+}
+
 /// Names of what was captured since `mark`, for a diagnostic.
 pub(crate) fn describe_since(mark: Lens) -> Vec<String> {
     with_launch_context(|ctx| {
@@ -300,6 +378,11 @@ pub(crate) fn include(file_path: String, args: Vec<(String, String)>) -> PyResul
         file_path,
         args,
         delay_secs: (delay > 0.0).then_some(delay),
+    });
+    FRAMES.with(|f| {
+        if let Some(fr) = f.borrow_mut().last_mut() {
+            fr.epoch += 1;
+        }
     });
     let sent = with_launch_context(|ctx| ctx.list_sync());
     // SAFETY: see `with_frame` — the frame, and so the borrow `host` came
@@ -389,6 +472,13 @@ fn execute_entity(py: Python, entity: &Bound<'_, PyAny>) -> PyResult<()> {
             }
         };
     }
+    macro_rules! exec_process {
+        ($ty:ty) => {
+            if let Ok(x) = entity.cast::<$ty>() {
+                return execute_process(entity, || <$ty>::execute(&x, py));
+            }
+        };
+    }
     exec!(a::DeclareLaunchArgument);
     exec!(a::SetLaunchConfiguration);
     exec!(a::UnsetLaunchConfiguration);
@@ -406,7 +496,7 @@ fn execute_entity(py: Python, entity: &Bound<'_, PyAny>) -> PyResult<()> {
     exec!(a::OpaqueFunction);
     exec!(a::TimerAction);
     exec!(a::RegisterEventHandler);
-    exec!(a::ExecuteProcess);
+    exec_process!(a::ExecuteProcess);
     exec!(a::LogInfo);
     exec!(r::RosTimer);
     exec!(r::PushRosNamespace);
@@ -415,9 +505,9 @@ fn execute_entity(py: Python, entity: &Bound<'_, PyAny>) -> PyResult<()> {
     exec!(r::SetParametersFromFile);
     exec!(r::SetRemap);
     exec!(r::SetUseSimTime);
-    exec!(r::Node);
-    exec!(r::LifecycleNode);
-    exec!(r::ComposableNodeContainer);
+    exec_process!(r::Node);
+    exec_process!(r::LifecycleNode);
+    exec_process!(r::ComposableNodeContainer);
     exec!(r::LoadComposableNodes);
 
     let class = entity

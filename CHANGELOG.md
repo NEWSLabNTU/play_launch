@@ -8,6 +8,14 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fixed (both parsers, #0081):** `RegisterEventHandler(OnProcessExit(
+  target_action=X, on_exit=[EmitEvent(event=Shutdown())]))` (or
+  `on_exit=Shutdown()`) now ends the launch when X exits, as `ros2 launch`
+  does; it was ignored and the launch ran on. X is marked required exactly
+  as for `X(on_exit=Shutdown())`, whether the handler is registered before
+  or after X. An untargeted `OnProcessExit` shutdown is warned about, not
+  modelled.
+
 ## 0.30.0 - 2026-11-07
 
 - **Visible:** `--export-graph` schema version 3: the phase 98 standard
