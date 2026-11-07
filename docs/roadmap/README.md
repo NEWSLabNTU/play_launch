@@ -353,22 +353,17 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     [phase-97-links.md](./phase-97-links.md).
   - **Phase 101** - planned (2026-11-07): fault tolerance, when most of the
     system is safety critical (rlm `docs/design/fault-tolerance.md`, design
-    issue 59; twelve case studies from aircraft, spacecraft, nuclear,
-    driving and medical systems). `independent:` checked against the
-    deployment facts, with freedom from interference derived; an ordered
-    `recovery:` (restart, switchover) credited before degradation when it
-    fits the FTTI; `functions.<f>.k_of`; `fail_operational:` modes; `on:`
-    gains repetition, resequencing and insertion.
+    issue 59; twelve case studies). Core: `k` on a redundant group, one
+    `independence:` form, `on_silence` on an external subscriber, three
+    `on:` classes. Derived: restart credit from `respawn`, standby,
+    fail-operational, freedom from interference.
     [phase-101-fault-tolerance.md](./phase-101-fault-tolerance.md).
-  - **Phase 100** - planned (2026-11-07, revised after a use-case survey):
-    safety functions, from Safe-ROS (FMAS 2025; rlm
-    `docs/design/safety-functions.md`, design issue 58). A safety function
-    ends at a final element (IEC 61511): `final_elements:` names the
-    actuator channel, its arbiter and the minimal risk condition's
-    predicate there, `modes.<m>.commands` a predicate per degradation
-    level, and the run checks it as an invariant for as long as the level
-    lasts; `hazards.<h>.requirement` traces a hazard to the hazard
-    analysis. Open questions decided before any code.
+  - **Phase 100** - planned (2026-11-07): safety functions, from Safe-ROS
+    and seven use cases (rlm `docs/design/safety-functions.md`, design
+    issue 58). One new key, `modes.<m>.commands`: a commanded topic is a
+    final element, its one publisher the arbiter, the invariant held for
+    the whole level; plus `hazards.<h>.requirement`. Use-case specifics
+    are extensions.
     [phase-100-safety-functions.md](./phase-100-safety-functions.md).
   - **Phase 99** - planned (2026-11-05): tier rename (phase 98 N7,
     decided: rename, own phase). `tier` (rlm `TierDef`/`ResolvedTier`,

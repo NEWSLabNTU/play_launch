@@ -1,14 +1,14 @@
 # Phase 101 - fault tolerance: when most of the system is safety critical
 
-**Status (2026-11-07): planned; nothing started. Follows phase 100, whose
-final element it builds on. The design doc's §6 open questions come before
-any code.** Design of record: rlm `docs/design/fault-tolerance.md` (design
-issue 59): twelve case studies (aircraft flight control, spacecraft FDIR,
-ARINC 653, fail-operational driving, nuclear defence in depth, closed-loop
-insulin, ventilators, surgical robots, Auto-GCAS, EN 50159, AUTOSAR
-watchdogs), what they share, the additions, and the larger models
-considered and not adopted. Spans rlm, play_launch and nano-ros (pull
-requests from `~/repos/nano-ros-pl`).
+**Status (2026-11-07): planned, revised the same day to the primitives
+rule; nothing started. Follows phase 100.** Design of record: rlm
+`docs/design/fault-tolerance.md` (design issue 59): twelve case studies
+from aircraft, spacecraft, nuclear, driving and medical systems. In the
+core: `k` on a redundant group, one `independence:` form, `on_silence` on
+an external subscriber side, three `on:` classes. Derived with no key:
+restart credit from `respawn`, standby, fail-operational, freedom from
+interference. Use-case specifics are extensions. Spans rlm, play_launch
+and nano-ros.
 
 ## Why
 
@@ -27,18 +27,18 @@ stamps (repetition, resequencing, insertion).
 
 | Unit | Work | Acceptance |
 |---|---|---|
-| T0 | **Decide** the design doc's §6 questions: where `k_of` agreement sits, whether a restart's time may be stated, whether `fail_operational` is declared or derived, which deployment facts count for `independent:`. | Each answered in the design doc; its status line says so. |
-| T1 | **`independent:` and freedom from interference (§4.5).** rlm: `functions.<f>.independent`, `final_elements.<e>.independent_of`/`independent`, model fields; resolver rule `independence-violated` from process, container, host and CPU set; `interference-shared-process` (warning) when nodes of different derived integrity share a process. | Fixtures for each shared fact with negative controls. Autoware under `observable` reports the shared-process cases of its control stack, or they are recorded; under `isolated` the rule is silent. |
-| T2 | **`recovery:` (§4.2).** rlm grammar and model; the checker credits a step only when detection plus its time fits the FTTI (`recovery-unfit`, warning). A restart's time is the node's `respawn_delay` plus its startup from `startup_timeline.json` when a run is given (`check --against`), else stated or absent. play_launch's observer reports which step the run actually took and how long it took. | `rt_av_demo`: a killed detector with `respawn` is credited when its restart fits and degrades when it does not, both measured. A recovery step whose node has no `respawn` is refused. |
-| T3 | **`functions.<f>.k_of` (§4.1).** rlm grammar and model; the observer counts healthy members and, with `agree:`, compares the stated field across members within the tolerance. | A 2-of-3 fixture: one silent member keeps the function, two lose it, one member off by more than the tolerance is reported. |
-| T4 | **`fail_operational:` modes (§4.3).** rlm: `fail-operational-uncovered` (error) for a hazard in such a mode covered by degradation alone. | A fixture with a covered and an uncovered hazard. The island's and Autoware's contracts are checked, and each finding is recorded. |
-| T5 | **`on:` gains `repetition`, `resequencing`, `insertion` (§4.6).** rlm closed set; play_launch's observer detects each from stamps and endpoint owners. | One fixture per class with a negative control. `insertion` on a final element's channel and phase 100's `arbiter-bypass` report one finding, not two. |
-| T6 | **Guide.** `docs/guide/fault-tolerance.md`: a redundant sensor pair, a restarted planner, a fail-operational driving mode, and what the checker says about each. | Its contracts are the fixtures above. `check-terms` passes. |
-| T7 | **nano-ros.** The model fields in a pull request; which of the runtime checks the image generates is recorded here. | nano-ros pins the rlm tag that carries the fields and its CI is green. |
+| T0 | **Decide** the design doc's §6 questions: `k` or IEC 61508's `m`; whether a startup time may be stated without a run; which deployment facts count for `independence`. | Each answered in the design doc. |
+| T1 | **`independence:` and freedom from interference (§4.5).** rlm: top-level `independence: [{ of, not_sharing }]`, model field; resolver rule `independence-violated` from process, container, host and CPU set; derived `interference-shared-process` (warning) for nodes of different derived integrity in one process. | Fixtures for each shared fact with negative controls. Autoware under `observable` reports its shared-process cases or they are recorded; under `isolated` the rule is silent. |
+| T2 | **Recovery credit (§4.2), no key.** The checker credits a node's `respawn` when detection + `respawn_delay` + its startup (from `check --against <run>`'s `startup_timeline.json`) fits the FTTI; `recovery-unfit` (warning) otherwise. A redundant group above `k` after a loss keeps the mode. The observer reports which recovery the run took and how long. | `rt_av_demo`: a killed detector with `respawn` is credited when its restart fits and degrades when it does not, both measured. Without a run the restart is not credited and the output says so. |
+| T3 | **`functions.<f>.k` (§4.1).** rlm grammar and model; members may be value functions. The observer counts held members. | A 2-of-3 fixture: one silent member keeps the function, two lose it; a member lost by value counts as lost. |
+| T4 | **`on_silence` on an external subscriber side (§4.4).** rlm grammar and model; a level may end in silence, settled by `after` plus the consumer's response. | A fixture whose external base stops on silence passes with a silent gate; without `on_silence` it fails with `final-element-silent`. |
+| T5 | **`on:` gains `repetition`, `resequencing`, `insertion` (§4.6).** rlm closed set; the observer detects each from stamps and endpoint owners. | One fixture per class with a negative control. `insertion` on a commanded topic and `arbiter-bypass` report one finding. |
+| T6 | **Guide.** `docs/guide/fault-tolerance.md`: a redundant sensor pair, a restarted planner, a level that cannot degrade in time and is rescued by redundancy, and what the checker says about each. | Its contracts are the fixtures above. `check-terms` passes. |
+| T7 | **nano-ros.** The model fields in a pull request; which runtime checks the image generates is recorded here. | nano-ros pins the rlm tag and its CI is green. |
 
-Order: T0; T1 first (independence is the argument the others rest on, and
-it needs no runtime work); T2 and T5 next (they use what play_launch
-already records); T3 and T4; T6 and T7 last.
+Order: T0; T1 (independence is the argument the rest rests on, and needs
+no runtime work); T2 and T5 (they use what play_launch already records);
+T3 and T4; T6 and T7 last.
 
 ## Not in scope
 
@@ -46,5 +46,7 @@ already records); T3 and T4; T6 and T7 last.
 - Corruption as a fault class: not observable above DDS.
 - Diversity of redundant members (dissimilar software or hardware): a
   stated claim, not a deployment fact.
+- Value agreement across redundant members: needs a runtime extension
+  hook; recorded in the design doc.
 - Generating a GSN safety case from a checked contract: a possible later
   export, which phase 100's requirement trace makes possible.
