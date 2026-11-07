@@ -351,6 +351,14 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     (#0042), P2 `links:`, P3 `measure` proposals, P4 `check --against`
     transport; P5 (a runtime link monitor) not adopted.
     [phase-97-links.md](./phase-97-links.md).
+  - **Phase 102** - planned (2026-11-07): the contract safety model's
+    build order across phases 100 and 101 (foundations: a Safe-ROS fixture
+    and an interceptor field reader; one rlm release for all grammar; then
+    runtime checks, explain and guides, nano-ros) and its evaluation:
+    expressiveness, detection by seeded defects, false positives on the
+    island and Autoware, timing against fault injection, runtime cost,
+    author burden, and agreement with nano-ros.
+    [phase-102-safety-model-build-and-evaluation.md](./phase-102-safety-model-build-and-evaluation.md).
   - **Phase 101** - planned (2026-11-07): fault tolerance, when most of the
     system is safety critical (rlm `docs/design/fault-tolerance.md`, design
     issue 59; twelve case studies). Core: `m` on a redundant group (MooN), one
