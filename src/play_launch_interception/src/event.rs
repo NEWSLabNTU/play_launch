@@ -165,6 +165,13 @@ pub enum EventKind {
     /// As `ServiceRequestTaken`, with `handle` = client id and the stamp the
     /// response's `source_timestamp`.
     ServiceResponseTaken = 28,
+    /// Phase 102 M0: one declared field of a published message
+    /// (`crate::fields`). Field overload: `handle` = the rcl publisher id,
+    /// `topic_hash` = the topic's hash, `_pad[0]` = the field's index in
+    /// `PLAY_LAUNCH_INTERCEPTION_FIELDS`, `_pad[1]` = its `ValueKind`,
+    /// `cpu_ns` = the value's 64 bits, `stamp_*` = the message's stamp when
+    /// it has one, `monotonic_ns` = the publish.
+    FieldValue = 29,
 }
 
 /// A single interception event (56 bytes, `#[repr(C)]`).

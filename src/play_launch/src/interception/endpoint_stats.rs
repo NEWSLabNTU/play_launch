@@ -188,6 +188,8 @@ impl LatencySummary {
 /// Aggregates per-endpoint traffic from every child's ring.
 #[derive(Debug, Default)]
 pub(crate) struct EndpointTracker {
+    /// Phase 102 M0: what the run saw of each declared field.
+    pub(super) fields: super::fields::FieldBook,
     /// `(child index, handle) -> node hash`, from `EndpointOwner`, which
     /// precedes the endpoint's init event.
     pub(super) owners: HashMap<(usize, u64), u64>,
@@ -276,6 +278,7 @@ impl EndpointTracker {
             | EventKind::ServiceResponseSent
             | EventKind::ServiceResponseTaken => self.calls.observe(child, member, event),
             EventKind::TfFramesDeclared => self.tf.observe_names(event),
+            EventKind::FieldValue => self.fields.observe(child, event),
             EventKind::EndpointOwner => {
                 self.owners.insert(key, event.topic_hash);
             }

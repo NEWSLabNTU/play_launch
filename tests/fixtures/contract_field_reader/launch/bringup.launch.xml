@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!-- Phase 102 M0: the interceptor reads the fields a contract's predicates
+     name, and nothing else of the message. talker's /chatter carries a
+     std_msgs/String whose `data` changes with every message. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="talker"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="listener"/>
+</launch>

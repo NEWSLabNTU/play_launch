@@ -272,6 +272,16 @@ pub(crate) async fn play(
     if common.contract_opts.record_events {
         runtime_config.interception.events = true;
     }
+    // Phase 102 M0: the fields the model's predicates read, for the
+    // interceptor to read by introspection.
+    runtime_config.interception.declared_fields =
+        crate::interception::fields::declared_fields(&system_model);
+    if !runtime_config.interception.declared_fields.is_empty() {
+        debug!(
+            "Interception: reading {} declared field(s)",
+            runtime_config.interception.declared_fields.len()
+        );
+    }
 
     // Phase 66 W2 — compile the limit globs once, rather than per member.
     // Inert without a cgroup tree, so a config written for a delegated run

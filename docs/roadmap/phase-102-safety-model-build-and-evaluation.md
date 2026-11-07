@@ -1,6 +1,6 @@
 # Phase 102 - the contract safety model: build order and evaluation
 
-**Status (2026-11-07): M0 in progress; M0a done (F0's verdict: F4 is needed).** Puts phases 100 and
+**Status (2026-11-07): M0 done.** M0a: F0's verdict is that F4 is needed (phase 100). M0b: the field reader, below. Puts phases 100 and
 101 (the work) into one build order and adds the evaluation that decides
 whether the model is right. Design of record: rlm
 `docs/design/safety-functions.md` (issue 58) and
@@ -59,6 +59,20 @@ bumps once.
 
 Phases 100 and 101 keep their units (F0-F7, T1-T7); this table is the
 order they are built in.
+
+### M0b, the field reader (done 2026-11-07)
+
+The model's `when:` predicates name the fields; `play()` passes them to
+each child in `PLAY_LAUNCH_INTERCEPTION_FIELDS`, the interceptor resolves
+each dotted path once per publisher by introspection and sends one
+`FieldValue` event per field per publish (a string as its FNV-1a hash), and
+`interception/fields.json` reports each field's messages, changes,
+publishers and last value. Test: `test_declared_fields_are_read_on_publish`
+(the talker's `data`, a C++ `std::string`, hashed to the exact text of its
+last message). Measured cost: 1.5 ns for the read, ~50 ns per field per
+publish with the event and ring push, the same as a service call hook
+(47 ns). At E5's scale, 10k declared-field publishes a second is 0.05% of a
+core. `modes.<m>.commands` (M1) adds its fields to the same list.
 
 ## Evaluation
 

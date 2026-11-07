@@ -465,6 +465,11 @@ pub struct InterceptionSettings {
     /// SPSC ring buffer capacity per child process (default: 65536)
     #[serde(default = "default_ring_capacity")]
     pub ring_capacity: usize,
+
+    /// Phase 102 M0: the message fields the model's predicates read. Not a
+    /// config key: filled from the model at `up`/`launch`, empty otherwise.
+    #[serde(skip)]
+    pub declared_fields: Vec<crate::interception::fields::DeclaredField>,
 }
 
 /// Why interception is on or off for a run (issue #0031). `up` logs the
@@ -532,6 +537,7 @@ impl Default for InterceptionSettings {
             trace: false,
             events: false,
             ring_capacity: default_ring_capacity(),
+            declared_fields: Vec::new(),
         }
     }
 }

@@ -734,6 +734,50 @@ interception:
     }
 }
 
+/// Phase 102 M0: the interceptor reads the fields a contract's predicates
+/// name. `contract_field_reader` declares one value predicate on
+/// `/chatter`'s `data`, so every talker message is read by introspection and
+/// counted in `fields.json`. The string travels as its FNV-1a hash, and the
+/// talker's text changes with each message, so every message after the
+/// first is a change.
+#[test]
+fn test_declared_fields_are_read_on_publish() {
+    let config = r#"
+interception:
+  enabled: true
+"#;
+    let work_dir = run_launch_until(
+        "../contract_field_reader/launch/bringup.launch.xml",
+        config,
+        Duration::from_secs(4),
+        |_| true,
+    );
+    let path = work_dir
+        .path()
+        .join("play_log/latest/interception/fields.json");
+    assert!(
+        wait_for_file(&path, Duration::from_secs(5)),
+        "fields.json not found at {}",
+        path.display()
+    );
+    let body = std::fs::read_to_string(&path).expect("read fields.json");
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&body).expect("invalid JSON");
+    assert_eq!(rows.len(), 1, "one declared field: {body}");
+    let row = &rows[0];
+    assert_eq!(row["topic"], "/chatter", "{body}");
+    assert_eq!(row["field"], "data", "{body}");
+    let messages = row["messages"].as_u64().unwrap();
+    assert!(messages >= 2, "{body}");
+    assert_eq!(row["changes"].as_u64().unwrap(), messages - 1, "{body}");
+    assert_eq!(row["publishers"], 1, "{body}");
+    assert!(
+        row["last"]
+            .as_str()
+            .is_some_and(|v| v.starts_with("fnv1a:")),
+        "{body}"
+    );
+}
+
 /// `events.jsonl` is opt-in: interception and `stats` on, `events` unset,
 /// and the summaries are written while the per-message record is not.
 #[test]
@@ -756,6 +800,8 @@ interception:
         !play_log.join("interception/events.jsonl").exists(),
         "events.jsonl written although `events` was never asked for"
     );
+    // No contract, so no declared field and no fields.json (phase 102 M0).
+    assert!(!play_log.join("interception/fields.json").exists());
 }
 
 /// One HTTP/1.1 request to the web UI; returns (status, body).

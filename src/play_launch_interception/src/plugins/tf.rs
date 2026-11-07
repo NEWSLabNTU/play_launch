@@ -116,6 +116,33 @@ impl InterceptionPlugin for TfPlugin {
         crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
 
+    /// Declared fields ride the same plugin: it is the one that reads
+    /// message contents.
+    fn on_field(
+        &self,
+        handle: usize,
+        topic_hash: u64,
+        index: u8,
+        kind: crate::fields::ValueKind,
+        bits: u64,
+        stamp: Option<Stamp>,
+    ) {
+        let (stamp_sec, stamp_nanosec) = stamp.map_or((0, 0), |s| (s.sec, s.nanosec));
+        let event = InterceptionEvent {
+            kind: EventKind::FieldValue,
+            _pad: [index, kind as u8, 0],
+            topic_hash,
+            stamp_sec,
+            stamp_nanosec,
+            handle: handle as u64,
+            monotonic_ns: crate::event::monotonic_ns(),
+            cpu_ns: bits,
+            tid: 0,
+            payload_bytes: 0,
+        };
+        crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
+    }
+
     fn on_tf(&self, handle: usize, is_static: bool, transforms: &[TfSample<'_>]) {
         let now = crate::event::monotonic_ns();
         let mut due = Vec::new();

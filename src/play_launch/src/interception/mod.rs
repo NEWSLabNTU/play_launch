@@ -11,6 +11,7 @@
 pub(crate) mod calls;
 mod chains;
 pub(crate) mod endpoint_stats;
+pub mod fields;
 mod latency;
 pub(crate) mod live;
 mod tf;
@@ -134,6 +135,10 @@ pub enum EventKind {
     ServiceResponseSent = 27,
     /// A response was taken; as `ServiceRequestTaken`.
     ServiceResponseTaken = 28,
+    /// Phase 102 M0: one declared field of a published message
+    /// (`fields`). `handle` = publisher id, `_pad[0]` = the field's index,
+    /// `_pad[1]` = its encoding, `cpu_ns` = the value's bits.
+    FieldValue = 29,
 }
 
 /// Interception event (56 bytes, matches play_launch_interception::event::InterceptionEvent).
@@ -294,6 +299,15 @@ pub fn setup_child_interception(
         env.insert(
             "PLAY_LAUNCH_INTERCEPTION_ENDPOINT_FILE".to_string(),
             path.with_file_name("endpoints.tsv").display().to_string(),
+        );
+    }
+
+    // Phase 102 M0: the declared fields this run reads, numbered by their
+    // position in this one list.
+    if !config.declared_fields.is_empty() {
+        env.insert(
+            fields::ENV.to_string(),
+            fields::env_value(&config.declared_fields),
         );
     }
 
@@ -822,6 +836,18 @@ pub async fn run_interception_task(
         log.finish(&names, &log_dir, records_before);
     }
 
+    // Declared fields (phase 102 M0): one row per field the model asked for.
+    if !config.declared_fields.is_empty() {
+        let interception_dir = log_dir.join("interception");
+        let rows = endpoints.fields.rows(&config.declared_fields);
+        if let Err(e) = std::fs::create_dir_all(&interception_dir)
+            .map_err(eyre::Report::from)
+            .and_then(|()| fields::write(&interception_dir, &rows))
+        {
+            warn!("Interception: fields.json not written: {e:#}");
+        }
+    }
+
     // Per-endpoint stats. Needs `stats`: the counts come from StatsPlugin's
     // Publish/Take events. The run's end is read on the children's clock.
     if config.stats && !endpoints.is_empty() {
@@ -962,7 +988,8 @@ fn process_event(
         | EventKind::EndpointQos
         | EventKind::TfEdge
         | EventKind::TfFramesDeclared
-        | EventKind::LifecycleTransition => {
+        | EventKind::LifecycleTransition
+        | EventKind::FieldValue => {
             // Per-endpoint attribution and QoS, handled by `EndpointTracker`.
         }
         EventKind::ServiceClientInit

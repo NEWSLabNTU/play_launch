@@ -499,6 +499,8 @@ play_log/<timestamp>/
 │   ├── endpoint_stats.json         # every pub/sub created: messages, rate, est. bytes,
 │                                   #   publish-to-take latency per subscription —
 │                                   #   silent endpoints included, busiest first
+│   ├── fields.json                 # each field a contract predicate reads: messages,
+│   │                               #   changes, publishers, last value (phase 102 M0)
 │   └── node_identity.tsv           # model key → PID → REAL ROS node name (#0017)
 ├── system_stats.csv, diagnostics.csv
 └── node/<node_name>/{metadata.json, metrics.csv, out, err, pid, status, cmdline}
@@ -696,6 +698,24 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-11-07**: **The interceptor reads declared fields** (phase 102
+  M0b, `play_launch_interception/src/fields.rs`,
+  `interception/fields.rs`). The model's `when:` predicates (hazards and
+  value functions) name `(topic, field)` pairs; `play()` hands them to every
+  child in `PLAY_LAUNCH_INTERCEPTION_FIELDS` (`topic<TAB>path` per line, the
+  line's position being the field's index on both sides), the dotted path
+  is resolved once per publisher by introspection as `tf.rs` resolves TF,
+  and each publish sends one `FieldValue` event (kind 29) per field: a
+  number or bool as its value, a string as its FNV-1a hash. Scalars at a
+  dotted path only, no sequences. `interception/fields.json` lists every
+  declared field, seen or not. Cost measured at ~50 ns per field per
+  publish (`field_hook_cost`); once any publisher in a process reads a
+  field, every publish there also takes a read-locked map lookup. Nothing
+  JUDGES the values yet: that is phase 100 F2 and phase 101's checks
+  (M2). Same day, M0a: `contract_safe_ros` showed the walk charges nothing
+  for a reaction that waits on another input's traffic, so phase 100 F4 is
+  needed.
 
 - **2026-11-05**: **N6 at R+1, model schema 4, S1-S5 ids retired** (phase
   98, rlm v0.3.9). A hazard's `guards:`, a subscriber's `ingress:`, a

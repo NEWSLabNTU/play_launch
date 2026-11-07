@@ -97,6 +97,19 @@ pub(crate) trait InterceptionPlugin: Send + Sync {
     /// Called when a lifecycle node publishes a `TransitionEvent`.
     fn on_lifecycle_transition(&self, _handle: usize, _start: u8, _goal: u8) {}
 
+    /// Called once per declared field of a published message
+    /// (`crate::fields`), with the field's index, encoding and value bits.
+    fn on_field(
+        &self,
+        _handle: usize,
+        _topic_hash: u64,
+        _index: u8,
+        _kind: crate::fields::ValueKind,
+        _bits: u64,
+        _stamp: Option<Stamp>,
+    ) {
+    }
+
     /// Phase 95: a service client (`is_client`) or server was created
     /// (cold path). `node_hash` is 0 when the node's name is unknown.
     fn on_call_endpoint_init(

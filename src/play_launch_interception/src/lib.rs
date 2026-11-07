@@ -33,6 +33,7 @@ mod drop_counter;
 mod endpoints;
 mod event;
 mod ffi_ext;
+mod fields;
 mod introspection;
 mod node_identity;
 mod plugin;
@@ -554,6 +555,17 @@ unsafe fn on_typed_publish(rt: &Runtime, publisher: usize, ros_message: *const c
     }
     if let Some(entry) = registry::lookup_publisher(publisher, monotonic_ns()) {
         let stamp = unsafe { read_stamp(ros_message, entry.stamp_offset) };
+        if !ros_message.is_null() {
+            fields::for_each(publisher, |layout| {
+                if let Some((kind, bits)) =
+                    unsafe { fields::read(layout, ros_message as *const u8) }
+                {
+                    for p in &rt.plugins {
+                        p.on_field(publisher, entry.topic_hash, layout.index, kind, bits, stamp);
+                    }
+                }
+            });
+        }
         let bytes = entry
             .sample_with
             .map(|ts| unsafe { sample_payload_bytes(&rt.originals, ros_message, ts) })
@@ -1070,6 +1082,7 @@ pub unsafe extern "C" fn rcl_publisher_init(
             {
                 tf::register(rcl_id(publisher), layout, topic.ends_with("tf_static"));
             }
+            unsafe { fields::register(rcl_id(publisher), &topic, type_support) };
             if id == "lifecycle_msgs/msg/TransitionEvent"
                 && let Some(layout) = unsafe { tf::transition_layout(type_support) }
             {

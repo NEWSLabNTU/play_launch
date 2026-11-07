@@ -1,0 +1,27 @@
+# Phase 102 M0: one value predicate, so the run reads one field.
+# `chatter_live` is lost when the talker sends `stop`, which it never does;
+# what the run must show is that every message's `data` was read.
+version: 1
+
+functions:
+  chatter_live:
+    of: [/chatter]
+    when: { field: data, equals: stop }
+
+nodes:
+  talker:
+    pub:
+      chatter: {}
+    paths:
+      talk:
+        trigger: { timer: { rate_hz: 1 } }
+        output: [chatter]
+  listener:
+    sub:
+      chatter: {}
+
+topics:
+  /chatter:
+    type: std_msgs/msg/String
+    pub: [talker/chatter]
+    sub: [listener/chatter]

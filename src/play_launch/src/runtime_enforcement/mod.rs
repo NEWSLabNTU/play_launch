@@ -639,6 +639,7 @@ impl RuleEngine {
             EventKind::TfEdge
             | EventKind::TfFramesDeclared
             | EventKind::LifecycleTransition
+            | EventKind::FieldValue
             | EventKind::ServiceClientInit
             | EventKind::ServiceServerInit
             | EventKind::ServiceRequestSent

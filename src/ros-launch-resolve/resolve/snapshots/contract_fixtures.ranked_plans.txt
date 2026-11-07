@@ -2024,6 +2024,22 @@ RankedPlan {
     ],
     warnings: [],
 }
+== contract_field_reader/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/talker",
+            path: "talk",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=1000)",
+        },
+    ],
+    warnings: [],
+}
 == contract_grammar_newer/launch/bringup.launch.xml
 RankedPlan {
     items: [],
