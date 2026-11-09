@@ -17,7 +17,13 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-None.
+**#0082** -- `--container-mode observable` turns a
+`component_container_isolated` into a play_launch_container with ONE
+SingleThreadedExecutor for all its components (only `component_container_mt`
+gets `--use_multi_threaded_executor`), where the stock executable gives each
+component its own thread. On the golf cart's ZED X container (ZED wrapper +
+two Isaac ROS converters + two NVENC H.264 encoders) one encoder then emits
+every frame twice under load; `stock` is clean. See `0082-*`.
 
 `just check-issue-index` fails if this section and the per-file `status:`
 frontmatter disagree.
