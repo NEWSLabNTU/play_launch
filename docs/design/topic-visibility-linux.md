@@ -103,8 +103,21 @@ into `open` shows up as a diff of this report in review.
 4. Monitor violation + suggestion reports.
 5. `--expose`, `play_launch locality`.
 
-## Open questions
+## Decisions (2026-11-10)
 
-1. Is an ACL egress deny on rmw_zenoh enough for Tier 2, or should
-   play_launch also drop the liveliness token (which needs rmw_zenoh support)?
-2. Should container derivation ever be the default, or always opt-in?
+1. **Container derivation is opt-in.** A derived container changes process
+   count (one node's crash takes its neighbours), scheduling and affinity,
+   and can break a launch file that assumed its own layout; and process
+   layout is this realizer's fact, not the contract's. So it stays
+   `compose_internal: true` per scope. Revisit a default once it is measured
+   on real systems.
+2. **Tier 2 on Linux is the ACL / partition.** The data never leaves the
+   process or scope, which is what bandwidth and isolation need. The
+   liveliness token and discovery entry remain, and a tool that subscribes is
+   told why through the monitor. Dropping the token needs rmw_zenoh or rclcpp
+   changes upstream; pursue that only if discovery traffic is measured to
+   matter. The gap is recorded here, not hidden.
+3. **Runtime suggestions stay here.** The monitor's "never had an outside
+   consumer" report is play_launch's own; the contract checker
+   (`export-unused`) stays static (rlm decision 2), and play_launch never
+   writes the contract.
