@@ -1,0 +1,40 @@
+{
+  "fits": {
+    "static": "recovery-credited",
+    "credited_total_ms": 269.0,
+    "startup_ms": 69.0,
+    "outage_ms": 221.19,
+    "live": "inside",
+    "first_safe_ms": 107.16,
+    "derived_detect_plus_route_ms": 107.0,
+    "safe_state_violated": 0,
+    "final_element_silent": 0,
+    "mode_events": [
+      "mode 'rt_av_demo/bringup.launch.xml/driving': LOST \u2014 falling to 'rt_av_demo/bringup.launch.xml/stopped'",
+      "mode 'rt_av_demo/bringup.launch.xml/driving': available again"
+    ],
+    "agree": true,
+    "outage_within_credit": true,
+    "first_safe_within_bound": true,
+    "invariant_held": true
+  },
+  "unfit": {
+    "static": "recovery-unfit",
+    "credited_total_ms": 1133.0,
+    "startup_ms": 33.0,
+    "outage_ms": 1401.91,
+    "live": "past",
+    "first_safe_ms": 102.0,
+    "derived_detect_plus_route_ms": 107.0,
+    "safe_state_violated": 0,
+    "final_element_silent": 0,
+    "mode_events": [
+      "mode 'rt_av_demo/bringup.launch.xml/driving': LOST \u2014 falling to 'rt_av_demo/bringup.launch.xml/stopped'",
+      "mode 'rt_av_demo/bringup.launch.xml/driving': available again"
+    ],
+    "agree": true,
+    "outage_within_credit": false,
+    "first_safe_within_bound": true,
+    "invariant_held": true
+  }
+}

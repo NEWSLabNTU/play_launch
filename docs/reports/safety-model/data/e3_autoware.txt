@@ -1,0 +1,134 @@
+Parsing launch file: /opt/autoware/1.5.0/share/autoware_launch/launch/planning_simulator.launch.xml
+[2m2026-11-09T11:11:07.246932Z[0m [33m WARN[0m Executing $(command xacro /opt/autoware/1.5.0/share/tier4_vehicle_launch/urdf/vehicle.xacro vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit config_dir:=/opt/autoware/1.5.0/share/sample_sensor_kit_description/config) — command substitutions run arbitrary shell commands. Use --block-commands to reject them.
+[2m2026-11-09T11:11:07.345081Z[0m [33m WARN[0m Executing $(command xacro /opt/autoware/1.5.0/share/tier4_vehicle_launch/urdf/vehicle.xacro vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit config_dir:=/opt/autoware/1.5.0/share/sample_sensor_kit_description/config) — command substitutions run arbitrary shell commands. Use --block-commands to reject them.
+Parsed: 169 scopes, 34 nodes, 15 containers, 70 composable nodes
+
+-- Install prefixes (--explain) --
+PACKAGE                                      PREFIX
+autoware_adapi_adaptors                      /opt/autoware/1.5.0
+autoware_component_interface_tools           /opt/autoware/1.5.0
+autoware_component_state_monitor             /opt/autoware/1.5.0
+autoware_control_evaluator                   /opt/autoware/1.5.0
+autoware_default_adapi_universe              /opt/autoware/1.5.0
+autoware_detected_object_feature_remover     /opt/autoware/1.5.0
+autoware_diagnostic_graph_aggregator         /opt/autoware/1.5.0
+autoware_diagnostic_graph_utils              /opt/autoware/1.5.0
+autoware_dummy_diag_publisher                /opt/autoware/1.5.0
+autoware_dummy_perception_publisher          /opt/autoware/1.5.0
+autoware_duplicated_node_checker             /opt/autoware/1.5.0
+autoware_external_cmd_converter              /opt/autoware/1.5.0
+autoware_external_cmd_selector               /opt/autoware/1.5.0
+autoware_external_velocity_limit_selector    /opt/autoware/1.5.0
+autoware_global_parameter_loader             /opt/autoware/1.5.0
+autoware_hazard_lights_selector              /opt/autoware/1.5.0
+autoware_hazard_status_converter             /opt/autoware/1.5.0
+autoware_launch                              /opt/autoware/1.5.0
+autoware_manual_lane_change_handler          /opt/autoware/1.5.0
+autoware_map_based_prediction                /opt/autoware/1.5.0
+autoware_map_projection_loader               /opt/autoware/1.5.0
+autoware_mission_planner_universe            /opt/autoware/1.5.0
+autoware_mrm_comfortable_stop_operator       /opt/autoware/1.5.0
+autoware_mrm_emergency_stop_operator         /opt/autoware/1.5.0
+autoware_mrm_handler                         /opt/autoware/1.5.0
+autoware_multi_object_tracker                /opt/autoware/1.5.0
+autoware_perception_online_evaluator         /opt/autoware/1.5.0
+autoware_pipeline_latency_monitor            /opt/autoware/1.5.0
+autoware_planning_evaluator                  /opt/autoware/1.5.0
+autoware_planning_validator                  /opt/autoware/1.5.0
+autoware_pose_initializer                    /opt/autoware/1.5.0
+autoware_probabilistic_occupancy_grid_map    /opt/autoware/1.5.0
+autoware_processing_time_checker             /opt/autoware/1.5.0
+autoware_remaining_distance_time_calculator  /opt/autoware/1.5.0
+autoware_scenario_selector                   /opt/autoware/1.5.0
+autoware_shape_estimation                    /opt/autoware/1.5.0
+autoware_simple_planning_simulator           /opt/autoware/1.5.0
+autoware_topic_state_monitor                 /opt/autoware/1.5.0
+autoware_vehicle_door_simulator              /opt/autoware/1.5.0
+autoware_vehicle_info_utils                  /opt/autoware/1.5.0
+tier4_autoware_api_launch                    /opt/autoware/1.5.0
+tier4_control_launch                         /opt/autoware/1.5.0
+tier4_map_launch                             /opt/autoware/1.5.0
+tier4_perception_launch                      /opt/autoware/1.5.0
+tier4_planning_launch                        /opt/autoware/1.5.0
+tier4_simulator_launch                       /opt/autoware/1.5.0
+tier4_system_launch                          /opt/autoware/1.5.0
+tier4_vehicle_launch                         /opt/autoware/1.5.0
+[2m2026-11-09T11:11:07.830702Z[0m [32m INFO[0m Loaded 4 manifest(s) [4 overlay, 0 provider] (79 scopes without manifests)
+
+-- Cross-scope diagnostics --
+  info[graph-from-remaps]: 105 topic(s) and 258 endpoint(s) derived from launch remaps that no contract declares; 52 remap(s) name a topic but not a direction and were left out. A derived edge is an inference from the `~/input/`-`~/output/` convention, not a declaration: it fills the graph the causal rules walk, and a contract always overrides it
+    at topics
+  warning[causal-dag-global]: cross-scope causal cycle in the merged dataflow graph (state edges already excluded): /control/vehicle_cmd_gate -> /control/external_cmd_converter (via /control/current_gate_mode), /control/external_cmd_converter -> /control/vehicle_cmd_gate (via /external/selected/control_cmd). Contract files: /home/aeon/repos/play_launch/tests/fixtures/autoware/contracts/tier4_control_launch/launch/control.contract.yaml. This may be a legitimate design (e.g. a simulator closing a physical control loop) or a missed 'state: true' tag on one of these subscribers -- see the per-manifest 'causal-dag' rule, which cannot see cross-scope cycles like this one.
+    at graph
+  warning[causal-dag-global]: cross-scope causal cycle in the merged dataflow graph (state edges already excluded): /control/autoware_shift_decider -> /control/vehicle_cmd_gate (via /control/shift_decider/gear_cmd), /control/vehicle_cmd_gate -> /simulation/autoware_simple_planning_simulator_node (via /control/command/gear_cmd), /simulation/autoware_simple_planning_simulator_node -> /control/autoware_shift_decider (via /vehicle/status/gear_status). Contract files: /home/aeon/repos/play_launch/tests/fixtures/autoware/contracts/tier4_control_launch/launch/control.contract.yaml. This may be a legitimate design (e.g. a simulator closing a physical control loop) or a missed 'state: true' tag on one of these subscribers -- see the per-manifest 'causal-dag' rule, which cannot see cross-scope cycles like this one.
+    at graph
+  warning[causal-dag-global]: cross-scope causal cycle in the merged dataflow graph (state edges already excluded): /control/vehicle_cmd_gate -> /simulation/autoware_simple_planning_simulator_node (via /control/command/gear_cmd), /simulation/autoware_simple_planning_simulator_node -> /control/vehicle_cmd_gate (via /localization/acceleration). Contract files: /home/aeon/repos/play_launch/tests/fixtures/autoware/contracts/tier4_control_launch/launch/control.contract.yaml. This may be a legitimate design (e.g. a simulator closing a physical control loop) or a missed 'state: true' tag on one of these subscribers -- see the per-manifest 'causal-dag' rule, which cannot see cross-scope cycles like this one.
+    at graph
+  warning[causal-dag-global]: cross-scope causal cycle in the merged dataflow graph (state edges already excluded): /simulation/autoware_simple_planning_simulator_node -> /planning/planning_validator (via /localization/acceleration), /planning/planning_validator -> /simulation/autoware_simple_planning_simulator_node (via /planning/trajectory). Contract files: none -- every node on this cycle was derived from the launch file's remaps, not declared. This may be a legitimate design (e.g. a simulator closing a physical control loop) or a missed 'state: true' tag on one of these subscribers -- see the per-manifest 'causal-dag' rule, which cannot see cross-scope cycles like this one.
+    at graph
+  warning[causal-dag-global]: cross-scope causal cycle in the merged dataflow graph (state edges already excluded): /control/vehicle_cmd_gate -> /simulation/autoware_simple_planning_simulator_node (via /control/command/gear_cmd), /simulation/autoware_simple_planning_simulator_node -> /planning/scenario_planning/lane_driving/behavior_planning/behavior_path_planner (via /localization/acceleration), /planning/scenario_planning/lane_driving/behavior_planning/behavior_path_planner -> /control/vehicle_cmd_gate (via /planning/turn_indicators_cmd). Contract files: /home/aeon/repos/play_launch/tests/fixtures/autoware/contracts/tier4_control_launch/launch/control.contract.yaml. This may be a legitimate design (e.g. a simulator closing a physical control loop) or a missed 'state: true' tag on one of these subscribers -- see the per-manifest 'causal-dag' rule, which cannot see cross-scope cycles like this one.
+    at graph
+  warning[causal-dag-global]: cross-scope causal cycle in the merged dataflow graph (state edges already excluded): /control/vehicle_cmd_gate -> /simulation/autoware_simple_planning_simulator_node (via /control/command/gear_cmd), /simulation/autoware_simple_planning_simulator_node -> /planning/scenario_planning/lane_driving/behavior_planning/behavior_path_planner (via /localization/acceleration), /planning/scenario_planning/lane_driving/behavior_planning/behavior_path_planner -> /planning/scenario_planning/autoware_hazard_lights_selector (via /planning/behavior_path_planner/hazard_lights_cmd), /planning/scenario_planning/autoware_hazard_lights_selector -> /control/vehicle_cmd_gate (via /planning/hazard_lights_cmd). Contract files: /home/aeon/repos/play_launch/tests/fixtures/autoware/contracts/tier4_control_launch/launch/control.contract.yaml. This may be a legitimate design (e.g. a simulator closing a physical control loop) or a missed 'state: true' tag on one of these subscribers -- see the per-manifest 'causal-dag' rule, which cannot see cross-scope cycles like this one.
+    at graph
+  warning[causal-dag-global]: cross-scope causal cycle in the merged dataflow graph (state edges already excluded): /planning/scenario_planning/scenario_selector -> /planning/scenario_planning/parking/freespace_planner (via /planning/scenario_planning/scenario), /planning/scenario_planning/parking/freespace_planner -> /planning/scenario_planning/scenario_selector (via /planning/scenario_planning/parking/trajectory). Contract files: none -- every node on this cycle was derived from the launch file's remaps, not declared. This may be a legitimate design (e.g. a simulator closing a physical control loop) or a missed 'state: true' tag on one of these subscribers -- see the per-manifest 'causal-dag' rule, which cannot see cross-scope cycles like this one.
+    at graph
+  warning[causal-dag-global]: cross-scope causal cycle in the merged dataflow graph (state edges already excluded): /control/vehicle_cmd_gate -> /simulation/autoware_simple_planning_simulator_node (via /control/command/gear_cmd), /simulation/autoware_simple_planning_simulator_node -> /system/mrm_handler (via /localization/kinematic_state), /system/mrm_handler -> /control/vehicle_cmd_gate (via /system/emergency/gear_cmd). Contract files: /home/aeon/repos/play_launch/tests/fixtures/autoware/contracts/autoware_mrm_handler/launch/mrm_handler.contract.yaml, /home/aeon/repos/play_launch/tests/fixtures/autoware/contracts/tier4_control_launch/launch/control.contract.yaml. This may be a legitimate design (e.g. a simulator closing a physical control loop) or a missed 'state: true' tag on one of these subscribers -- see the per-manifest 'causal-dag' rule, which cannot see cross-scope cycles like this one.
+    at graph
+  warning[causal-dag-global]: cross-scope causal cycle in the merged dataflow graph (state edges already excluded): /system/mrm_handler -> /system/mrm_comfortable_stop_operator (via /system/mrm/comfortable_stop/operate), /system/mrm_comfortable_stop_operator -> /system/mrm_handler (via /system/mrm/comfortable_stop/status). Contract files: /home/aeon/repos/play_launch/tests/fixtures/autoware/contracts/autoware_mrm_handler/launch/mrm_handler.contract.yaml. This may be a legitimate design (e.g. a simulator closing a physical control loop) or a missed 'state: true' tag on one of these subscribers -- see the per-manifest 'causal-dag' rule, which cannot see cross-scope cycles like this one.
+    at graph
+  warning[causal-dag-global]: cross-scope causal cycle in the merged dataflow graph (state edges already excluded): /control/vehicle_cmd_gate -> /simulation/autoware_simple_planning_simulator_node (via /control/command/gear_cmd), /simulation/autoware_simple_planning_simulator_node -> /system/mrm_handler (via /localization/kinematic_state), /system/mrm_handler -> /system/mrm_emergency_stop_operator (via /system/mrm/emergency_stop/operate), /system/mrm_emergency_stop_operator -> /control/vehicle_cmd_gate (via /system/emergency/control_cmd). Contract files: /home/aeon/repos/play_launch/tests/fixtures/autoware/contracts/autoware_mrm_emergency_stop_operator/launch/mrm_emergency_stop_operator.contract.yaml, /home/aeon/repos/play_launch/tests/fixtures/autoware/contracts/autoware_mrm_handler/launch/mrm_handler.contract.yaml, /home/aeon/repos/play_launch/tests/fixtures/autoware/contracts/tier4_control_launch/launch/control.contract.yaml. This may be a legitimate design (e.g. a simulator closing a physical control loop) or a missed 'state: true' tag on one of these subscribers -- see the per-manifest 'causal-dag' rule, which cannot see cross-scope cycles like this one.
+    at graph
+  warning[causal-dag-global]: cross-scope causal cycle in the merged dataflow graph (state edges already excluded): /system/mrm_handler -> /system/mrm_emergency_stop_operator (via /system/mrm/emergency_stop/operate), /system/mrm_emergency_stop_operator -> /system/mrm_handler (via /system/mrm/emergency_stop/status). Contract files: /home/aeon/repos/play_launch/tests/fixtures/autoware/contracts/autoware_mrm_emergency_stop_operator/launch/mrm_emergency_stop_operator.contract.yaml, /home/aeon/repos/play_launch/tests/fixtures/autoware/contracts/autoware_mrm_handler/launch/mrm_handler.contract.yaml. This may be a legitimate design (e.g. a simulator closing a physical control loop) or a missed 'state: true' tag on one of these subscribers -- see the per-manifest 'causal-dag' rule, which cannot see cross-scope cycles like this one.
+    at graph
+  warning[reaction-unguarded]: hazard 'mode_unavailable' enters mode 'autonomous', whose reaction ends at /control/command/control_cmd and no subscriber there declares an `on_violation` -- a stalled reaction would go unnoticed. Monitor it with a second hazard whose `monitors:` name this output [requirement SG-AW-1]
+    at hazards.mode_unavailable.enters
+  info[fault-reaction-time]: system.contract.yaml:66: hazard 'mode_unavailable': detection 500.00ms (/system/mrm_handler/operation_mode_availability detects within 500.00ms) + reaction 1444.00ms (reaction route /system/mrm_handler/call_mrm -> /system/mrm_emergency_stop_operator/stop -> /control/vehicle_cmd_gate/gate_emergency = 244.00ms + settle 1200.00ms) = 1944.00ms fits the fault-tolerant time interval 2000.00ms with 56.00ms of slack [requirement SG-AW-1]
+    at hazards.mode_unavailable.ftti
+  error[fault-reaction-time]: system.contract.yaml:72: hazard 'mode_unavailable_tight': detection 500.00ms (/system/mrm_handler/operation_mode_availability detects within 500.00ms) + reaction 1444.00ms (reaction route /system/mrm_handler/call_mrm -> /system/mrm_emergency_stop_operator/stop -> /control/vehicle_cmd_gate/gate_emergency = 244.00ms + settle 1200.00ms) = 1944.00ms exceeds the fault-tolerant time interval 1500.00ms. Tighten the slowest detector, shorten the reaction route, or the hazard is not covered in time
+    at hazards.mode_unavailable_tight.ftti
+  warning[reaction-unguarded]: hazard 'mode_unavailable_tight' reaction 'system.emergency_stop' ends at /control/command/control_cmd and no subscriber there declares an `on_violation` -- a stalled reaction would go unnoticed. Monitor it with a second hazard whose `monitors:` name this output
+    at hazards.mode_unavailable_tight.reaction
+
+-- Hazards (--explain) --
+  hazard 'mode_unavailable' implements SG-AW-1 (Autoware HARA (illustrative)) at ASIL_D: it watches /system/operation_mode/availability for omission; the system must reach a safe state within 2000.00ms; it enters mode 'autonomous', reaching 'emergency_stop' (minimal risk condition) in 1944.00ms. At 'comfortable_stop', /planning/scenario_planning/max_velocity must carry max_velocity == 0. At 'emergency_stop', /control/command/control_cmd must carry longitudinal.velocity == 0 and longitudinal.acceleration <= 0.
+  hazard 'mode_unavailable_tight' names no requirement: it watches /system/operation_mode/availability for omission; the system must reach a safe state within 1500.00ms; it reacts by 'system.emergency_stop', reaching 'system.emergency_stop' (minimal risk condition) in 1944.00ms.
+
+-- Fault-reaction budgets (--explain, ms) --
+HAZARD                  DEGRADATION            ROLE     DETECT  DWELLS   ROUTE           SETTLE    TOTAL     FTTI    SLACK
+mode_unavailable        comfortable_stop       skipped       -       -       -                -        -  2000.00        -
+mode_unavailable        emergency_stop         mrc      500.00    0.00  244.00  1200.00 literal  1944.00  2000.00    56.00
+mode_unavailable_tight  system.emergency_stop  mrc      500.00    0.00  244.00  1200.00 literal  1944.00  1500.00  -444.00
+  TOTAL = DETECT + DWELLS + ROUTE + SETTLE; DWELLS is the route and dwell of every degradation level with a `min_dwell` passed on the way, up to its deadline.
+  A dwell is a least time (`dwell >=`); noticing its deadline is the first hop of the ROUTE below it (`dwell-expiry`), never a second charge.
+  ROUTE includes the guard edge's link (`max_transport` into the detecting subscriber), except after a dwell's deadline.
+  DEGRADATION is the level of the hazard's fallback sequence (a mode, or the event chain of a one-level reaction); role `mrc` is the minimal risk condition, its last level.
+  mode_unavailable/comfortable_stop: requires operation_mode_availability, which this fault removes
+
+-- Stated budgets (--explain, ms) --
+BUDGET                                                                                                          MS  SOURCE    LEVEL  CHECKED BY
+system.contract.yaml: hazards.mode_unavailable.ftti                                                        2000.00  unstated  -      fault-reaction sum (the interval)
+system.contract.yaml: hazards.mode_unavailable_tight.ftti                                                  1500.00  unstated  -      fault-reaction sum (the interval)
+system.contract.yaml: paths.system.comfortable_stop.max_latency                                            4000.00  unstated  -      chain-latency; runtime monitor (max-latency-runtime)
+system.contract.yaml: paths.system.emergency_stop.max_latency                                               300.00  unstated  -      chain-latency; runtime monitor (max-latency-runtime)
+mrm_emergency_stop_operator.contract.yaml: nodes.mrm_emergency_stop_operator.paths.stop.max_latency          34.00  unstated  -      fault-reaction sum (mode_unavailable, mode_unavailable_tight); chain-latency (where an event chain's route crosses the node); runtime monitor (the realizer's path deadline)
+mrm_emergency_stop_operator.contract.yaml: nodes.mrm_emergency_stop_operator.paths.stop.safe_state.settle  1200.00  unstated  -      nothing
+mrm_handler.contract.yaml: nodes.mrm_handler.paths.call_mrm.max_latency                                     110.00  unstated  -      fault-reaction sum (mode_unavailable, mode_unavailable_tight); reaction-within; chain-latency (where an event chain's route crosses the node); runtime monitor (the realizer's path deadline)
+mrm_handler.contract.yaml: nodes.mrm_handler.sub.operation_mode_availability.on_violation.within            150.00  unstated  -      reaction-within
+control.contract.yaml: nodes.vehicle_cmd_gate.paths.gate.max_latency                                        100.00  unstated  -      chain-latency (where an event chain's route crosses the node); runtime monitor (the realizer's path deadline)
+control.contract.yaml: nodes.vehicle_cmd_gate.paths.gate.safe_state.settle                                 1200.00  unstated  -      nothing
+control.contract.yaml: nodes.vehicle_cmd_gate.paths.gate_emergency.max_latency                              100.00  unstated  -      fault-reaction sum (mode_unavailable, mode_unavailable_tight); chain-latency (where an event chain's route crosses the node); runtime monitor (the realizer's path deadline)
+control.contract.yaml: nodes.vehicle_cmd_gate.paths.gate_emergency.safe_state.settle                       1200.00  unstated  -      fault-reaction sum (mode_unavailable, mode_unavailable_tight)
+  CHECKED BY: `fault-reaction sum` -- a hazard's detection, route or settle charges it (the hazards named); a rule that compares it with something; a runtime monitor the model hands to the realizer (for a supervised budget, only when it was lowered to a monitor with its reaction); `nothing` -- no check reads the number.
+  LEVEL: `bound` (analysed), `supervised` (`supervise:`), `unsupervised` (measured, nothing supervises it: `measured-unsupervised`), `-` (a requirement, a derived value, or no source).
+  2 stated budget(s) checked by nothing.
+
+-- Reaction totals (--explain, ms; `reaction_total` for extension checks) --
+mode_unavailable  1944.00  (mrc 'emergency_stop')
+mode_unavailable_tight  1944.00  (mrc 'system.emergency_stop')
+
+-- Extensions (--explain) --
+/home/aeon/repos/play_launch/tests/fixtures/autoware/contracts/tier4_system_launch/launch/system.contract.yaml  (lock: none)
+    iso26262 1.1.0  profile  sha256 8cdb7e677892158e0a874aae6dce3605debd1a8ad2a2c6988e927674005adcdd  bundled with the checker
+
+4 manifest(s) checked: 0 clean, 4 with errors (1 errors, 13 warnings)
+4 contract(s): 4 overlay, 0 provider

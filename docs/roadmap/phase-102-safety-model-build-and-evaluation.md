@@ -1,6 +1,6 @@
 # Phase 102 - the contract safety model: build order and evaluation
 
-**Status (2026-11-09): M0, M1 and M2 done.** M0a: F0's verdict is that F4 is needed (phase 100). M0b: the field reader. M1: rlm v0.3.13 and the static checks. M2: the runtime checks. Each below. Puts phases 100 and
+**Status (2026-11-09): M0 to M4 done, M5 evaluated** (`docs/reports/safety-model/`). M0a: F0's verdict is that F4 is needed (phase 100). M0b: the field reader. M1: rlm v0.3.13 and the static checks. M2: the runtime checks. Each below. Puts phases 100 and
 101 (the work) into one build order and adds the evaluation that decides
 whether the model is right. Design of record: rlm
 `docs/design/safety-functions.md` (issue 58) and
@@ -127,6 +127,60 @@ Not yet: a message constant name in a predicate is not judged at run time
 (the model carries the name, not its value), and a hazard's own `when:`
 still detects through its detector's output only. Unit tests cover each
 rule; the running-system checks are E4's (`rt_av_demo`'s `just fault`).
+
+### M3, explain, extension, guides (done 2026-11-09)
+
+- `check --explain` states each hazard as one sentence
+  (`ros/hazard_sentence.rs`): the requirement it implements, what it
+  watches for which classes, its bound, the levels it reaches with the time
+  charged for each (levels the fault removes and overrun rows left out),
+  and what each level commands. Every finding about a hazard ends
+  `[requirement <id>]`. Golden test `a_hazard_reads_as_one_sentence`; the
+  field census line for `requirement` is gone.
+- `mobile.protective_stop`, an rlm reference extension (unreleased; not
+  bundled, so a contract ships a copy): `field >= v * reaction_total +
+  v^2 / (2 decel) + margin`, all three worst cases proved. Safe-ROS's 5 cm
+  field is refused at 1 m/s (840.33 mm needed), 0.9 m passes
+  (`contract_protective_stop`, `_sized`).
+- Guides: `docs/guide/safety-function.md` (Safe-ROS to a sized protective
+  field, and Simplex as a pattern on `contract_simplex`) and
+  `docs/guide/fault-tolerance.md`; `runtime-enforcement.md` lists the M2
+  rules.
+
+### M4, nano-ros (PR open 2026-11-09)
+
+NEWSLabNTU/nano-ros#3341 bumps nano-ros to rlm v0.3.13. The image counts
+nothing for `repetition`/`resequencing`/`insertion` (listed unobserved),
+and writes each hazard's requirement as a comment in its generated tables.
+What the image checks, from its RFC-0052:
+
+| Field or rule | On the image |
+|---|---|
+| hazard detected / reaction / recovered, the active level as a mode | generated, unchanged |
+| a level's route overrun | generated |
+| `requirement` | carried (a comment in the generated table) |
+| `repetition`, `resequencing` | carried, not checked: no stamp kept per publisher |
+| `insertion`, runtime `arbiter-bypass` | not applicable: an image's publishers are fixed by its source |
+| `m` | carried, not checked: the image does not read `functions` |
+| `commands` / `safe-state-violated` | carried, not checked: nothing on target reads message fields |
+| `on_silence` / `final-element-silent` | not applicable: the consumer is not on the image |
+| recovery inside / past the FTTI | not applicable: an image does not respawn |
+| `independence` | carried, not checked: Linux deployment facts |
+
+### M5, evaluation (done 2026-11-09)
+
+`docs/reports/safety-model/` (`generate.py` writes `results.md`). E1
+pass (12 cases, 6 gaps ruled); E2 16 of 17 (no rule for a stop that never
+releases: `level-not-released`, follow-up); E3 pass (the one new finding
+on Autoware was a true one about the first draft); E4 credit and run agree
+in both cases, but one restart outlasted its credit (the credit samples a
+first spawn's startup); E5 no difference above noise on the idle
+simulator, 52.2 ns per field; E6 26 lines against 58 for the dropped forms,
+one fact written twice until rlm's type-only fix is pinned; E7 not run.
+Three defects found and fixed: `startup_timeline.json` was written before
+any first publish was known, so no real run could credit a restart; a
+type-only contract topic was dropped (rlm) and not wired (resolver); and
+`reaction-unguarded` called a mode a reaction.
 
 ## Evaluation
 

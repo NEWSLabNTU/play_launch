@@ -1,0 +1,34 @@
+[
+  {
+    "topic": "/control/command/control_cmd",
+    "field": "longitudinal.acceleration",
+    "sources": [
+      "modes.tier4_system_launch/system.launch.xml/emergency_stop.commands"
+    ],
+    "messages": 20,
+    "changes": 1,
+    "publishers": 1,
+    "last": -1.5
+  },
+  {
+    "topic": "/control/command/control_cmd",
+    "field": "longitudinal.velocity",
+    "sources": [
+      "modes.tier4_system_launch/system.launch.xml/emergency_stop.commands"
+    ],
+    "messages": 20,
+    "changes": 0,
+    "publishers": 1,
+    "last": 0.0
+  },
+  {
+    "topic": "/planning/scenario_planning/max_velocity",
+    "field": "max_velocity",
+    "sources": [
+      "modes.tier4_system_launch/system.launch.xml/comfortable_stop.commands"
+    ],
+    "messages": 0,
+    "changes": 0,
+    "publishers": 0
+  }
+]

@@ -1,0 +1,8 @@
+# Phase 102 E5: tmp/e5/run.sh, Autoware 1.5.0 planning simulator, 120 s per run, no goal set.
+# Arms alternate: fields-1, nofields-1, fields-2, nofields-2 (play_log/latest/play_launch.log).
+fields-1: 15.2% of a core (rclrs executor 0.00%, interception 1.12%, monitor 0.58%, diagnostics 0.36%, entities 0.33%, graph 0.27%, logs 0.03%, web 0.00%)
+nofields-1: 12.4% of a core (rclrs executor 0.00%, interception 1.42%, monitor 0.52%, diagnostics 0.44%, entities 0.38%, graph 0.31%, logs 0.04%, web 0.00%)
+fields-2: 14.4% of a core (rclrs executor 0.00%, interception 1.08%, monitor 0.48%, diagnostics 0.34%, entities 0.33%, graph 0.31%, logs 0.03%, web 0.00%)
+nofields-2: 15.6% of a core (rclrs executor 0.00%, interception 1.30%, monitor 0.50%, diagnostics 0.43%, entities 0.39%, graph 0.31%, logs 0.04%, web 0.00%)
+# FieldValue messages read (interception/fields.json): fields-1 40, fields-2 26; nofields: none declared.
+# Interceptor microbenchmark (field_hook_cost, release, this host): field hook overhead: 52.2 ns per field

@@ -258,7 +258,7 @@ cause.
 
 ## The rules
 
-Thirteen rule ids. "Contract field" is what a rule reads to have an opinion;
+Seventeen rule ids. "Contract field" is what a rule reads to have an opinion;
 a rule with none is comparing the running system against itself.
 
 | rule id | severity | reads | fires when |
@@ -272,10 +272,14 @@ a rule with none is comparing the running system against itself.
 | `max-latency-runtime` | error | `paths.<p>.max_latency` (event chain) | the same `header.stamp` reaches the path's output topic later than the budget allows after its publish on the input topic |
 | `deadline-runtime` | warning | `qos.deadline` (applied to the node as a `qos_overrides.*` parameter — phase 74) | DDS reports a missed deadline on either side |
 | `liveliness-runtime` | error / warning | `qos.liveliness`, `qos.lease_duration` | error: DDS `LIVELINESS_LOST` on a publisher. warning: `LIVELINESS_CHANGED` on a subscription — the topic's publisher set changed shape |
-| `hazard-detected` | error | `hazards.<h>.monitors`; threshold from the reacting subscriber's `sub.<e>.max_age` or `qos.lease_duration` | a guard topic goes silent past the threshold — or DDS reports it lost liveliness or missed its deadline first. Absent a declared detector the threshold is 10× the guard's own median period, minimal risk condition 50 ms. Silence produces no event, so it is judged on the consumer's 10 ms tick |
+| `hazard-detected` | error | `hazards.<h>.monitors`, `hazards.<h>.on`; threshold from the reacting subscriber's `sub.<e>.max_age` or `qos.lease_duration` | a guard topic goes silent past the threshold — or DDS reports it lost liveliness or missed its deadline first. Absent a declared detector the threshold is 10× the guard's own median period, at least 50 ms. Silence produces no event, so it is judged on the consumer's 10 ms tick. With `repetition`, `resequencing` or `insertion` in `on:`, also a message whose stamp repeats or goes back from the same publisher, or a publisher the contract does not name |
 | `hazard-reaction` | warning / error | `hazards.<h>.ftti`, `paths.<p>.safe_state.settle` | the first publish on the reaction path's output topic that carries no provenance from the dead guard. Warning when `reaction + settle` fits the FTTI (with the slack named), **error** when it exceeds it. The message also reports when the observer itself noticed, which is usually later than the node's own watchdog |
 | `hazard-recovered` | warning | — | the guard resumes publishing, with how long it was out |
-| `mode-availability` | warning / error | `modes.<m>.requires` / `fallback`, `functions.<f>` | a mode becomes unavailable because a function it requires has a silent guard. Warning naming the degradation level it falls to, **error** when no degradation level of the fallback sequence is available either. Reported once per transition, not once per event |
+| `mode-availability` | warning / error | `modes.<m>.requires` / `fallback`, `functions.<f>` (`m`, `when`) | a mode becomes unavailable because a function it requires has a silent guard, has fewer than `m` live members, or its `when:` predicate holds on the latest value. Warning naming the degradation level it falls to, **error** when no degradation level of the fallback sequence is available either. Reported once per transition, not once per event |
+| `safe-state-violated` | error | `modes.<m>.commands`; the bound from the checker's reaction time for that level | a message on a commanded topic breaks a predicate after the active level's bound, until the mode above it is available again. Once per entry of the level |
+| `final-element-silent` | error | `modes.<m>.commands`, `topics.<t>.external.on_silence` | a commanded topic goes silent (ten median gaps, at least 50 ms) while its level is active, and its consumer states no `on_silence` |
+| `safe-state-unjudged` | warning | `modes.<m>.commands` | an active level commands a topic no hazard's reaction route reaches, so there is no bound to judge from |
+| `arbiter-bypass` | error | `modes.<m>.commands`, `topics.<t>.pub` | a publisher is created on a commanded topic by a node other than its one declared publisher |
 
 Three things about the table worth knowing before you read output against it.
 

@@ -1,0 +1,129 @@
+Parsing launch file: /home/aeon/repos/play_launch/examples/rt_av_demo/install/rt_av_demo/share/rt_av_demo/launch/bringup.launch.xml
+Parsed: 6 scopes, 10 nodes, 0 containers, 0 composable nodes
+
+-- Install prefixes (--explain) --
+PACKAGE     PREFIX
+rt_av_demo  /home/aeon/repos/play_launch/examples/rt_av_demo/install/rt_av_demo
+2026-11-09T11:15:20.633156Z  INFO Loaded 1 manifest(s) [0 overlay, 1 provider] (0 scopes without manifests)
+2026-11-09T11:15:20.633176Z  INFO Scheduling platform file [provider]: /home/aeon/repos/play_launch/examples/rt_av_demo/src/rt_av_demo/launch/bringup.system.posix.yaml
+Scheduling platform file [provider]: /home/aeon/repos/play_launch/examples/rt_av_demo/src/rt_av_demo/launch/bringup.system.posix.yaml
+Scheduling (posix, priority_assignment=chain_aware): 6 task(s)
+  task /safety/brake_controller prio=40   sched_class=SCHED_FIFO core=-    members=1
+      /safety/brake_controller
+  task /safety/obstacle_detector prio=39   sched_class=SCHED_FIFO core=-    members=1
+      /safety/obstacle_detector
+  task /safety/lidar_driver prio=38   sched_class=SCHED_FIFO core=-    members=1
+      /safety/lidar_driver
+  task default          prio=0    sched_class=-          core=-    members=5
+      /planning/path_planner
+      /tools/diagnostics_aggregator
+      /tools/health_monitor
+      /tools/rosbag_recorder
+      /tools/visualizer
+  task /perception/map_loader prio=0    sched_class=SCHED_OTHER core=-    members=1
+      /perception/map_loader
+  task /telemetry/telemetry_logger prio=0    sched_class=SCHED_OTHER core=-    members=1
+      /telemetry/telemetry_logger
+2 scheduling warning(s) (2 suppressed: chain-intended)
+  warning[sched:other]: scheduling: chain 'lidar_to_brake' is feasible ON INCOMPLETE EVIDENCE -- boundary /safety/lidar_driver/sample carries no measured WCET, so the sampling cost counted it as ZERO execution time. The reported slack is an upper bound on what the chain can afford, not a statement about what it costs; supply a WCET to make the verdict mean what it says.
+  warning[sched:other]: scheduling: chain 'safety.stop' is feasible ON INCOMPLETE EVIDENCE -- boundary /safety/lidar_driver/sample carries no measured WCET, so the sampling cost counted it as ZERO execution time. The reported slack is an upper bound on what the chain can afford, not a statement about what it costs; supply a WCET to make the verdict mean what it says.
+FQN                            CLASS        PRIO  CORE  PROVENANCE
+/safety/brake_controller       SCHED_FIFO     40     -  derived(chain_aware: lidar_to_brake segment drain 1/2) -> prio 40 (max over 3 paths)
+/safety/obstacle_detector      SCHED_FIFO     39     -  derived(chain_aware: lidar_to_brake segment drain 2/2) -> prio 39 (max over 3 paths)
+/safety/lidar_driver           SCHED_FIFO     38     -  derived(chain_aware: lidar_to_brake boundary RM period=20ms) -> prio 38 (max over 2 paths)
+/perception/map_loader         SCHED_OTHER     0     -  override(map_loader)
+/planning/path_planner         SCHED_OTHER     0     -  default (no timing facts)
+/telemetry/telemetry_logger    SCHED_OTHER     0     -  override(telemetry_logger)
+/tools/diagnostics_aggregator  SCHED_OTHER     0     -  default (no timing facts)
+/tools/health_monitor          SCHED_OTHER     0     -  default (no timing facts)
+/tools/rosbag_recorder         SCHED_OTHER     0     -  default (no timing facts)
+/tools/visualizer              SCHED_OTHER     0     -  default (no timing facts)
+system file: provider(/home/aeon/repos/play_launch/examples/rt_av_demo/src/rt_av_demo/launch/bringup.system.posix.yaml)
+contract[scope 0, rt_av_demo/bringup.launch.xml]: provider(/home/aeon/repos/play_launch/examples/rt_av_demo/src/rt_av_demo/launch/bringup.contract.yaml)
+Compared with play_log/latest/interception/endpoints.tsv: 42 endpoint(s) created, 0 contract-vs-code finding(s)
+
+-- Cross-scope diagnostics --
+  info[path-exclusion]: event chain 'lidar_to_brake' (scope 0): the critical path assumes each node runs on arrival, but these traversals serialise with a sibling callback and may be delayed by it -- /safety/obstacle_detector/detect may wait for [declare_lost] (up to 2.00ms); /safety/brake_controller/brake may wait for [emergency_stop] (up to 5.00ms). Declare `concurrency.exclusive` on the node if they can in fact run concurrently; absent that declaration every path of a node is assumed to serialise, matching rclcpp's default callback group
+    at paths.lidar_to_brake
+  info[path-exclusion]: event chain 'safety.stop' (scope 0): the critical path assumes each node runs on arrival, but these traversals serialise with a sibling callback and may be delayed by it -- /safety/obstacle_detector/detect may wait for [declare_lost] (up to 2.00ms); /safety/brake_controller/brake may wait for [emergency_stop] (up to 5.00ms). Declare `concurrency.exclusive` on the node if they can in fact run concurrently; absent that declaration every path of a node is assumed to serialise, matching rclcpp's default callback group
+    at paths.safety.stop
+  info[derivable-min-rate]: publisher '/safety/lidar_driver/scan' promises min_rate_hz 50, which the graph already derives for '/safety/scan' from the timers that drive it. The declaration is redundant and can be deleted
+    at nodes./safety/lidar_driver.pub.scan.min_rate_hz
+  warning[reaction-unguarded]: hazard 'drive_blind' enters mode 'driving', whose reaction ends at /safety/brake_cmd and no subscriber there declares an `on_violation` -- a stalled reaction would go unnoticed. Monitor it with a second hazard whose `monitors:` name this output [requirement DEMO-1]
+    at hazards.drive_blind.enters
+  info[fault-reaction-time]: bringup.contract.yaml:61: hazard 'drive_blind': detection 100.00ms (/safety/obstacle_detector/scan detects within 100.00ms) + reaction 207.00ms (reaction route /safety/obstacle_detector/declare_lost -> /safety/brake_controller/emergency_stop = 7.00ms + settle 200.00ms) = 307.00ms fits the fault-tolerant time interval 500.00ms with 193.00ms of slack [requirement DEMO-1]
+    at hazards.drive_blind.ftti
+  info[recovery-credited]: bringup.contract.yaml:61: hazard 'drive_blind': a restart of /safety/lidar_driver restores /safety/lidar_driver's output in detection 100.00ms + respawn_delay 100.00ms + startup 69.00ms = 269.00ms, inside the FTTI 500.00ms [requirement DEMO-1]
+    at hazards.drive_blind.ftti
+
+-- Hazards (--explain) --
+  hazard 'drive_blind' implements DEMO-1 (rt_av_demo, illustrative) at ASIL_D: it watches /safety/scan for omission; the system must reach a safe state within 500.00ms; it enters mode 'driving', reaching 'stopped' (minimal risk condition) in 307.00ms. At 'stopped', /safety/brake_cmd must carry payload == "emergency".
+
+-- Fault-reaction budgets (--explain, ms) --
+HAZARD       DEGRADATION  ROLE  DETECT  DWELLS  ROUTE          SETTLE   TOTAL    FTTI   SLACK
+drive_blind  stopped      mrc   100.00    0.00   7.00  200.00 literal  307.00  500.00  193.00
+  TOTAL = DETECT + DWELLS + ROUTE + SETTLE; DWELLS is the route and dwell of every degradation level with a `min_dwell` passed on the way, up to its deadline.
+  A dwell is a least time (`dwell >=`); noticing its deadline is the first hop of the ROUTE below it (`dwell-expiry`), never a second charge.
+  ROUTE includes the guard edge's link (`max_transport` into the detecting subscriber), except after a dwell's deadline.
+  DEGRADATION is the level of the hazard's fallback sequence (a mode, or the event chain of a one-level reaction); role `mrc` is the minimal risk condition, its last level.
+
+-- Stated budgets (--explain, ms) --
+BUDGET                                                             MS  SOURCE    LEVEL  CHECKED BY
+hazards.drive_blind.ftti                                       500.00  unstated  -      fault-reaction sum (the interval)
+nodes.brake_controller.paths.brake.max_latency                   8.00  unstated  -      chain-latency (where an event chain's route crosses the node); runtime monitor (the realizer's path deadline)
+nodes.brake_controller.paths.emergency_stop.max_latency          5.00  unstated  -      fault-reaction sum (drive_blind); reaction-within; chain-latency (where an event chain's route crosses the node); runtime monitor (the realizer's path deadline)
+nodes.brake_controller.paths.emergency_stop.safe_state.settle  200.00  unstated  -      fault-reaction sum (drive_blind)
+nodes.brake_controller.sub.obstacles.max_age                    60.00  unstated  -      the node itself (on_violation.mechanism)
+nodes.brake_controller.sub.obstacles.on_violation.within        20.00  unstated  -      reaction-within
+nodes.lidar_driver.paths.sample.max_latency                      2.00  unstated  -      chain-latency (where an event chain's route crosses the node); runtime monitor (the realizer's path deadline)
+nodes.obstacle_detector.paths.declare_lost.max_latency           2.00  unstated  -      fault-reaction sum (drive_blind); reaction-within; chain-latency (where an event chain's route crosses the node); runtime monitor (the realizer's path deadline)
+nodes.obstacle_detector.paths.detect.max_latency                12.00  unstated  -      chain-latency (where an event chain's route crosses the node); runtime monitor (the realizer's path deadline)
+nodes.obstacle_detector.sub.scan.on_violation.within            10.00  unstated  -      reaction-within
+paths.lidar_to_brake.max_latency                                60.00  unstated  -      chain-latency; runtime monitor (max-latency-runtime)
+paths.safety.stop.max_latency                                  100.00  unstated  -      chain-latency; runtime monitor (max-latency-runtime)
+  CHECKED BY: `fault-reaction sum` -- a hazard's detection, route or settle charges it (the hazards named); a rule that compares it with something; a runtime monitor the model hands to the realizer (for a supervised budget, only when it was lowered to a monitor with its reaction); `nothing` -- no check reads the number.
+  LEVEL: `bound` (analysed), `supervised` (`supervise:`), `unsupervised` (measured, nothing supervises it: `measured-unsupervised`), `-` (a requirement, a derived value, or no source).
+
+-- Reaction totals (--explain, ms; `reaction_total` for extension checks) --
+drive_blind  307.00  (mrc 'stopped')
+
+-- Extensions (--explain) --
+/home/aeon/repos/play_launch/examples/rt_av_demo/src/rt_av_demo/launch/bringup.contract.yaml  (lock: none)
+    iso26262 1.1.0  profile  sha256 8cdb7e677892158e0a874aae6dce3605debd1a8ad2a2c6988e927674005adcdd  bundled with the checker
+
+-- Timer periods (--explain, ms) --
+TIMER                        PERIOD      MIN    MAX
+/safety/lidar_driver/sample   20.00  unknown  20.00
+  MAX: the period may grow until a fault-reaction row runs out of slack (its slack over the number of periods it charges) or a check refuses it; MIN: the executor that runs the timer keeps up (sum of work / period <= 1 over its timers).
+  /safety/lidar_driver/sample: MIN unknown: /safety/lidar_driver/sample states no work
+  /safety/lidar_driver/sample: MAX 20.00 <- rule `derived-rate-hierarchy` above it: warning: subscriber '/safety/obstacle_detector/scan' requires min_rate_hz 50 on '/safety/scan', but the timers that drive it derive only 49.9996 Hz. The requirement cannot be met by any scheduling assignment -- the source is too slow
+
+-- Values read from the launch tree (--explain) --
+bringup.contract.yaml:
+  /safety/lidar_driver pub.scan.min_rate_hz = 50 Hz                <- $(let lidar_rate)
+                                                                   <- let lidar_rate: $(var lidar_hz) Hz = 50 Hz, bringup.contract.yaml:19
+                                                                   <- lidar_hz = 50 Hz, <arg> default bringup.launch.xml:13
+  /safety/lidar_driver pub.scan.qos.lease_duration = 100 ms        <- $(param obstacle_detector watchdog_ms) ms
+                                                                   <- /safety/obstacle_detector watchdog_ms = 100 ms, <param> bringup.launch.xml:42 = $(var watchdog_ms)
+                                                                   <- watchdog_ms = 100.0, <arg> default bringup.launch.xml:21
+  /safety/lidar_driver paths.sample.trigger.timer.rate_hz = 50 Hz  <- $(param rate_hz) Hz
+                                                                   <- /safety/lidar_driver rate_hz = 50 Hz, <param> bringup.launch.xml:34 = $(var lidar_hz)
+                                                                   <- lidar_hz = 50.0, <arg> default bringup.launch.xml:13
+  /safety/obstacle_detector sub.scan.min_rate_hz = 50 Hz           <- $(let lidar_rate)
+                                                                   <- let lidar_rate: $(var lidar_hz) Hz = 50 Hz, bringup.contract.yaml:19
+                                                                   <- lidar_hz = 50 Hz, <arg> default bringup.launch.xml:13
+  /safety/obstacle_detector sub.scan.qos.lease_duration = 100 ms   <- $(param watchdog_ms) ms
+                                                                   <- /safety/obstacle_detector watchdog_ms = 100 ms, <param> bringup.launch.xml:42 = $(var watchdog_ms)
+                                                                   <- watchdog_ms = 100.0, <arg> default bringup.launch.xml:21
+  /safety/obstacle_detector pub.obstacles.min_rate_hz = 50 Hz      <- $(let lidar_rate)
+                                                                   <- let lidar_rate: $(var lidar_hz) Hz = 50 Hz, bringup.contract.yaml:19
+                                                                   <- lidar_hz = 50 Hz, <arg> default bringup.launch.xml:13
+  /safety/brake_controller sub.obstacles.min_rate_hz = 50 Hz       <- $(let lidar_rate)
+                                                                   <- let lidar_rate: $(var lidar_hz) Hz = 50 Hz, bringup.contract.yaml:19
+                                                                   <- lidar_hz = 50 Hz, <arg> default bringup.launch.xml:13
+  /safety/brake_controller pub.brake_cmd.min_rate_hz = 50 Hz       <- $(let lidar_rate)
+                                                                   <- let lidar_rate: $(var lidar_hz) Hz = 50 Hz, bringup.contract.yaml:19
+                                                                   <- lidar_hz = 50 Hz, <arg> default bringup.launch.xml:13
+
+1 manifest(s) checked: 1 clean, 0 with errors (0 errors, 1 warnings)
+1 contract(s): 0 overlay, 1 provider

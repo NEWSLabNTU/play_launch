@@ -1,0 +1,258 @@
+Parsing launch file: src/safety_island_bringup/launch/safety_island.launch.xml
+Parsed: 1 scopes, 3 nodes, 0 containers, 0 composable nodes
+[2m2026-11-09T11:03:08.050057Z[0m [32m INFO[0m Loaded 1 manifest(s) [0 overlay, 1 provider] (0 scopes without manifests)
+
+-- Cross-scope diagnostics --
+  info[path-exclusion]: event chain 'island.tor' (scope 0): the critical path assumes each node runs on arrival, but these traversals serialise with a sibling callback and may be delayed by it -- /mrm_handler/on_timer may wait for [call_mrm, driver_exit] (up to 149.00ms). Declare `concurrency.exclusive` on the node if they can in fact run concurrently; absent that declaration every path of a node is assumed to serialise, matching rclcpp's default callback group
+    at paths.island.tor
+  info[fault-reaction-time]: safety_island.contract.yaml:588: hazard 'hpc_loss': detection 500.00ms (/mrm_handler/operation_mode_availability detects within 500.00ms) + reaction 4728.67ms (reaction route link 56.00ms into /mrm_handler/operation_mode_availability + /mrm_handler/call_mrm -> /mrm_emergency_stop_operator/on_timer (+33.33ms sampling + 6.00ms jitter) = 244.33ms + settle 4484.33ms) = 5228.67ms fits the fault-tolerant time interval 10000.00ms with 4771.33ms of slack [requirement SG-01]
+    at hazards.hpc_loss.ftti
+  info[fault-reaction-time]: safety_island.contract.yaml:601: hazard 'odd_exit': detection 100.00ms (/availability_gate/availability reports every 100.00ms + 0.00ms) + 'takeover_request' reaction 205.00ms + dwell 10000.00ms + reaction 4672.67ms (reaction route /mrm_handler/call_mrm -> /mrm_emergency_stop_operator/on_timer (+33.33ms sampling + 6.00ms jitter) = 188.33ms + settle 4484.33ms) = 14977.67ms fits the fault-tolerant time interval 30000.00ms with 15022.33ms of slack [requirement SG-02]
+    at hazards.odd_exit.ftti
+  info[settle-derived]: safety_island.contract.yaml:682: hazard 'odd_exit', degradation level 'comfortable_stop': settle = 10939.67ms derived by vehicle.braking 1.1.0 (sha256 5441e622d5c4)
+entry_speed = 8.33 m/s   (8.33 m/s)
+decel = 1 m/s^2   (min_acceleration)
+jerk = 0.3 m/s^3   (min_jerk)
+response = 943 ms   (943ms)
+braking_time(entry_speed, decel, jerk) = 9.9967 s
+  v0 = 8.33 m/s
+  a = 1 m/s^2
+  j = 0.3 m/s^3
+  v_r = a^2 / (2 j) = 1.6667 m/s
+  if v0 > v_r: 8.33 m/s > 1.6667 m/s, true: take `then`
+settle.duration = response + braking_time(entry_speed, decel, jerk) = 10.94 s
+worst case: proved increasing in entry_speed, response; decreasing in decel, jerk [requirement SG-02]
+    at nodes.mrm_comfortable_stop_operator.paths.operate.safe_state.settle
+  info[supervised-fit]: safety_island.contract.yaml:682: hazard 'odd_exit', degradation level 'comfortable_stop': if `nodes.mrm_comfortable_stop_operator.paths.operate.safe_state.settle` overruns, before it 10454.00ms + settle 10939.67ms (profile 9996.67ms + response 943.00ms) + observation 136.00ms (/mrm_handler/kinematic_state: period 100.00ms (/localization/kinematic_state rate_hz 10) + max_transport 36.00ms) + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.emergency_stop' 188.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 26306.33ms fits the fault-tolerant time interval 30000.00ms with 3693.67ms of slack [requirement SG-02]
+    at nodes.mrm_comfortable_stop_operator.paths.operate.safe_state.settle.supervise
+  info[settle-derived]: safety_island.contract.yaml:758: hazard 'hpc_loss', degradation level 'emergency_stop': settle = 4484.33ms derived by vehicle.braking 1.1.0 (sha256 5441e622d5c4)
+entry_speed = 8.33 m/s   (8.33 m/s)
+decel = 2.5 m/s^2   (target_acceleration)
+jerk = 1.5 m/s^3   (target_jerk)
+response = 319 ms   (319ms)
+braking_time(entry_speed, decel, jerk) = 4.1653 s
+  v0 = 8.33 m/s
+  a = 2.5 m/s^2
+  j = 1.5 m/s^3
+  v_r = a^2 / (2 j) = 2.0833 m/s
+  if v0 > v_r: 8.33 m/s > 2.0833 m/s, true: take `then`
+settle.duration = response + braking_time(entry_speed, decel, jerk) = 4.4843 s
+worst case: proved increasing in entry_speed, response; decreasing in decel, jerk [requirement SG-01]
+    at nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle
+  info[settle-derived]: safety_island.contract.yaml:758: hazard 'odd_exit', degradation level 'emergency_stop': settle = 4484.33ms derived by vehicle.braking 1.1.0 (sha256 5441e622d5c4)
+entry_speed = 8.33 m/s   (8.33 m/s)
+decel = 2.5 m/s^2   (target_acceleration)
+jerk = 1.5 m/s^3   (target_jerk)
+response = 319 ms   (319ms)
+braking_time(entry_speed, decel, jerk) = 4.1653 s
+  v0 = 8.33 m/s
+  a = 2.5 m/s^2
+  j = 1.5 m/s^3
+  v_r = a^2 / (2 j) = 2.0833 m/s
+  if v0 > v_r: 8.33 m/s > 2.0833 m/s, true: take `then`
+settle.duration = response + braking_time(entry_speed, decel, jerk) = 4.4843 s
+worst case: proved increasing in entry_speed, response; decreasing in decel, jerk [requirement SG-02]
+    at nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle
+  info[supervised-fit]: safety_island.contract.yaml:758: hazard 'hpc_loss', degradation level 'emergency_stop': if `nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle` overruns, before it 744.33ms + settle 4484.33ms (profile 4165.33ms + response 319.00ms) + observation 136.00ms (/mrm_handler/kinematic_state: period 100.00ms (/localization/kinematic_state rate_hz 10) + max_transport 36.00ms) + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.floor_override' 39.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 9992.33ms fits the fault-tolerant time interval 10000.00ms with 7.67ms of slack [requirement SG-01]
+    at nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise
+  info[supervised-fit]: safety_island.contract.yaml:758: hazard 'odd_exit', degradation level 'emergency_stop': if `nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle` overruns, before it 10493.33ms + settle 4484.33ms (profile 4165.33ms + response 319.00ms) + observation 136.00ms (/mrm_handler/kinematic_state: period 100.00ms (/localization/kinematic_state rate_hz 10) + max_transport 36.00ms) + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.floor_override' 39.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 19741.33ms fits the fault-tolerant time interval 30000.00ms with 10258.67ms of slack [requirement SG-02]
+    at nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise
+  info[supervised-early]: safety_island.contract.yaml:758: hazard 'hpc_loss', degradation level 'emergency_stop': the response check of `nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle` (shed 0.25 m/s by 1319.00ms after the command) fits: the nominal profile sheds 0.7500 m/s by then (vehicle.braking 1.1.0), 0.5000 m/s above `drop`; a vehicle slower than that has stopped, which the check counts as met
+decel = 2.5 m/s^2   (target_acceleration)
+jerk = 1.5 m/s^3   (target_jerk)
+response = 319 ms   (319ms)
+elapsed = 1.319 s   (1319ms)
+if elapsed <= response: 1.319 s <= 319 ms, false: take `else`
+shed(elapsed - response, decel, jerk) = 0.75 m/s
+  t = 1 s
+  a = 2.5 m/s^2
+  j = 1.5 m/s^3
+  if t < a / j: 1 s < 1.6667 s, true: take `then`
+settle.speed_lost = if elapsed <= response then 0 m/s else shed(elapsed - response, decel, jerk) = 0.75 m/s [requirement SG-01]
+    at nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise.early
+  info[supervised-early]: safety_island.contract.yaml:758: hazard 'odd_exit', degradation level 'emergency_stop': the response check of `nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle` (shed 0.25 m/s by 1319.00ms after the command) fits: the nominal profile sheds 0.7500 m/s by then (vehicle.braking 1.1.0), 0.5000 m/s above `drop`; a vehicle slower than that has stopped, which the check counts as met
+decel = 2.5 m/s^2   (target_acceleration)
+jerk = 1.5 m/s^3   (target_jerk)
+response = 319 ms   (319ms)
+elapsed = 1.319 s   (1319ms)
+if elapsed <= response: 1.319 s <= 319 ms, false: take `else`
+shed(elapsed - response, decel, jerk) = 0.75 m/s
+  t = 1 s
+  a = 2.5 m/s^2
+  j = 1.5 m/s^3
+  if t < a / j: 1 s < 1.6667 s, true: take `then`
+settle.speed_lost = if elapsed <= response then 0 m/s else shed(elapsed - response, decel, jerk) = 0.75 m/s [requirement SG-02]
+    at nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise.early
+  info[supervised-fit]: safety_island.contract.yaml:758: hazard 'hpc_loss', degradation level 'emergency_stop': if the vehicle has not responded by `nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise.early`, before it 744.33ms + response check at 1319.00ms (shed 0.25 m/s by then, else a miss) + observation 136.00ms (/mrm_handler/kinematic_state: period 100.00ms (/localization/kinematic_state rate_hz 10) + max_transport 36.00ms) + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.floor_override' 39.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 6827.00ms fits the fault-tolerant time interval 10000.00ms with 3173.00ms of slack [requirement SG-01]
+    at nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise.early
+  info[supervised-fit]: safety_island.contract.yaml:758: hazard 'odd_exit', degradation level 'emergency_stop': if the vehicle has not responded by `nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise.early`, before it 10493.33ms + response check at 1319.00ms (shed 0.25 m/s by then, else a miss) + observation 136.00ms (/mrm_handler/kinematic_state: period 100.00ms (/localization/kinematic_state rate_hz 10) + max_transport 36.00ms) + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.floor_override' 39.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 16576.00ms fits the fault-tolerant time interval 30000.00ms with 13424.00ms of slack [requirement SG-02]
+    at nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise.early
+  info[supervised-fit]: safety_island.contract.yaml:957: hazard 'hpc_loss', degradation level 'emergency_stop': if `nodes.mrm_handler.paths.call_mrm.max_latency` overruns, before it 556.00ms + budget 149.00ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.emergency_stop' 188.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 5481.67ms fits the fault-tolerant time interval 10000.00ms with 4518.33ms of slack [requirement SG-01]
+    at nodes.mrm_handler.paths.call_mrm.max_latency.supervise
+  info[supervised-fit]: safety_island.contract.yaml:957: hazard 'odd_exit', degradation level 'comfortable_stop': if `nodes.mrm_handler.paths.call_mrm.max_latency` overruns, before it 10305.00ms + budget 149.00ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.emergency_stop' 188.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 15230.67ms fits the fault-tolerant time interval 30000.00ms with 14769.33ms of slack [requirement SG-02]
+    at nodes.mrm_handler.paths.call_mrm.max_latency.supervise
+  info[supervised-fit]: safety_island.contract.yaml:957: hazard 'odd_exit', degradation level 'emergency_stop': if `nodes.mrm_handler.paths.call_mrm.max_latency` overruns, before it 10305.00ms + budget 149.00ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.emergency_stop' 188.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 15230.67ms fits the fault-tolerant time interval 30000.00ms with 14769.33ms of slack [requirement SG-02]
+    at nodes.mrm_handler.paths.call_mrm.max_latency.supervise
+  info[declared-not-charged]: safety_island.contract.yaml:1065: `nodes.mrm_handler.sub.control_mode.max_transport: 143ms` on '/mrm_handler/control_mode' is not charged by the fault-reaction arithmetic: no hazard's reaction route enters through it (a route is charged `max_transport` on its guard edge only, the hop into the subscriber that detects the fault), so hazard detection and reaction routes (the `--explain` budgets) do not include it; nothing else checks it either (`--explain` lists what checks each stated budget)
+    at nodes.mrm_handler.sub.control_mode.max_transport
+  info[declared-not-charged]: safety_island.contract.yaml:1059: `nodes.mrm_handler.sub.kinematic_state.max_transport: 36ms` on '/mrm_handler/kinematic_state' is not charged by the fault-reaction arithmetic: no hazard's reaction route enters through it (a route is charged `max_transport` on its guard edge only, the hop into the subscriber that detects the fault), so hazard detection and reaction routes (the `--explain` budgets) do not include it; it is checked by fault-reaction sum (hpc_loss, odd_exit)
+    at nodes.mrm_handler.sub.kinematic_state.max_transport
+  warning[measured-unsupervised]: safety_island.contract.yaml:741: `nodes.mrm_emergency_stop_operator.paths.on_timer.trigger.timer.jitter: 6.00ms` is measured and nothing supervises it: an observed maximum, not a bound, and a run that exceeds it goes unnoticed. Supervise it (`supervise: { reaction, mechanism }`), analyse it (`source: analysed`), or accept it (`policy: { unsupervised_measured: warn }`, the default)
+    at nodes.mrm_emergency_stop_operator.paths.on_timer.trigger.timer.jitter
+  warning[measured-unsupervised]: safety_island.contract.yaml:1001: `nodes.mrm_handler.paths.driver_exit.max_latency: 149.00ms` is measured and nothing supervises it: an observed maximum, not a bound, and a run that exceeds it goes unnoticed. Supervise it (`supervise: { reaction, mechanism }`), analyse it (`source: analysed`), or accept it (`policy: { unsupervised_measured: warn }`, the default)
+    at nodes.mrm_handler.paths.driver_exit.max_latency
+  warning[measured-unsupervised]: safety_island.contract.yaml:885: `nodes.mrm_handler.paths.on_timer.trigger.timer.jitter: 18.00ms` is measured and nothing supervises it: an observed maximum, not a bound, and a run that exceeds it goes unnoticed. Supervise it (`supervise: { reaction, mechanism }`), analyse it (`source: analysed`), or accept it (`policy: { unsupervised_measured: warn }`, the default)
+    at nodes.mrm_handler.paths.on_timer.trigger.timer.jitter
+  warning[measured-unsupervised]: safety_island.contract.yaml:1065: `nodes.mrm_handler.sub.control_mode.max_transport: 143.00ms` is measured and nothing supervises it: an observed maximum, not a bound, and a run that exceeds it goes unnoticed. Supervise it (`supervise: { reaction, mechanism }`), analyse it (`source: analysed`), or accept it (`policy: { unsupervised_measured: warn }`, the default)
+    at nodes.mrm_handler.sub.control_mode.max_transport
+  warning[measured-unsupervised]: safety_island.contract.yaml:1059: `nodes.mrm_handler.sub.kinematic_state.max_transport: 36.00ms` is measured and nothing supervises it: an observed maximum, not a bound, and a run that exceeds it goes unnoticed. Supervise it (`supervise: { reaction, mechanism }`), analyse it (`source: analysed`), or accept it (`policy: { unsupervised_measured: warn }`, the default)
+    at nodes.mrm_handler.sub.kinematic_state.max_transport
+  warning[measured-unsupervised]: safety_island.contract.yaml:1016: `nodes.mrm_handler.sub.operation_mode_availability.max_transport: 56.00ms` is measured and nothing supervises it: an observed maximum, not a bound, and a run that exceeds it goes unnoticed. Supervise it (`supervise: { reaction, mechanism }`), analyse it (`source: analysed`), or accept it (`policy: { unsupervised_measured: warn }`, the default)
+    at nodes.mrm_handler.sub.operation_mode_availability.max_transport
+
+-- Acknowledged --
+  ack[reaction-unguarded]: hazard 'hpc_loss' reaction 'l3_engaged' ends at /system/emergency/control_cmd and no subscriber there declares an `on_violation` -- a stalled reaction would go unnoticed. Monitor it with a second hazard whose `monitors:` name this output [requirement SG-01]
+    at hazards.hpc_loss.enters -- acknowledged[0] in safety_island.contract.yaml
+    reason: the emergency stop ends at /system/emergency/control_cmd, an external topic; only Autoware or the vehicle outside this image could notice a stalled manoeuvre, and nothing there is declared yet
+  ack[reaction-unguarded]: hazard 'odd_exit' reaction 'l3_engaged' ends at /system/emergency/control_cmd and no subscriber there declares an `on_violation` -- a stalled reaction would go unnoticed. Monitor it with a second hazard whose `monitors:` name this output [requirement SG-02]
+    at hazards.odd_exit.enters -- acknowledged[1] in safety_island.contract.yaml
+    reason: the emergency stop ends at /system/emergency/control_cmd, an external topic; only Autoware or the vehicle outside this image could notice a stalled manoeuvre, and nothing there is declared yet
+
+-- Hazards (--explain) --
+  hazard 'hpc_loss' implements SG-01 (island HARA (illustrative)) at ASIL_D: it watches /system/operation_mode/availability for omission; the system must reach a safe state within 10000.00ms; it enters mode 'l3_engaged', reaching 'emergency_stop' (minimal risk condition) in 5228.67ms. At 'emergency_stop', /system/emergency/control_cmd must carry longitudinal.velocity == 0 and longitudinal.acceleration <= 0.
+  hazard 'odd_exit' implements SG-02 (island HARA (illustrative)) at ASIL_B: it watches /system/operation_mode/availability for reported (when autonomous == false); the system must reach a safe state within 30000.00ms; it enters mode 'l3_engaged', reaching 'takeover_request' (dwell) in an unknown time, 'comfortable_stop' in 21393.67ms and 'emergency_stop' (minimal risk condition) in 14977.67ms. At 'comfortable_stop', /planning/scenario_planning/max_velocity_candidates must carry max_velocity == 0. At 'emergency_stop', /system/emergency/control_cmd must carry longitudinal.velocity == 0 and longitudinal.acceleration <= 0.
+
+-- Fault-reaction budgets (--explain, ms) --
+HAZARD    DEGRADATION                                                                                          ROLE     DETECT    DWELLS     ROUTE            SETTLE     TOTAL      FTTI     SLACK  SOURCES               LEVEL
+hpc_loss  takeover_request                                                                                     skipped       -         -         -                 -         -  10000.00         -  -                     -
+hpc_loss  comfortable_stop                                                                                     skipped       -         -         -                 -         -  10000.00         -  -                     -
+hpc_loss  emergency_stop                                                                                       mrc      500.00      0.00    244.33   4484.33 derived   5228.67  10000.00   4771.33  measured+requirement  unsupervised
+hpc_loss  emergency_stop (nodes.mrm_handler.paths.call_mrm.max_latency)                                        overrun  500.00      0.00    497.33   4484.33 derived   5481.67  10000.00   4518.33  measured+requirement  unsupervised
+hpc_loss  emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise.early)  overrun  500.00      0.00   1842.67   4484.33 derived   6827.00  10000.00   3173.00  measured+requirement  unsupervised
+hpc_loss  emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle)                  overrun  500.00      0.00   5008.00   4484.33 derived   9992.33  10000.00      7.67  measured+requirement  unsupervised
+odd_exit  takeover_request                                                                                     dwell    100.00      0.00    205.00  dwell >=10000.00         -  30000.00         -  measured+requirement  unsupervised
+odd_exit  comfortable_stop                                                                                     level    100.00  10205.00    149.00  10939.67 derived  21393.67  30000.00   8606.33  measured+requirement  unsupervised
+odd_exit  comfortable_stop (nodes.mrm_handler.paths.call_mrm.max_latency)                                      overrun  100.00  10205.00    441.33   4484.33 derived  15230.67  30000.00  14769.33  measured+requirement  unsupervised
+odd_exit  comfortable_stop (nodes.mrm_comfortable_stop_operator.paths.operate.safe_state.settle)               overrun  100.00  10205.00  11517.00   4484.33 derived  26306.33  30000.00   3693.67  measured+requirement  unsupervised
+odd_exit  emergency_stop                                                                                       mrc      100.00  10205.00    188.33   4484.33 derived  14977.67  30000.00  15022.33  measured+requirement  unsupervised
+odd_exit  emergency_stop (nodes.mrm_handler.paths.call_mrm.max_latency)                                        overrun  100.00  10205.00    441.33   4484.33 derived  15230.67  30000.00  14769.33  measured+requirement  unsupervised
+odd_exit  emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise.early)  overrun  100.00  10205.00   1786.67   4484.33 derived  16576.00  30000.00  13424.00  measured+requirement  unsupervised
+odd_exit  emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle)                  overrun  100.00  10205.00   4952.00   4484.33 derived  19741.33  30000.00  10258.67  measured+requirement  unsupervised
+  TOTAL = DETECT + DWELLS + ROUTE + SETTLE; DWELLS is the route and dwell of every degradation level with a `min_dwell` passed on the way, up to its deadline.
+  A dwell is a least time (`dwell >=`); noticing its deadline is the first hop of the ROUTE below it (`dwell-expiry`), never a second charge.
+  ROUTE includes the guard edge's link (`max_transport` into the detecting subscriber), except after a dwell's deadline.
+  DEGRADATION is the level of the hazard's fallback sequence (a mode, or the event chain of a one-level reaction); role `mrc` is the minimal risk condition, its last level.
+  SOURCES are the provenances of the stated budgets in the row (`source:`). LEVEL is the weakest of their levels: `bound` (analysed), `supervised` (`supervise:`: a miss is caught and handled, its OVERRUN row checks the fallback), `unsupervised` (a measured budget nothing supervises: an observed maximum plus a margin, not a bound).
+  hpc_loss/takeover_request: requires hpc_alive, which this fault removes
+  hpc_loss/comfortable_stop: requires hpc_alive, which this fault removes
+  hpc_loss/emergency_stop: TOTAL 5228.67 is unsupervised: it contains nodes.mrm_handler.sub.operation_mode_availability.max_transport, nodes.mrm_emergency_stop_operator.paths.on_timer.trigger.timer.jitter
+  hpc_loss/emergency_stop: route = link 56.00ms (max_transport into '/mrm_handler/operation_mode_availability', sub-level; link 'gate_availability'; measured) + path 188.33ms; call /mrm_handler/emergency_stop_operate -> /system/mrm/emergency_stop/operate: no failure branch, the level's effect is supervised (/mrm_emergency_stop_operator/on_timer safe_state.settle)
+  hpc_loss/emergency_stop: settle = profile 4165.33ms + response 319.00ms
+  hpc_loss/emergency_stop (nodes.mrm_handler.paths.call_mrm.max_latency): TOTAL 5481.67 is unsupervised: it contains nodes.mrm_handler.sub.operation_mode_availability.max_transport, nodes.mrm_emergency_stop_operator.paths.on_timer.trigger.timer.jitter
+  hpc_loss/emergency_stop (nodes.mrm_handler.paths.call_mrm.max_latency): overrun of nodes.mrm_handler.paths.call_mrm.max_latency: before it 556.00ms + budget 149.00ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.emergency_stop' 188.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 5481.67ms
+  hpc_loss/emergency_stop (nodes.mrm_handler.paths.call_mrm.max_latency): settle = profile 4165.33ms + response 319.00ms
+  hpc_loss/emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise.early): TOTAL 6827.00 is unsupervised: it contains nodes.mrm_handler.sub.operation_mode_availability.max_transport, nodes.mrm_emergency_stop_operator.paths.on_timer.trigger.timer.jitter, nodes.mrm_handler.sub.kinematic_state.max_transport
+  hpc_loss/emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise.early): response check of nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle: before it 744.33ms + response check at 1319.00ms (shed 0.25 m/s by then, else a miss) + observation 136.00ms (/mrm_handler/kinematic_state: period 100.00ms (/localization/kinematic_state rate_hz 10) + max_transport 36.00ms) + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.floor_override' 39.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 6827.00ms
+  hpc_loss/emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise.early): settle = profile 4165.33ms + response 319.00ms
+  hpc_loss/emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle): TOTAL 9992.33 is unsupervised: it contains nodes.mrm_handler.sub.operation_mode_availability.max_transport, nodes.mrm_emergency_stop_operator.paths.on_timer.trigger.timer.jitter, nodes.mrm_handler.sub.kinematic_state.max_transport
+  hpc_loss/emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle): overrun of nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle: before it 744.33ms + settle 4484.33ms (profile 4165.33ms + response 319.00ms) + observation 136.00ms (/mrm_handler/kinematic_state: period 100.00ms (/localization/kinematic_state rate_hz 10) + max_transport 36.00ms) + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.floor_override' 39.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 9992.33ms
+  hpc_loss/emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle): settle = profile 4165.33ms + response 319.00ms
+  odd_exit/takeover_request: lasts at least 10000.00ms once on, and ends within 10149.00ms: /mrm_handler reads the deadline on its 100.00ms timer ('on_timer') released up to 18.00ms late, charged inside /mrm_handler/call_mrm 149.00ms, the first hop of the route below
+  odd_exit/takeover_request: route = link 56.00ms (max_transport into '/mrm_handler/operation_mode_availability', sub-level; link 'gate_availability'; measured) + path 149.00ms
+  odd_exit/comfortable_stop: TOTAL 21393.67 is unsupervised: it contains nodes.mrm_handler.sub.operation_mode_availability.max_transport
+  odd_exit/comfortable_stop: route = path 149.00ms; the guard edge's link (56.00ms into '/mrm_handler/operation_mode_availability') is not charged after a dwell's deadline, which its owner reads on its own clock; call /mrm_handler/comfortable_stop_operate -> /system/mrm/comfortable_stop/operate: no failure branch, the level's effect is supervised (/mrm_comfortable_stop_operator/operate safe_state.settle)
+  odd_exit/comfortable_stop: settle = profile 9996.67ms + response 943.00ms
+  odd_exit/comfortable_stop (nodes.mrm_handler.paths.call_mrm.max_latency): TOTAL 15230.67 is unsupervised: it contains nodes.mrm_handler.sub.operation_mode_availability.max_transport, nodes.mrm_emergency_stop_operator.paths.on_timer.trigger.timer.jitter
+  odd_exit/comfortable_stop (nodes.mrm_handler.paths.call_mrm.max_latency): overrun of nodes.mrm_handler.paths.call_mrm.max_latency: before it 10305.00ms + budget 149.00ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.emergency_stop' 188.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 15230.67ms
+  odd_exit/comfortable_stop (nodes.mrm_handler.paths.call_mrm.max_latency): settle = profile 4165.33ms + response 319.00ms
+  odd_exit/comfortable_stop (nodes.mrm_comfortable_stop_operator.paths.operate.safe_state.settle): TOTAL 26306.33 is unsupervised: it contains nodes.mrm_handler.sub.operation_mode_availability.max_transport, nodes.mrm_handler.sub.kinematic_state.max_transport, nodes.mrm_emergency_stop_operator.paths.on_timer.trigger.timer.jitter
+  odd_exit/comfortable_stop (nodes.mrm_comfortable_stop_operator.paths.operate.safe_state.settle): overrun of nodes.mrm_comfortable_stop_operator.paths.operate.safe_state.settle: before it 10454.00ms + settle 10939.67ms (profile 9996.67ms + response 943.00ms) + observation 136.00ms (/mrm_handler/kinematic_state: period 100.00ms (/localization/kinematic_state rate_hz 10) + max_transport 36.00ms) + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.emergency_stop' 188.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 26306.33ms
+  odd_exit/comfortable_stop (nodes.mrm_comfortable_stop_operator.paths.operate.safe_state.settle): settle = profile 4165.33ms + response 319.00ms
+  odd_exit/emergency_stop: TOTAL 14977.67 is unsupervised: it contains nodes.mrm_handler.sub.operation_mode_availability.max_transport, nodes.mrm_emergency_stop_operator.paths.on_timer.trigger.timer.jitter
+  odd_exit/emergency_stop: route = path 188.33ms; the guard edge's link (56.00ms into '/mrm_handler/operation_mode_availability') is not charged after a dwell's deadline, which its owner reads on its own clock; call /mrm_handler/emergency_stop_operate -> /system/mrm/emergency_stop/operate: no failure branch, the level's effect is supervised (/mrm_emergency_stop_operator/on_timer safe_state.settle)
+  odd_exit/emergency_stop: settle = profile 4165.33ms + response 319.00ms
+  odd_exit/emergency_stop (nodes.mrm_handler.paths.call_mrm.max_latency): TOTAL 15230.67 is unsupervised: it contains nodes.mrm_handler.sub.operation_mode_availability.max_transport, nodes.mrm_emergency_stop_operator.paths.on_timer.trigger.timer.jitter
+  odd_exit/emergency_stop (nodes.mrm_handler.paths.call_mrm.max_latency): overrun of nodes.mrm_handler.paths.call_mrm.max_latency: before it 10305.00ms + budget 149.00ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.emergency_stop' 188.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 15230.67ms
+  odd_exit/emergency_stop (nodes.mrm_handler.paths.call_mrm.max_latency): settle = profile 4165.33ms + response 319.00ms
+  odd_exit/emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise.early): TOTAL 16576.00 is unsupervised: it contains nodes.mrm_handler.sub.operation_mode_availability.max_transport, nodes.mrm_emergency_stop_operator.paths.on_timer.trigger.timer.jitter, nodes.mrm_handler.sub.kinematic_state.max_transport
+  odd_exit/emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise.early): response check of nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle: before it 10493.33ms + response check at 1319.00ms (shed 0.25 m/s by then, else a miss) + observation 136.00ms (/mrm_handler/kinematic_state: period 100.00ms (/localization/kinematic_state rate_hz 10) + max_transport 36.00ms) + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.floor_override' 39.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 16576.00ms
+  odd_exit/emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.supervise.early): settle = profile 4165.33ms + response 319.00ms
+  odd_exit/emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle): TOTAL 19741.33 is unsupervised: it contains nodes.mrm_handler.sub.operation_mode_availability.max_transport, nodes.mrm_emergency_stop_operator.paths.on_timer.trigger.timer.jitter, nodes.mrm_handler.sub.kinematic_state.max_transport
+  odd_exit/emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle): overrun of nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle: before it 10493.33ms + settle 4484.33ms (profile 4165.33ms + response 319.00ms) + observation 136.00ms (/mrm_handler/kinematic_state: period 100.00ms (/localization/kinematic_state rate_hz 10) + max_transport 36.00ms) + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.floor_override' 39.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 19741.33ms
+  odd_exit/emergency_stop (nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle): settle = profile 4165.33ms + response 319.00ms
+
+-- Stated budgets (--explain, ms) --
+BUDGET                                                                              MS  SOURCE                                                                                            LEVEL         CHECKED BY
+hazards.hpc_loss.ftti                                                         10000.00  requirement                                                                                       -             fault-reaction sum (the interval)
+hazards.odd_exit.ftti                                                         30000.00  requirement                                                                                       -             fault-reaction sum (the interval)
+modes.takeover_request.min_dwell                                              10000.00  requirement                                                                                       -             fault-reaction sum (odd_exit); dwell-param
+nodes.mrm_comfortable_stop_operator.paths.operate.safe_state.settle.response    943.00  measured: 785.43 x 1.2 (n=3) = 942.52 -> 943                                                      supervised    fault-reaction sum (odd_exit); runtime monitor (settle-deadline: reaction event chain 'island.emergency_stop', timer, standstill seen on /mrm_handler/kinematic_state)
+nodes.mrm_emergency_stop_operator.paths.on_timer.trigger.timer.jitter             6.00  measured: 4.34 x 1.2 (n=1073) = 5.21 -> 6                                                         unsupervised  fault-reaction sum (hpc_loss, odd_exit); chain-latency (where an event chain's route crosses the node)
+nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle.response     319.00  measured: 265.34 x 1.2 (n=16) = 318.41 -> 319                                                     supervised    fault-reaction sum (hpc_loss, odd_exit); runtime monitor (settle-deadline: reaction event chain 'island.floor_override', timer, standstill seen on /mrm_handler/kinematic_state)
+nodes.mrm_handler.paths.call_mrm.max_latency                                    149.00  measured: tick 100 + 14.84 x 1.2 (n=1641) = 117.81 -> 118, work 25.04 x 1.2 (n=13) = 30.05 -> 31  supervised    fault-reaction sum (hpc_loss, odd_exit); reaction-within; chain-latency (where an event chain's route crosses the node); runtime monitor (route-deadline-runtime: reaction event chain 'island.emergency_stop', timer)
+nodes.mrm_handler.paths.driver_exit.max_latency                                 149.00  measured: tick 100 + 14.84 x 1.2 (n=1641) = 117.81 -> 118, work 25.04 x 1.2 (n=13) = 30.05 -> 31  unsupervised  chain-latency (where an event chain's route crosses the node); runtime monitor (the realizer's path deadline)
+nodes.mrm_handler.paths.on_timer.max_latency                                    100.00  derived                                                                                           -             chain-latency (where an event chain's route crosses the node); runtime monitor (the realizer's path deadline)
+nodes.mrm_handler.paths.on_timer.trigger.timer.jitter                            18.00  measured: 14.84 x 1.2 (n=1641) = 17.81 -> 18                                                      unsupervised  dwell-expiry; chain-latency (where an event chain's route crosses the node)
+nodes.mrm_handler.sub.control_mode.max_transport                                143.00  measured: 118.78 x 1.2 (n=5) = 142.54 -> 143                                                      unsupervised  nothing
+nodes.mrm_handler.sub.kinematic_state.max_transport                              36.00  measured: 29.43 x 1.2 (n=361) = 35.32 -> 36                                                       unsupervised  fault-reaction sum (hpc_loss, odd_exit)
+nodes.mrm_handler.sub.operation_mode_availability.max_age                       500.00  requirement                                                                                       -             fault-reaction sum (hpc_loss); max-age-param; the node itself (on_violation.mechanism)
+nodes.mrm_handler.sub.operation_mode_availability.max_transport                  56.00  measured: 46.42 x 1.2 (n=12) = 55.70 -> 56                                                        unsupervised  fault-reaction sum (hpc_loss, odd_exit)
+nodes.mrm_handler.sub.operation_mode_availability.on_violation.within           149.00  derived                                                                                           -             reaction-within
+paths.island.emergency_stop.max_latency                                         210.00  requirement                                                                                       -             chain-latency; runtime monitor (max-latency-runtime)
+paths.island.tor.max_latency                                                    218.00  derived                                                                                           -             chain-latency; runtime monitor (max-latency-runtime)
+  CHECKED BY: `fault-reaction sum` -- a hazard's detection, route or settle charges it (the hazards named); a rule that compares it with something; a runtime monitor the model hands to the realizer (for a supervised budget, only when it was lowered to a monitor with its reaction); `nothing` -- no check reads the number.
+  LEVEL: `bound` (analysed), `supervised` (`supervise:`), `unsupervised` (measured, nothing supervises it: `measured-unsupervised`), `-` (a requirement, a derived value, or no source).
+  1 stated budget(s) checked by nothing.
+
+-- Reaction totals (--explain, ms; `reaction_total` for extension checks) --
+hpc_loss  5228.67  (mrc 'emergency_stop')
+odd_exit  14977.67  (mrc 'emergency_stop')
+
+-- Extensions (--explain) --
+/home/aeon/repos/simple-autoware-safety-island/src/safety_island_bringup/launch/safety_island.contract.yaml  (lock: /home/aeon/repos/simple-autoware-safety-island/src/safety_island_bringup/launch/rlm.lock)
+    vehicle.braking 1.1.0  extension  sha256 5441e622d5c478c1da4cc3186d8083b877da267e012a5e9b3b7b56c35472c8d7  bundled with the checker
+    iso26262 1.1.0  profile  sha256 8cdb7e677892158e0a874aae6dce3605debd1a8ad2a2c6988e927674005adcdd  bundled with the checker
+
+-- Timer periods (--explain, ms) --
+TIMER                                    PERIOD      MIN     MAX
+/mrm_comfortable_stop_operator/on_timer  100.00  unknown  111.11
+/mrm_emergency_stop_operator/on_timer     33.33  unknown   34.87
+/mrm_handler/on_timer                    100.00    31.00  107.67
+  MAX: the period may grow until a fault-reaction row runs out of slack (its slack over the number of periods it charges) or a check refuses it; MIN: the executor that runs the timer keeps up (sum of work / period <= 1 over its timers).
+  /mrm_comfortable_stop_operator/on_timer: MIN unknown: /mrm_comfortable_stop_operator/on_timer states no work
+  /mrm_comfortable_stop_operator/on_timer: MAX 111.11 <- rule `derived-rate-hierarchy` above it: warning: subscriber '/mrm_handler/comfortable_stop_status' requires min_rate_hz 9 on '/system/mrm/comfortable_stop/status', but the timers that drive it derive only 9.0000 Hz. The requirement cannot be met by any scheduling assignment -- the source is too slow
+  /mrm_emergency_stop_operator/on_timer: MIN unknown: /mrm_emergency_stop_operator/on_timer states no work
+  /mrm_emergency_stop_operator/on_timer: MAX 34.87 <- rule `supervised-fit` above it: error: safety_island.contract.yaml:758: hazard 'hpc_loss', degradation level 'emergency_stop': if `nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle` overruns, before it 745.87ms + settle 4484.33ms (profile 4165.33ms + response 319.00ms) + observation 136.00ms (/mrm_handler/kinematic_state: period 100.00ms (/localization/kinematic_state rate_hz 10) + max_transport 36.00ms) + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.floor_override' 40.87ms + resume gap 106.60ms (3 periods of /mrm_emergency_stop_operator/on_timer 34.87ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 10000.00ms exceeds the fault-tolerant time interval 10000.00ms
+  /mrm_emergency_stop_operator/on_timer:     4804.67 <- FTTI: hazard 'hpc_loss' degradation level 'emergency_stop', slack 4771.33ms / 1 period(s) (route 1)
+  /mrm_emergency_stop_operator/on_timer:     15055.67 <- FTTI: hazard 'odd_exit' degradation level 'emergency_stop', slack 15022.33ms / 1 period(s) (route 1)
+  /mrm_handler/on_timer: MIN 31.00 <- utilization of /mrm_handler: work 31ms (measured work beside the tick in nodes.mrm_handler.paths.call_mrm.max_latency)
+  /mrm_handler/on_timer: MAX 107.67 <- rule `supervised-fit` above it: error: safety_island.contract.yaml:758: hazard 'hpc_loss', degradation level 'emergency_stop': if `nodes.mrm_emergency_stop_operator.paths.on_timer.safe_state.settle` overruns, before it 752.00ms + settle 4484.33ms (profile 4165.33ms + response 319.00ms) + observation 136.00ms (/mrm_handler/kinematic_state: period 100.00ms (/localization/kinematic_state rate_hz 10) + max_transport 36.00ms) + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer)) + reaction event chain 'island.floor_override' 39.33ms + resume gap 102.00ms (3 periods of /mrm_emergency_stop_operator/on_timer 33.33ms + detection 2.00ms (tick 1.00ms + switch 1.00ms (timer))) + settle 4484.33ms = 10000.00ms exceeds the fault-tolerant time interval 10000.00ms
+  /mrm_handler/on_timer:     500.00 <- max_age detection: nodes.mrm_handler.sub.operation_mode_availability.max_age 500ms is evaluated by the node on its own tick (detection up to max_age + one period)
+  /mrm_handler/on_timer:     4403.17 <- FTTI: hazard 'odd_exit' degradation level 'comfortable_stop', slack 8606.33ms / 2 period(s) (dwells 1, route 1; tick term of nodes.mrm_handler.paths.call_mrm.max_latency)
+  /mrm_handler/on_timer:     4871.33 <- FTTI: hazard 'hpc_loss' degradation level 'emergency_stop', slack 4771.33ms / 1 period(s) (route 1; tick term of nodes.mrm_handler.paths.call_mrm.max_latency)
+  /mrm_handler/on_timer:     7611.17 <- FTTI: hazard 'odd_exit' degradation level 'emergency_stop', slack 15022.33ms / 2 period(s) (dwells 1, route 1; tick term of nodes.mrm_handler.paths.call_mrm.max_latency)
+  /mrm_handler/on_timer: derived from the period, recomputed with it: paths.island.tor.max_latency
+
+-- Values read from the launch tree (--explain) --
+safety_island.contract.yaml:
+  hazards.hpc_loss.entry_speed = 8.33 m/s                                           <- $(let odd_speed_bound)
+                                                                                    <- let odd_speed_bound: 8.33 m/s, safety_island.contract.yaml:121
+  hazards.odd_exit.entry_speed = 8.33 m/s                                           <- $(let odd_speed_bound)
+                                                                                    <- let odd_speed_bound: 8.33 m/s, safety_island.contract.yaml:121
+  /mrm_comfortable_stop_operator paths.on_timer.trigger.timer.rate_hz = 10 Hz       <- $(param update_rate) Hz
+                                                                                    <- /mrm_comfortable_stop_operator update_rate = 10 Hz, mrm_comfortable_stop_operator.param.yaml
+  /mrm_comfortable_stop_operator paths.operate.safe_state.settle.decel = -1 m/s^2   <- $(param min_acceleration) m/s^2
+                                                                                    <- /mrm_comfortable_stop_operator min_acceleration = -1 m/s^2, mrm_comfortable_stop_operator.param.yaml
+  /mrm_comfortable_stop_operator paths.operate.safe_state.settle.jerk = -0.3 m/s^3  <- $(param min_jerk) m/s^3
+                                                                                    <- /mrm_comfortable_stop_operator min_jerk = -0.3 m/s^3, mrm_comfortable_stop_operator.param.yaml
+  /mrm_emergency_stop_operator paths.on_timer.trigger.timer.rate_hz = 30 Hz         <- $(param update_rate) Hz
+                                                                                    <- /mrm_emergency_stop_operator update_rate = 30 Hz, mrm_emergency_stop_operator.param.yaml
+  /mrm_emergency_stop_operator paths.on_timer.safe_state.settle.decel = -2.5 m/s^2  <- $(param target_acceleration) m/s^2
+                                                                                    <- /mrm_emergency_stop_operator target_acceleration = -2.5 m/s^2, mrm_emergency_stop_operator.param.yaml
+  /mrm_emergency_stop_operator paths.on_timer.safe_state.settle.jerk = -1.5 m/s^3   <- $(param target_jerk) m/s^3
+                                                                                    <- /mrm_emergency_stop_operator target_jerk = -1.5 m/s^3, mrm_emergency_stop_operator.param.yaml
+  /mrm_handler paths.on_timer.trigger.timer.rate_hz = 10 Hz                         <- $(param update_rate) Hz
+                                                                                    <- /mrm_handler update_rate = 10 Hz, mrm_handler.param.yaml
+
+1 manifest(s) checked: 1 clean, 0 with errors (0 errors, 6 warnings, 2 acknowledged)
+1 contract(s): 0 overlay, 1 provider

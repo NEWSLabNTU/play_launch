@@ -1,0 +1,66 @@
+# Phase 102 E6: the same facts as the safety model's additions, written in the
+# forms the 2026-11-07 design round dropped (`final_elements:`, rlm
+# safety-functions.md section 5; `recovery:`, fault-tolerance.md section 4).
+# Each block is one contract; generate.py counts its non-comment lines. The
+# requirement ids are core in both, so they are written in both.
+# --- island (simple-autoware-safety-island)
+hazards:
+  hpc_loss:
+    requirement: { id: SG-01, source: "island HARA (illustrative)" }
+  odd_exit:
+    requirement: { id: SG-02, source: "island HARA (illustrative)" }
+final_elements:
+  velocity_limit:
+    channel: /planning/scenario_planning/max_velocity_candidates
+    arbiter: mrm_comfortable_stop_operator
+    safe:
+      comfortable_stop:
+        - { field: max_velocity, equals: 0 }
+    silence: { after: 500ms }
+  emergency_command:
+    channel: /system/emergency/control_cmd
+    arbiter: mrm_emergency_stop_operator
+    safe:
+      emergency_stop:
+        - { field: longitudinal.velocity, equals: 0 }
+        - { field: longitudinal.acceleration, le: 0 }
+    silence: { after: 500ms }
+# --- Autoware overlay (tier4_system_launch)
+hazards:
+  mode_unavailable:
+    requirement: { id: SG-AW-1, source: "Autoware HARA (illustrative)" }
+final_elements:
+  velocity_limit:
+    channel: /planning/scenario_planning/max_velocity
+    arbiter: /planning/scenario_planning/external_velocity_limit_selector
+    safe:
+      comfortable_stop:
+        - { field: max_velocity, equals: 0 }
+    silence: { after: 500ms }
+  vehicle_command:
+    channel: /control/command/control_cmd
+    arbiter: /control/vehicle_cmd_gate
+    safe:
+      emergency_stop:
+        - { field: longitudinal.velocity, equals: 0 }
+        - { field: longitudinal.acceleration, le: 0 }
+    silence: { after: 500ms }
+topics:
+  /planning/scenario_planning/max_velocity:
+    type: autoware_internal_planning_msgs/msg/VelocityLimit
+# --- rt_av_demo
+hazards:
+  drive_blind:
+    requirement: { id: DEMO-1, source: "rt_av_demo, illustrative" }
+    recovery: [restart]
+final_elements:
+  brake:
+    channel: /safety/brake_cmd
+    arbiter: brake_controller
+    safe:
+      stopped:
+        - { field: payload, equals: "emergency" }
+    silence: { after: 200ms }
+nodes:
+  lidar_driver:
+    recovery: { restart: { delay: 100ms } }

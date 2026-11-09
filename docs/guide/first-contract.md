@@ -190,7 +190,7 @@ and `check --explain` says where each value came from:
 -- Values read from the launch tree (--explain) --
 bringup.contract.yaml:
   /safety/lidar_driver paths.sample.trigger.timer.rate_hz = 100 Hz  <- $(param rate_hz) Hz
-                                                                    <- /safety/lidar_driver rate_hz = 100 Hz, <param> bringup.launch.xml:29 = $(var lidar_hz)
+                                                                    <- /safety/lidar_driver rate_hz = 100 Hz, <param> bringup.launch.xml:34 = $(var lidar_hz)
                                                                     <- lidar_hz = 100, command line
   /safety/obstacle_detector sub.scan.min_rate_hz = 100 Hz           <- $(let lidar_rate)
                                                                     <- let lidar_rate: $(var lidar_hz) Hz = 100 Hz, bringup.contract.yaml:19
@@ -297,6 +297,11 @@ extra endpoint is a warning rather than an error.
 
 ## Related
 
+- `docs/guide/safety-function.md` — once the structure is captured: a
+  hazard, its reaction, what the safe state commands, and a protective
+  field sized by an extension.
+- `docs/guide/fault-tolerance.md` — redundancy, restarts credited from a
+  run, and independence.
 - `docs/design/contract-primitives.md` — the rule this verb follows: a
   contract states what the code does and what it must achieve, and anything
   computable from those two is derived, never written.

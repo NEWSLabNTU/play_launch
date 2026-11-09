@@ -1,7 +1,7 @@
 # Phase 101 - fault tolerance: when most of the system is safety critical
 
-**Status (2026-11-07): planned, revised the same day to the primitives
-rule; nothing started. Follows phase 100.** Design of record: rlm
+**Status (2026-11-09): built (phase 102 M1 to M4) and evaluated (M5).
+Follows phase 100.** Design of record: rlm
 `docs/design/fault-tolerance.md` (design issue 59): twelve case studies
 from aircraft, spacecraft, nuclear, driving and medical systems. In the
 core: `m` on a redundant group (IEC 61508's MooN), one `independence:` form, `on_silence` on
@@ -33,7 +33,7 @@ stamps (repetition, resequencing, insertion).
 | T3 | **`functions.<f>.m` (§4.1).** Grammar and model 2026-11-08; counting is M2. rlm grammar and model; members may be value functions. The observer counts held members. | A 2-of-3 fixture: one silent member keeps the function, two lose it; a member lost by value counts as lost. |
 | T4 | **`on_silence` on an external subscriber side (§4.4).** Grammar and model 2026-11-08; the settle is M2. rlm grammar and model; a level may end in silence, settled by `after` plus the consumer's response. | A fixture whose external base stops on silence passes with a silent gate; without `on_silence` it fails with `final-element-silent`. |
 | T5 | **`on:` gains `repetition`, `resequencing`, `insertion` (§4.6).** Grammar and model 2026-11-08; detection is M2. rlm closed set; the observer detects each from stamps and endpoint owners. | One fixture per class with a negative control. `insertion` on a commanded topic and `arbiter-bypass` report one finding. |
-| T6 | **Guide.** `docs/guide/fault-tolerance.md`: a redundant sensor pair, a restarted planner, a level that cannot degrade in time and is rescued by redundancy, and what the checker says about each. | Its contracts are the fixtures above. `check-terms` passes. |
+| T6 | **Guide.** Done 2026-11-09 (phase 102 M3). `docs/guide/fault-tolerance.md`: a redundant sensor pair, a restarted planner, a level that cannot degrade in time and is rescued by redundancy, and what the checker says about each. | Its contracts are the fixtures above. `check-terms` passes. |
 | T7 | **nano-ros.** The model fields in a pull request; which runtime checks the image generates is recorded here. | nano-ros pins the rlm tag and its CI is green. |
 
 Order: phase 102 sets the build order across phases 100 and 101.
