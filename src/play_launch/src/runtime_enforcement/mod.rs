@@ -135,6 +135,11 @@ struct HazardRuntime {
     /// Sinks a host process has been seen publishing: their takes are never
     /// the reaction.
     sink_host_pub: std::collections::HashSet<String>,
+    /// Phase 102 M2: each guard publisher's last stamp, `(guard, handle)`,
+    /// for `repetition` and `resequencing`.
+    last_stamp: HashMap<(String, u64), u64>,
+    /// Class findings already reported, `(guard, publisher handle, class)`.
+    class_reported: std::collections::HashSet<(String, u64, &'static str)>,
 }
 
 /// Per-topic aggregated state used by the runtime rules.
@@ -241,6 +246,12 @@ pub struct RuleEngine {
     /// Endpoint handle -> owning node's hash, from the `EndpointOwner`
     /// event that precedes the endpoint's init; taken at the init.
     endpoint_owner: HashMap<u64, u64>,
+    /// Node FQNs by hash, from `NodeNameDeclared` chunks (phase 102 M2), so
+    /// a finding about an endpoint can name its node.
+    node_names: HashMap<u64, String>,
+    node_name_chunks: HashMap<u64, TopicNameAssembly>,
+    /// `(topic, owner hash)` publisher findings already reported.
+    publisher_reported: HashSet<(String, u64)>,
     /// Shared flag flipped on the first violation at or above
     /// `strict_threshold` in Strict mode. Owners hold a `clone()` of the
     /// `Arc` and poll it to trigger shutdown. Below the threshold a
@@ -342,6 +353,9 @@ impl RuleEngine {
             violation_count: 0,
             contracted_node_hashes,
             endpoint_owner: HashMap::new(),
+            node_names: HashMap::new(),
+            node_name_chunks: HashMap::new(),
+            publisher_reported: HashSet::new(),
             strict_violated: Arc::new(AtomicBool::new(false)),
             strict_threshold: Severity::Error,
             first_strict_violation: Arc::new(Mutex::new(None)),
@@ -414,6 +428,22 @@ impl RuleEngine {
         // NODE hash in `topic_hash`, which must not create topic state below.
         if matches!(event.kind, EventKind::EndpointOwner) {
             self.endpoint_owner.insert(event.handle, event.topic_hash);
+        }
+        if matches!(event.kind, EventKind::NodeNameDeclared) {
+            let (idx, total, n, buf) = decode_topic_name_chunk(event);
+            let entry = self
+                .node_name_chunks
+                .entry(event.topic_hash)
+                .or_insert_with(|| TopicNameAssembly::new(total.max(1)));
+            if entry.total != total.max(1) {
+                *entry = TopicNameAssembly::new(total.max(1));
+            }
+            entry.add(idx, &buf[..n]);
+            if let Some(name) = entry.assembled() {
+                self.node_names.entry(event.topic_hash).or_insert(name);
+                self.node_name_chunks.remove(&event.topic_hash);
+            }
+            return;
         }
         if matches!(event.kind, EventKind::FieldValue) {
             self.observe_field(event);
@@ -642,6 +672,13 @@ impl RuleEngine {
                 // from nothing. An unknown owner (an interceptor that sends
                 // no `EndpointOwner`) is still judged, as before.
                 let owner = self.endpoint_owner.remove(&event.handle);
+                if matches!(event.kind, EventKind::PublisherInit)
+                    && let Some(o) = owner
+                    && let Some(fqn) = self.topic_hash_to_fqn.get(&event.topic_hash).cloned()
+                {
+                    drop_borrow(&mut self.state);
+                    self.judge_publisher(&fqn, o, event.monotonic_ns);
+                }
                 let uncontracted = owner.is_some_and(|o| !self.contracted_node_hashes.contains(&o));
                 if !uncontracted && !self.topic_hash_to_fqn.contains_key(&event.topic_hash) {
                     let kind = if matches!(event.kind, EventKind::PublisherInit) {
@@ -1167,6 +1204,43 @@ impl RuleEngine {
                         }
                     }
                     rt.last_pub.insert(fqn.clone(), event.monotonic_ns);
+                    // Phase 102 M2: a stamp equal to, or earlier than, this
+                    // publisher's previous one, where the hazard asks.
+                    if let Some(k) = stamp
+                        && let Some(classes) = self.view.hazard_classes.get(&watch.key)
+                    {
+                        use ros_launch_manifest_model::FaultKind as F;
+                        let prev = rt.last_stamp.insert((fqn.clone(), event.handle), k);
+                        let class = match prev {
+                            Some(p) if p == k && classes.contains(&F::Repetition) => {
+                                Some("repetition")
+                            }
+                            Some(p) if p > k && classes.contains(&F::Resequencing) => {
+                                Some("resequencing")
+                            }
+                            _ => None,
+                        };
+                        if let Some(class) = class
+                            && rt.class_reported.insert((fqn.clone(), event.handle, class))
+                        {
+                            pending.push((
+                                "hazard-detected".to_string(),
+                                Severity::Error,
+                                watch.key.clone(),
+                                format!(
+                                    "hazard '{}': '{fqn}' carried a {class} -- a stamp {} the \
+                                     same publisher's previous one",
+                                    watch.key,
+                                    if class == "repetition" {
+                                        "equal to"
+                                    } else {
+                                        "earlier than"
+                                    }
+                                ),
+                                None,
+                            ));
+                        }
+                    }
                     if let Some(k) = stamp {
                         let st = rt.stamps.entry(fqn.clone()).or_default();
                         st.push_back(k);
@@ -1181,11 +1255,22 @@ impl RuleEngine {
                             "hazard-recovered".to_string(),
                             Severity::Warning,
                             watch.key.clone(),
-                            format!(
-                                "hazard '{}': '{fqn}' resumed publishing {:.2}ms after it went silent",
-                                watch.key,
-                                event.monotonic_ns.saturating_sub(*fault_ns) as f64 / 1e6
-                            ),
+                            {
+                                // Phase 102 M2: the recovery the run took, against
+                                // the FTTI the static credit judged it by.
+                                let after =
+                                    event.monotonic_ns.saturating_sub(*fault_ns) as f64 / 1e6;
+                                let verdict = match watch.ftti_ms {
+                                    Some(f) if after <= f => format!(", inside the FTTI {f:.2}ms"),
+                                    Some(f) => format!(", past the FTTI {f:.2}ms"),
+                                    None => String::new(),
+                                };
+                                format!(
+                                    "hazard '{}': '{fqn}' resumed publishing {after:.2}ms after it \
+                                     went silent{verdict}",
+                                    watch.key,
+                                )
+                            },
                             None,
                         ));
                         rt.fault = None;
@@ -1373,6 +1458,86 @@ impl RuleEngine {
             } else {
                 self.modes_lost.remove(&key);
             }
+        }
+    }
+
+    /// Phase 102 M2: a publisher created on a topic the contract constrains.
+    /// On a commanded topic any node but its arbiter (the topic's one
+    /// declared publisher) is `arbiter-bypass`; on a hazard's monitored
+    /// topic whose `on:` names `insertion`, a node the contract does not
+    /// name is that fault. A commanded topic reports the bypass only, once.
+    fn judge_publisher(&mut self, topic: &str, owner: u64, now: u64) {
+        let declared: HashSet<u64> = self
+            .view
+            .topics
+            .get(topic)
+            .map(|t| {
+                t.publishers
+                    .iter()
+                    .filter_map(|ep| ep.rsplit_once('/').map(|(n, _)| fnv1a(n.as_bytes())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if declared.contains(&owner) {
+            return;
+        }
+        let commanded = self
+            .view
+            .modes
+            .iter()
+            .any(|m| m.commands.contains_key(topic));
+        let inserted_into: Vec<String> =
+            self.view
+                .hazards
+                .iter()
+                .filter(|h| h.guards.iter().any(|g| g == topic))
+                .filter(|h| {
+                    self.view.hazard_classes.get(&h.key).is_some_and(|c| {
+                        c.contains(&ros_launch_manifest_model::FaultKind::Insertion)
+                    })
+                })
+                .map(|h| h.key.clone())
+                .collect();
+        if (!commanded && inserted_into.is_empty())
+            || !self.publisher_reported.insert((topic.to_string(), owner))
+        {
+            return;
+        }
+        let node = self
+            .node_names
+            .get(&owner)
+            .cloned()
+            .unwrap_or_else(|| format!("a node (hash {owner:016x})"));
+        let arbiter = self
+            .view
+            .topics
+            .get(topic)
+            .map(|t| t.publishers.join(", "))
+            .unwrap_or_default();
+        if commanded {
+            self.emit_repeatable(
+                "arbiter-bypass".into(),
+                Severity::Error,
+                topic.to_string(),
+                format!(
+                    "{node} created a publisher on '{topic}', a commanded topic whose arbiter is \
+                     {arbiter}: a command can now reach it around the level's reaction"
+                ),
+                now,
+            );
+            return;
+        }
+        for key in inserted_into {
+            self.emit_repeatable(
+                "hazard-detected".into(),
+                Severity::Error,
+                key.clone(),
+                format!(
+                    "hazard '{key}': {node} created a publisher on the monitored '{topic}', which \
+                     the contract does not name (insertion; declared: {arbiter})"
+                ),
+                now,
+            );
         }
     }
 
@@ -3174,6 +3339,118 @@ mod tests {
         assert_eq!(re.violation_count, 4, "mode-availability: available again");
         re.observe(&field(t0 + 2_200 * ms, 1, 1, 0.5f64.to_bits()));
         assert_eq!(re.violation_count, 4, "no level active, nothing judged");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Phase 102 M2: a publisher created on a commanded topic by any node
+    /// but its arbiter is `arbiter-bypass`; on a monitored topic whose
+    /// hazard names `insertion`, a node the contract does not name is that
+    /// fault; and a stamp equal to the same publisher's previous one is
+    /// `repetition`. Each reported once.
+    #[test]
+    fn publishers_and_stamps_are_judged_where_the_contract_asks() {
+        use crate::{
+            interception::{EventKind, InterceptionEvent},
+            runtime_enforcement::view::{HazardWatch, ModeWatch, TopicView},
+        };
+        use ros_launch_manifest_model::{
+            CompareOp, FaultKind, PredicateContract, PredicateValueContract,
+        };
+        let mut view = ContractView::default();
+        view.topics.insert(
+            "/cmd".to_string(),
+            TopicView {
+                msg_type: "x".into(),
+                publishers: vec!["/gate/cmd".into()],
+                ..Default::default()
+            },
+        );
+        view.topics.insert(
+            "/scan".to_string(),
+            TopicView {
+                msg_type: "x".into(),
+                publishers: vec!["/lidar/scan".into()],
+                ..Default::default()
+            },
+        );
+        let mut commands = std::collections::BTreeMap::new();
+        commands.insert(
+            "/cmd".to_string(),
+            vec![PredicateContract {
+                field: "x".into(),
+                op: CompareOp::Equals,
+                value: PredicateValueContract::Int(0),
+            }],
+        );
+        view.modes.push(ModeWatch {
+            key: "s/stopped".into(),
+            commands,
+            ..Default::default()
+        });
+        view.hazards.push(HazardWatch {
+            key: "s/blind".into(),
+            guards: vec!["/scan".into()],
+            sinks: vec![],
+            ftti_ms: None,
+            settle_ms: None,
+            silence_ms: None,
+            via_diagnostics: false,
+            off_host_sinks: vec![],
+        });
+        view.hazard_classes.insert(
+            "s/blind".into(),
+            vec![FaultKind::Insertion, FaultKind::Repetition],
+        );
+        let tmp = std::env::temp_dir().join(format!("play_launch_pubs_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut re = RuleEngine::new(Arc::new(view), EnforceMode::Warn, &tmp);
+        let ev = |kind: EventKind, topic: u64, handle: u64, stamp: u32| InterceptionEvent {
+            kind,
+            _pad: [0; 3],
+            topic_hash: topic,
+            stamp_sec: if matches!(kind, EventKind::Publish) {
+                1
+            } else {
+                0
+            },
+            stamp_nanosec: stamp,
+            handle,
+            monotonic_ns: 1_000_000,
+            cpu_ns: 0,
+            tid: 0,
+            payload_bytes: 0,
+        };
+        let (cmd, scan) = (fnv1a(b"/cmd"), fnv1a(b"/scan"));
+        let owned = |re: &mut RuleEngine, node: &str, topic: u64, handle: u64| {
+            re.observe(&ev(
+                EventKind::EndpointOwner,
+                fnv1a(node.as_bytes()),
+                handle,
+                0,
+            ));
+            re.observe(&ev(EventKind::PublisherInit, topic, handle, 0));
+        };
+        owned(&mut re, "/gate", cmd, 1);
+        owned(&mut re, "/lidar", scan, 2);
+        assert_eq!(re.violation_count, 0, "the declared publishers");
+        owned(&mut re, "/teleop", cmd, 3);
+        owned(&mut re, "/teleop", cmd, 4);
+        assert_eq!(re.violation_count, 1, "arbiter-bypass, once");
+        owned(&mut re, "/spoof", scan, 5);
+        assert_eq!(re.violation_count, 2, "insertion");
+        re.observe(&ev(EventKind::Publish, scan, 2, 10));
+        re.observe(&ev(EventKind::Publish, scan, 2, 20));
+        assert_eq!(re.violation_count, 2, "advancing stamps");
+        re.observe(&ev(EventKind::Publish, scan, 2, 20));
+        re.observe(&ev(EventKind::Publish, scan, 2, 20));
+        assert_eq!(re.violation_count, 3, "repetition, once");
+        re.observe(&ev(EventKind::Publish, scan, 2, 5));
+        assert_eq!(re.violation_count, 3, "resequencing is not asked for");
+        re.flush();
+        let log = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
+        assert!(log.contains("arbiter-bypass"), "{log}");
+        assert!(log.contains("(insertion; declared: /lidar/scan)"), "{log}");
+        assert!(log.contains("carried a repetition"), "{log}");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

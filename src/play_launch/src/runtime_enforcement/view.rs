@@ -61,6 +61,11 @@ pub struct ContractView {
     /// subscriber's `max_age` + `on_violation`, or an external side's
     /// `on_silence`): silence there is not `final-element-silent`.
     pub silence_handled: BTreeSet<String>,
+    /// Hazard key to the fault classes its `on:` names explicitly (phase
+    /// 102 M2). The three communication classes are judged only where a
+    /// contract asks for them: a stamp re-sent at rate is right for a state
+    /// topic (phase 88's `stale_stamp`), so an omitted `on:` does not.
+    pub hazard_classes: BTreeMap<String, Vec<model::FaultKind>>,
     /// Node FQNs some contract describes: every node of a launch scope that
     /// has a contract (`ScopeInfo.manifest`), plus the owner of any endpoint,
     /// path, concurrency or parameter entry a contract states about a node
@@ -461,6 +466,7 @@ impl ContractView {
             });
         }
         for (key, h) in &m.contracts.hazards {
+            view.hazard_classes.insert(key.clone(), h.on.clone());
             let guards: Vec<String> = h.monitors.iter().flat_map(|g| g.members.clone()).collect();
             let sinks: Vec<String> = h
                 .reaction
