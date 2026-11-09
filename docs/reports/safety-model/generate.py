@@ -68,9 +68,8 @@ E1_GAPS = [
     ("A topic declared with only a type (the type of a topic the launch tree "
      "wires) was dropped by rlm's conditional cleanup, and the resolver did not "
      "let the launch tree wire a contract topic.",
-     "U2 Autoware", "fixed: rlm (unreleased, GRAMMAR_VERSION 0.3.14) keeps it, "
-     "the resolver wires it from the remaps. Until play_launch pins it, the "
-     "contract names both endpoints."),
+     "U2 Autoware", "fixed: rlm v0.3.14 keeps it and the resolver wires it from the "
+     "remaps; the Autoware contract states the type alone."),
     ("`max_velocity_candidates` is a proposal topic with several publishers; "
      "the final element is the selector's output.",
      "U2 Autoware", "not a gap in the grammar: `arbiter-bypass` found the "

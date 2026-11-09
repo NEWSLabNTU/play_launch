@@ -715,8 +715,8 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   --against` could never credit a restart from a real run (now rewritten
   while its rows change); a contract topic declared with only a type was
   dropped by rlm's conditional cleanup and, once kept, not wired from the
-  remaps (rlm fix unreleased, GRAMMAR_VERSION 0.3.14; the resolver half
-  is in, inert until the pin moves); and `reaction-unguarded` called a
+  remaps (fixed in rlm v0.3.14, which play_launch pins, and in
+  `derive_topics_from_remaps`); and `reaction-unguarded` called a
   mode a reaction. Two things a later change must keep: the sentence
   leaves out levels the fault removes and overrun rows; and a predicate
   value in upper snake case is a constant name even when quoted (a known

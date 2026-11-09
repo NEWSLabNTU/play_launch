@@ -21,7 +21,7 @@ fixture, test or run it came from.
 | E3 | False positives on real systems? | no false error; every warning true or explained | **Pass.** No false error; one false warning in the first Autoware draft was a true finding about the draft (below). |
 | E4 | Do the derived bounds match runs? | each measured time within its bound; credit decided as the run went | **Partly.** Credit and run agree in both cases, and the first safe message is within its bound in both. One measured restart (1401.91 ms) exceeds its credited total (1133.0 ms). |
 | E5 | Runtime cost? | under 1% of a core; ns per event | **Pass, weakly.** No difference between the arms above run-to-run noise (play_launch 14.8% vs 14.0% of a core, interception 1.10% vs 1.36%); 52.2 ns per field per publish. The idle simulator published only 26 to 40 commanded messages a run, so the runs bound the cost, not measure it. |
-| E6 | Author burden? | fewer lines than the dropped forms; no fact written twice | **Pass on lines** (26 against 58); **one fact written twice** until rlm's fix is pinned (below). |
+| E6 | Author burden? | fewer lines than the dropped forms; no fact written twice | **Pass.** 24 lines against 58; no fact written twice once rlm v0.3.14 was pinned (below). |
 | E7 | Same answer in nano-ros? | same hazard, level and verdict | **Not run.** The image cannot report the level it fell to, nor any value fault (M4's table). |
 
 ## E1 expressiveness
@@ -50,10 +50,9 @@ them"). Two matter:
   contract only needs its type. rlm's conditional cleanup removed every
   topic left without endpoints, including one that never had any, and the
   resolver would not have wired a contract topic from the remaps anyway.
-  Both halves are fixed (rlm `types/src/cond.rs`, unreleased, and
-  `derive_topics_from_remaps`), verified with a resolver built against the
-  local rlm. Until play_launch pins the rlm release, the Autoware contract
-  names the topic's two endpoints.
+  Both halves are fixed (rlm v0.3.14 `types/src/cond.rs`, and
+  `derive_topics_from_remaps`), and play_launch pins v0.3.14: the Autoware
+  contract states the topic's type and nothing else.
 
 ## E2 detection
 
@@ -164,11 +163,10 @@ it.
 The dropped forms are `final_elements:` (channel, arbiter, safe predicate
 per level, silence) and `recovery:`, written for the same facts in
 `data/e6_dropped_forms.yaml`. The field census reports no new write-only
-field (`requirement` is read since M3). One fact is written twice for now:
-the Autoware contract names the endpoints of `/planning/scenario_planning/
-max_velocity`, which the launch file's remaps already state, because the
-pinned rlm drops a type-only topic (E1). With the fix pinned those two
-lines go.
+field (`requirement` is read since M3). The first Autoware draft wrote one
+fact twice, the endpoints of `/planning/scenario_planning/max_velocity`
+that the launch file's remaps state, because rlm v0.3.13 dropped a
+type-only topic (E1); with v0.3.14 pinned the entry is its type alone.
 
 ## E7 same answer in nano-ros
 
@@ -181,8 +179,7 @@ a nano-ros with #3341 and the image reports its level.
 
 ## Follow-up
 
-- rlm: a quoted predicate value is a string (E1); release the type-only
-  topic fix and pin it here (E1, E6).
+- rlm: a quoted predicate value is a string (E1).
 - play_launch: `level-not-released` (E2); credit a restart from the slowest
   startup a run saw (E4).
 - nano-ros: report the active level; E7 after that.

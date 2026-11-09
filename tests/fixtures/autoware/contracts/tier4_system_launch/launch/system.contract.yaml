@@ -87,14 +87,11 @@ paths:
     max_latency: 300ms
 
 topics:
-  # The selector's output, named by the endpoints the launch file's remaps
-  # give it. Both ends are written only because rlm v0.3.13 drops a topic
-  # declared with a type alone (fixed in rlm after v0.3.13, phase 102 E3);
-  # with the fix the `type:` line is all this entry needs.
+  # The selector's output: a type is all a contract needs to say about a
+  # topic the launch file's remaps wire (rlm v0.3.14 keeps such an entry;
+  # phase 102 E3).
   /planning/scenario_planning/max_velocity:
     type: autoware_internal_planning_msgs/msg/VelocityLimit
-    pub: [/planning/scenario_planning/external_velocity_limit_selector/output_external_velocity_limit]
-    sub: [/planning/scenario_planning/velocity_smoother/input_external_velocity_limit_mps]
   /system/operation_mode/availability:
     type: tier4_system_msgs/msg/OperationModeAvailability
     external: pub

@@ -175,8 +175,8 @@ releases: `level-not-released`, follow-up); E3 pass (the one new finding
 on Autoware was a true one about the first draft); E4 credit and run agree
 in both cases, but one restart outlasted its credit (the credit samples a
 first spawn's startup); E5 no difference above noise on the idle
-simulator, 52.2 ns per field; E6 26 lines against 58 for the dropped forms,
-one fact written twice until rlm's type-only fix is pinned; E7 not run.
+simulator, 52.2 ns per field; E6 24 lines against 58 for the dropped forms,
+no fact written twice once rlm v0.3.14 was pinned; E7 not run.
 Three defects found and fixed: `startup_timeline.json` was written before
 any first publish was known, so no real run could credit a restart; a
 type-only contract topic was dropped (rlm) and not wired (resolver); and

@@ -1,6 +1,6 @@
 Parsing launch file: /opt/autoware/1.5.0/share/autoware_launch/launch/planning_simulator.launch.xml
-[2m2026-11-09T11:11:07.246932Z[0m [33m WARN[0m Executing $(command xacro /opt/autoware/1.5.0/share/tier4_vehicle_launch/urdf/vehicle.xacro vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit config_dir:=/opt/autoware/1.5.0/share/sample_sensor_kit_description/config) — command substitutions run arbitrary shell commands. Use --block-commands to reject them.
-[2m2026-11-09T11:11:07.345081Z[0m [33m WARN[0m Executing $(command xacro /opt/autoware/1.5.0/share/tier4_vehicle_launch/urdf/vehicle.xacro vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit config_dir:=/opt/autoware/1.5.0/share/sample_sensor_kit_description/config) — command substitutions run arbitrary shell commands. Use --block-commands to reject them.
+[2m2026-11-09T11:58:08.356345Z[0m [33m WARN[0m Executing $(command xacro /opt/autoware/1.5.0/share/tier4_vehicle_launch/urdf/vehicle.xacro vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit config_dir:=/opt/autoware/1.5.0/share/sample_sensor_kit_description/config) — command substitutions run arbitrary shell commands. Use --block-commands to reject them.
+[2m2026-11-09T11:58:08.440803Z[0m [33m WARN[0m Executing $(command xacro /opt/autoware/1.5.0/share/tier4_vehicle_launch/urdf/vehicle.xacro vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit config_dir:=/opt/autoware/1.5.0/share/sample_sensor_kit_description/config) — command substitutions run arbitrary shell commands. Use --block-commands to reject them.
 Parsed: 169 scopes, 34 nodes, 15 containers, 70 composable nodes
 
 -- Install prefixes (--explain) --
@@ -53,10 +53,10 @@ tier4_planning_launch                        /opt/autoware/1.5.0
 tier4_simulator_launch                       /opt/autoware/1.5.0
 tier4_system_launch                          /opt/autoware/1.5.0
 tier4_vehicle_launch                         /opt/autoware/1.5.0
-[2m2026-11-09T11:11:07.830702Z[0m [32m INFO[0m Loaded 4 manifest(s) [4 overlay, 0 provider] (79 scopes without manifests)
+[2m2026-11-09T11:58:08.898772Z[0m [32m INFO[0m Loaded 4 manifest(s) [4 overlay, 0 provider] (79 scopes without manifests)
 
 -- Cross-scope diagnostics --
-  info[graph-from-remaps]: 105 topic(s) and 258 endpoint(s) derived from launch remaps that no contract declares; 52 remap(s) name a topic but not a direction and were left out. A derived edge is an inference from the `~/input/`-`~/output/` convention, not a declaration: it fills the graph the causal rules walk, and a contract always overrides it
+  info[graph-from-remaps]: 105 topic(s) and 260 endpoint(s) derived from launch remaps that no contract declares; 52 remap(s) name a topic but not a direction and were left out. A derived edge is an inference from the `~/input/`-`~/output/` convention, not a declaration: it fills the graph the causal rules walk, and a contract always overrides it
     at topics
   warning[causal-dag-global]: cross-scope causal cycle in the merged dataflow graph (state edges already excluded): /control/vehicle_cmd_gate -> /control/external_cmd_converter (via /control/current_gate_mode), /control/external_cmd_converter -> /control/vehicle_cmd_gate (via /external/selected/control_cmd). Contract files: /home/aeon/repos/play_launch/tests/fixtures/autoware/contracts/tier4_control_launch/launch/control.contract.yaml. This may be a legitimate design (e.g. a simulator closing a physical control loop) or a missed 'state: true' tag on one of these subscribers -- see the per-manifest 'causal-dag' rule, which cannot see cross-scope cycles like this one.
     at graph

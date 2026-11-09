@@ -22,7 +22,7 @@ Gaps found writing them:
 | Gap | Case | Ruling |
 |---|---|---|
 | A string predicate whose value is upper snake case (`LAND`) is read as a message constant name, quoted or not (rlm `PredicateValue::from_text`). | U4 | grammar fix: a quoted YAML scalar is a string. rlm, next release. The fixture uses mavros' `AUTO.LAND`. |
-| A topic declared with only a type (the type of a topic the launch tree wires) was dropped by rlm's conditional cleanup, and the resolver did not let the launch tree wire a contract topic. | U2 Autoware | fixed: rlm (unreleased, GRAMMAR_VERSION 0.3.14) keeps it, the resolver wires it from the remaps. Until play_launch pins it, the contract names both endpoints. |
+| A topic declared with only a type (the type of a topic the launch tree wires) was dropped by rlm's conditional cleanup, and the resolver did not let the launch tree wire a contract topic. | U2 Autoware | fixed: rlm v0.3.14 keeps it and the resolver wires it from the remaps; the Autoware contract states the type alone. |
 | `max_velocity_candidates` is a proposal topic with several publishers; the final element is the selector's output. | U2 Autoware | not a gap in the grammar: `arbiter-bypass` found the first draft's wrong topic. The contract commands the selector's output. |
 | A relational safe predicate (a speed limit that is a function of the measured distance, U3's continuous form). | U3 | out of scope (safety-functions.md decision 4): discrete zones are levels; the continuous form is an extension's static check. |
 | Simplex's recoverable envelope. | Simplex | out of scope: the monitor's argument. The contract states the verdict and checks what follows from it. |
@@ -97,5 +97,5 @@ nofields-2: 15.6% of a core (rclrs executor 0.00%, interception 1.30%, monitor 0
 | Contract | Lines the safety model added | Same facts in the dropped forms |
 |---|---|---|
 | island (simple-autoware-safety-island) | 9 | 21 |
-| Autoware overlay (tier4_system_launch) | 12 | 22 |
+| Autoware overlay (tier4_system_launch) | 10 | 22 |
 | rt_av_demo | 5 | 15 |
