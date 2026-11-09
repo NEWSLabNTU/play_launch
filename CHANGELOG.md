@@ -6,8 +6,40 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.31.0 - 2026-11-10
 
+- **Added (contracts; rlm v0.3.13 and v0.3.14, phase 102): the safety
+  model.** New keys: `modes.<m>.commands` (what a degradation level puts
+  on the actuator topic), `hazards.<h>.requirement`, `functions.<f>.m` (an
+  m-of-n redundant group), a root `independence:`, the map form
+  `topics.<t>.external: { side, on_silence }`, and the fault classes
+  `repetition`, `resequencing` and `insertion` in `on:`. New static rules:
+  `arbiter-bypass`, `commands-unreached`, `commands-field-unknown`,
+  `reaction-waits-on-traffic`, `independence-violated`,
+  `independence-unchecked`, `interference-shared-process` and
+  `recovery-credited` / `-unfit` / `-uncredited` (the last needs
+  `check --against <run>`). A contract that uses one of these keys needs
+  this release; 0.30 refuses it as an unknown key.
+- **Added (runtime):** the observer reads the values of the fields a
+  contract's predicates name (`interception/fields.json`, about 50 ns per
+  field per publish). A mode is lost by value as well as by silence, and
+  the level it falls to must hold what it commands: `safe-state-violated`,
+  `final-element-silent`, `safe-state-unjudged`. Run-time
+  `arbiter-bypass`, `insertion`, `repetition` and `resequencing`, and
+  `hazard-recovered` says whether the guard came back inside the FTTI.
+- **Added (`check --explain`):** each hazard is printed as one sentence
+  (requirement, what it watches, its bound, the levels it reaches and what
+  each commands), and every finding about a hazard ends
+  `[requirement <id>]`.
+- **Changed (`check`, `resolve`):** `--container-mode` (default
+  `observable`) tells the independence rules whether composables share a
+  process; `launch` passes the mode it runs.
+- **Fixed (`startup_timeline.json`):** it was written once, at startup
+  complete, before any first publish was known, so `check --against` could
+  never credit a restart from a real run. It is now rewritten while its
+  rows change.
+- **Fixed (contracts):** a topic declared with only a type was dropped,
+  and is now kept and wired from the launch file's remaps.
 - **Fixed (both parsers, #0081):** `RegisterEventHandler(OnProcessExit(
   target_action=X, on_exit=[EmitEvent(event=Shutdown())]))` (or
   `on_exit=Shutdown()`) now ends the launch when X exits, as `ros2 launch`
