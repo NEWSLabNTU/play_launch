@@ -306,6 +306,7 @@ mod tests {
                     max_transport_ms: None,
                     drop: None,
                     scope_ids: vec![0],
+                    on_silence_after_ms: None,
                 },
             );
         }
@@ -645,6 +646,7 @@ mod tests {
                 max_transport_ms: None,
                 drop: None,
                 scope_ids: vec![0],
+                on_silence_after_ms: None,
             },
         );
         index.topics.insert(
@@ -661,6 +663,7 @@ mod tests {
                 max_transport_ms: None,
                 drop: None,
                 scope_ids: vec![0],
+                on_silence_after_ms: None,
             },
         );
 
@@ -1584,6 +1587,7 @@ mod tests {
                 max_transport_ms: None,
                 drop: None,
                 scope_ids: vec![0],
+                on_silence_after_ms: None,
             },
         );
         let budgets = BTreeMap::from([("/talker".to_string(), 3_500u64)]);

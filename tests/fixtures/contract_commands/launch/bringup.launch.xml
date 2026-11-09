@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!-- rlm v0.3.13 (play_launch phase 100 F1): a protective stop with a
+     final element. The gate is the one publisher of /cmd_vel_filtered,
+     and the stop level commands a zero twist on it. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="lidar"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="safety_node"/>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="planner"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="gate"/>
+</launch>

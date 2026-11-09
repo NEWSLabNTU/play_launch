@@ -636,6 +636,250 @@ RankedPlan {
     ],
     warnings: [],
 }
+== contract_commands/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/gate",
+            path: "forward",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=2)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "stop",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=2)",
+        },
+        RankItem {
+            node: "/safety_node",
+            path: "judge",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/lidar",
+            path: "sample",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/planner",
+            path: "plan",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=100)",
+        },
+    ],
+    warnings: [],
+}
+== contract_commands_bypass/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/gate",
+            path: "forward",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=2)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "stop",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=2)",
+        },
+        RankItem {
+            node: "/safety_node",
+            path: "judge",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/lidar",
+            path: "sample",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/teleop",
+            path: "drive",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=50)",
+        },
+        RankItem {
+            node: "/planner",
+            path: "plan",
+            fine_group: 4,
+            coarse_group: None,
+            tie_group: Some(
+                4,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=100)",
+        },
+    ],
+    warnings: [],
+}
+== contract_commands_field/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/gate",
+            path: "forward",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=2)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "stop",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=2)",
+        },
+        RankItem {
+            node: "/safety_node",
+            path: "judge",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/lidar",
+            path: "sample",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/planner",
+            path: "plan",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=100)",
+        },
+    ],
+    warnings: [],
+}
+== contract_commands_unreached/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/gate",
+            path: "forward",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=2)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "stop",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=2)",
+        },
+        RankItem {
+            node: "/safety_node",
+            path: "judge",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/lidar",
+            path: "sample",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/planner",
+            path: "plan",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=100)",
+        },
+        RankItem {
+            node: "/lamp_driver",
+            path: "blink",
+            fine_group: 4,
+            coarse_group: None,
+            tie_group: Some(
+                4,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=500)",
+        },
+    ],
+    warnings: [],
+}
 == contract_concurrency/launch/bringup.launch.xml
 RankedPlan {
     items: [
@@ -2118,6 +2362,78 @@ RankedPlan {
     items: [],
     warnings: [],
 }
+== contract_independence/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/detector",
+            path: "stop",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=5)",
+        },
+        RankItem {
+            node: "/lidar_a",
+            path: "sample",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=50)",
+        },
+        RankItem {
+            node: "/lidar_b",
+            path: "sample",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=50)",
+        },
+    ],
+    warnings: [],
+}
+== contract_independence_ok/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/detector",
+            path: "stop",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=5)",
+        },
+        RankItem {
+            node: "/lidar_a",
+            path: "sample",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=50)",
+        },
+        RankItem {
+            node: "/lidar_b",
+            path: "sample",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=50)",
+        },
+    ],
+    warnings: [],
+}
 == contract_merge/launch/bringup.launch.xml
 RankedPlan {
     items: [],
@@ -2700,6 +3016,69 @@ RankedPlan {
     ],
     warnings: [],
 }
+== contract_recovery/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/safety/brake_controller",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: Some(
+                "safety.stop",
+            ),
+            tie_group: None,
+            provenance: "derived(chain_aware: safety.stop segment drain 1/2)",
+        },
+        RankItem {
+            node: "/safety/obstacle_detector",
+            path: "detect",
+            fine_group: 0,
+            coarse_group: Some(
+                "safety.stop",
+            ),
+            tie_group: None,
+            provenance: "derived(chain_aware: safety.stop segment drain 2/2)",
+        },
+        RankItem {
+            node: "/safety/lidar_driver",
+            path: "sample",
+            fine_group: 1,
+            coarse_group: Some(
+                "safety.stop",
+            ),
+            tie_group: None,
+            provenance: "derived(chain_aware: safety.stop boundary RM period=20ms)",
+        },
+        RankItem {
+            node: "/safety/obstacle_detector",
+            path: "declare_lost",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=2)",
+        },
+        RankItem {
+            node: "/safety/brake_controller",
+            path: "emergency_stop",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=5)",
+        },
+    ],
+    warnings: [
+        ChainFeasibleWithoutWcet {
+            chain: "safety.stop",
+            boundaries_without_wcet: [
+                "/safety/lidar_driver/sample",
+            ],
+        },
+    ],
+}
 == contract_safe_ros/launch/bringup.launch.xml
 RankedPlan {
     items: [
@@ -2732,6 +3111,108 @@ RankedPlan {
                 2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/planner",
+            path: "plan",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=100)",
+        },
+    ],
+    warnings: [],
+}
+== contract_safe_ros_fixed/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/cmd_vel_interceptor",
+            path: "gate",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=2)",
+        },
+        RankItem {
+            node: "/cmd_vel_interceptor",
+            path: "stop",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=2)",
+        },
+        RankItem {
+            node: "/safety_node",
+            path: "judge",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/lidar",
+            path: "sample",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/planner",
+            path: "plan",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=100)",
+        },
+    ],
+    warnings: [],
+}
+== contract_safe_ros_plain/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/safety_node",
+            path: "judge",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/lidar",
+            path: "sample",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+        RankItem {
+            node: "/cmd_vel_interceptor",
+            path: "gate",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=2)",
         },
         RankItem {
             node: "/planner",

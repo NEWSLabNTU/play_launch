@@ -540,6 +540,7 @@ mod tests {
                     )),
                 }),
                 scope_ids: vec![0],
+                on_silence_after_ms: None,
             },
         );
         let mut manifest = ros_launch_manifest_types::Manifest::default();

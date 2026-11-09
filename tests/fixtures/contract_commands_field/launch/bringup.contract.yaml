@@ -1,0 +1,107 @@
+# rlm v0.3.13: `contract_commands` with a predicate on a field Twist does
+# not have (`linear.q`). `commands-field-unknown` refuses it.
+#
+# (The rest is `contract_commands`.)
+#
+# The safety node reports `too_close`; the gate subscribes to it and, unlike
+# Safe-ROS's interceptor, its stop path is TRIGGERED by the report, so the
+# stop does not wait for the planner's next command. The `stopped` level
+# commands a zero twist on /cmd_vel_filtered, which only the gate publishes.
+version: 1
+use:
+  iso26262: "^1"
+
+hazards:
+  collision:
+    integrity: ASIL_B
+    requirement: { id: R1, source: "HARA rev 3, section 4.2" }
+    monitors: [/too_close]
+    on: reported
+    when: { field: data, equals: true }
+    ftti: 1s
+    enters: driving
+
+functions:
+  path_clear:
+    of: [/too_close]
+    when: { field: data, equals: true }
+
+modes:
+  driving:
+    requires: [path_clear]
+    fallback: [stopped]
+  stopped:
+    requires: []
+    reaction: safety.stop
+    commands:
+      /cmd_vel_filtered:
+        - { field: linear.q, equals: 0 }
+        - { field: angular.z, equals: 0 }
+
+nodes:
+  lidar:
+    pub:
+      scan: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [scan]
+        max_latency: 5ms
+  safety_node:
+    sub:
+      scan: {}
+    pub:
+      too_close: {}
+    paths:
+      judge:
+        trigger: { input: [scan] }
+        output: [too_close]
+        max_latency: 5ms
+  planner:
+    pub:
+      cmd_vel: {}
+    paths:
+      plan:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [cmd_vel]
+        max_latency: 20ms
+  gate:
+    sub:
+      cmd_vel: {}
+      too_close:
+        on_violation: { on: [reported], reaction: stop }
+    pub:
+      cmd_vel_filtered: {}
+    paths:
+      forward:
+        trigger: { input: [cmd_vel] }
+        output: [cmd_vel_filtered]
+        max_latency: 2ms
+      stop:
+        trigger: { input: [too_close] }
+        output: [cmd_vel_filtered]
+        max_latency: 2ms
+        safe_state: { emits: cmd_vel_filtered, settle: 300ms }
+
+paths:
+  safety.stop:
+    trigger: { input: [/too_close] }
+    output: [/cmd_vel_filtered]
+
+topics:
+  /scan:
+    type: std_msgs/msg/String
+    pub: [lidar/scan]
+    sub: [safety_node/scan]
+  /too_close:
+    type: std_msgs/msg/Bool
+    pub: [safety_node/too_close]
+    sub: [gate/too_close]
+  /cmd_vel:
+    type: geometry_msgs/msg/Twist
+    pub: [planner/cmd_vel]
+    sub: [gate/cmd_vel]
+  /cmd_vel_filtered:
+    type: geometry_msgs/msg/Twist
+    external: { side: sub, on_silence: { after: 500ms } }
+    pub: [gate/cmd_vel_filtered]

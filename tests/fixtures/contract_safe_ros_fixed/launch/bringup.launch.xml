@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!-- Phase 100 F0: the shape of Safe-ROS (FMAS 2025, arXiv 2511.14433;
+     github.com/dianabenjumea/Safe-ROS). A LiDAR, a safety node that
+     publishes a too-close flag, an interceptor that forwards velocity
+     commands and replaces them with a stop while the flag is set, and the
+     base. The interceptor publishes only from its command callback. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="lidar"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="safety_node"/>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="planner"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="cmd_vel_interceptor"/>
+</launch>

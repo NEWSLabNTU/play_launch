@@ -198,6 +198,9 @@ pub struct ResolvedTopic {
     pub drop: Option<ros_launch_manifest_types::DropSpec>,
     /// All scope IDs that declared this topic.
     pub scope_ids: Vec<usize>,
+    /// An external consumer's silence behaviour (rlm v0.3.13): it is in its
+    /// safe state after this long without a message.
+    pub on_silence_after_ms: Option<f64>,
 }
 
 /// Resolved service entry with fully-qualified names.
@@ -262,6 +265,21 @@ pub struct ResolvedMode {
     pub scope_id: usize,
     pub name: String,
     pub decl: ros_launch_manifest_types::ModeDecl,
+    /// `decl.commands` with each topic qualified by the scope namespace
+    /// (rlm v0.3.13): topic FQN to its predicates.
+    pub commands: BTreeMap<String, Vec<ros_launch_manifest_types::ValuePredicate>>,
+}
+
+/// One `independence:` entry with its names qualified (rlm v0.3.13).
+#[derive(Debug, Clone)]
+pub struct ResolvedIndependence {
+    pub scope_id: usize,
+    /// Position in the scope's `independence:` list, for the diagnostic path.
+    pub index: usize,
+    /// Node FQNs or function names (a function stays a bare name, resolved
+    /// against the scope's functions by the rule).
+    pub of: Vec<String>,
+    pub not_sharing: Vec<ros_launch_manifest_types::SharedFact>,
 }
 
 /// A named guard group (phase 75), members qualified by the scope namespace.
@@ -273,6 +291,8 @@ pub struct ResolvedFunction {
     /// The predicate that loses the function by value (`of:` + `when:`,
     /// rlm v0.1.46). `None` for a function lost only by silence.
     pub when: Option<ros_launch_manifest_types::ValuePredicate>,
+    /// A redundant group's count (rlm v0.3.13); `None` is 1.
+    pub m: Option<u32>,
 }
 
 /// A hazard with its guard topics resolved to FQNs (phase 71).
@@ -548,6 +568,8 @@ pub struct ManifestIndex {
     pub functions: Vec<ResolvedFunction>,
     /// Operational modes (phase 75).
     pub modes: Vec<ResolvedMode>,
+    /// Independence requirements (rlm v0.3.13).
+    pub independence: Vec<ResolvedIndependence>,
     /// Node FQN → criticality derived from hazards (phase 72). Absent means
     /// no hazard reaches the node, and its declared label — if any — stands.
     pub derived_criticality: BTreeMap<String, DerivedCriticality>,
@@ -1253,6 +1275,8 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // Phase 72: criticality is a consequence of the hazards that reach a
     // node. Derived here; `sched_derive` reads it before any label.
     derive_criticality_from_hazards(index, &graph);
+    // rlm v0.3.13: freedom from interference reads the derived levels.
+    super::independence::check_interference(index);
 
     // A service server's promised response time, against the blocking its own
     // declarations imply.
@@ -1810,6 +1834,14 @@ fn detector_interval_ms(
         // A supervision's verdict (phase 93), never a subscriber's class:
         // the parser refuses it in an `on:` list.
         F::Reported | F::Overrun => None,
+        // rlm v0.3.13: a repeated, reordered or inserted message is the
+        // fault itself, so a node that checks each message it takes
+        // (`mechanism: application`) notices it on that message.
+        F::Repetition | F::Resequencing | F::Insertion => props
+            .on_violation
+            .as_ref()
+            .filter(|v| v.mechanism == ros_launch_manifest_types::DetectMechanism::Application)
+            .map(|_| 0.0),
     }
 }
 
@@ -1880,6 +1912,9 @@ fn fault_kind_name(kind: ros_launch_manifest_types::FaultKind) -> &'static str {
         F::Loss => "loss",
         F::Reported => "reported",
         F::Overrun => "overrun",
+        F::Repetition => "repetition",
+        F::Resequencing => "resequencing",
+        F::Insertion => "insertion",
     }
 }
 
@@ -1894,6 +1929,9 @@ fn detectors_that_count(kind: ros_launch_manifest_types::FaultKind) -> &'static 
         F::Loss => "`drop.max_consecutive` on the guard topic, whose rate is known",
         F::Reported => "a publisher of the guard topic whose rate is known",
         F::Overrun => "a `supervise:` on the budget (not a guard's class)",
+        F::Repetition | F::Resequencing | F::Insertion => {
+            "an `on_violation` with `mechanism: application` on the subscriber (the node checks each message's stamp and publisher itself)"
+        }
     }
 }
 
@@ -4556,6 +4594,9 @@ fn check_fault_reaction(
     super::budget_book::check_budget_rule(index, &mut diags);
 
     check_modes(index, graph, &mut diags);
+    super::safety_function::check_commands(index, graph, &mut diags);
+    super::safety_function::check_reaction_waits_on_traffic(index, graph, &mut diags);
+    super::independence::check_independence(index, graph, &mut diags);
 
     diags.sort_by(|a, b| a.path.cmp(&b.path).then(a.rule_id.cmp(&b.rule_id)));
     // A finding about a declaration, reached once per hazard that walks
@@ -6603,6 +6644,10 @@ fn resolve_topics(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestI
                     max_transport_ms: topic_decl.max_transport.ms(),
                     drop: topic_decl.drop.clone(),
                     scope_ids: vec![scope.id],
+                    on_silence_after_ms: topic_decl
+                        .on_silence
+                        .as_ref()
+                        .map(|s| s.after.as_millis_f64()),
                 },
             );
         }
@@ -6703,6 +6748,7 @@ fn derive_topics_from_remaps(dump: &LaunchDump, index: &mut ManifestIndex) {
                     max_transport_ms: None,
                     drop: None,
                     scope_ids: record.scope_id.into_iter().collect(),
+                    on_silence_after_ms: None,
                 });
             if is_new {
                 derived_topics += 1;
@@ -7152,6 +7198,7 @@ fn resolve_hazards(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifest
                 all_of: f.group.all_of,
             },
             when: f.when.clone(),
+            m: f.m,
         });
     }
     for (name, decl) in &manifest.modes {
@@ -7159,6 +7206,29 @@ fn resolve_hazards(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifest
             scope_id: scope.id,
             name: name.clone(),
             decl: decl.clone(),
+            commands: decl
+                .commands
+                .iter()
+                .map(|(t, p)| (qualify_name(&scope.ns, t), p.clone()))
+                .collect(),
+        });
+    }
+    for (i, ind) in manifest.independence.iter().enumerate() {
+        index.independence.push(ResolvedIndependence {
+            scope_id: scope.id,
+            index: i,
+            of: ind
+                .of
+                .iter()
+                .map(|n| {
+                    if manifest.functions.contains_key(n) {
+                        n.clone()
+                    } else {
+                        qualify_name(&scope.ns, n)
+                    }
+                })
+                .collect(),
+            not_sharing: ind.not_sharing.clone(),
         });
     }
 

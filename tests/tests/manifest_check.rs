@@ -1447,23 +1447,173 @@ fn a_server_that_latches_the_request_is_a_sampling_hop() {
     assert!(!check_fixture("contract_fault_service").contains("sampling)"));
 }
 
-/// Phase 100 F0: Safe-ROS's interceptor, written as it is built. It reads
+/// Phase 100 F0/F4: Safe-ROS's interceptor, written as it is built. It reads
 /// the too-close flag as state and publishes only from its command callback,
 /// so a stop reaches the base only when the planner's next command arrives.
 ///
-/// What holds today: the reaction edge names a path the flag does not
-/// trigger, and `reaction-unreachable` refuses it. What does not, and is
-/// deliberately not pinned here: `fault-reaction-time` still reports the
-/// hazard as fitting, charging the gate's 2 ms with no wait for the
-/// planner's traffic (and without the `on_violation`, the same system checks
-/// clean with a 0 ms reaction). That is phase 100 F4's case.
+/// F0 found the walk charged nothing for that wait, and that without the
+/// `on_violation` (`contract_safe_ros_plain`, how Safe-ROS reads) the system
+/// checked clean. F4's `reaction-waits-on-traffic` now refuses both shapes,
+/// naming the input and its period, and the fixed twin (a stop path
+/// triggered by the report) is not refused.
 #[test]
 fn safe_ros_interceptor_waits_on_command_traffic() {
     let out = check_fixture("contract_safe_ros");
     assert!(
-        out.contains("error[reaction-unreachable]: subscriber '/cmd_vel_interceptor/too_close' declares reaction 'gate'"),
+        out.contains(
+            "error[reaction-unreachable]: subscriber '/cmd_vel_interceptor/too_close' declares \
+             reaction 'gate'"
+        ),
         "{out}"
     );
+    for dir in ["contract_safe_ros", "contract_safe_ros_plain"] {
+        let out = check_fixture(dir);
+        assert!(
+            out.contains("error[reaction-waits-on-traffic]")
+                && out.contains("triggered by '/cmd_vel_in' (up to 100.00ms at its 10 Hz"),
+            "{dir}:\n{out}"
+        );
+        assert!(out.contains("0 clean, 1 with errors"), "{dir}:\n{out}");
+    }
+    let fixed = check_fixture("contract_safe_ros_fixed");
+    assert!(!fixed.contains("reaction-waits-on-traffic"), "{fixed}");
+    assert!(fixed.contains("1 clean, 0 with errors"), "{fixed}");
+}
+
+/// rlm v0.3.13 (phase 100 F1): a level's `commands`. `contract_commands`
+/// is a correct gate; each twin carries one defect, refused by its rule and
+/// by no other new rule.
+#[test]
+fn a_commanded_topic_is_a_final_element() {
+    let rules = [
+        "arbiter-bypass",
+        "commands-unreached",
+        "commands-field-unknown",
+    ];
+    let good = check_fixture("contract_commands");
+    for rule in rules {
+        assert!(!good.contains(rule), "{rule} on the correct gate:\n{good}");
+    }
+    assert!(good.contains("1 clean, 0 with errors"), "{good}");
+    for (dir, rule, needle) in [
+        (
+            "contract_commands_bypass",
+            "arbiter-bypass",
+            "commands '/cmd_vel_filtered', which has 2 publishers (/gate, /teleop)",
+        ),
+        (
+            "contract_commands_unreached",
+            "commands-unreached",
+            "commands '/lamp', but its reaction 'safety.stop' ends at /cmd_vel_filtered",
+        ),
+        (
+            "contract_commands_field",
+            "commands-field-unknown",
+            "reads field 'linear.q' of '/cmd_vel_filtered'",
+        ),
+    ] {
+        let out = check_fixture(dir);
+        assert!(
+            out.contains(&format!("error[{rule}]")) && out.contains(needle),
+            "{dir}:\n{out}"
+        );
+        for other in rules.iter().filter(|r| **r != rule) {
+            assert!(!out.contains(other), "{dir} also reports {other}:\n{out}");
+        }
+    }
+}
+
+/// rlm v0.3.13 (phase 101 T1): a redundant pair in one container violates
+/// its `process` and `container` independence and shares a process with a
+/// node of lower integrity; deployed apart it does neither. `cpus` is
+/// reported unchecked in both, since no platform file resolves.
+#[test]
+fn independence_is_checked_against_the_deployment() {
+    let out = check_fixture("contract_independence");
+    for needle in [
+        "'/lidar_a' and '/lidar_b' must not share a process",
+        "'/lidar_a' and '/lidar_b' must not share a container",
+        "warning[interference-shared-process]: container /sensing_container",
+        "/logger (none)",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    assert!(out.contains("under `isolated` they do not"), "{out}");
+    let ok = check_fixture("contract_independence_ok");
+    assert!(!ok.contains("independence-violated"), "{ok}");
+    assert!(!ok.contains("interference-shared-process"), "{ok}");
+    for o in [&out, &ok] {
+        assert!(o.contains("info[independence-unchecked]"), "{o}");
+    }
+}
+
+/// rlm v0.3.13 (phase 101 T2): a respawning LiDAR's restart is credited only
+/// from a run, and only when detection + `respawn_delay` + its startup fits
+/// the FTTI. The two runs are hand-written, startup 150 ms and 400 ms.
+#[test]
+fn a_restart_is_credited_only_from_a_run() {
+    let out = check_fixture("contract_recovery");
+    assert!(
+        out.contains("info[recovery-uncredited]")
+            && out.contains("a startup time comes only from a run"),
+        "{out}"
+    );
+    let run = |r: &str| {
+        fixtures::repo_root()
+            .join("tests/fixtures/contract_recovery/runs")
+            .join(r)
+            .display()
+            .to_string()
+    };
+    let (_, fits) = check_takeover("contract_recovery", &["--against", &run("fits")]);
+    assert!(
+        fits.contains("info[recovery-credited]")
+            && fits.contains("startup 150.00ms = 350.00ms, inside the FTTI 500.00ms"),
+        "{fits}"
+    );
+    let (_, unfit) = check_takeover("contract_recovery", &["--against", &run("unfit")]);
+    assert!(
+        unfit.contains("warning[recovery-unfit]")
+            && unfit.contains("startup 400.00ms = 600.00ms, past the FTTI 500.00ms"),
+        "{unfit}"
+    );
+}
+
+/// rlm v0.3.13: the model carries every new fact, so `up` and nano-ros read
+/// what `check` read.
+#[test]
+fn the_model_carries_the_safety_facts() {
+    let model = |dir: &str| {
+        let launch = fixtures::repo_root()
+            .join("tests/fixtures")
+            .join(dir)
+            .join("launch/bringup.launch.xml");
+        let out = play_launch_cmd()
+            .arg("resolve")
+            .arg(&launch)
+            .args(["-o", "-"])
+            .output()
+            .expect("resolve runs");
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+    let commands = model("contract_commands");
+    for needle in [
+        "commands:",
+        "/cmd_vel_filtered:",
+        "field: linear.x",
+        "requirement:",
+        "id: R1",
+        "on_silence_after_ms: 500",
+    ] {
+        assert!(
+            commands.contains(needle),
+            "expected `{needle}`:\n{commands}"
+        );
+    }
+    let ind = model("contract_independence_ok");
+    for needle in ["independence:", "not_sharing:", "- cpus", "m: 1"] {
+        assert!(ind.contains(needle), "expected `{needle}`:\n{ind}");
+    }
 }
 
 /// Phase 82: a detector counts only for the fault classes it can see, and a

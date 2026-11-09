@@ -240,6 +240,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // `sources.overlay` is already the discovered root (see
     // `CheckInputs::contract_sources`), so both channels agree on which root
     // is in play.
+    let mut independence_cpus: Option<crate::ros::independence::NodeCpus> = None;
     let resolved_platform = crate::ros::sched_loader::resolve_platform_file(
         &dump,
         inputs.sched.as_deref(),
@@ -259,6 +260,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
             &resolved.path,
             &inputs.target,
         )?;
+        independence_cpus = Some(crate::ros::independence::node_cpus(&derived.plan));
         if inputs.explain {
             crate::ros::sched_loader::print_explain(&derived, resolved, Some(&index));
             let note = crate::ros::sched_loader::render_composable_task_note(
@@ -283,6 +285,14 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
              (pass --sched <path>, or ship one via the overlay/provider channels)"
         );
     }
+
+    // rlm v0.3.13: the CPU half of `independence`, which needs the plan.
+    let cpu_diags = crate::ros::independence::check_cpus(&index, independence_cpus.as_ref());
+    index.merge_diagnostics.extend(cpu_diags);
+    // rlm v0.3.13: a restart is credited from the launch file's `respawn`
+    // and a run's startup times, and only from a run.
+    let recovery = crate::ros::recovery::check_recovery(&index, &dump, inputs.against.as_deref());
+    index.merge_diagnostics.extend(recovery);
 
     // Phase 85 D6: the declared endpoints against a recorded run's.
     if let Some(run) = &inputs.against {

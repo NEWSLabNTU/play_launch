@@ -699,6 +699,23 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-11-08**: **The safety model's static checks** (phase 102 M1, rlm
+  v0.3.13). Keys: `modes.<m>.commands`, `hazards.<h>.requirement`,
+  `functions.<f>.m`, `independence:`, `topics.<t>.external: { side,
+  on_silence }`, and `on:` gains `repetition`/`resequencing`/`insertion`.
+  Rules in `ros/safety_function.rs` (`arbiter-bypass`,
+  `commands-unreached`, F4's `reaction-waits-on-traffic`),
+  `ros/independence.rs` (`independence-violated`, `independence-unchecked`,
+  `interference-shared-process`) and `ros/recovery.rs`
+  (`recovery-credited`/`-unfit`/`-uncredited`); `commands-field-unknown` is
+  `value_rules::check_predicate_field` with its own rule id. Three things a
+  later change must keep: `process` assumes composables in one container
+  share a process (the model has no container mode), and says so;
+  `interference-shared-process` runs AFTER `derive_criticality_from_hazards`
+  (run before it, every node reads as no integrity and the rule is silent);
+  and `cpus` and recovery need the `check` verb's platform plan and
+  `--against` run, so they live in `verbs/check.rs`, not `load_manifests`.
+
 - **2026-11-07**: **The interceptor reads declared fields** (phase 102
   M0b, `play_launch_interception/src/fields.rs`,
   `interception/fields.rs`). The model's `when:` predicates (hazards and

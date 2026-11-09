@@ -631,6 +631,9 @@ fn fault_kind(kind: ros_launch_manifest_types::FaultKind) -> &'static str {
         F::Loss => "loss",
         F::Reported => "reported",
         F::Overrun => "overrun",
+        F::Repetition => "repetition",
+        F::Resequencing => "resequencing",
+        F::Insertion => "insertion",
     }
 }
 

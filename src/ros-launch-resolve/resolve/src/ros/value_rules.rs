@@ -466,6 +466,9 @@ fn lookup_field(msg_type: &str, dotted: &str) -> FieldLookup {
 // when-requires-reported, when-field-unknown
 // ---------------------------------------------------------------------------
 
+// `rule` names the reader's own rule (`when-field-unknown` or
+// `commands-field-unknown`); the rest is the site the finding is reported at.
+#[allow(clippy::too_many_arguments)]
 fn check_predicate_field(
     index: &ManifestIndex,
     scope_id: usize,
@@ -473,6 +476,7 @@ fn check_predicate_field(
     at: &str,
     topic: &str,
     pred: &ValuePredicate,
+    rule: &'static str,
     diags: &mut Vec<Diagnostic>,
 ) {
     let where_ = site(index, scope_id, at);
@@ -483,7 +487,7 @@ fn check_predicate_field(
         .filter(|t| !t.is_empty())
     else {
         diags.push(diag(
-            "when-field-unknown",
+            rule,
             Severity::Warning,
             format!(
                 "{where_}: {owner} reads field '{}' of '{topic}', whose message type no \
@@ -534,7 +538,7 @@ fn check_predicate_field(
         )),
         FieldLookup::Unresolved { ty } => {
             diags.push(diag(
-                "when-field-unknown",
+                rule,
                 Severity::Warning,
                 format!(
                     "{where_}: {owner} reads field '{}' of {msg_type}, but {} is not on the \
@@ -553,12 +557,7 @@ fn check_predicate_field(
         }
     };
     if let Some(message) = found {
-        diags.push(diag(
-            "when-field-unknown",
-            Severity::Error,
-            message,
-            at.to_string(),
-        ));
+        diags.push(diag(rule, Severity::Error, message, at.to_string()));
     }
 }
 
@@ -584,6 +583,9 @@ pub(crate) fn check_predicates(index: &ManifestIndex, diags: &mut Vec<Diagnostic
                         FaultKind::Loss => "loss",
                         FaultKind::Reported => "reported",
                         FaultKind::Overrun => "overrun",
+                        FaultKind::Repetition => "repetition",
+                        FaultKind::Resequencing => "resequencing",
+                        FaultKind::Insertion => "insertion",
                     })
                     .collect();
                 format!("`on: [{}]`", names.join(", "))
@@ -613,6 +615,7 @@ pub(crate) fn check_predicates(index: &ManifestIndex, diags: &mut Vec<Diagnostic
                     &at,
                     member,
                     pred,
+                    "when-field-unknown",
                     diags,
                 );
             }
@@ -631,8 +634,28 @@ pub(crate) fn check_predicates(index: &ManifestIndex, diags: &mut Vec<Diagnostic
                 &at,
                 member,
                 pred,
+                "when-field-unknown",
                 diags,
             );
+        }
+    }
+    // rlm v0.3.13: a level's `commands` are predicates on the commanded
+    // topic's message, checked the same way.
+    for m in &index.modes {
+        for (topic, preds) in &m.commands {
+            for (i, pred) in preds.iter().enumerate() {
+                let at = format!("modes.{}.commands.{topic}[{i}]", m.name);
+                check_predicate_field(
+                    index,
+                    m.scope_id,
+                    &format!("mode '{}'", m.name),
+                    &at,
+                    topic,
+                    pred,
+                    "commands-field-unknown",
+                    diags,
+                );
+            }
         }
     }
 }
@@ -652,10 +675,19 @@ pub(crate) fn check_predicates(index: &ManifestIndex, diags: &mut Vec<Diagnostic
 /// classes, as everywhere else.
 pub(crate) fn removed_by(h: &ResolvedHazard, index: &ManifestIndex) -> BTreeSet<String> {
     let silence = h.decl.on.is_empty()
-        || h.decl
-            .on
-            .iter()
-            .any(|k| matches!(k, FaultKind::Omission | FaultKind::Late | FaultKind::Loss));
+        || h.decl.on.iter().any(|k| {
+            // A repeated, reordered or inserted message leaves the value
+            // as unknown as silence does (rlm v0.3.13).
+            matches!(
+                k,
+                FaultKind::Omission
+                    | FaultKind::Late
+                    | FaultKind::Loss
+                    | FaultKind::Repetition
+                    | FaultKind::Resequencing
+                    | FaultKind::Insertion
+            )
+        });
     let reported = h.decl.on.contains(&FaultKind::Reported);
     let guarded: BTreeSet<&str> = h
         .guards
@@ -1424,6 +1456,7 @@ mod tests {
                 name: name.into(),
                 group: group(topic),
                 when,
+                m: None,
             });
         }
         let hazard = |on: Vec<F>| ResolvedHazard {

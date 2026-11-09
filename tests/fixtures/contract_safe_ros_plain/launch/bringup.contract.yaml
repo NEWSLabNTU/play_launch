@@ -1,0 +1,97 @@
+# Phase 100 F0/F4: `contract_safe_ros` without the `on_violation`, which is
+# how Safe-ROS reads: the flag is state and nothing names a reaction edge.
+# Before F4 this checked CLEAN with a 0 ms reaction; `reaction-waits-on-
+# traffic` now refuses it.
+#
+#
+# Safe-ROS's `cmd_vel_interceptor_node.py` keeps the latest `too_close` flag
+# and publishes only from its `/cmd_vel` callback: while the flag is set it
+# replaces the incoming command with a zero twist. So the stop reaches the
+# base only when the planner's next command arrives, and the flag is read as
+# state, never as a trigger. This fixture states exactly that, and records
+# what the checker makes of the reaction route (phase 100 F0, which decides
+# whether F4's `reaction-waits-on-traffic` is needed).
+#
+# Timing is not stated anywhere in Safe-ROS; the numbers here are ours: a
+# 10 Hz LiDAR, a 10 Hz planner, a 1 s FTTI, 300 ms for the base to stop.
+version: 1
+use:
+  iso26262: "^1"
+
+hazards:
+  collision:
+    integrity: ASIL_B
+    description: robot drives into an obstacle closer than the stop distance
+    monitors: [/too_close]
+    on: reported
+    when: { field: data, equals: true }
+    ftti: 1s
+    reaction: safety.stop
+
+nodes:
+  lidar:
+    pub:
+      scan: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [scan]
+        max_latency: 5ms
+
+  safety_node:
+    sub:
+      scan: {}
+    pub:
+      too_close: {}
+    paths:
+      judge:
+        trigger: { input: [scan] }
+        output: [too_close]
+        max_latency: 5ms
+
+  planner:
+    pub:
+      cmd_vel_in: {}
+    paths:
+      plan:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [cmd_vel_in]
+        max_latency: 20ms
+
+  cmd_vel_interceptor:
+    sub:
+      cmd_vel_in: {}
+      too_close:
+        state: true
+    pub:
+      cmd_vel: {}
+    paths:
+      # The only path: a command in, a command (or a stop) out.
+      gate:
+        trigger: { input: [cmd_vel_in] }
+        output: [cmd_vel]
+        max_latency: 2ms
+        safe_state: { emits: cmd_vel, settle: 300ms }
+
+paths:
+  safety.stop:
+    trigger: { input: [/too_close] }
+    output: [/cmd_vel]
+
+topics:
+  /scan:
+    type: std_msgs/msg/String
+    pub: [lidar/scan]
+    sub: [safety_node/scan]
+  /too_close:
+    type: std_msgs/msg/Bool
+    pub: [safety_node/too_close]
+    sub: [cmd_vel_interceptor/too_close]
+  /cmd_vel_in:
+    type: std_msgs/msg/String
+    pub: [planner/cmd_vel_in]
+    sub: [cmd_vel_interceptor/cmd_vel_in]
+  /cmd_vel:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [cmd_vel_interceptor/cmd_vel]

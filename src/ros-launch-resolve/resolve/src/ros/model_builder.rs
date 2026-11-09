@@ -290,6 +290,9 @@ fn fault_kind(k: ros_launch_manifest_types::FaultKind) -> model::FaultKind {
         F::Loss => model::FaultKind::Loss,
         F::Reported => model::FaultKind::Reported,
         F::Overrun => model::FaultKind::Overrun,
+        F::Repetition => model::FaultKind::Repetition,
+        F::Resequencing => model::FaultKind::Resequencing,
+        F::Insertion => model::FaultKind::Insertion,
     }
 }
 
@@ -1311,6 +1314,7 @@ pub fn build_system_model(
             max_transport_ms: t.max_transport_ms,
             drop: t.drop.as_ref().map(drop_contract),
             qos: t.qos.as_ref().map(qos_contract),
+            on_silence_after_ms: t.on_silence_after_ms,
             sources: index
                 .manifests
                 .values()
@@ -1669,6 +1673,7 @@ pub fn build_system_model(
                 members: f.group.members.clone(),
                 all_of: f.group.all_of,
                 when: f.when.as_ref().map(predicate),
+                m: f.m,
             },
         );
     }
@@ -1718,6 +1723,11 @@ pub fn build_system_model(
                     on: key(&e.holds),
                     to: key(&e.to),
                 }),
+                commands: m
+                    .commands
+                    .iter()
+                    .map(|(t, ps)| (t.clone(), ps.iter().map(predicate).collect()))
+                    .collect(),
                 sources: index
                     .manifests
                     .get(&m.scope_id)
@@ -1725,6 +1735,41 @@ pub fn build_system_model(
                     .unwrap_or_default(),
             },
         );
+    }
+
+    // Independence (rlm v0.3.13): a function stays a function key, a node
+    // is its FQN.
+    for ind in &index.independence {
+        let scope_functions: Vec<&str> = index
+            .functions
+            .iter()
+            .filter(|f| f.scope_id == ind.scope_id)
+            .map(|f| f.name.as_str())
+            .collect();
+        contracts.independence.push(model::IndependenceContract {
+            of: ind
+                .of
+                .iter()
+                .map(|n| {
+                    if scope_functions.contains(&n.as_str()) {
+                        scope_scoped_key(&scope_key(Some(ind.scope_id)), n)
+                    } else {
+                        n.clone()
+                    }
+                })
+                .collect(),
+            not_sharing: ind
+                .not_sharing
+                .iter()
+                .map(|f| match f {
+                    ros_launch_manifest_types::SharedFact::Process => model::SharedFact::Process,
+                    ros_launch_manifest_types::SharedFact::Container => {
+                        model::SharedFact::Container
+                    }
+                    ros_launch_manifest_types::SharedFact::Cpus => model::SharedFact::Cpus,
+                })
+                .collect(),
+        });
     }
 
     // Hazards (phase 71): guards already resolved to topic FQNs by the
@@ -1784,6 +1829,14 @@ pub fn build_system_model(
                         })
                     })
                     .collect(),
+                requirement: h
+                    .decl
+                    .requirement
+                    .as_ref()
+                    .map(|r| model::RequirementContract {
+                        id: r.id.clone(),
+                        source: r.source.clone(),
+                    }),
             },
         );
     }

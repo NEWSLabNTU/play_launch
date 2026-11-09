@@ -1,6 +1,6 @@
 # Phase 102 - the contract safety model: build order and evaluation
 
-**Status (2026-11-07): M0 done.** M0a: F0's verdict is that F4 is needed (phase 100). M0b: the field reader, below. Puts phases 100 and
+**Status (2026-11-08): M0 done; M1 built, waiting on the rlm v0.3.13 tag.** M0a: F0's verdict is that F4 is needed (phase 100). M0b: the field reader, below. M1: below. Puts phases 100 and
 101 (the work) into one build order and adds the evaluation that decides
 whether the model is right. Design of record: rlm
 `docs/design/safety-functions.md` (issue 58) and
@@ -73,6 +73,32 @@ last message). Measured cost: 1.5 ns for the read, ~50 ns per field per
 publish with the event and ring push, the same as a service call hook
 (47 ns). At E5's scale, 10k declared-field publishes a second is 0.05% of a
 core. `modes.<m>.commands` (M1) adds its fields to the same list.
+
+### M1, grammar and static checks (built 2026-11-08)
+
+rlm `acc6987` (CHANGELOG "Unreleased", GRAMMAR_VERSION 0.3.13) carries
+every key. The resolver's rules, each with a fixture beside its correct
+twin and a test in `manifest_check.rs`:
+
+| Rule | Severity | Fixtures |
+|---|---|---|
+| `arbiter-bypass` | error | `contract_commands_bypass` / `contract_commands` |
+| `commands-unreached` | error | `contract_commands_unreached` |
+| `commands-field-unknown` | error | `contract_commands_field` |
+| `reaction-waits-on-traffic` (F4) | error | `contract_safe_ros`, `contract_safe_ros_plain` / `contract_safe_ros_fixed` |
+| `independence-violated` (process, container) | error | `contract_independence` / `contract_independence_ok` |
+| `independence-violated` (cpus), `independence-unchecked` | error / info | both, with and without a platform file |
+| `interference-shared-process` | warning | `contract_independence` / `contract_independence_ok` |
+| `recovery-credited`, `recovery-unfit`, `recovery-uncredited` | info / warning / info | `contract_recovery` with `runs/fits`, `runs/unfit`, no run |
+
+Every other fixture's verdict was compared before and after: only
+`contract_safe_ros` moved, gaining the F4 error. A fault class
+`repetition`, `resequencing` or `insertion` counts as detected by a
+subscriber only with `on_violation.mechanism: application` (the node
+checks each message), and removes value functions as silence does. Not in
+M1: `m` member counting, `on_silence` settle and the three classes'
+detection are runtime (M2); the requirement in every hazard diagnostic is
+F3 (M3).
 
 ## Evaluation
 

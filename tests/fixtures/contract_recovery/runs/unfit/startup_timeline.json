@@ -1,0 +1,5 @@
+{
+  "rows": [
+    { "id": "node:/safety/lidar_driver", "spawned_ms": 10, "first_publish_ms": 410 }
+  ]
+}

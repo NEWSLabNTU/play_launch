@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!-- rlm v0.3.13: `contract_independence` deployed apart: each LiDAR in a
+     container of its own, the logger a plain node. -->
+<launch>
+  <node_container pkg="rclcpp_components" exec="component_container" name="lidar_a_container">
+    <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Talker" name="lidar_a"/>
+  </node_container>
+  <node_container pkg="rclcpp_components" exec="component_container" name="lidar_b_container">
+    <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Talker" name="lidar_b"/>
+  </node_container>
+  <node pkg="demo_nodes_cpp" exec="listener" name="logger"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="detector"/>
+</launch>

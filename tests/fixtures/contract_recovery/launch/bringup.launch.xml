@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!-- rlm v0.3.13 (play_launch phase 101 T2): contract_fault with a LiDAR driver that respawns after 100 ms.
+     lidar -> detector -> brake; the hazard is "drive blind" (scan lost). -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="lidar_driver"      namespace="/safety" respawn="true" respawn_delay="0.1"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="obstacle_detector" namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="brake_controller"  namespace="/safety"/>
+</launch>

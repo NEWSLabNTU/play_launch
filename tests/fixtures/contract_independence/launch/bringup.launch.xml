@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<!-- rlm v0.3.13 (play_launch phase 101 T1): a redundant LiDAR pair that
+     must be independent, loaded into ONE container beside a logger. -->
+<launch>
+  <node_container pkg="rclcpp_components" exec="component_container" name="sensing_container">
+    <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Talker" name="lidar_a"/>
+    <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Talker" name="lidar_b"/>
+    <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Listener" name="logger"/>
+  </node_container>
+  <node pkg="demo_nodes_cpp" exec="listener" name="detector"/>
+</launch>

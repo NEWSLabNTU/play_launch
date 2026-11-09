@@ -1,0 +1,87 @@
+# rlm v0.3.13 (play_launch phase 101 T1): independence and freedom from
+# interference.
+#
+# Two LiDARs form a 1oo2 group (`scan_pair`, `m: 1`): the hazard is losing
+# both. The pair must share no process and no container, and no CPU. In
+# `contract_independence` they share one container (so one process under
+# `observable` and `stock`), beside a logger no hazard reaches:
+# `independence-violated` twice, and `interference-shared-process` for the
+# container. No platform file resolves, so `cpus` is reported unchecked.
+# `contract_independence_ok` deploys the same contract apart and is clean
+# but for that info.
+version: 1
+use:
+  iso26262: "^1"
+
+functions:
+  scan_pair:
+    all_of: [/scan_a, /scan_b]
+    m: 1
+
+independence:
+  - of: [lidar_a, lidar_b]
+    not_sharing: [process, container, cpus]
+
+hazards:
+  drive_blind:
+    integrity: ASIL_D
+    monitors: [scan_pair]
+    on: omission
+    ftti: 500ms
+    reaction: safety.stop
+
+nodes:
+  lidar_a:
+    pub:
+      scan_a: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [scan_a]
+        max_latency: 2ms
+  lidar_b:
+    pub:
+      scan_b: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [scan_b]
+        max_latency: 2ms
+  logger:
+    sub:
+      scan_a: {}
+  detector:
+    sub:
+      scan_a:
+        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
+        on_violation: { on: [omission], reaction: stop }
+      scan_b:
+        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
+        on_violation: { on: [omission], reaction: stop }
+    pub:
+      brake: {}
+    paths:
+      stop:
+        trigger: { input: [scan_a, scan_b] }
+        output: [brake]
+        max_latency: 5ms
+        safe_state: { emits: brake, settle: 200ms }
+
+paths:
+  safety.stop:
+    trigger: { input: [/scan_a, /scan_b] }
+    output: [/brake]
+
+topics:
+  /scan_a:
+    type: std_msgs/msg/String
+    pub: [lidar_a/scan_a]
+    sub: [detector/scan_a, logger/scan_a]
+  /scan_b:
+    type: std_msgs/msg/String
+    pub: [lidar_b/scan_b]
+    sub: [detector/scan_b]
+  /brake:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [detector/brake]

@@ -1810,6 +1810,7 @@ mod tests {
                 max_transport_ms: None,
                 drop: None,
                 scope_ids: vec![0],
+                on_silence_after_ms: None,
             },
         );
 
@@ -2018,6 +2019,7 @@ mod tests {
                 max_transport_ms: None,
                 drop: None,
                 scope_ids: vec![0],
+                on_silence_after_ms: None,
             },
         );
 
@@ -2096,6 +2098,7 @@ mod tests {
                 max_transport_ms: None,
                 drop: None,
                 scope_ids: vec![0],
+                on_silence_after_ms: None,
             },
         );
 
@@ -2204,6 +2207,7 @@ mod tests {
                 max_transport_ms: None,
                 drop: None,
                 scope_ids: vec![0],
+                on_silence_after_ms: None,
             },
         );
 
@@ -2302,6 +2306,7 @@ mod tests {
                 max_transport_ms: None,
                 drop: None,
                 scope_ids: vec![0],
+                on_silence_after_ms: None,
             },
         );
 
