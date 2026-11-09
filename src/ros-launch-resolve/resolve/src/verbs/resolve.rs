@@ -41,6 +41,9 @@ pub struct ResolveInputs {
     pub out: String,
     /// Print the merged scheduling plan with per-node provenance.
     pub explain: bool,
+    /// Every composable runs in its own process (`--container-mode
+    /// isolated`).
+    pub process_per_composable: bool,
 }
 
 pub fn run(inputs: ResolveInputs) -> Result<()> {
@@ -73,6 +76,7 @@ pub fn run(inputs: ResolveInputs) -> Result<()> {
         system: inputs.system.as_deref(),
         target: inputs.target.as_str(),
         explain: inputs.explain,
+        process_per_composable: inputs.process_per_composable,
     })?;
 
     let yaml = model

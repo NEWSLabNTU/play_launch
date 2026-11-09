@@ -41,6 +41,7 @@ pub fn handle_check(args: &CheckArgs) -> Result<()> {
         expect: args.expect.clone(),
         ascii: args.ascii,
         width: args.width,
+        process_per_composable: args.container_mode == crate::cli::options::ContainerMode::Isolated,
     })?;
 
     if code != 0 {

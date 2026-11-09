@@ -95,6 +95,9 @@ pub struct CheckInputs {
     /// Phase 85 I5: wrap every output line longer than this many characters.
     /// `None` = no wrapping.
     pub width: Option<usize>,
+    /// Every composable runs in its own process (`--container-mode
+    /// isolated`).
+    pub process_per_composable: bool,
 }
 
 /// Exit status for a contract file the grammar refused (`manifest-parse`),
@@ -119,6 +122,7 @@ impl CheckInputs {
             } else {
                 crate::ros::rlm_lock::LockMode::Prefer
             },
+            process_per_composable: self.process_per_composable,
         })
     }
 }

@@ -7,9 +7,9 @@
 //! - `container`: two composables loaded into one container.
 //! - `process`: the same, since composables in one container share a
 //!   process under `observable` and `stock`. The model does not carry the
-//!   container mode, so `check` assumes the shared case and says so; under
-//!   `isolated` each composable is its own process, and `launch`/`up`
-//!   re-check with the mode they run.
+//!   container mode; `check` and `resolve` assume the shared case and say
+//!   so, `--container-mode isolated` states the other, and `launch` passes
+//!   the mode it runs (`ContractSources::process_per_composable`).
 //! - `cpus`: overlapping CPU sets in the scheduling platform file. Checked
 //!   only where a platform file resolved (`check_cpus`); without one the
 //!   fact is reported unchecked, never passed.
@@ -64,6 +64,9 @@ fn nodes_of(
 /// The process a node runs in, on the shared-container assumption: its
 /// container's, else its own.
 fn process_of<'a>(index: &'a ManifestIndex, node: &'a str) -> &'a str {
+    if index.process_per_composable {
+        return node;
+    }
     index
         .executor_of
         .get(node)
@@ -137,8 +140,8 @@ pub(crate) fn check_independence(
                 }
                 let assumed = if *fact == SharedFact::Process {
                     " (composables in one container share a process under `observable` and \
-                     `stock`; under `isolated` they do not, and `launch`/`up` re-check with the \
-                     mode they run)"
+                     `stock`, the mode this check assumed; under `isolated` they do not -- pass \
+                     `--container-mode isolated` if that is how the system runs)"
                 } else {
                     ""
                 };
@@ -160,6 +163,10 @@ pub(crate) fn check_independence(
 /// `interference-shared-process`, derived: nodes of different derived
 /// integrity in one container. Called once criticality is derived.
 pub(crate) fn check_interference(index: &mut ManifestIndex) {
+    // Under `isolated` a container shares no process with its composables.
+    if index.process_per_composable {
+        return;
+    }
     let mut diags = Vec::new();
     let mut by_container: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for (node, container) in &index.executor_of {

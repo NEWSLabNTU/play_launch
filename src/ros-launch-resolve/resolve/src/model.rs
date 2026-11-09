@@ -35,6 +35,9 @@ pub struct ModelBuildInputs<'a> {
     pub system: Option<&'a Path>,
     pub target: &'a str,
     pub explain: bool,
+    /// Every composable runs in its own process (`--container-mode
+    /// isolated`); see `ContractSources::process_per_composable`.
+    pub process_per_composable: bool,
 }
 
 /// Build a checked [`ros_launch_manifest_model::SystemModel`] from an
@@ -58,12 +61,14 @@ pub fn build_checked_model(
         system,
         target,
         explain,
+        process_per_composable,
     } = inputs;
 
     let sources = crate::ros::manifest_loader::ContractSources {
         overlay: manifest_loader::discover_overlay_root(contracts)?,
         provider: !no_provider_contracts,
         lock: Default::default(),
+        process_per_composable,
     };
     let mut index = manifest_loader::load_manifests(dump, &sources)?;
     // Phase 85 D8 on the model path: what a contract acknowledges is

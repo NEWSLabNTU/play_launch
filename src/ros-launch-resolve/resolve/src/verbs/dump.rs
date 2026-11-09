@@ -63,6 +63,9 @@ pub fn run(inputs: DumpInputs) -> Result<()> {
         parser: inputs.parser,
         out: output.display().to_string(),
         explain: false,
+        // `dump` keeps the shared-process assumption; `resolve
+        // --container-mode isolated` states the other.
+        process_per_composable: false,
     })?;
 
     info!("To run: play_launch up {}", output.display());

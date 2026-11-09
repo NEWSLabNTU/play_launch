@@ -34,6 +34,7 @@ pub fn handle_check(args: &CheckArgs) -> Result<()> {
         expect: args.expect.clone(),
         ascii: args.ascii,
         width: args.width,
+        process_per_composable: false,
     })?;
 
     if code != 0 {

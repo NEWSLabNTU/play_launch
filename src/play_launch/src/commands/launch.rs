@@ -74,6 +74,8 @@ pub fn handle_launch(cmd_args: &LaunchCommandArgs) -> Result<()> {
                 system: None,
                 target: args.common.sched_opts.target.as_str(),
                 explain: false,
+                process_per_composable: args.common.containers.container_mode
+                    == crate::cli::options::ContainerMode::Isolated,
             },
         )?;
 

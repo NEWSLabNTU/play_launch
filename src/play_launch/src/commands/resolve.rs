@@ -24,5 +24,6 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
         parser: args.parser.into(),
         out: args.out.clone(),
         explain: args.explain,
+        process_per_composable: args.container_mode == crate::cli::options::ContainerMode::Isolated,
     })
 }

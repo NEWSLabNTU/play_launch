@@ -774,6 +774,7 @@ mod tests {
                 overlay: None,
                 provider: true,
                 lock: Default::default(),
+                process_per_composable: false,
             },
         )
         .unwrap_or_else(|e| panic!("{name}: load manifests: {e}"))

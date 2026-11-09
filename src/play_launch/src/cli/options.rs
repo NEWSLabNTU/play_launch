@@ -353,6 +353,13 @@ pub struct MigrateArgs {
 /// re-apply them (Task 8), so dropping one hands the checker an empty string.
 #[derive(Args)]
 pub struct CheckArgs {
+    /// The container mode the system runs under. Under `isolated` every
+    /// composable is a process of its own, which `independence`'s `process`
+    /// and `interference-shared-process` read; the default assumes
+    /// composables share their container's process.
+    #[arg(long, value_enum, default_value = "observable")]
+    pub container_mode: ContainerMode,
+
     /// Package name or path to launch file
     pub package_or_path: String,
 
@@ -510,6 +517,13 @@ pub struct CheckArgs {
 /// defaults below are load-bearing (the library does not re-apply them).
 #[derive(Args)]
 pub struct ResolveArgs {
+    /// The container mode the system runs under. Under `isolated` every
+    /// composable is a process of its own, which `independence`'s `process`
+    /// and `interference-shared-process` read; the default assumes
+    /// composables share their container's process.
+    #[arg(long, value_enum, default_value = "observable")]
+    pub container_mode: ContainerMode,
+
     /// Package name or path to launch file
     pub package_or_path: String,
 
@@ -1169,6 +1183,7 @@ impl CommonOptions {
             )?,
             provider: !self.contract_opts.no_provider_contracts,
             lock: Default::default(),
+            process_per_composable: self.containers.container_mode == ContainerMode::Isolated,
         })
     }
 }

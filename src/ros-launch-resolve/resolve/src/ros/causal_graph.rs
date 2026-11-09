@@ -941,6 +941,7 @@ paths:
             overlay: Some(tmp.path().to_path_buf()),
             provider: false,
             lock: Default::default(),
+            process_per_composable: false,
         };
         crate::ros::manifest_loader::load_manifests(&dump, &sources)
             .expect("synthetic manifest loads")

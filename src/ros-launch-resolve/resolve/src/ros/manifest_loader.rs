@@ -57,6 +57,11 @@ pub struct ContractSources {
     pub provider: bool,
     /// How extension resolution treats `rlm.lock` (phase 91 E7).
     pub lock: super::rlm_lock::LockMode,
+    /// The system runs every composable in a process of its own
+    /// (`--container-mode isolated`), so composables in one container share
+    /// no process (`independence`'s `process`, phase 102 M2). `false`, the
+    /// default, assumes the shared case of `observable` and `stock`.
+    pub process_per_composable: bool,
 }
 
 /// Discover the overlay root shared by contracts and platform files (Phase
@@ -526,6 +531,8 @@ fn walk_keys(index: &ManifestIndex, w: &ReactionWalk, after_deadline: bool) -> V
 /// The complete resolved manifest index for the launch tree.
 #[derive(Debug, Default, Clone)]
 pub struct ManifestIndex {
+    /// Copied from [`ContractSources::process_per_composable`].
+    pub process_per_composable: bool,
     /// Every node's resolved launch parameter values, keyed by node FQN
     /// (phase 83): what `dwell-param` and a braking-profile settle read.
     pub launch_params: HashMap<String, BTreeMap<String, super::value_rules::LaunchParam>>,
@@ -712,6 +719,7 @@ pub fn load_manifests(
 ) -> eyre::Result<ManifestIndex> {
     let mut index = ManifestIndex {
         lock_mode: sources.lock,
+        process_per_composable: sources.process_per_composable,
         ..ManifestIndex::default()
     };
     let mut loaded = 0usize;
@@ -7644,6 +7652,7 @@ mod tests {
             overlay: Some(tmp.path().to_path_buf()),
             provider: false,
             lock: Default::default(),
+            process_per_composable: false,
         };
         load_manifests(dump, &sources).unwrap()
     }
@@ -9701,6 +9710,7 @@ mod tests {
             overlay: Some(overlay_root.clone()),
             provider: true,
             lock: Default::default(),
+            process_per_composable: false,
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert_eq!(index.manifests[&0].channel, ContractChannel::Overlay);
@@ -9711,6 +9721,7 @@ mod tests {
             overlay: None,
             provider: true,
             lock: Default::default(),
+            process_per_composable: false,
         };
         let dump = make_dump(vec![scope_with_path(
             0,
@@ -9734,6 +9745,7 @@ mod tests {
             overlay: None,
             provider: true,
             lock: Default::default(),
+            process_per_composable: false,
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert!(index.manifests.is_empty());
@@ -9757,6 +9769,7 @@ mod tests {
             overlay: None,
             provider: false,
             lock: Default::default(),
+            process_per_composable: false,
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert!(index.manifests.is_empty());
@@ -9778,6 +9791,7 @@ mod tests {
             overlay: Some(overlay_root),
             provider: false,
             lock: Default::default(),
+            process_per_composable: false,
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert_eq!(index.manifests.len(), 1);
@@ -10039,6 +10053,7 @@ paths:
             overlay: Some(tmp.path().to_path_buf()),
             provider: false,
             lock: Default::default(),
+            process_per_composable: false,
         };
         load_manifests(dump, &sources).unwrap()
     }

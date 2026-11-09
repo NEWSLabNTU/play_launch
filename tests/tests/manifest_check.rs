@@ -1526,7 +1526,8 @@ fn a_commanded_topic_is_a_final_element() {
 /// rlm v0.3.13 (phase 101 T1): a redundant pair in one container violates
 /// its `process` and `container` independence and shares a process with a
 /// node of lower integrity; deployed apart it does neither. `cpus` is
-/// reported unchecked in both, since no platform file resolves.
+/// reported unchecked in both, since no platform file resolves. Under
+/// `--container-mode isolated` the process half and the interference go.
 #[test]
 fn independence_is_checked_against_the_deployment() {
     let out = check_fixture("contract_independence");
@@ -1545,6 +1546,12 @@ fn independence_is_checked_against_the_deployment() {
     for o in [&out, &ok] {
         assert!(o.contains("info[independence-unchecked]"), "{o}");
     }
+    // Phase 102 M2: under `isolated` each composable is its own process, so
+    // only the shared container remains, and nothing interferes.
+    let (_, iso) = check_takeover("contract_independence", &["--container-mode", "isolated"]);
+    assert!(iso.contains("must not share a container"), "{iso}");
+    assert!(!iso.contains("must not share a process"), "{iso}");
+    assert!(!iso.contains("interference-shared-process"), "{iso}");
 }
 
 /// rlm v0.3.13 (phase 101 T2): a respawning LiDAR's restart is credited only
