@@ -699,6 +699,24 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-11-09**: **The safety model at run time** (phase 102 M2,
+  `runtime_enforcement/levels.rs`). The observer reads `FieldValue`
+  events: value functions are lost by value, `m` groups by count, and the
+  level a lost mode falls to is ACTIVE until that mode returns; from the
+  level's derived bound (`ModeWatch.bound_ms`, the largest
+  `LevelRoute.route_ms` of its scope's hazards) its `commands` must hold
+  (`safe-state-violated`) and its topics must not go silent unless their
+  consumer says what it does then (`final-element-silent`). Publisher
+  creation is judged (`arbiter-bypass`, `insertion`, node named from
+  `NodeNameDeclared`), and `repetition`/`resequencing` per publisher, only
+  where a hazard's `on:` names them. `launch`, `check --container-mode`
+  and `resolve --container-mode` tell `independence` the real container
+  mode (`ContractSources::process_per_composable`). Two things a later
+  change must keep: `ContractView.fields` and the interceptor's list are
+  both `interception::fields::declared_fields(model)`, so their order is
+  the field index; and a level is entered in `recheck_modes`, which must
+  run on a value change as well as a silence change.
+
 - **2026-11-08**: **The safety model's static checks** (phase 102 M1, rlm
   v0.3.13). Keys: `modes.<m>.commands`, `hazards.<h>.requirement`,
   `functions.<f>.m`, `independence:`, `topics.<t>.external: { side,

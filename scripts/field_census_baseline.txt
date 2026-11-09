@@ -106,10 +106,6 @@ ftti_derived       # HazardContract (rlm v0.2.0, phase 91 E10): as
 detection_derived  # HazardContract (rlm v0.2.0, phase 91 E10): as
                    # `settle_derived`, for a derived `detection_ms`.
 
-on_silence_after_ms # TopicContract (rlm v0.3.13, phase 101 T4): an external
-                    # consumer's silence behaviour. Its reader is the runtime
-                    # observer's `final-element-silent` (phase 102 M2), not
-                    # written yet. Drop this line when M2 lands.
 requirement         # HazardContract (rlm v0.3.13, phase 100 F3): the
                     # hazard analysis's requirement id. Its reader is
                     # `check --explain`'s hazard sentence and the diagnostics

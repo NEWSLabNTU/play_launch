@@ -1,6 +1,6 @@
 # Phase 102 - the contract safety model: build order and evaluation
 
-**Status (2026-11-08): M0 done; M1 built, waiting on the rlm v0.3.13 tag.** M0a: F0's verdict is that F4 is needed (phase 100). M0b: the field reader, below. M1: below. Puts phases 100 and
+**Status (2026-11-09): M0, M1 and M2 done.** M0a: F0's verdict is that F4 is needed (phase 100). M0b: the field reader. M1: rlm v0.3.13 and the static checks. M2: the runtime checks. Each below. Puts phases 100 and
 101 (the work) into one build order and adds the evaluation that decides
 whether the model is right. Design of record: rlm
 `docs/design/safety-functions.md` (issue 58) and
@@ -74,7 +74,7 @@ publish with the event and ring push, the same as a service call hook
 (47 ns). At E5's scale, 10k declared-field publishes a second is 0.05% of a
 core. `modes.<m>.commands` (M1) adds its fields to the same list.
 
-### M1, grammar and static checks (built 2026-11-08)
+### M1, grammar and static checks (done 2026-11-09, rlm v0.3.13)
 
 rlm `acc6987` (CHANGELOG "Unreleased", GRAMMAR_VERSION 0.3.13) carries
 every key. The resolver's rules, each with a fixture beside its correct
@@ -99,6 +99,34 @@ checks each message), and removes value functions as silence does. Not in
 M1: `m` member counting, `on_silence` settle and the three classes'
 detection are runtime (M2); the requirement in every hazard diagnostic is
 F3 (M3).
+
+### M2, runtime checks (done 2026-11-09)
+
+- **Container mode reaches the resolver** (`ContractSources::
+  process_per_composable`): `launch` passes the mode it runs, `check` and
+  `resolve` take `--container-mode`. Under `isolated` only a shared
+  container violates `independence`, and `interference-shared-process` is
+  silent. Before this a correct `isolated` deployment was refused.
+- **Values decide modes**: a value function is lost while its predicate
+  holds on its latest sample, and a redundant group with `m` is lost when
+  fewer than `m` members publish.
+- **A level holds what it commands**: the level a lost mode falls to is
+  active until that mode is back; from its derived bound (the largest
+  `LevelRoute.route_ms` charged for it) a message on a commanded topic that
+  breaks a predicate is `safe-state-violated`, and silence past ten gaps
+  with no declared consumer behaviour is `final-element-silent`. A level no
+  hazard's walk reached is `safe-state-unjudged`.
+- **Publishers and stamps**: runtime `arbiter-bypass` on a commanded topic;
+  `insertion`, `repetition` and `resequencing` on a monitored topic whose
+  hazard names them (an omitted `on:` names none of the three, since a
+  stamp re-sent at rate is right for a state topic).
+- **Recovery**: `hazard-recovered` says whether the guard came back inside
+  the FTTI.
+
+Not yet: a message constant name in a predicate is not judged at run time
+(the model carries the name, not its value), and a hazard's own `when:`
+still detects through its detector's output only. Unit tests cover each
+rule; the running-system checks are E4's (`rt_av_demo`'s `just fault`).
 
 ## Evaluation
 
