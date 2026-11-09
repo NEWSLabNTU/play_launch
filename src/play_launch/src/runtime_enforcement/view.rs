@@ -51,6 +51,16 @@ pub struct ContractView {
     pub hazards: Vec<HazardWatch>,
     /// Modes to derive availability for (phase 75).
     pub modes: Vec<ModeWatch>,
+    /// The declared fields the interceptor reads, in the order of
+    /// `PLAY_LAUNCH_INTERCEPTION_FIELDS`: a `FieldValue` event's index is a
+    /// position here (phase 102 M0b).
+    pub fields: Vec<(String, String)>,
+    /// Value functions by function key (phase 102 M2).
+    pub value_fns: BTreeMap<String, ValueFn>,
+    /// Commanded topics whose consumer states what it does on silence (a
+    /// subscriber's `max_age` + `on_violation`, or an external side's
+    /// `on_silence`): silence there is not `final-element-silent`.
+    pub silence_handled: BTreeSet<String>,
     /// Node FQNs some contract describes: every node of a launch scope that
     /// has a contract (`ScopeInfo.manifest`), plus the owner of any endpoint,
     /// path, concurrency or parameter entry a contract states about a node
@@ -68,17 +78,54 @@ fn key_node(key: &str) -> Option<&str> {
         .filter(|n| !n.is_empty())
 }
 
-/// One mode, as the live observer needs it (phase 75): the topic groups it
-/// requires and the ladder it falls to.
+/// One required function of a mode, as the live observer needs it.
+#[derive(Debug, Clone, Default)]
+pub struct RequiredFn {
+    /// Member topic FQNs.
+    pub members: Vec<String>,
+    /// A redundant group: lost only when fewer than `m` members hold.
+    pub all_of: bool,
+    /// MooN's M (rlm v0.3.13); `None` is 1.
+    pub m: Option<u32>,
+    /// The function's key in `ContractView::value_fns` when it is also lost
+    /// by value (`of:` + `when:`).
+    pub value_fn: Option<String>,
+}
+
+impl RequiredFn {
+    /// A function that is one or more topics, lost when any member is.
+    pub fn topics(members: Vec<String>) -> Self {
+        Self {
+            members,
+            ..Self::default()
+        }
+    }
+}
+
+/// One mode, as the live observer needs it (phase 75): the functions it
+/// requires, the ladder it falls to, and (rlm v0.3.13) what it commands.
 #[derive(Debug, Clone, Default)]
 pub struct ModeWatch {
     pub key: String,
-    /// Each entry is one required function: its member topics, and whether
-    /// it is lost only when EVERY member is (`all_of`).
-    pub requires: Vec<(Vec<String>, bool)>,
-    /// Fallback rungs, in order, as `(mode key, its requires)` — enough to
-    /// pick the first still-available rung without a second lookup.
+    pub requires: Vec<RequiredFn>,
+    /// Fallback levels, in order, by mode key.
     pub fallback: Vec<String>,
+    /// Commanded topic FQN to the predicates every message on it satisfies
+    /// while this level is active.
+    pub commands: BTreeMap<String, Vec<model::PredicateContract>>,
+    /// When the invariant starts after the level is entered: the largest
+    /// route the checker derived for this level over the hazards that reach
+    /// it (`LevelRoute.route_ms`). `None` when no hazard's walk reached it,
+    /// and then the invariant is not judged.
+    pub bound_ms: Option<f64>,
+}
+
+/// A value function (rlm v0.1.46): lost while its predicate holds on a
+/// sample of one of its topics.
+#[derive(Debug, Clone)]
+pub struct ValueFn {
+    pub topics: Vec<String>,
+    pub when: model::PredicateContract,
 }
 
 /// A hazard as the live observer needs it (phase 73): which topics going
@@ -299,14 +346,20 @@ impl ContractView {
                         .functions
                         .iter()
                         .find(|f| f.scope_id == m.scope_id && &f.name == r)
-                        .map(|f| (f.group.members.clone(), f.group.all_of))
-                        .unwrap_or_else(|| (vec![super::qualify("", r)], false))
+                        .map(|f| RequiredFn {
+                            members: f.group.members.clone(),
+                            all_of: f.group.all_of,
+                            m: f.m,
+                            value_fn: None,
+                        })
+                        .unwrap_or_else(|| RequiredFn::topics(vec![super::qualify("", r)]))
                 })
                 .collect();
             view.modes.push(ModeWatch {
                 key: m.name.clone(),
                 requires,
                 fallback: m.decl.fallback.clone(),
+                ..ModeWatch::default()
             });
         }
         view
@@ -484,21 +537,77 @@ impl ContractView {
                 off_host_sinks,
             });
         }
-        for (key, m) in &m_modes {
-            let requires = m
+        // Phase 102 M2: the values the interceptor reads, the functions lost
+        // by them, and what each level commands.
+        view.fields = crate::interception::fields::declared_fields(m)
+            .into_iter()
+            .map(|f| (f.topic, f.path))
+            .collect();
+        for (key, f) in &m_functions {
+            if let Some(when) = &f.when {
+                view.value_fns.insert(
+                    key.clone(),
+                    ValueFn {
+                        topics: f.members.clone(),
+                        when: when.clone(),
+                    },
+                );
+            }
+        }
+        for (key, mc) in &m_modes {
+            let requires = mc
                 .requires
                 .iter()
                 .map(|r| {
                     m_functions
                         .get(r)
-                        .map(|f| (f.members.clone(), f.all_of))
-                        .unwrap_or_else(|| (vec![r.clone()], false))
+                        .map(|f| RequiredFn {
+                            members: f.members.clone(),
+                            all_of: f.all_of,
+                            m: f.m,
+                            value_fn: f.when.as_ref().map(|_| r.clone()),
+                        })
+                        .unwrap_or_else(|| RequiredFn::topics(vec![r.clone()]))
                 })
                 .collect();
+            // The level's derived route, over every hazard of its scope that
+            // reaches it. A mode key is `<scope>/<name>`; a level route names
+            // the bare level.
+            let (scope, name) = key.rsplit_once('/').unwrap_or(("", key.as_str()));
+            let bound_ms = m
+                .contracts
+                .hazards
+                .iter()
+                .filter(|(hk, _)| hk.rsplit_once('/').map(|(s, _)| s) == Some(scope))
+                .flat_map(|(_, h)| h.degradation_levels.iter())
+                .filter(|l| l.level == name)
+                .filter_map(|l| l.route_ms)
+                .fold(None, |acc: Option<f64>, v| {
+                    Some(acc.map_or(v, |a| a.max(v)))
+                });
+            for topic in mc.commands.keys() {
+                let handled =
+                    m.contracts
+                        .topics
+                        .get(topic)
+                        .is_some_and(|t| t.on_silence_after_ms.is_some())
+                        || m.structure.topics.get(topic).is_some_and(|w| {
+                            w.subscribers.iter().any(|ep| {
+                                m.contracts.sub_endpoints.get(ep).is_some_and(|s| {
+                                    s.max_age_ms.is_some() && s.on_violation.is_some()
+                                })
+                            })
+                        });
+                if handled {
+                    view.silence_handled.insert(topic.clone());
+                }
+            }
             view.modes.push(ModeWatch {
                 key: key.clone(),
                 requires,
-                fallback: m.fallback.clone(),
+                fallback: mc.fallback.clone(),
+                commands: mc.commands.clone(),
+                bound_ms,
             });
         }
         view

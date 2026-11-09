@@ -35,7 +35,33 @@ use crate::{
     cli::options::EnforceMode,
     interception::{EventKind, InterceptionEvent, TopicNameAssembly, decode_topic_name_chunk},
 };
+mod levels;
 pub mod view;
+
+/// A predicate's operator as a reader writes it.
+fn op_symbol(op: ros_launch_manifest_model::CompareOp) -> &'static str {
+    use ros_launch_manifest_model::CompareOp as Op;
+    match op {
+        Op::Equals => "==",
+        Op::NotEquals => "!=",
+        Op::Lt => "<",
+        Op::Le => "<=",
+        Op::Gt => ">",
+        Op::Ge => ">=",
+    }
+}
+
+/// A predicate's constant as the contract wrote it.
+fn predicate_constant(v: &ros_launch_manifest_model::PredicateValueContract) -> String {
+    use ros_launch_manifest_model::PredicateValueContract as V;
+    match v {
+        V::Bool(b) => b.to_string(),
+        V::Int(i) => i.to_string(),
+        V::Float(f) => f.to_string(),
+        V::Constant { constant } => constant.clone(),
+        V::Str(s) => format!("\"{s}\""),
+    }
+}
 pub use view::ContractView;
 
 /// One runtime violation entry written to the jsonl log.
@@ -184,6 +210,10 @@ pub struct RuleEngine {
     /// once per event).
     silent_topics: std::collections::HashSet<String>,
     modes_lost: std::collections::HashSet<String>,
+    /// Phase 102 M2 — value functions, active levels and their commands.
+    levels: levels::Levels,
+    /// The value-lost functions `recheck_modes` last judged with.
+    value_lost_seen: std::collections::HashSet<String>,
     mode: EnforceMode,
     /// Map topic_hash → resolved FQN, built from the manifest index at
     /// startup so we don't have to hash on every event.
@@ -299,6 +329,8 @@ impl RuleEngine {
                 .collect(),
             silent_topics: std::collections::HashSet::new(),
             modes_lost: std::collections::HashSet::new(),
+            levels: levels::Levels::default(),
+            value_lost_seen: std::collections::HashSet::new(),
             view,
             mode,
             topic_hash_to_fqn,
@@ -382,6 +414,17 @@ impl RuleEngine {
         // NODE hash in `topic_hash`, which must not create topic state below.
         if matches!(event.kind, EventKind::EndpointOwner) {
             self.endpoint_owner.insert(event.handle, event.topic_hash);
+        }
+        if matches!(event.kind, EventKind::FieldValue) {
+            self.observe_field(event);
+            return;
+        }
+        if matches!(event.kind, EventKind::Publish)
+            && let Some(fqn) = self.topic_hash_to_fqn.get(&event.topic_hash)
+            && self.view.modes.iter().any(|m| m.commands.contains_key(fqn))
+        {
+            let fqn = fqn.clone();
+            self.levels.note_publish(&fqn, event.monotonic_ns);
         }
         if matches!(
             event.kind,
@@ -1249,19 +1292,27 @@ impl RuleEngine {
             .iter()
             .filter_map(|rt| rt.fault.as_ref().map(|(g, _)| g.clone()))
             .collect();
-        if silent == self.silent_topics {
+        if silent == self.silent_topics && self.levels.value_lost == self.value_lost_seen {
             return;
         }
         self.silent_topics = silent;
+        self.value_lost_seen = self.levels.value_lost.clone();
+        let value_lost = self.value_lost_seen.clone();
 
+        // A function is lost by silence (any member; for a redundant group,
+        // when fewer than `m` members still publish) or, for a value
+        // function, by value (phase 102 M2).
         let lost = |w: &crate::runtime_enforcement::view::ModeWatch,
                     silent: &std::collections::HashSet<String>| {
-            w.requires.iter().any(|(members, all_of)| {
-                if *all_of {
-                    members.iter().all(|t| silent.contains(t))
+            w.requires.iter().any(|r| {
+                let by_value = r.value_fn.as_ref().is_some_and(|k| value_lost.contains(k));
+                let by_silence = if r.all_of {
+                    let held = r.members.iter().filter(|t| !silent.contains(*t)).count();
+                    held < r.m.unwrap_or(1) as usize
                 } else {
-                    members.iter().any(|t| silent.contains(t))
-                }
+                    r.members.iter().any(|t| silent.contains(t))
+                };
+                by_value || by_silence
             })
         };
         let mut pending: Vec<(Severity, String, String, bool)> = Vec::new();
@@ -1278,6 +1329,9 @@ impl RuleEngine {
                         .find(|m| &m.key == *name)
                         .is_some_and(|m| !lost(m, &self.silent_topics))
                 });
+                if let Some(r) = rung {
+                    self.levels.enter(r, ts);
+                }
                 let (sev, to) = match rung {
                     Some(r) => (Severity::Warning, format!("falling to '{r}'")),
                     None if w.fallback.is_empty() => (
@@ -1300,6 +1354,10 @@ impl RuleEngine {
                     true,
                 ));
             } else {
+                // The mode is back: every level it had fallen to is left.
+                for l in &w.fallback {
+                    self.levels.leave(l);
+                }
                 pending.push((
                     Severity::Warning,
                     w.key.clone(),
@@ -1318,6 +1376,155 @@ impl RuleEngine {
         }
     }
 
+    /// Phase 102 M2: one declared field of a published message. It updates
+    /// the value functions that read it, and is judged against the
+    /// `commands` of every active level past its derived bound.
+    fn observe_field(&mut self, event: &InterceptionEvent) {
+        let Some((topic, path)) = self.view.fields.get(event._pad[0] as usize).cloned() else {
+            return;
+        };
+        let (kind, bits, now) = (event._pad[1], event.cpu_ns, event.monotonic_ns);
+
+        let mut changed = false;
+        for (key, vf) in &self.view.value_fns {
+            if vf.when.field != path || !vf.topics.contains(&topic) {
+                continue;
+            }
+            match levels::eval(&vf.when, kind, bits) {
+                Some(true) => changed |= self.levels.value_lost.insert(key.clone()),
+                Some(false) => changed |= self.levels.value_lost.remove(key),
+                None => {}
+            }
+        }
+        if changed {
+            self.recheck_modes(now);
+        }
+
+        let mut pending: Vec<(Severity, String, String, String)> = Vec::new();
+        for m in &self.view.modes {
+            let Some(&entered) = self.levels.active.get(&m.key) else {
+                continue;
+            };
+            let Some(preds) = m.commands.get(&topic) else {
+                continue;
+            };
+            let Some(bound_ms) = m.bound_ms else {
+                if self
+                    .levels
+                    .reported
+                    .insert((m.key.clone(), "unjudged".into()))
+                {
+                    pending.push((
+                        Severity::Warning,
+                        "safe-state-unjudged".into(),
+                        m.key.clone(),
+                        format!(
+                            "level '{}' commands '{topic}', but no hazard's reaction route reaches \
+                             it, so when its commands must hold is unknown -- NOT judged",
+                            m.key
+                        ),
+                    ));
+                }
+                continue;
+            };
+            let start = entered + (bound_ms * 1e6) as u64;
+            if now < start {
+                continue;
+            }
+            for pred in preds.iter().filter(|p| p.field == path) {
+                if levels::eval(pred, kind, bits) != Some(false) {
+                    continue;
+                }
+                if !self
+                    .levels
+                    .reported
+                    .insert((m.key.clone(), format!("{topic}.{path}")))
+                {
+                    continue;
+                }
+                pending.push((
+                    Severity::Error,
+                    "safe-state-violated".into(),
+                    m.key.clone(),
+                    format!(
+                        "level '{}' commands {topic} {path} {} {}, and a message carried {} \
+                         {:.2}ms after the level's derived bound ({bound_ms:.2}ms after it was \
+                         entered)",
+                        m.key,
+                        op_symbol(pred.op),
+                        predicate_constant(&pred.value),
+                        levels::show(kind, bits),
+                        now.saturating_sub(start) as f64 / 1e6,
+                    ),
+                ));
+            }
+        }
+        for (sev, rule, key, msg) in pending {
+            self.emit_repeatable(rule, sev, key, msg, now);
+        }
+    }
+
+    /// Phase 102 M2: a commanded topic gone silent while its level holds,
+    /// and its consumer states nothing it does on silence.
+    fn tick_levels(&mut self, now: u64) {
+        let mut pending: Vec<(String, String)> = Vec::new();
+        for m in &self.view.modes {
+            let Some(&entered) = self.levels.active.get(&m.key) else {
+                continue;
+            };
+            let Some(bound_ms) = m.bound_ms else {
+                continue;
+            };
+            let start = entered + (bound_ms * 1e6) as u64;
+            if now < start {
+                continue;
+            }
+            for topic in m.commands.keys() {
+                if self.view.silence_handled.contains(topic) {
+                    continue;
+                }
+                let last = self
+                    .levels
+                    .last_pub
+                    .get(topic)
+                    .copied()
+                    .unwrap_or(0)
+                    .max(start);
+                let quiet = now.saturating_sub(last);
+                if quiet <= self.levels.silence_ns(topic) {
+                    continue;
+                }
+                if !self
+                    .levels
+                    .reported
+                    .insert((m.key.clone(), format!("silent:{topic}")))
+                {
+                    continue;
+                }
+                pending.push((
+                    m.key.clone(),
+                    format!(
+                        "level '{}' commands {topic}, which has been silent {:.2}ms while the \
+                         level holds, and its consumer states nothing it does on silence (a \
+                         subscriber's `max_age` + `on_violation`, or `external: {{ side: sub, \
+                         on_silence }}`)",
+                        m.key,
+                        quiet as f64 / 1e6
+                    ),
+                ));
+            }
+        }
+        for (key, msg) in pending {
+            self.emit_repeatable(
+                "final-element-silent".into(),
+                Severity::Error,
+                key,
+                msg,
+                now,
+            );
+        }
+    }
+
     /// Judge silence. A dead guard produces no event, so this runs on the
     /// consumer's poll tick with the current `CLOCK_MONOTONIC` time. The
     /// threshold is the fastest declared detector among the guard's reacting
@@ -1325,7 +1532,11 @@ impl RuleEngine {
     /// inter-publish gaps and at least 50ms — the same rule `measure` uses
     /// after the fact.
     pub fn tick(&mut self, now_ns: u64) {
-        if matches!(self.mode, EnforceMode::Off) || self.view.hazards.is_empty() {
+        if matches!(self.mode, EnforceMode::Off) {
+            return;
+        }
+        self.tick_levels(now_ns);
+        if self.view.hazards.is_empty() {
             return;
         }
         let mut pending: Vec<Pending> = Vec::new();
@@ -2798,13 +3009,15 @@ mod tests {
         });
         view.modes.push(ModeWatch {
             key: "driving".into(),
-            requires: vec![(vec!["/safety/scan".into()], false)],
+            requires: vec![crate::runtime_enforcement::view::RequiredFn::topics(vec![
+                "/safety/scan".into(),
+            ])],
             fallback: vec!["stopped".into()],
+            ..Default::default()
         });
         view.modes.push(ModeWatch {
             key: "stopped".into(),
-            requires: vec![],
-            fallback: vec![],
+            ..Default::default()
         });
         let tmp = std::env::temp_dir().join(format!("play_launch_modes_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
@@ -2850,6 +3063,117 @@ mod tests {
         re.flush();
         let log = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
         assert!(log.contains("mode 'driving': available again"), "{log}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Phase 102 M2: a value function lost by value takes its mode down;
+    /// the level it falls to commands `/cmd linear.x == 0` from its derived
+    /// bound (10 ms) on. A message before the bound is not judged, one after
+    /// it that breaks the predicate is `safe-state-violated` (once per
+    /// entry), and silence with no declared consumer behaviour is
+    /// `final-element-silent`. The mode coming back leaves the level.
+    #[test]
+    fn a_level_holds_its_commands_from_its_bound() {
+        use crate::{
+            interception::{EventKind, InterceptionEvent},
+            runtime_enforcement::view::{ModeWatch, RequiredFn, TopicView, ValueFn},
+        };
+        use ros_launch_manifest_model::{CompareOp, PredicateContract, PredicateValueContract};
+        let mut view = ContractView::default();
+        for t in ["/avail", "/cmd"] {
+            view.topics.insert(
+                t.to_string(),
+                TopicView {
+                    msg_type: "x".into(),
+                    ..Default::default()
+                },
+            );
+        }
+        view.fields = vec![
+            ("/avail".into(), "ok".into()),
+            ("/cmd".into(), "linear.x".into()),
+        ];
+        view.value_fns.insert(
+            "s/avail_ok".into(),
+            ValueFn {
+                topics: vec!["/avail".into()],
+                when: PredicateContract {
+                    field: "ok".into(),
+                    op: CompareOp::Equals,
+                    value: PredicateValueContract::Bool(false),
+                },
+            },
+        );
+        view.modes.push(ModeWatch {
+            key: "s/driving".into(),
+            requires: vec![RequiredFn {
+                members: vec!["/avail".into()],
+                value_fn: Some("s/avail_ok".into()),
+                ..Default::default()
+            }],
+            fallback: vec!["s/stopped".into()],
+            ..Default::default()
+        });
+        let mut commands = std::collections::BTreeMap::new();
+        commands.insert(
+            "/cmd".to_string(),
+            vec![PredicateContract {
+                field: "linear.x".into(),
+                op: CompareOp::Equals,
+                value: PredicateValueContract::Int(0),
+            }],
+        );
+        view.modes.push(ModeWatch {
+            key: "s/stopped".into(),
+            commands,
+            bound_ms: Some(10.0),
+            ..Default::default()
+        });
+        let tmp = std::env::temp_dir().join(format!("play_launch_levels_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut re = RuleEngine::new(Arc::new(view), EnforceMode::Warn, &tmp);
+        let field = |t: u64, index: u8, kind: u8, bits: u64| InterceptionEvent {
+            kind: EventKind::FieldValue,
+            _pad: [index, kind, 0],
+            topic_hash: 0,
+            stamp_sec: 0,
+            stamp_nanosec: 0,
+            handle: 1,
+            monotonic_ns: t,
+            cpu_ns: bits,
+            tid: 0,
+            payload_bytes: 0,
+        };
+        let ms = 1_000_000u64;
+        let t0 = 1_000 * ms;
+        re.observe(&field(t0, 0, 4, 1));
+        assert_eq!(re.violation_count, 0, "available while ok is true");
+        re.observe(&field(t0 + ms, 0, 4, 0));
+        assert_eq!(re.violation_count, 1, "mode-availability: driving lost");
+        // Before the bound a moving command is not judged.
+        re.observe(&field(t0 + 5 * ms, 1, 1, 0.5f64.to_bits()));
+        assert_eq!(re.violation_count, 1);
+        // After it, it is, once per entry; a stopped command is fine.
+        re.observe(&field(t0 + 20 * ms, 1, 1, 0.5f64.to_bits()));
+        re.observe(&field(t0 + 25 * ms, 1, 1, 0.5f64.to_bits()));
+        re.observe(&field(t0 + 30 * ms, 1, 1, 0.0f64.to_bits()));
+        assert_eq!(re.violation_count, 2);
+        // Silent for longer than 1 s (no cadence known), nothing declared.
+        re.tick(t0 + 2_000 * ms);
+        assert_eq!(re.violation_count, 3);
+        re.flush();
+        let log = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
+        assert!(log.contains("safe-state-violated"), "{log}");
+        assert!(
+            log.contains("/cmd linear.x == 0, and a message carried 0.5"),
+            "{log}"
+        );
+        assert!(log.contains("final-element-silent"), "{log}");
+        // Back to ok: the mode is available and the level left.
+        re.observe(&field(t0 + 2_100 * ms, 0, 4, 1));
+        assert_eq!(re.violation_count, 4, "mode-availability: available again");
+        re.observe(&field(t0 + 2_200 * ms, 1, 1, 0.5f64.to_bits()));
+        assert_eq!(re.violation_count, 4, "no level active, nothing judged");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
