@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!-- Phase 102 E1: a Simplex system. An advanced controller, a verified
+     safety controller, a monitor that judges whether the advanced
+     controller's command keeps the robot inside its safety envelope, and a
+     decision module that forwards one controller or the other. Each runs in
+     its own process. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="advanced_ctrl"/>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="safety_ctrl"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="envelope_monitor"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="decision"/>
+</launch>

@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!-- Phase 102 E1: contract_case_u3_cobot. One process per node; the contract is the case. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="distance_sensor"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="in_warning_zone_monitor"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="distance_s_sensor"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="in_stop_zone_monitor"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="planner"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="controller"/>
+</launch>

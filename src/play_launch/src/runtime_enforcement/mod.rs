@@ -3401,6 +3401,11 @@ mod tests {
             "s/blind".into(),
             vec![FaultKind::Insertion, FaultKind::Repetition],
         );
+        // Phase 102 E2: the same system, with resequencing asked for.
+        let mut reseq_view = view.clone();
+        reseq_view
+            .hazard_classes
+            .insert("s/blind".into(), vec![FaultKind::Resequencing]);
         let tmp = std::env::temp_dir().join(format!("play_launch_pubs_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let mut re = RuleEngine::new(Arc::new(view), EnforceMode::Warn, &tmp);
@@ -3452,5 +3457,22 @@ mod tests {
         assert!(log.contains("(insertion; declared: /lidar/scan)"), "{log}");
         assert!(log.contains("carried a repetition"), "{log}");
         let _ = std::fs::remove_dir_all(&tmp);
+
+        // A stamp earlier than the publisher's previous one is resequencing
+        // where the hazard names it; a repeated stamp is not judged there.
+        let tmp2 = std::env::temp_dir().join(format!("play_launch_reseq_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp2).unwrap();
+        let mut re = RuleEngine::new(Arc::new(reseq_view), EnforceMode::Warn, &tmp2);
+        owned(&mut re, "/lidar", scan, 2);
+        re.observe(&ev(EventKind::Publish, scan, 2, 10));
+        re.observe(&ev(EventKind::Publish, scan, 2, 20));
+        re.observe(&ev(EventKind::Publish, scan, 2, 20));
+        assert_eq!(re.violation_count, 0, "repetition is not asked for");
+        re.observe(&ev(EventKind::Publish, scan, 2, 5));
+        assert_eq!(re.violation_count, 1, "resequencing");
+        re.flush();
+        let log = std::fs::read_to_string(tmp2.join("runtime_violations.jsonl")).unwrap();
+        assert!(log.contains("resequencing"), "{log}");
+        let _ = std::fs::remove_dir_all(&tmp2);
     }
 }

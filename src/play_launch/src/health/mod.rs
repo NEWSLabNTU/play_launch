@@ -752,8 +752,8 @@ pub fn resource_conditions(snap: &crate::monitoring::trends::ResourceSnapshot) -
     out
 }
 
-/// `startup_timeline.json`, written once, when the run reaches startup
-/// complete.
+/// `startup_timeline.json`, written when the run reaches startup complete
+/// and rewritten while its rows still change.
 fn write_startup_timeline(log_dir: &Path, t: &startup::StartupTimeline) {
     let path = log_dir.join("startup_timeline.json");
     match serde_json::to_string_pretty(t) {
@@ -883,6 +883,8 @@ pub async fn run_health_task(inputs: HealthInputs) {
     let mut params_job: Option<tokio::task::JoinHandle<params::ParamsReport>> = None;
     let mut params_report: Option<params::ParamsReport> = None;
     let mut next_probe: Option<std::time::Instant> = None;
+    // The rows last written to `startup_timeline.json` (phase 102 E4).
+    let mut written_rows: Option<String> = None;
     let mut clock_published: Option<bool> = None;
     let mut graph_nodes: Option<usize> = None;
     let mut discovery_view: Option<discovery::DiscoveryView> = None;
@@ -1012,8 +1014,18 @@ pub async fn run_health_task(inputs: HealthInputs) {
                 };
                 if !complete {
                     conditions.extend(startup::startup_conditions(&timeline));
-                    if timeline.complete_ms.is_some() {
+                }
+                // Written at completion, and again whenever a row changes
+                // after it (phase 102 E4): a node's first endpoint and first
+                // publish reach the book from the interceptor's drain, which
+                // can trail the completion tick, and `check --against`
+                // credits a restart from exactly those times. Written once,
+                // the file of a real run carried none of them.
+                if timeline.complete_ms.is_some() {
+                    let rows = serde_json::to_string(&timeline.rows).unwrap_or_default();
+                    if written_rows.as_deref() != Some(rows.as_str()) {
                         write_startup_timeline(&log_dir, &timeline);
+                        written_rows = Some(rows);
                     }
                 }
                 let _ = startup_tx.send(Arc::new(timeline));

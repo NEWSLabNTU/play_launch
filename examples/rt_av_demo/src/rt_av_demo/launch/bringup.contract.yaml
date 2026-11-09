@@ -44,11 +44,18 @@ modes:
   stopped:
     requires: []
     reaction: safety.stop
+    # Phase 102 E3/E4: what the level commands while it lasts. The brake
+    # controller sends one emergency command; the brake holds it, which the
+    # topic's `on_silence` states.
+    commands:
+      /safety/brake_cmd:
+        - { field: payload, equals: "emergency" }
 
 hazards:
   drive_blind:
     integrity: ASIL_D
     description: vehicle continues with no obstacle data
+    requirement: { id: DEMO-1, source: "rt_av_demo, illustrative" }
     monitors: [perception]
     on: omission
     ftti: 500ms
@@ -163,5 +170,7 @@ topics:
     sub: [brake_controller/obstacles]
   /safety/brake_cmd:
     type: rt_av_demo/msg/Stamped
+    # The brake actuator, outside the launch: it holds the last command, so
+    # a quiet command topic is not a released brake.
+    external: { side: sub, on_silence: { after: 200ms } }
     pub: [brake_controller/brake_cmd]
-    sub: []

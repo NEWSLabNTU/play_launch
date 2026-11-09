@@ -105,8 +105,3 @@ ftti_derived       # HazardContract (rlm v0.2.0, phase 91 E10): as
                    # `settle_derived`, for a derived `ftti_ms`.
 detection_derived  # HazardContract (rlm v0.2.0, phase 91 E10): as
                    # `settle_derived`, for a derived `detection_ms`.
-
-requirement         # HazardContract (rlm v0.3.13, phase 100 F3): the
-                    # hazard analysis's requirement id. Its reader is
-                    # `check --explain`'s hazard sentence and the diagnostics
-                    # that name it (phase 102 M3). Drop this line then.

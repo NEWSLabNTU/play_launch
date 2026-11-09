@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!-- Phase 102 E1: contract_case_u5_infusion. One process per node; the contract is the case. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="line_pressure_sensor"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="occluded_monitor"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="planner"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="controller"/>
+</launch>

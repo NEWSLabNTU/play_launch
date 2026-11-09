@@ -1071,6 +1071,9 @@ pub fn load_manifests(
         );
     }
 
+    // Phase 100 F3: every finding about a hazard names its requirement.
+    super::hazard_sentence::tag_requirements(&mut index);
+
     Ok(index)
 }
 
@@ -4472,10 +4475,18 @@ fn check_fault_reaction(
                 rule_id: "reaction-unguarded".to_string(),
                 severity: Severity::Warning,
                 message: format!(
-                    "hazard '{}' reaction '{reaction_name}' ends at {} and no subscriber there \
-                     declares an `on_violation` — a stalled reaction would go unnoticed. Monitor \
-                     it with a second hazard whose `monitors:` name this output",
+                    "hazard '{}' {} ends at {} and no subscriber there declares an \
+                     `on_violation` — a stalled reaction would go unnoticed. Monitor it with a \
+                     second hazard whose `monitors:` name this output",
                     h.name,
+                    // Phase 102 E1: a mode is not a reaction; name what it is
+                    // (by lookup, so the deprecated `reaction: <mode>` reads the
+                    // same as `enters:`).
+                    if mode_of(reaction_name).is_some() {
+                        format!("enters mode '{reaction_name}', whose reaction")
+                    } else {
+                        format!("reaction '{reaction_name}'")
+                    },
                     reaction.output_topics.join(", ")
                 ),
                 path: format!("{at}.{rk}"),
@@ -6711,6 +6722,14 @@ fn remap_direction(from: &str) -> Option<bool> {
 ///   one of the undecidable ones — a gap in the inference, not a defect in
 ///   the system.
 fn derive_topics_from_remaps(dump: &LaunchDump, index: &mut ManifestIndex) {
+    // A contract topic that states no endpoint at all states only its type
+    // (phase 102 E3): its wiring is still the launch tree's.
+    let type_only: std::collections::BTreeSet<String> = index
+        .topics
+        .values()
+        .filter(|t| !t.derived_from_remaps && t.publishers.is_empty() && t.subscribers.is_empty())
+        .map(|t| t.fqn.clone())
+        .collect();
     let mut ambiguous = 0usize;
     let mut derived_topics = 0usize;
     let mut derived_ends = 0usize;
@@ -6763,7 +6782,7 @@ fn derive_topics_from_remaps(dump: &LaunchDump, index: &mut ManifestIndex) {
             }
             // A contract declared this topic: its wiring is authored, and an
             // inference must not add to it.
-            if !entry.derived_from_remaps {
+            if !entry.derived_from_remaps && !type_only.contains(&entry.fqn) {
                 continue;
             }
             let side = if is_pub {

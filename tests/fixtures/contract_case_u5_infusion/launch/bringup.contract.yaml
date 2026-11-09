@@ -1,0 +1,107 @@
+# Phase 102 E1, U5: an infusion pump's occlusion stop (`medical.occlusion`
+# carries the physics, contract_ext_medical). Safe is two facts on two
+# final elements: the pump rate is zero and the alarm is raised.
+version: 1
+use:
+  iso26262: "^1"
+
+hazards:
+  occlusion:
+    integrity: ASIL_C
+    requirement: { id: IEC60601-OCC, source: "pump risk file" }
+    monitors: [/occluded]
+    on: reported
+    when: { field: data, equals: true }
+    ftti: 5s
+    enters: infusing
+
+functions:
+  occluded_clear:
+    of: [/occluded]
+    when: { field: data, equals: true }
+
+modes:
+  infusing:
+    requires: [occluded_clear]
+    fallback: [stopped_alarm]
+  stopped_alarm:
+    requires: []
+    reaction: occlusion.stop
+    commands:
+      /pump_rate:
+        - { field: data, equals: 0 }
+      /alarm:
+        - { field: data, equals: true }
+
+nodes:
+  line_pressure_sensor:
+    pub:
+      line_pressure: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [line_pressure]
+        max_latency: 2ms
+  occluded_monitor:
+    sub:
+      line_pressure: {}
+    pub:
+      occluded: {}
+    paths:
+      judge:
+        trigger: { input: [line_pressure] }
+        output: [occluded]
+        max_latency: 5ms
+  planner:
+    pub:
+      setpoint: {}
+    paths:
+      plan:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [setpoint]
+        max_latency: 10ms
+  controller:
+    sub:
+      setpoint: {}
+      occluded:
+        on_violation: { on: [reported], reaction: occlusion_stop }
+    pub:
+      pump_rate: {}
+      alarm: {}
+    paths:
+      forward:
+        trigger: { input: [setpoint] }
+        output: [pump_rate, alarm]
+        max_latency: 2ms
+      occlusion_stop:
+        trigger: { input: [occluded] }
+        output: [pump_rate, alarm]
+        max_latency: 2ms
+        safe_state: { emits: pump_rate, settle: 200ms }
+
+paths:
+  occlusion.stop:
+    trigger: { input: [/occluded] }
+    output: [/pump_rate, /alarm]
+
+topics:
+  /line_pressure:
+    type: std_msgs/msg/Float64
+    pub: [line_pressure_sensor/line_pressure]
+    sub: [occluded_monitor/line_pressure]
+  /occluded:
+    type: std_msgs/msg/Bool
+    pub: [occluded_monitor/occluded]
+    sub: [controller/occluded]
+  /pump_rate:
+    type: std_msgs/msg/Float64
+    external: { side: sub, on_silence: { after: 500ms } }
+    pub: [controller/pump_rate]
+  /alarm:
+    type: std_msgs/msg/Bool
+    external: { side: sub, on_silence: { after: 500ms } }
+    pub: [controller/alarm]
+  /setpoint:
+    type: std_msgs/msg/Float64
+    pub: [planner/setpoint]
+    sub: [controller/setpoint]

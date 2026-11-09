@@ -1,0 +1,100 @@
+# Phase 102 E1, U6: a process plant's overpressure trip (IEC 61511;
+# `process.pst` carries the process safety time, contract_ext_process). The
+# final element is the valve; safe is commanded closed.
+version: 1
+use:
+  iso26262: "^1"
+
+hazards:
+  overpressure:
+    integrity: ASIL_D
+    requirement: { id: SIF-07, source: "SRS rev 2" }
+    monitors: [/overpressure]
+    on: reported
+    when: { field: data, equals: true }
+    ftti: 3s
+    enters: operating
+
+functions:
+  overpressure_clear:
+    of: [/overpressure]
+    when: { field: data, equals: true }
+
+modes:
+  operating:
+    requires: [overpressure_clear]
+    fallback: [tripped]
+  tripped:
+    requires: []
+    reaction: overpressure.stop
+    commands:
+      /valve_position:
+        - { field: data, equals: 0 }
+
+nodes:
+  pressure_sensor:
+    pub:
+      pressure: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [pressure]
+        max_latency: 2ms
+  overpressure_monitor:
+    sub:
+      pressure: {}
+    pub:
+      overpressure: {}
+    paths:
+      judge:
+        trigger: { input: [pressure] }
+        output: [overpressure]
+        max_latency: 5ms
+  planner:
+    pub:
+      setpoint: {}
+    paths:
+      plan:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [setpoint]
+        max_latency: 10ms
+  controller:
+    sub:
+      setpoint: {}
+      overpressure:
+        on_violation: { on: [reported], reaction: overpressure_stop }
+    pub:
+      valve_position: {}
+    paths:
+      forward:
+        trigger: { input: [setpoint] }
+        output: [valve_position]
+        max_latency: 2ms
+      overpressure_stop:
+        trigger: { input: [overpressure] }
+        output: [valve_position]
+        max_latency: 2ms
+        safe_state: { emits: valve_position, settle: 1s }
+
+paths:
+  overpressure.stop:
+    trigger: { input: [/overpressure] }
+    output: [/valve_position]
+
+topics:
+  /pressure:
+    type: std_msgs/msg/Float64
+    pub: [pressure_sensor/pressure]
+    sub: [overpressure_monitor/pressure]
+  /overpressure:
+    type: std_msgs/msg/Bool
+    pub: [overpressure_monitor/overpressure]
+    sub: [controller/overpressure]
+  /valve_position:
+    type: std_msgs/msg/Float64
+    external: { side: sub, on_silence: { after: 500ms } }
+    pub: [controller/valve_position]
+  /setpoint:
+    type: std_msgs/msg/Float64
+    pub: [planner/setpoint]
+    sub: [controller/setpoint]

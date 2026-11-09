@@ -1,0 +1,107 @@
+# Phase 102 E1, U7: a train's emergency brake against its supervision
+# (`rail.ebd` carries the braking curve, contract_ext_rail). Safe is two
+# final elements: emergency brake applied, traction cut.
+version: 1
+use:
+  iso26262: "^1"
+
+hazards:
+  overspeed:
+    integrity: ASIL_D
+    requirement: { id: EBD-1, source: "SUBSET-026 3.13 (illustrative)" }
+    monitors: [/overspeed]
+    on: reported
+    when: { field: data, equals: true }
+    ftti: 2s
+    enters: supervised
+
+functions:
+  overspeed_clear:
+    of: [/overspeed]
+    when: { field: data, equals: true }
+
+modes:
+  supervised:
+    requires: [overspeed_clear]
+    fallback: [emergency_brake]
+  emergency_brake:
+    requires: []
+    reaction: overspeed.stop
+    commands:
+      /brake_cmd:
+        - { field: data, equals: true }
+      /traction_cmd:
+        - { field: data, equals: 0 }
+
+nodes:
+  speed_sensor:
+    pub:
+      speed: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [speed]
+        max_latency: 2ms
+  overspeed_monitor:
+    sub:
+      speed: {}
+    pub:
+      overspeed: {}
+    paths:
+      judge:
+        trigger: { input: [speed] }
+        output: [overspeed]
+        max_latency: 5ms
+  planner:
+    pub:
+      setpoint: {}
+    paths:
+      plan:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [setpoint]
+        max_latency: 10ms
+  controller:
+    sub:
+      setpoint: {}
+      overspeed:
+        on_violation: { on: [reported], reaction: overspeed_stop }
+    pub:
+      brake_cmd: {}
+      traction_cmd: {}
+    paths:
+      forward:
+        trigger: { input: [setpoint] }
+        output: [brake_cmd, traction_cmd]
+        max_latency: 2ms
+      overspeed_stop:
+        trigger: { input: [overspeed] }
+        output: [brake_cmd, traction_cmd]
+        max_latency: 2ms
+        safe_state: { emits: brake_cmd, settle: 500ms }
+
+paths:
+  overspeed.stop:
+    trigger: { input: [/overspeed] }
+    output: [/brake_cmd, /traction_cmd]
+
+topics:
+  /speed:
+    type: std_msgs/msg/Float64
+    pub: [speed_sensor/speed]
+    sub: [overspeed_monitor/speed]
+  /overspeed:
+    type: std_msgs/msg/Bool
+    pub: [overspeed_monitor/overspeed]
+    sub: [controller/overspeed]
+  /brake_cmd:
+    type: std_msgs/msg/Bool
+    external: { side: sub, on_silence: { after: 500ms } }
+    pub: [controller/brake_cmd]
+  /traction_cmd:
+    type: std_msgs/msg/Float64
+    external: { side: sub, on_silence: { after: 500ms } }
+    pub: [controller/traction_cmd]
+  /setpoint:
+    type: std_msgs/msg/Float64
+    pub: [planner/setpoint]
+    sub: [controller/setpoint]

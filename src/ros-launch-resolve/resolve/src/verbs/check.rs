@@ -321,6 +321,10 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
         index.merge_diagnostics.extend(against.diagnostics);
     }
 
+    // Phase 100 F3: the findings added since loading name their hazard's
+    // requirement too.
+    crate::ros::hazard_sentence::tag_requirements(&mut index);
+
     // Phase 85 D8: what the contracts acknowledge, judged against the
     // verdict about to be printed -- after `--strict` re-grades and
     // `--against` adds, so an entry naming a diagnostic one of them made an
@@ -369,6 +373,13 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // Phase 85 D8: the findings the contracts acknowledge, apart.
     render_acknowledged(&index, &inputs.format, rule_filter.as_ref())?;
 
+    // Phase 100 F3: each hazard as one sentence.
+    if inputs.explain && inputs.format != "json" {
+        let hazards = crate::ros::hazard_sentence::render_hazards(&index);
+        if !hazards.is_empty() {
+            crate::say_raw!("{hazards}");
+        }
+    }
     // Phase 83: the fault-reaction arithmetic the verdicts above were
     // computed from, one row per (hazard, rung).
     if inputs.explain && inputs.format != "json" && !index.budgets.is_empty() {

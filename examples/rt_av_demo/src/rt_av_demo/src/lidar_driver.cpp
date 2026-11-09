@@ -4,6 +4,7 @@
 // the brake controller measures true end-to-end latency and the Chrome trace
 // links all three hops into a single flow.
 #include <cstdio>
+#include <cstdlib>
 
 #include "common.hpp"
 
@@ -21,6 +22,9 @@ public:
     // (0 = never). The node stays alive, so what dies is the DATA — the
     // omission fault the contract's hazard guards against.
     die_after_s_ = this->declare_parameter<double>("die_after", 0.0);
+    // Phase 102 E4: exit instead, so the PROCESS dies and the launch file's
+    // `respawn` restarts it -- the recovery the checker credits from a run.
+    exit_on_death_ = this->declare_parameter<bool>("exit_on_death", false);
 
     // Phase 74: opt in to the contract's QoS. play_launch applies the
     // contract's deadline/liveliness as `qos_overrides.*` parameters, and
@@ -45,6 +49,9 @@ public:
             dead_ = true;
             std::printf("LIDAR_DEAD seq=%u\n", seq_);
             std::fflush(stdout);
+            if (exit_on_death_) {
+              std::_Exit(3);
+            }
           }
           return;
         }
@@ -58,6 +65,7 @@ public:
 
 private:
   double rate_hz_, burn_ms_, die_after_s_;
+  bool exit_on_death_ {false};
   rclcpp::Time start_ {this->now()};
   bool dead_ {false};
   uint32_t seq_ {0};

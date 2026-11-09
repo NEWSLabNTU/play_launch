@@ -419,6 +419,83 @@ fault:
     print("fault-reaction vocabulary verified on a running system, live and after the fact.")
     PY
 
+# Phase 102 E4: the safety model's times against runs. The lidar's PROCESS
+# exits at 8 s and the launch file respawns it, once after 0.1 s (a restart
+# the checker should credit) and once after 1.0 s (one it should not). For
+# each run: `check --against` the run gives the static verdict
+# (`recovery-credited` / `recovery-unfit`), and the live observer's
+# `hazard-recovered` says whether the guard came back inside the FTTI. They
+# must agree, the measured outage must be within the credited total, the
+# first safe message must come within the level's derived bound, and the
+# level's `commands` must hold (no `safe-state-violated`, no
+# `final-element-silent`). Writes out/recovery/<case>/ and summary.json.
+fault-recovery:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/humble/setup.bash
+    source "{{ repo }}/install/setup.bash"
+    source "{{ justfile_directory() }}/install/setup.bash"
+    cd "{{ justfile_directory() }}"
+    rm -rf out/recovery && mkdir -p out/recovery
+    export PLAY_LAUNCH_INTERCEPTION_SO="{{ interception_so }}"
+    for case in fits:0.1 unfit:1.0; do
+        name="${case%%:*}" delay="${case#*:}"
+        dir="out/recovery/$name"; mkdir -p "$dir"; cd "$dir"
+        printf 'interception:\n  enabled: true\n  events: true\n' > cfg.yaml
+        args="die_after:=8.0 exit_on_death:=true lidar_respawn:=true lidar_respawn_delay:=$delay {{ launch_args }}"
+        export ROS_DOMAIN_ID=$(( 60 + RANDOM % 20 ))
+        echo "=== $name: lidar process exits at 8s, respawn_delay $delay s ==="
+        timeout 16 "{{ play_launch }}" launch rt_av_demo bringup.launch.xml \
+            --sched-apply off --config cfg.yaml --disable-web-ui $args > run.log 2>&1 || true
+        "{{ play_launch }}" check rt_av_demo bringup.launch.xml $args --explain \
+            --against play_log/latest 2>&1 | sed -E 's/\x1b\[[0-9;]*m//g' > check.txt || true
+        cd "{{ justfile_directory() }}"
+    done
+    python3 - <<'PY'
+    import json, re, sys
+    out, ok = {}, True
+    for name in ("fits", "unfit"):
+        d = f"out/recovery/{name}"
+        check = open(f"{d}/check.txt").read()
+        live = [json.loads(l) for l in open(f"{d}/play_log/latest/runtime_violations.jsonl") if l.strip()]
+        rules = lambda r: [x["message"] for x in live if x["rule_id"] == r]
+        static = re.search(r"(recovery-credited|recovery-unfit|recovery-uncredited)\]: .*?= ([\d.]+)ms", check)
+        startup = re.search(r"startup ([\d.]+)ms", check)
+        rec = rules("hazard-recovered")
+        outage = re.search(r"resumed publishing ([\d.]+)ms after it went silent, (inside|past) the FTTI", rec[0]) if rec else None
+        reaction = rules("hazard-reaction")
+        react_ms = re.search(r"reaction on '\S+' ([\d.]+)ms after", reaction[0]) if reaction else None
+        row = re.search(r"drive_blind\s+stopped\s+mrc\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)", check)
+        r = {
+            "static": static.group(1) if static else None,
+            "credited_total_ms": float(static.group(2)) if static else None,
+            "startup_ms": float(startup.group(1)) if startup else None,
+            "outage_ms": float(outage.group(1)) if outage else None,
+            "live": outage.group(2) if outage else None,
+            "first_safe_ms": float(react_ms.group(1)) if react_ms else None,
+            "derived_detect_plus_route_ms": float(row.group(1)) + float(row.group(3)) if row else None,
+            "safe_state_violated": len(rules("safe-state-violated")),
+            "final_element_silent": len(rules("final-element-silent")),
+            "mode_events": rules("mode-availability"),
+        }
+        agree = (r["static"] == "recovery-credited") == (r["live"] == "inside")
+        within = r["outage_ms"] is not None and r["credited_total_ms"] is not None and r["outage_ms"] <= r["credited_total_ms"]
+        safe_in_time = (r["first_safe_ms"] is not None and r["derived_detect_plus_route_ms"] is not None
+                        and r["first_safe_ms"] <= r["derived_detect_plus_route_ms"] + 40)
+        clean = r["safe_state_violated"] == 0 and r["final_element_silent"] == 0
+        r.update(agree=agree, outage_within_credit=within, first_safe_within_bound=safe_in_time, invariant_held=clean)
+        out[name] = r
+        print(f"{name}: static {r['static']} (credited total {r['credited_total_ms']} ms, startup {r['startup_ms']} ms); "
+              f"live {r['live']} the FTTI after {r['outage_ms']} ms; first safe message {r['first_safe_ms']} ms "
+              f"(derived detection + route {r['derived_detect_plus_route_ms']} ms); "
+              f"safe-state-violated {r['safe_state_violated']}, final-element-silent {r['final_element_silent']}")
+        for k in ("agree", "outage_within_credit", "first_safe_within_bound", "invariant_held"):
+            print(f"  {k}: {'yes' if r[k] else 'NO'}")
+            ok = ok and r[k]
+    json.dump(out, open("out/recovery/summary.json", "w"), indent=2)
+    sys.exit(0 if ok else 1)
+    PY
+
 # Internal: one run. $1 = off|on, $2 = output dir.
 _run mode outdir:
     #!/usr/bin/env bash

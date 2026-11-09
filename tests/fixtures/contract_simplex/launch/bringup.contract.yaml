@@ -1,0 +1,125 @@
+# Phase 102 E1: Simplex as a pattern, with the decided primitives only.
+#
+# Simplex runs an unverified advanced controller beside a verified safety
+# controller; a decision module forwards the advanced command while a
+# monitor says it keeps the system inside the envelope the safety
+# controller can recover from, and switches to the safety controller when
+# it does not. In contract terms:
+#
+# - the monitor's verdict is a value function (`envelope`), and the
+#   advanced mode requires it;
+# - the safe mode is the level the advanced mode falls to; its reaction is
+#   the decision module's switch, TRIGGERED by the verdict (not by the next
+#   advanced command, which `reaction-waits-on-traffic` would refuse);
+# - the safe mode commands what the safety controller guarantees, on the
+#   one topic only the decision module publishes (`arbiter-bypass`);
+# - the safety controller and the monitor share nothing with the advanced
+#   controller (`independence`).
+version: 1
+use:
+  iso26262: "^1"
+
+hazards:
+  leaves_envelope:
+    integrity: ASIL_B
+    requirement: { id: SR-3, source: "Simplex envelope argument, section 2" }
+    monitors: [/envelope_ok]
+    on: reported
+    when: { field: data, equals: false }
+    ftti: 200ms
+    enters: advanced
+
+functions:
+  envelope:
+    of: [/envelope_ok]
+    when: { field: data, equals: false }
+
+modes:
+  advanced:
+    requires: [envelope]
+    fallback: [safe]
+  safe:
+    requires: []
+    reaction: switch_to_safe
+    commands:
+      /cmd:
+        - { field: linear.x, le: 0.5 }
+
+independence:
+  - of: [advanced_ctrl, safety_ctrl]
+    not_sharing: [process, container]
+  - of: [advanced_ctrl, envelope_monitor]
+    not_sharing: [process, container]
+
+nodes:
+  advanced_ctrl:
+    pub:
+      cmd_adv: {}
+    paths:
+      control:
+        trigger: { timer: { rate_hz: 50 } }
+        output: [cmd_adv]
+        max_latency: 10ms
+  safety_ctrl:
+    pub:
+      cmd_safe: {}
+    paths:
+      control:
+        trigger: { timer: { rate_hz: 50 } }
+        output: [cmd_safe]
+        max_latency: 2ms
+  envelope_monitor:
+    sub:
+      cmd_adv: {}
+    pub:
+      envelope_ok: {}
+    paths:
+      judge:
+        trigger: { input: [cmd_adv] }
+        output: [envelope_ok]
+        max_latency: 3ms
+  decision:
+    sub:
+      cmd_adv: {}
+      cmd_safe: {}
+      envelope_ok:
+        on_violation: { on: [reported], reaction: switch }
+    pub:
+      cmd: {}
+    paths:
+      forward_advanced:
+        trigger: { input: [cmd_adv] }
+        output: [cmd]
+        max_latency: 1ms
+      forward_safe:
+        trigger: { input: [cmd_safe] }
+        output: [cmd]
+        max_latency: 1ms
+      switch:
+        trigger: { input: [envelope_ok] }
+        output: [cmd]
+        max_latency: 1ms
+        safe_state: { emits: cmd, settle: 100ms }
+
+paths:
+  switch_to_safe:
+    trigger: { input: [/envelope_ok] }
+    output: [/cmd]
+
+topics:
+  /cmd_adv:
+    type: geometry_msgs/msg/Twist
+    pub: [advanced_ctrl/cmd_adv]
+    sub: [envelope_monitor/cmd_adv, decision/cmd_adv]
+  /cmd_safe:
+    type: geometry_msgs/msg/Twist
+    pub: [safety_ctrl/cmd_safe]
+    sub: [decision/cmd_safe]
+  /envelope_ok:
+    type: std_msgs/msg/Bool
+    pub: [envelope_monitor/envelope_ok]
+    sub: [decision/envelope_ok]
+  /cmd:
+    type: geometry_msgs/msg/Twist
+    external: { side: sub, on_silence: { after: 100ms } }
+    pub: [decision/cmd]

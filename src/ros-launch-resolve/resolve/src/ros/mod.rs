@@ -13,6 +13,7 @@ pub mod contract_vs_code;
 pub mod dds_env;
 pub mod extensions;
 pub mod graph_identity;
+pub mod hazard_sentence;
 pub(crate) mod independence;
 pub mod launch_dump;
 pub mod link_samples;

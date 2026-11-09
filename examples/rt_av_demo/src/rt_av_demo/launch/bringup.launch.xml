@@ -14,6 +14,10 @@
   <arg name="detect_burn"   default="8.0"/>
   <arg name="detect_jitter" default="0.0"/>
   <arg name="die_after"     default="0.0"/>
+  <!-- Phase 102 E4: the lidar's PROCESS exits at die_after, and respawns. -->
+  <arg name="exit_on_death" default="false"/>
+  <arg name="lidar_respawn" default="false"/>
+  <arg name="lidar_respawn_delay" default="0.0"/>
   <arg name="watchdog_ms"   default="100.0"/>
   <arg name="brake_burn"    default="3.0"/>
   <arg name="deadline_ms"   default="60.0"/>
@@ -25,10 +29,12 @@
 
   <group>
     <push-ros-namespace namespace="safety"/>
-    <node pkg="rt_av_demo" exec="lidar_driver" name="lidar_driver" output="screen">
+    <node pkg="rt_av_demo" exec="lidar_driver" name="lidar_driver" output="screen"
+          respawn="$(var lidar_respawn)" respawn_delay="$(var lidar_respawn_delay)">
       <param name="rate_hz" value="$(var lidar_hz)"/>
       <param name="burn_ms" value="2.0"/>
       <param name="die_after" value="$(var die_after)"/>
+      <param name="exit_on_death" value="$(var exit_on_death)"/>
     </node>
     <node pkg="rt_av_demo" exec="obstacle_detector" name="obstacle_detector" output="screen">
       <param name="burn_ms" value="$(var detect_burn)"/>

@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<!-- Phase 100 F5: contract_safe_ros_fixed's system, its safety node's stop
+     distance a parameter the contract reads. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="lidar"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="safety_node">
+    <param name="stop_distance" value="0.05"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="planner"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="cmd_vel_interceptor"/>
+</launch>

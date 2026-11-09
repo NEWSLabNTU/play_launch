@@ -1,0 +1,104 @@
+# Phase 102 E1, U4: a UAV's low battery failsafe (`uav.descent` carries the
+# physics, contract_ext_uav). The final element is the flight mode, in the
+# flight controller outside ROS; the channel is the last topic before it,
+# and safe there is an enumeration: the mode is AUTO.LAND (mavros spells
+# PX4's modes so). E1 found that a mode spelled LAND cannot be written: a
+# predicate value in upper snake case is read as a message constant name,
+# quoted or not (rlm `PredicateValue::from_text`).
+version: 1
+use:
+  iso26262: "^1"
+
+hazards:
+  battery_low:
+    integrity: ASIL_B
+    requirement: { id: UAV-4, source: "failsafe analysis" }
+    monitors: [/battery_low]
+    on: reported
+    when: { field: data, equals: true }
+    ftti: 2s
+    enters: mission
+
+functions:
+  battery_low_clear:
+    of: [/battery_low]
+    when: { field: data, equals: true }
+
+modes:
+  mission:
+    requires: [battery_low_clear]
+    fallback: [land]
+  land:
+    requires: []
+    reaction: battery_low.stop
+    commands:
+      /flight_mode:
+        - { field: data, equals: "AUTO.LAND" }
+
+nodes:
+  battery_sensor:
+    pub:
+      battery: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [battery]
+        max_latency: 2ms
+  battery_low_monitor:
+    sub:
+      battery: {}
+    pub:
+      battery_low: {}
+    paths:
+      judge:
+        trigger: { input: [battery] }
+        output: [battery_low]
+        max_latency: 5ms
+  planner:
+    pub:
+      setpoint: {}
+    paths:
+      plan:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [setpoint]
+        max_latency: 10ms
+  controller:
+    sub:
+      setpoint: {}
+      battery_low:
+        on_violation: { on: [reported], reaction: battery_low_stop }
+    pub:
+      flight_mode: {}
+    paths:
+      forward:
+        trigger: { input: [setpoint] }
+        output: [flight_mode]
+        max_latency: 2ms
+      battery_low_stop:
+        trigger: { input: [battery_low] }
+        output: [flight_mode]
+        max_latency: 2ms
+        safe_state: { emits: flight_mode, settle: 500ms }
+
+paths:
+  battery_low.stop:
+    trigger: { input: [/battery_low] }
+    output: [/flight_mode]
+
+topics:
+  /battery:
+    type: std_msgs/msg/Float64
+    pub: [battery_sensor/battery]
+    sub: [battery_low_monitor/battery]
+  /battery_low:
+    type: std_msgs/msg/Bool
+    pub: [battery_low_monitor/battery_low]
+    sub: [controller/battery_low]
+  /flight_mode:
+    type: std_msgs/msg/String
+    external: { side: sub, on_silence: { after: 500ms } }
+    pub: [controller/flight_mode]
+  /setpoint:
+    type: std_msgs/msg/Float64
+    pub: [planner/setpoint]
+    sub: [controller/setpoint]

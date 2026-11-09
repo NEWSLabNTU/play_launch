@@ -1,0 +1,158 @@
+# Phase 102 E1, U3: a collaborative robot's speed and separation monitoring
+# (ISO 10218-2, ISO/TS 15066). The person's distance is judged against two
+# zones; each zone is its own hazard and level: in the warning zone the
+# joint speed is limited, in the stop zone it is zero. Both levels command
+# the same final element, through the one controller.
+version: 1
+use:
+  iso26262: "^1"
+
+hazards:
+  person_in_warning_zone:
+    integrity: ASIL_B
+    requirement: { id: SSM-1, source: "risk assessment, zone W" }
+    monitors: [/in_warning_zone]
+    on: reported
+    when: { field: data, equals: true }
+    ftti: 500ms
+    enters: collaborative
+  person_in_stop_zone:
+    integrity: ASIL_C
+    requirement: { id: SSM-2, source: "risk assessment, zone S" }
+    monitors: [/in_stop_zone]
+    on: reported
+    when: { field: data, equals: true }
+    ftti: 300ms
+    enters: collaborative_near
+
+functions:
+  in_warning_zone_clear:
+    of: [/in_warning_zone]
+    when: { field: data, equals: true }
+  in_stop_zone_clear:
+    of: [/in_stop_zone]
+    when: { field: data, equals: true }
+
+modes:
+  collaborative:
+    requires: [in_warning_zone_clear]
+    fallback: [reduced_speed]
+  reduced_speed:
+    requires: []
+    reaction: person_in_warning_zone.stop
+    commands:
+      /joint_speed:
+        - { field: data, le: 0.25 }
+  collaborative_near:
+    requires: [in_stop_zone_clear]
+    fallback: [protective_stop]
+  protective_stop:
+    requires: []
+    reaction: person_in_stop_zone.stop
+    commands:
+      /joint_speed:
+        - { field: data, equals: 0 }
+
+nodes:
+  distance_sensor:
+    pub:
+      distance: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [distance]
+        max_latency: 2ms
+  in_warning_zone_monitor:
+    sub:
+      distance: {}
+    pub:
+      in_warning_zone: {}
+    paths:
+      judge:
+        trigger: { input: [distance] }
+        output: [in_warning_zone]
+        max_latency: 5ms
+  distance_s_sensor:
+    pub:
+      distance_s: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [distance_s]
+        max_latency: 2ms
+  in_stop_zone_monitor:
+    sub:
+      distance_s: {}
+    pub:
+      in_stop_zone: {}
+    paths:
+      judge:
+        trigger: { input: [distance_s] }
+        output: [in_stop_zone]
+        max_latency: 5ms
+  planner:
+    pub:
+      setpoint: {}
+    paths:
+      plan:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [setpoint]
+        max_latency: 10ms
+  controller:
+    sub:
+      setpoint: {}
+      in_warning_zone:
+        on_violation: { on: [reported], reaction: person_in_warning_zone_stop }
+      in_stop_zone:
+        on_violation: { on: [reported], reaction: person_in_stop_zone_stop }
+    pub:
+      joint_speed: {}
+    paths:
+      forward:
+        trigger: { input: [setpoint] }
+        output: [joint_speed]
+        max_latency: 2ms
+      person_in_warning_zone_stop:
+        trigger: { input: [in_warning_zone] }
+        output: [joint_speed]
+        max_latency: 2ms
+        safe_state: { emits: joint_speed, settle: 150ms }
+      person_in_stop_zone_stop:
+        trigger: { input: [in_stop_zone] }
+        output: [joint_speed]
+        max_latency: 2ms
+        safe_state: { emits: joint_speed, settle: 100ms }
+
+paths:
+  person_in_warning_zone.stop:
+    trigger: { input: [/in_warning_zone] }
+    output: [/joint_speed]
+  person_in_stop_zone.stop:
+    trigger: { input: [/in_stop_zone] }
+    output: [/joint_speed]
+
+topics:
+  /distance:
+    type: std_msgs/msg/Float64
+    pub: [distance_sensor/distance]
+    sub: [in_warning_zone_monitor/distance]
+  /in_warning_zone:
+    type: std_msgs/msg/Bool
+    pub: [in_warning_zone_monitor/in_warning_zone]
+    sub: [controller/in_warning_zone]
+  /distance_s:
+    type: std_msgs/msg/Float64
+    pub: [distance_s_sensor/distance_s]
+    sub: [in_stop_zone_monitor/distance_s]
+  /in_stop_zone:
+    type: std_msgs/msg/Bool
+    pub: [in_stop_zone_monitor/in_stop_zone]
+    sub: [controller/in_stop_zone]
+  /joint_speed:
+    type: std_msgs/msg/Float64
+    external: { side: sub, on_silence: { after: 500ms } }
+    pub: [controller/joint_speed]
+  /setpoint:
+    type: std_msgs/msg/Float64
+    pub: [planner/setpoint]
+    sub: [controller/setpoint]

@@ -1483,6 +1483,73 @@ fn safe_ros_interceptor_waits_on_command_traffic() {
 /// rlm v0.3.13 (phase 100 F1): a level's `commands`. `contract_commands`
 /// is a correct gate; each twin carries one defect, refused by its rule and
 /// by no other new rule.
+/// Phase 100 F5: `mobile.protective_stop` judges the protective field the
+/// safety node runs (read by `$(param ...)`): Safe-ROS's 5 cm is refused at
+/// 1 m/s with the reaction the checker charged, and a field sized by the
+/// formula passes. Its worst case is proved.
+#[test]
+fn a_protective_field_is_sized_by_the_stop() {
+    let (code, out) = ext_fixture("contract_protective_stop", &["--explain"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains(
+            "error[extension-check]: hazard 'collision': mobile.protective_stop/stopping_distance FAIL"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("required <= field: 840.33 mm <= 50 mm (margin -790.33 mm) FAIL"),
+        "{out}"
+    );
+    let (code, out) = ext_fixture("contract_protective_stop_sized", &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("required <= field: 840.33 mm <= 900 mm (margin 59.67 mm) PASS"),
+        "{out}"
+    );
+    assert!(
+        out.contains("worst case: proved increasing in reaction_total, speed, margin"),
+        "{out}"
+    );
+}
+
+/// Phase 100 F3: `--explain` states each hazard as one sentence, with its
+/// requirement, its bound, the levels it falls through and what each
+/// commands; every finding about the hazard names the requirement.
+#[test]
+fn a_hazard_reads_as_one_sentence() {
+    let launch =
+        fixtures::repo_root().join("tests/fixtures/contract_commands/launch/bringup.launch.xml");
+    let out = play_launch_cmd()
+        .arg("check")
+        .arg(&launch)
+        .arg("--explain")
+        .output()
+        .expect("play_launch check runs");
+    let out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let golden = "hazard 'collision' implements R1 (HARA rev 3, section 4.2) at ASIL_B: it \
+                  watches /too_close for reported (when data == true); the system must reach a \
+                  safe state within 1000.00ms; it enters mode 'driving', reaching 'stopped' \
+                  (minimal risk condition) in 407.00ms. At 'stopped', /cmd_vel_filtered must \
+                  carry linear.x == 0 and angular.z == 0.";
+    assert!(out.contains("-- Hazards (--explain) --"), "{out}");
+    assert!(out.contains(golden), "{out}");
+    let tagged = out
+        .lines()
+        .filter(|l| {
+            l.contains("hazard 'collision'") && l.contains("[") && !l.starts_with("  hazard")
+        })
+        .collect::<Vec<_>>();
+    assert!(!tagged.is_empty(), "{out}");
+    for l in tagged {
+        assert!(l.ends_with("[requirement R1]"), "untagged finding: {l}");
+    }
+}
+
 #[test]
 fn a_commanded_topic_is_a_final_element() {
     let rules = [
@@ -4761,7 +4828,7 @@ fn rt_av_demo_rates_follow_the_command_line() {
         "/safety/lidar_driver paths.sample.trigger.timer.rate_hz = 100 Hz",
         // W2.3: the parameter followed to the `$(var)` it was written as,
         // and on to the command line.
-        "<- /safety/lidar_driver rate_hz = 100 Hz, <param> bringup.launch.xml:29 = $(var lidar_hz)\n",
+        "<- /safety/lidar_driver rate_hz = 100 Hz, <param> bringup.launch.xml:34 = $(var lidar_hz)\n",
         "<- lidar_hz = 100, command line\n",
         "/safety/brake_controller sub.obstacles.min_rate_hz = 100 Hz",
         "<- lidar_hz = 100 Hz, command line",

@@ -152,6 +152,14 @@ CONSUMING_PATTERNS = [
     # unreadable value (`param-unset`, `param-dimension`, ...).
     (r"types/src/values\.rs$", "value evaluation (phase 94)"),
     (r"resolve/src/ros/contract_values\.rs$", "contract values (phase 94)"),
+    # rlm v0.3.13 (phases 100-102): a level's commands, independence and
+    # recovery rules; and a hazard's requirement traced into every finding
+    # about it and into `--explain`'s sentence, which is the only place the
+    # analysis's id meets the verdict.
+    (r"resolve/src/ros/safety_function\.rs$", "final-element rules (phase 100)"),
+    (r"resolve/src/ros/independence\.rs$", "independence rules (phase 101)"),
+    (r"resolve/src/ros/recovery\.rs$", "recovery credit (phase 101)"),
+    (r"resolve/src/ros/hazard_sentence\.rs$", "requirement traced into findings (phase 100 F3)"),
     (r"sched/src/", "scheduling"),
     (r"^rlm/derive/src/", "shared mapper derivation (rlm derive)"),
     (r"check/src/graph\.rs$", "dataflow graph"),

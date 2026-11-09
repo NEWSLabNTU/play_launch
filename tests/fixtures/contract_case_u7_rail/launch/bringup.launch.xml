@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!-- Phase 102 E1: contract_case_u7_rail. One process per node; the contract is the case. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="speed_sensor"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="overspeed_monitor"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="planner"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="controller"/>
+</launch>
