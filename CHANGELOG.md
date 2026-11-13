@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.32.0 - 2026-11-13
 
 - **Removed (contracts; rlm v0.3.15, phase 104 S1):** five spellings
   deprecated since rlm v0.1.59/v0.1.60 are refused, each naming its
