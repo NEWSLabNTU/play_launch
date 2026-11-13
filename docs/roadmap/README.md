@@ -351,6 +351,23 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     (#0042), P2 `links:`, P3 `measure` proposals, P4 `check --against`
     transport; P5 (a runtime link monitor) not adopted.
     [phase-97-links.md](./phase-97-links.md).
+  - **Phase 104** - planned (2026-11-13): the contract grammar revision, in
+    stages: removals (overdue aliases, `links.monitor`, `tolerance`, a
+    deprecation registry), two meanings settled, one release of
+    contract-key renames and relocations (`reaction`, `functions`, rates as
+    `Hz` values, `early` into `vehicle.braking`, `supervision` to the
+    platform file), then additions on demand (end-to-end protection,
+    quoted strings, actions, transforms, several hosts). rlm specifies,
+    play_launch (Linux) and nano-ros (RTOS) follow. Design: rlm
+    `docs/design/grammar-revision/`.
+    [phase-104-contract-grammar-revision.md](./phase-104-contract-grammar-revision.md).
+  - **Phase 103** - planned (2026-11-13): defects the grammar review found
+    in shipped behaviour, fixed before the revision: a constant predicate
+    never judged at run time (fail-unsafe), criticality not derived for
+    hazards that enter a mode, three meanings of entering a mode and of an
+    omitted `on:`, independence passing on an absent node, action routes,
+    and message text.
+    [phase-103-contract-review-defects.md](./phase-103-contract-review-defects.md).
   - **Phase 102** - planned (2026-11-07): the contract safety model's
     build order across phases 100 and 101 (foundations: a Safe-ROS fixture
     and an interceptor field reader; one rlm release for all grammar; then
