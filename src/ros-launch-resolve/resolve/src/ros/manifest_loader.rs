@@ -4926,7 +4926,6 @@ fn set_path_field(
         "max_latency" => set_bound(&mut p.max_latency, Context::Path, "max_latency", v),
         "min_latency" => set_bound(&mut p.min_latency, Context::Path, "min_latency", v),
         "max_jitter" => set_bound(&mut p.max_jitter, Context::Path, "max_jitter", v),
-        "tolerance" => p.tolerance = Some(v),
         _ => return false,
     }
     true
@@ -5148,7 +5147,6 @@ fn path_field_declared(p: &ros_launch_manifest_types::PathDecl, field: &str) -> 
         "max_latency" => p.max_latency.is_some(),
         "min_latency" => p.min_latency.is_some(),
         "max_jitter" => p.max_jitter.is_some(),
-        "tolerance" => p.tolerance.is_some(),
         _ => false,
     }
 }
@@ -6301,8 +6299,9 @@ fn durability_compatible(pub_v: &str, sub_v: &str) -> bool {
 /// time the path has already spent, so a window wider than the path's
 /// `max_latency` cannot be met however the system is scheduled.
 ///
-/// Reads the three window fields that had no consumer: `sync.timeout`,
-/// `sync.max_interval` and the path's `tolerance`.
+/// Reads the two window fields: `sync.timeout` and `sync.max_interval`. (A
+/// path's `tolerance` was a third, the same quantity as `max_interval`;
+/// rlm v0.3.16 removed it.)
 fn check_sync_window_budget(index: &mut ManifestIndex) {
     let paths = index.node_paths.clone();
     for np in &paths {
@@ -6318,9 +6317,6 @@ fn check_sync_window_budget(index: &mut ManifestIndex) {
             if let Some(mi) = sync.max_interval {
                 windows.push(("sync.max_interval", mi.as_millis_f64()));
             }
-        }
-        if let Some(tol) = np.path.tolerance {
-            windows.push(("tolerance", tol.as_millis_f64()));
         }
         for (field, window) in windows {
             if window <= budget {

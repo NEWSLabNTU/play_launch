@@ -6,6 +6,22 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Removed (contracts; rlm v0.3.16, phase 104 S1):** a path's
+  `tolerance` is refused naming `sync.max_interval`, the same quantity
+  under one key. `play_launch migrate` folds it into an existing `sync:`;
+  a path without one is reported, since adding `sync:` turns its derived
+  output rate from the sum of its inputs into their minimum. `sync-budget`
+  reads `sync.timeout` and `sync.max_interval`; `--export-graph` and the
+  model no longer carry `tolerance_ms`.
+- **Deprecated (contracts; rlm v0.3.16):** a `max_transport` written on a
+  subscriber is `warning[deprecated-spelling]` (it was
+  `info[transport-inline]`) and is refused at the next rlm release: name a
+  link (`links.<l>: { max_transport }`, `sub.<ep>.link: <l>`). `migrate`
+  writes the link, from a subscriber's value or a topic's (in one step;
+  it used to move a topic's value onto the subscribers).
+
 ## 0.32.0 - 2026-11-13
 
 - **Removed (contracts; rlm v0.3.15, phase 104 S1):** five spellings

@@ -289,8 +289,6 @@ pub struct NodePathOut {
     pub safe_state: Option<SafeStateOut>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_latency_ms: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tolerance_ms: Option<f64>,
     pub scope_id: usize,
     /// Always `false` — node paths are intra-node by construction.
     pub cross_node: bool,
@@ -307,8 +305,6 @@ pub struct EventChainOut {
     pub output_topics: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_latency_ms: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tolerance_ms: Option<f64>,
     /// Always `true` — event chains cross node boundaries by construction.
     pub cross_node: bool,
 }
@@ -483,7 +479,6 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
                 derived: !ss.settle_ext.is_empty(),
             }),
             max_latency_ms: p.path.max_latency.ms(),
-            tolerance_ms: p.path.tolerance.map(|d| d.as_millis_f64()),
             scope_id: p.scope_id,
             cross_node: false,
         })
@@ -501,7 +496,6 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             input_topics: p.input_topics.clone(),
             output_topics: p.output_topics.clone(),
             max_latency_ms: p.path.max_latency.ms(),
-            tolerance_ms: p.path.tolerance.map(|d| d.as_millis_f64()),
             cross_node: true,
         })
         .collect();

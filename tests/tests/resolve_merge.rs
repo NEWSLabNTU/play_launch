@@ -180,9 +180,10 @@ fn resolve_merges_launch_and_contracts_into_full_model() {
     assert_eq!(e2e["input"][0], "/sensing/points");
     assert_eq!(e2e["output"][0], "/perception/objects");
     assert_eq!(e2e["max_latency_ms"], 80.0);
-    // `correlation` used to be asserted here; phase 70 removed it from the
-    // contract and the model, since nothing ever read it.
-    assert_eq!(e2e["tolerance_ms"], 10.0);
+    // `correlation` (phase 70) and `tolerance` (rlm v0.3.16) used to be
+    // asserted here; both are gone from the contract and the model, the
+    // second being `sync.max_interval` under another name.
+    assert!(e2e["tolerance_ms"].is_null(), "{e2e}");
     assert_eq!(e2e["drop"]["max_drop_rate"], 0.08);
     assert_eq!(e2e["drop"]["max_consecutive"], 5);
     // topic channel contract: fields merged from BOTH scopes' declarations

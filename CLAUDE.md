@@ -699,6 +699,18 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-11-14**: **`tolerance` removed, an inline subscriber transport
+  deprecated** (phase 104 S1's last two decisions, rlm v0.3.16). A path's
+  `tolerance` is `sync.max_interval` under another name and is refused;
+  `migrate` folds it only into an existing `sync:`, never adding one,
+  because `sync:` turns a fan-in's derived rate from the SUM of its inputs
+  into their MIN. A subscriber's own `max_transport` is
+  `warning[deprecated-spelling]` and refused at the next rlm release:
+  links are the one spelling, and `migrate` writes one directly (from a
+  topic's value too). A deprecation no field-table row can carry (the
+  `Endpoint` row also serves a client's live `max_transport`) goes in rlm's
+  `field_table::DEPRECATED_USES`, which the overdue test reads.
+
 - **2026-11-13**: **The grammar review's defects, and the removal release**
   (phases 103 and 104 S1, rlm v0.3.15; design rlm
   `docs/design/grammar-revision/`). rlm is the runtime-agnostic

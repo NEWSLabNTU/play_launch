@@ -716,7 +716,6 @@ fn path_contract(
         }),
         max_latency_ms: decl.max_latency.ms(),
         min_latency_ms: decl.min_latency.ms(),
-        tolerance_ms: decl.tolerance.map(|d| d.as_millis_f64()),
         drop: decl.drop.as_ref().map(drop_contract),
         // Phase 67 added these to the contract and to the sched crate's
         // `MapperPath`, but not here — and the model is the only thing a

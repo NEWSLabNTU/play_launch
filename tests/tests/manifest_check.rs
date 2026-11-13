@@ -2116,7 +2116,8 @@ fn takeover_ladder_fits_and_explains_itself() {
 /// (`links.host_serial`, measured): every row and route is the one the
 /// inline `max_transport` gives (one reader), and the route names the link
 /// and the number's source. The inline subscriber value it replaced is no
-/// longer `transport-inline`; the driver's 143 ms still is.
+/// longer reported; the driver's 143 ms still is, as `deprecated-spelling`
+/// since rlm v0.3.16 (`transport-inline`, an info, before).
 #[test]
 fn a_named_link_is_charged_as_the_inline_value_and_named() {
     let (code, out) = check_takeover("contract_takeover_named_link", &["--explain"]);
@@ -2132,7 +2133,7 @@ fn a_named_link_is_charged_as_the_inline_value_and_named() {
     assert!(!out.contains("link-unsourced"), "{out}");
     let inline: Vec<_> = out
         .lines()
-        .filter(|l| l.contains("[transport-inline]"))
+        .filter(|l| l.contains("[deprecated-spelling]"))
         .collect();
     assert_eq!(inline.len(), 1, "only control_mode's: {inline:?}");
     assert!(inline[0].contains("control_mode"), "{inline:?}");
@@ -2902,9 +2903,10 @@ fn g3_removed_spellings_are_refused_and_migrate_to_a_contract_that_checks() {
 }
 
 /// Phase 90 G3 (the bound part), refused since rlm v0.3.15: a topic-level
-/// `max_transport` is a parse error naming the subscriber. `migrate` moves
-/// it onto the one subscriber of the same file and leaves the topic with no
-/// subscriber for a hand edit, which the next check names.
+/// `max_transport` is a parse error naming the subscriber. `migrate` writes
+/// it as a link the one subscriber of the same file names (rlm v0.3.16: one
+/// step, not two through the deprecated inline form) and leaves the topic
+/// with no subscriber for a hand edit, which the next check names.
 #[test]
 fn g3b_a_topic_transport_is_refused_and_migrates_onto_its_subscriber() {
     let (_tmp, dir) = fixture_copy("contract_spelling_deprecated_g3b");
@@ -2921,16 +2923,17 @@ fn g3b_a_topic_transport_is_refused_and_migrates_onto_its_subscriber() {
     assert_eq!(code, 0, "{out}");
     assert!(
         out.contains(
-            "topic-max-transport-subscribers: `max_transport: 3ms` -> (nothing) \
+            "max-transport-link: `max_transport: 3ms` -> (nothing) \
              (topics./safety/obstacles.max_transport)"
-        ) && out.contains("1 rewritten (2 edit(s))"),
+        ) && out.contains("1 rewritten (3 edit(s))"),
         "{out}"
     );
     let migrated = std::fs::read_to_string(&contract).unwrap();
     assert!(
-        migrated.contains("        max_transport: 3ms\n")
+        migrated.contains("link: safety_obstacles")
+            && migrated.contains("  safety_obstacles: { max_transport: 3ms }\n")
             && migrated.contains("    max_transport: 1ms\n"),
-        "the subscriber states 3ms; /safety/brake_cmd is left:\n{migrated}"
+        "the subscriber names a 3ms link; /safety/brake_cmd is left:\n{migrated}"
     );
     let (code, left) = check_launch(&launch, &[]);
     assert_eq!(code, 3, "the hand edit is left:\n{left}");
@@ -3615,7 +3618,9 @@ fn migrate_rewrites_the_deprecated_spellings_in_place() {
         "exit-on-holds: `on` -> `holds` (modes.takeover.exit.on)",
         "-    reaction: engaged",
         "+    enters: engaged",
-        "1 file(s) scanned, 1 to rewrite (7 edit(s))",
+        "max-transport-link: `57ms` -> `handler_availability` \
+         (nodes.handler.sub.availability.max_transport)",
+        "1 file(s) scanned, 1 to rewrite (12 edit(s))",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }

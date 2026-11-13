@@ -39,9 +39,6 @@
 # not see the read. Scanning it also showed `node_criticality` consumed there
 # (the effective criticality, phase 72), which nano-ros no longer reads itself.
 
-tolerance_ms       # PathContract (model). Same shape: the declaration feeds
-                   # `sync-feasibility`; the lowered copy is read by nothing.
-
 duration_ms        # DwellContract (model, phase 83; WindowContract before
                    # phase 98). The DECLARATION is read
                    # -- `dwell-param` and the cumulative level budget in

@@ -247,8 +247,10 @@ The rules that read it:
   <node>/<subscriber>` names the input standstill is seen on; the
   observation delay is derived from the contract, never written on the
   supervision: that input's period (the slowest of its topic's `rate_hz`
-  and its `min_rate_hz`) + the subscriber's `max_transport` (or its
-  `link:`'s). No `observes`, no period or no transport: `supervised-unlowered`
+  and its `min_rate_hz`) + the transport of the subscriber's `link:`
+  (a `max_transport` written on the subscriber itself is still read, and
+  reported as `deprecated-spelling`; `play_launch migrate` moves it onto
+  a link). No `observes`, no period or no transport: `supervised-unlowered`
   says which. The overrun row for the degradation level charges the time before the
   settle + the settle at the hazard's entry speed + the observation + the
   detection + the reaction's route and settle:
