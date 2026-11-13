@@ -6,6 +6,27 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Fixed (`check`, #20):** a degradation level below a dwell is charged
+  from the dwell's deadline along a timer path of the dwell's owner when
+  one reaches the level's output: the owner's tick (period + release
+  jitter) and that path on the first hop, then the route. It used to be
+  `error[dwell-expiry]` whenever the node that detected the fault was not
+  the owner. The error stands where no timer path of the owner reaches the
+  level, and now says so; the warning that the owner's notice is
+  undeclared is given only when no timer path of the owner publishes the
+  dwell's output and none reaches the level below. Budgets below a dwell change
+  where the owner's tick route now carries them.
+- **Fixed (`check`, #21):** derived criticality follows a degradation
+  level's command past the end of its reaction: every node that carries
+  the reaction's output on to a topic the level `commands` takes the
+  hazard's integrity (role `commands`), and so does that topic's arbiter,
+  its one publisher. A node that feeds the same path from upstream (a QM
+  controller beside the fallback) is not downstream of the level and
+  inherits nothing. Schedules derived from contracts with `commands:`
+  change accordingly.
+
 ## 0.33.0 - 2026-11-14
 
 - **Removed (contracts; rlm v0.3.16, phase 104 S1):** a path's

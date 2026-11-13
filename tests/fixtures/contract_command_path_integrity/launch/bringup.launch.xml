@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!-- #21: a two-tier controller behind one gate. A supervisor commits the
+     hold level; the fallback controller, the gate and the vehicle interface
+     carry its command to the actuator; a QM MPC feeds the same gate, and a
+     logger reads the fallback's command. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="listener" name="supervisor"/>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="mpc"/>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="fallback"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="gate"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="vehicle_interface"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="logger"/>
+</launch>

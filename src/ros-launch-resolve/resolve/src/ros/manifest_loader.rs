@@ -3388,6 +3388,12 @@ struct WaitedWindow {
     noted: bool,
     /// The stated budgets inside `route_ms + window_ms` (phase 10 B7).
     terms: Vec<TermKey>,
+    /// The rung's site and output topics, for the warning that its owner's
+    /// notice is undeclared: given once a rung below is walked, because a
+    /// timer path of the owner that reaches the rung below declares it
+    /// (#20).
+    site: String,
+    outputs: Vec<String>,
 }
 
 /// The clock a window's owner reads the deadline on (phase 84): its timer
@@ -3457,6 +3463,92 @@ fn owner_notice(
         })
 }
 
+/// The route below a dwell from its owner's tick (#20): the owner's timer
+/// paths that reach `sinks`, each charged one period plus its release
+/// jitter on its first hop (the owner reads the deadline on that tick, as
+/// on a sampling hop), the longest kept. `None` when no timer path of the
+/// owner reaches the sinks.
+fn owner_tick_walk(
+    owner: &str,
+    sinks: &HashSet<&str>,
+    topics: &BTreeMap<String, ResolvedTopic>,
+    services: &BTreeMap<String, ResolvedService>,
+    node_paths: &[ResolvedNodePath],
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) -> Option<ReactionWalk> {
+    let mut best: Option<ReactionWalk> = None;
+    for p in node_paths.iter().filter(|p| p.node_fqn == owner) {
+        let ros_launch_manifest_types::EffectiveTrigger::Timer { rate_hz } =
+            p.path.effective_trigger()
+        else {
+            continue;
+        };
+        if rate_hz <= 0.0 {
+            continue;
+        }
+        let jitter = p
+            .path
+            .timer_jitter()
+            .and_then(ros_launch_manifest_types::Bound::ms)
+            .filter(|j| *j > 0.0);
+        let tick = 1000.0 / rate_hz + jitter.unwrap_or(0.0);
+        let Some(mut w) = walk_reaction_at(
+            WalkStart::Path(owner, &p.path_name),
+            sinks,
+            topics,
+            services,
+            node_paths,
+            graph,
+        ) else {
+            continue;
+        };
+        let Some(first) = w.hops.first_mut() else {
+            continue;
+        };
+        first.sampling_ms = Some(tick);
+        first.jitter_ms = jitter;
+        first.ms += tick;
+        w.route_ms += tick;
+        keep_longest(&mut best, w);
+    }
+    best
+}
+
+/// The route charged to a degradation level below a dwell (#20). The walk
+/// from the guards stands when its first hop is the owner of the dwell just
+/// above and holds the owner's notice of the deadline (phase 84). Otherwise
+/// the level starts where the owner notices the deadline: its tick, then the
+/// route from there ([`owner_tick_walk`]), whichever node detected the
+/// fault. The flag says the owner's tick route was taken.
+#[allow(clippy::too_many_arguments)]
+fn route_below_dwell(
+    windows: &[WaitedWindow],
+    walk: Option<ReactionWalk>,
+    sinks: &HashSet<&str>,
+    topics: &BTreeMap<String, ResolvedTopic>,
+    services: &BTreeMap<String, ResolvedService>,
+    node_paths: &[ResolvedNodePath],
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) -> (Option<ReactionWalk>, bool) {
+    let Some(owner) = windows
+        .last()
+        .and_then(|w| w.owner.as_ref().map(|o| (o, w)))
+    else {
+        return (walk, false);
+    };
+    let (owner, w) = owner;
+    let held = walk.as_ref().and_then(|x| x.hops.first()).is_some_and(|f| {
+        &f.node == owner && w.notice.as_ref().is_some_and(|n| f.ms + 1e-9 >= n.ms())
+    });
+    if held {
+        return (walk, false);
+    }
+    match owner_tick_walk(owner, sinks, topics, services, node_paths, graph) {
+        Some(t) => (Some(t), true),
+        None => (walk, false),
+    }
+}
+
 /// `dwell-expiry` (phase 84): a window is charged up to its DEADLINE, and
 /// the rung below is charged its route from there. That is sound only if
 /// the route's first hop is the node that enforces the window, charged at
@@ -3464,26 +3556,64 @@ fn owner_notice(
 /// late notice of the deadline is charged nowhere. The check is necessary,
 /// not sufficient: the checker sees the hop's latency, not how it divides
 /// between the wait for the tick and the call that follows.
+///
+/// #20: the route below may start at the owner's tick instead
+/// ([`route_below_dwell`], `ticked`), whichever node detected the fault;
+/// that route charges the tick on its first hop. The error is kept for a
+/// route that neither starts at the owner nor can be taken from a timer path
+/// of it. The warning that the owner's notice is undeclared is given here,
+/// once per window, only when no timer path of the owner publishes the
+/// rung's output and none reaches the rung below.
+#[allow(clippy::too_many_arguments)]
 fn check_window_expiry(
     windows: &mut [WaitedWindow],
     walk: Option<&ReactionWalk>,
+    ticked: bool,
     hazard: &str,
     rung: &str,
     site: &str,
+    sinks: &[String],
+    scope_id: usize,
+    warned: &mut HashSet<(usize, String)>,
     budgets: &mut [LevelBudget],
     diags: &mut Vec<Diagnostic>,
 ) {
-    let Some(first) = walk.and_then(|w| w.hops.first()) else {
-        return;
-    };
+    let first = walk.and_then(|w| w.hops.first());
     for w in windows.iter_mut() {
         let Some(owner) = &w.owner else {
             continue;
         };
-        let problem = if &first.node != owner {
+        let by_tick = ticked && first.is_some_and(|f| &f.node == owner);
+        if w.notice.is_none() && !by_tick && warned.insert((scope_id, w.rung.clone())) {
+            diags.push(Diagnostic {
+                rule_id: "dwell-expiry".to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "{}: mode '{}' waits {:.2}ms, enforced by {owner}, but no timer path of \
+                     {owner} publishes {}, so when {owner} notices the deadline is not \
+                     declared. The level below is charged from the deadline as if it were \
+                     noticed at once, and no timer path of {owner} reaches '{rung}' ({}) either",
+                    w.site,
+                    w.rung,
+                    w.window_ms,
+                    w.outputs.join(", "),
+                    sinks.join(", ")
+                ),
+                path: format!("modes.{}.min_dwell", w.rung),
+                span: None,
+            });
+        }
+        let Some(first) = first else {
+            continue;
+        };
+        let problem = if by_tick {
+            None
+        } else if &first.node != owner {
             Some(format!(
-                "its route starts at {first}, not at {owner}, which enforces the dwell -- \
-                 nothing charges {owner} noticing the deadline"
+                "its route starts at {first}, not at {owner}, which enforces the dwell, and no \
+                 timer path of {owner} reaches {} -- nothing charges {owner} noticing the \
+                 deadline",
+                sinks.join(", ")
             ))
         } else {
             match &w.notice {
@@ -3517,15 +3647,23 @@ fn check_window_expiry(
         }
         w.noted = true;
         let d = w.window_ms;
-        let note = match &w.notice {
-            Some(n) => format!(
+        let note = match (&w.notice, by_tick) {
+            (_, true) => format!(
+                "lasts at least {d:.2}ms once on, and ends within {:.2}ms: {owner} reads the \
+                 deadline on its timer path '{}', charged {:.2}ms as the first hop of the \
+                 route below ({first})",
+                d + first.ms,
+                first.path,
+                first.ms
+            ),
+            (Some(n), false) => format!(
                 "lasts at least {d:.2}ms once on, and ends within {:.2}ms: {owner} reads the \
                  deadline on {n}, charged inside {first} {:.2}ms, the first hop of the route \
                  below",
                 d + first.ms,
                 first.ms
             ),
-            None => format!(
+            (None, false) => format!(
                 "lasts at least {d:.2}ms once on; when {owner} notices the deadline is not \
                  declared, and the route below ({first} {:.2}ms) is charged from the deadline",
                 first.ms
@@ -4029,6 +4167,17 @@ fn check_fault_reaction(
                 &node_paths,
                 graph,
             );
+            // #20: below a dwell, the level starts where the dwell's owner
+            // notices the deadline, which need not be the detector.
+            let (walk, ticked) = route_below_dwell(
+                &windows,
+                walk,
+                &sinks,
+                &topics,
+                &services,
+                &node_paths,
+                graph,
+            );
             // Phase 85 I1: the guard edge's link is charged unless a window's
             // deadline is what starts this rung.
             let after_deadline = !windows.is_empty();
@@ -4110,25 +4259,6 @@ fn check_fault_reaction(
                 let notice = owner
                     .as_deref()
                     .and_then(|o| owner_notice(o, &rp.output_topics, &topics, &node_paths));
-                if let Some(o) = &owner
-                    && notice.is_none()
-                    && expiry_warned.insert((h.scope_id, rung_name.clone()))
-                {
-                    diags.push(Diagnostic {
-                        rule_id: "dwell-expiry".to_string(),
-                        severity: Severity::Warning,
-                        message: format!(
-                            "{}: mode '{rung_name}' waits {d:.2}ms, enforced by {o}, but no \
-                             timer path of {o} publishes {}, so when {o} notices the deadline \
-                             is not declared. The level below is charged from the deadline as \
-                             if it were noticed at once",
-                            rung_site(rung_name),
-                            rp.output_topics.join(", ")
-                        ),
-                        path: format!("modes.{rung_name}.min_dwell"),
-                        span: None,
-                    });
-                }
                 let mut rung_terms = route_terms.clone();
                 rung_terms.push((h.scope_id, format!("modes.{rung_name}.min_dwell")));
                 let row = budgets.len();
@@ -4164,15 +4294,21 @@ fn check_fault_reaction(
                     row,
                     noted: false,
                     terms: rung_terms.clone(),
+                    site: rung_site(rung_name),
+                    outputs: rp.output_topics.clone(),
                 });
                 continue;
             }
             check_window_expiry(
                 &mut windows,
                 walk.as_ref(),
+                ticked,
                 &h.name,
                 rung_name,
                 &rung_site(rung_name),
+                &rp.output_topics,
+                h.scope_id,
+                &mut expiry_warned,
                 &mut budgets,
                 &mut diags,
             );
@@ -4305,13 +4441,27 @@ fn check_fault_reaction(
             &node_paths,
             graph,
         );
+        // #20: the floor below a dwell starts at its owner's notice too.
+        let (walk, ticked) = route_below_dwell(
+            &windows,
+            walk,
+            &sinks,
+            &topics,
+            &services,
+            &node_paths,
+            graph,
+        );
         let floor_name = rungs.last().map(|(n, _)| n.clone()).unwrap_or_default();
         check_window_expiry(
             &mut windows,
             walk.as_ref(),
+            ticked,
             &h.name,
             &floor_name,
             &rung_site(&floor_name),
+            &reaction.output_topics,
+            h.scope_id,
+            &mut expiry_warned,
             &mut budgets,
             &mut diags,
         );
@@ -5165,9 +5315,119 @@ fn endpoint_field_declared(e: &ros_launch_manifest_types::EndpointProps, field: 
 // Phase 72 — criticality from hazards
 // ---------------------------------------------------------------------------
 
+/// The nodes that carry a degradation level's command from its reaction's
+/// output topics `from` on to a topic it `commands` (`to`), #21. A hop
+/// follows the reaction walk's rules past the guard: a subscriber's
+/// `on_violation` reaction, else the paths its endpoint triggers, else (a
+/// `state: true` subscriber) the node's timer paths, which read it. A node
+/// is on the command path when one of its hops leaves a topic downstream of
+/// `from` and lands on a topic that reaches `to`; what feeds those nodes
+/// from elsewhere is not downstream of the level and is not returned.
+fn command_path_nodes(
+    from: &[String],
+    to: &[&str],
+    topics: &BTreeMap<String, ResolvedTopic>,
+    node_paths: &[ResolvedNodePath],
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) -> BTreeSet<String> {
+    if to.is_empty() {
+        return BTreeSet::new();
+    }
+    // Every hop out of a topic: (node, the topic it publishes onto).
+    let hops = |t: &str| -> Vec<(String, String)> {
+        let Some(topic) = topics.get(t) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for sub_ref in &topic.subscribers {
+            let Some((node, ep)) = split_endpoint_ref_for_check(sub_ref) else {
+                continue;
+            };
+            let props = graph.nodes.get(&node).and_then(|n| n.subscribers.get(&ep));
+            let mine = |p: &&ResolvedNodePath| p.node_fqn == node;
+            let mut paths: Vec<&ResolvedNodePath> =
+                match props.and_then(|p| p.on_violation.as_ref()) {
+                    Some(ov) => node_paths
+                        .iter()
+                        .filter(mine)
+                        .filter(|p| p.path_name == ov.reaction)
+                        .collect(),
+                    None => node_paths
+                        .iter()
+                        .filter(mine)
+                        .filter(|p| {
+                            matches!(
+                                p.path.effective_trigger(),
+                                ros_launch_manifest_types::EffectiveTrigger::Input(ref eps)
+                                    if eps.contains(&ep)
+                            )
+                        })
+                        .collect(),
+                };
+            if paths.is_empty()
+                && props.is_some_and(|p| p.on_violation.is_none() && p.state == Some(true))
+            {
+                paths = node_paths
+                    .iter()
+                    .filter(mine)
+                    .filter(|p| {
+                        matches!(
+                            p.path.effective_trigger(),
+                            ros_launch_manifest_types::EffectiveTrigger::Timer { .. }
+                        )
+                    })
+                    .collect();
+            }
+            for p in paths {
+                for out_ep in &p.path.output {
+                    let r = format!("{node}/{out_ep}");
+                    for (u, tu) in topics {
+                        if tu.publishers.contains(&r) {
+                            out.push((node.clone(), u.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    };
+    // Forward from the reaction's output: every hop downstream of it.
+    let mut edges: Vec<(String, String, String)> = Vec::new();
+    let mut seen: HashSet<String> = from.iter().cloned().collect();
+    let mut frontier: Vec<String> = from.to_vec();
+    while let Some(t) = frontier.pop() {
+        if to.contains(&t.as_str()) {
+            continue; // the commanded topic ends the path
+        }
+        for (node, u) in hops(&t) {
+            if seen.insert(u.clone()) {
+                frontier.push(u.clone());
+            }
+            edges.push((t.clone(), node, u));
+        }
+    }
+    // Backward from the commanded topics: a hop landing on a topic that
+    // reaches one is on the path, and so is the topic it leaves.
+    let mut reaches: HashSet<String> = to.iter().map(|t| t.to_string()).collect();
+    let mut nodes: BTreeSet<String> = BTreeSet::new();
+    loop {
+        let mut grew = false;
+        for (t, node, u) in &edges {
+            if reaches.contains(u) {
+                nodes.insert(node.clone());
+                grew |= reaches.insert(t.clone());
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    nodes
+}
+
 /// Which nodes a hazard reaches, and why. `criticality-from-hazards.md`'s
 /// rule: severity is never a property of a component, it is allocated
-/// inward from an outcome. Three ways in:
+/// inward from an outcome. Four ways in:
 ///
 /// - **guards**: the publishers of a guard topic are the elements whose
 ///   fault IS the hazard, and severity propagates UPSTREAM from them along
@@ -5175,6 +5435,12 @@ fn endpoint_field_declared(e: &ros_launch_manifest_types::EndpointProps, field: 
 ///   hazardous plan as surely as a stale scan does). R1: max, never sum.
 /// - **detects**: a subscriber of a guard that declares an `on_violation`.
 /// - **reacts**: every node on the reaction walk to the safe state.
+/// - **commands** (#21): a degradation level that `commands` a topic
+///   credits every node that carries its reaction's output on to that
+///   topic ([`command_path_nodes`]), and the topic's arbiter (its one
+///   publisher). Only downstream of the level's reaction: a source that
+///   feeds the same arbiter from outside it (a QM controller beside the
+///   fallback) is not on the path and inherits nothing.
 ///
 /// Nothing reaching a hazard derives nothing, and its label — if any —
 /// stands: that is the underivable case, the same absence-of-information
@@ -5291,7 +5557,7 @@ fn derive_criticality_from_hazards(
                 .map(|(rungs, _)| rungs)
                 .unwrap_or_default();
             let guards: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
-            for (_, path) in &levels {
+            for (rung, path) in &levels {
                 let Some(reaction) = scope_paths
                     .iter()
                     .find(|p| p.scope_id == h.scope_id && &p.path_name == path)
@@ -5305,6 +5571,34 @@ fn derive_criticality_from_hazards(
                 {
                     for hop in &w.hops {
                         assign(&hop.node, mk("reacts"));
+                    }
+                }
+                // #21: the level's command path, from its reaction's output
+                // to the topic it commands, and that topic's arbiter. The
+                // reaction ends where the level is committed; the command
+                // it puts on the actuator still runs through these nodes.
+                let Some(mode) = modes
+                    .iter()
+                    .find(|m| m.scope_id == h.scope_id && &m.name == rung)
+                else {
+                    continue;
+                };
+                let commanded: Vec<&str> = mode.commands.keys().map(String::as_str).collect();
+                for node in command_path_nodes(
+                    &reaction.output_topics,
+                    &commanded,
+                    &topics,
+                    &node_paths,
+                    graph,
+                ) {
+                    assign(&node, mk("commands"));
+                }
+                for t in &commanded {
+                    let mut pubs = graph.topic_publishers.get(*t).cloned().unwrap_or_default();
+                    pubs.sort();
+                    pubs.dedup();
+                    if let [arbiter] = pubs.as_slice() {
+                        assign(arbiter, mk("commands"));
                     }
                 }
             }

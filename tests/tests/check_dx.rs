@@ -430,6 +430,45 @@ fn the_graph_export_carries_what_the_walk_reads() {
     assert_eq!(find("nodes", "fqn", "/handler")["contracted"], true);
 }
 
+/// #21: integrity follows a degradation level's command past the end of
+/// its reaction. The supervisor commits `hold` on the hold reference; the
+/// fallback controller, the gate and the vehicle interface carry the level's
+/// command on to /actuation, the topic it commands, and take the hazard's
+/// ASIL_D. The QM MPC feeds the same gate from upstream and the logger reads
+/// the fallback's command without reaching /actuation: neither inherits.
+#[test]
+fn integrity_follows_a_levels_command_path_to_the_commanded_topic() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let json = dir.path().join("graph.json");
+    let out = check(
+        "contract_command_path_integrity",
+        &["--export-graph", json.to_str().unwrap()],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let g: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json).expect("export written"))
+            .expect("export is JSON");
+    let derived = |fqn: &str| -> serde_json::Value {
+        g["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["fqn"] == fqn)
+            .unwrap_or_else(|| panic!("no node {fqn}: {g}"))["derived_criticality"]
+            .clone()
+    };
+    assert_eq!(derived("/supervisor")["role"], "detects", "{g}");
+    for node in ["/fallback", "/gate", "/vehicle_interface"] {
+        let d = derived(node);
+        assert_eq!(d["level"], "ASIL_D", "{node}: {g}");
+        assert_eq!(d["hazard"], "hpc_loss", "{node}: {g}");
+        assert_eq!(d["role"], "commands", "{node}: {g}");
+    }
+    for node in ["/mpc", "/logger"] {
+        assert!(derived(node).is_null(), "{node} must not inherit: {g}");
+    }
+}
+
 /// Parse `check --format json`'s stdout: zero or more arrays, concatenated.
 fn json_elements(out: &Output) -> Vec<serde_json::Value> {
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();

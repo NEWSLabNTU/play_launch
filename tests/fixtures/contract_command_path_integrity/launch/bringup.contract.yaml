@@ -1,0 +1,148 @@
+# #21 -- integrity along a degradation level's command path.
+#
+# A two-tier controller behind one gate. The supervisor detects the lost
+# heartbeat and commits the `hold` level by publishing the hold reference
+# (its reaction ends there). The level's command still runs on: the fallback
+# controller reads the reference on its tick, the gate reads the fallback's
+# command on its tick, and the vehicle interface transmits it on
+# /actuation, the topic `hold` commands. Each of them carries the ASIL_D
+# level, and /vehicle_interface is the commanded topic's arbiter.
+#
+# Not credited: the QM MPC feeds the same gate but is upstream of it, not
+# downstream of the level's reaction; the logger reads the fallback's
+# command but reaches nothing that the level commands.
+version: 1
+
+integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
+
+functions:
+  hpc_alive: [/heartbeat]
+
+hazards:
+  hpc_loss:
+    integrity: ASIL_D
+    monitors: [/heartbeat]
+    on: omission
+    ftti: 1s
+    enters: active
+
+modes:
+  active:
+    requires: [hpc_alive]
+    fallback: [hold]
+  hold:
+    requires: []
+    reaction: sys.hold
+    commands:
+      /actuation:
+        - { field: linear.x, le: 0.5 }
+
+nodes:
+  supervisor:
+    sub:
+      heartbeat:
+        qos: { lease_duration: 30ms }
+        on_violation: { on: [omission], reaction: declare_lost }
+    pub:
+      hold_ref: {}
+    paths:
+      declare_lost:
+        trigger: { input: [heartbeat] }
+        output: [hold_ref]
+        max_latency: 2ms
+        safe_state: { emits: hold_ref, settle: 100ms }
+
+  mpc:
+    sub:
+      odom: { state: true }
+    pub:
+      mpc_cmd: {}
+    paths:
+      control:
+        trigger: { timer: { rate_hz: 30 } }
+        output: [mpc_cmd]
+        max_latency: 20ms
+
+  fallback:
+    sub:
+      hold_ref: { state: true }
+    pub:
+      fallback_cmd: {}
+    paths:
+      control:
+        trigger: { timer: { rate_hz: 50 } }
+        output: [fallback_cmd]
+        max_latency: 5ms
+
+  gate:
+    sub:
+      mpc_cmd: { state: true }
+      fallback_cmd: { state: true }
+    pub:
+      control: {}
+    paths:
+      on_timer:
+        trigger: { timer: { rate_hz: 100 } }
+        output: [control]
+        max_latency: 2ms
+
+  vehicle_interface:
+    sub:
+      control: {}
+    pub:
+      actuation: {}
+    paths:
+      transmit:
+        trigger: { input: [control] }
+        output: [actuation]
+        max_latency: 2ms
+
+  logger:
+    sub:
+      fallback_cmd: {}
+    pub:
+      log: {}
+    paths:
+      record:
+        trigger: { input: [fallback_cmd] }
+        output: [log]
+        max_latency: 10ms
+
+paths:
+  sys.hold:
+    trigger: { input: [/heartbeat] }
+    output: [/hold_ref]
+
+topics:
+  /heartbeat:
+    type: std_msgs/msg/Bool
+    external: pub
+    sub: [supervisor/heartbeat]
+  /odom:
+    type: std_msgs/msg/Float64
+    external: pub
+    sub: [mpc/odom]
+  /hold_ref:
+    type: std_msgs/msg/Float64
+    pub: [supervisor/hold_ref]
+    sub: [fallback/hold_ref]
+  /mpc_cmd:
+    type: geometry_msgs/msg/Twist
+    pub: [mpc/mpc_cmd]
+    sub: [gate/mpc_cmd]
+  /fallback_cmd:
+    type: geometry_msgs/msg/Twist
+    pub: [fallback/fallback_cmd]
+    sub: [gate/fallback_cmd, logger/fallback_cmd]
+  /control:
+    type: geometry_msgs/msg/Twist
+    pub: [gate/control]
+    sub: [vehicle_interface/control]
+  /actuation:
+    type: geometry_msgs/msg/Twist
+    external: { side: sub, on_silence: { after: 100ms } }
+    pub: [vehicle_interface/actuation]
+  /log:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [logger/log]

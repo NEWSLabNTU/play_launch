@@ -946,6 +946,72 @@ RankedPlan {
     ],
     warnings: [],
 }
+== contract_command_path_integrity/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/supervisor",
+            path: "declare_lost",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=2)",
+        },
+        RankItem {
+            node: "/vehicle_interface",
+            path: "transmit",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=2)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "on_timer",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=10)",
+        },
+        RankItem {
+            node: "/fallback",
+            path: "control",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=20)",
+        },
+        RankItem {
+            node: "/logger",
+            path: "record",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
+        },
+        RankItem {
+            node: "/mpc",
+            path: "control",
+            fine_group: 4,
+            coarse_group: None,
+            tie_group: Some(
+                4,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+        },
+    ],
+    warnings: [],
+}
 == contract_commands/launch/bringup.launch.xml
 RankedPlan {
     items: [
@@ -1168,24 +1234,24 @@ RankedPlan {
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
         },
         RankItem {
-            node: "/planner",
-            path: "plan",
+            node: "/lamp_driver",
+            path: "blink",
             fine_group: 3,
             coarse_group: None,
             tie_group: Some(
                 3,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=100)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=500)",
         },
         RankItem {
-            node: "/lamp_driver",
-            path: "blink",
+            node: "/planner",
+            path: "plan",
             fine_group: 4,
             coarse_group: None,
             tie_group: Some(
                 4,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=500)",
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=100)",
         },
     ],
     warnings: [],
@@ -4291,6 +4357,158 @@ RankedPlan {
         RankItem {
             node: "/handler",
             path: "on_timer",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "call_mrm",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
+        },
+        RankItem {
+            node: "/planner",
+            path: "follow",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=300)",
+        },
+    ],
+    warnings: [],
+}
+== contract_takeover_expiry_owner_tick/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/estop_op",
+            path: "on_timer",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "driver_exit",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "on_timer",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/planner",
+            path: "on_tick",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "call_mrm",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
+        },
+        RankItem {
+            node: "/planner",
+            path: "follow",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=300)",
+        },
+    ],
+    warnings: [],
+}
+== contract_takeover_expiry_owner_tick_off/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/estop_op",
+            path: "on_timer",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "driver_exit",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "on_timer",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+        },
+        RankItem {
+            node: "/planner",
+            path: "on_tick",
             fine_group: 1,
             coarse_group: None,
             tie_group: Some(

@@ -2388,8 +2388,8 @@ fn window_expiry_names_an_owner_off_the_route() {
     for needle in [
         "error[dwell-expiry]",
         "degradation level 'comfortable' is charged from the deadline of 'takeover' (10000.00ms), and its \
-         route starts at /handler/call_mrm, not at /planner, which enforces the dwell -- nothing \
-         charges /planner noticing the deadline",
+         route starts at /handler/call_mrm, not at /planner, which enforces the dwell, and no timer \
+         path of /planner reaches /planner_cmd -- nothing charges /planner noticing the deadline",
         "warning[dwell-expiry]",
         "mode 'takeover' waits 10000.00ms, enforced by /planner, but no timer path of /planner \
          publishes /tor_state, so when /planner notices the deadline is not declared",
@@ -2398,6 +2398,57 @@ fn window_expiry_names_an_owner_off_the_route() {
     }
     // The declaration warning is about the window, once.
     assert_eq!(out.matches("warning[dwell-expiry]").count(), 1, "{out}");
+}
+
+/// #20: the dwell's owner is not the detector, but it ends the dwell on its
+/// own tick, and that tick reaches both levels below. Each is charged from
+/// the deadline along the owner's timer path (the 100 ms tick and its 5 ms
+/// on the first hop, then the route), not refused: no `dwell-expiry` at all,
+/// and the window's note names the tick.
+#[test]
+fn window_expiry_charges_the_owners_tick_when_another_node_detects() {
+    let (code, out) = check_takeover("contract_takeover_expiry_owner_tick", &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("[dwell-expiry]"), "{out}");
+    for needle in [
+        "odd_exit/takeover: lasts at least 10000.00ms once on, and ends within 10105.00ms: \
+         /planner reads the deadline on its timer path 'on_tick', charged 105.00ms as the first \
+         hop of the route below (/planner/on_tick (+100.00ms sampling))",
+        "odd_exit  comfortable  level    120.00  10110.00  405.00   9996.67 derived  20631.67  30000.00   9368.33",
+        "odd_exit  estop        mrc      120.00  10110.00  138.33   4165.33 derived  14533.67  30000.00  15466.33",
+        "reaction route /planner/on_tick (+100.00ms sampling) -> /estop_op/on_timer (+33.33ms \
+         sampling) = 138.33ms",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+}
+
+/// #20, the other side: the owner's tick reaches the comfortable stop only.
+/// That level is charged from it; the floor is not reachable from any timer
+/// path of the owner, so its route still starts at the detector and the
+/// error stands, once, with the declaration warning beside it.
+#[test]
+fn window_expiry_keeps_the_error_where_no_owner_tick_reaches_the_level() {
+    let (code, out) = check_takeover("contract_takeover_expiry_owner_tick_off", &["--explain"]);
+    assert_eq!(code, 1, "{out}");
+    for needle in [
+        "error[dwell-expiry]",
+        "hazard 'odd_exit': degradation level 'estop' is charged from the deadline of 'takeover' \
+         (10000.00ms), and its route starts at /handler/call_mrm, not at /planner, which enforces \
+         the dwell, and no timer path of /planner reaches /estop_cmd -- nothing charges /planner \
+         noticing the deadline",
+        "warning[dwell-expiry]",
+        "no timer path of /planner reaches 'estop' (/estop_cmd) either",
+        "odd_exit  comfortable  level    120.00  10110.00  405.00   9996.67 derived  20631.67  30000.00   9368.33",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    assert_eq!(out.matches("error[dwell-expiry]").count(), 1, "{out}");
+    assert_eq!(out.matches("warning[dwell-expiry]").count(), 1, "{out}");
+    assert!(
+        !out.contains("degradation level 'comfortable' is charged"),
+        "{out}"
+    );
 }
 
 /// Phase 83: every structural takeover rule, once, with the file and line.
