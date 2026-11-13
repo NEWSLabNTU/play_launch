@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.33.0 - 2026-11-14
 
 - **Removed (contracts; rlm v0.3.16, phase 104 S1):** a path's
   `tolerance` is refused naming `sync.max_interval`, the same quantity
