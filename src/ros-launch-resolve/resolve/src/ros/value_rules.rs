@@ -462,6 +462,84 @@ fn lookup_field(msg_type: &str, dotted: &str) -> FieldLookup {
     }
 }
 
+/// The value of message constant `name`, compared with `field` of the
+/// messages on `topic` (play_launch phase 103 D1). `uint8 MANUAL = 4` gives
+/// `Int(4)`; the value is typed by the FIELD's type, which a run time
+/// compares against. `None` when the topic's type, its definition or the
+/// constant cannot be found -- the model then carries the name alone, and
+/// the run time reports the predicate as unjudged.
+pub(crate) fn constant_value(
+    index: &ManifestIndex,
+    topic: &str,
+    field: &str,
+    name: &str,
+) -> Option<ros_launch_manifest_model::ConstantValue> {
+    use ros_launch_manifest_model::ConstantValue as C;
+    let msg_type = index.topics.get(topic).map(|t| t.msg_type.clone())?;
+    let FieldLookup::Scalar { ty, constants, .. } = lookup_field(&msg_type, field) else {
+        return None;
+    };
+    let text = constants
+        .iter()
+        .find(|(n, _)| n == name)?
+        .1
+        .trim()
+        .to_string();
+    let base = ty.split('[').next().unwrap_or(&ty);
+    match base {
+        "bool" => match text.to_ascii_lowercase().as_str() {
+            "true" | "1" => Some(C::Bool(true)),
+            "false" | "0" => Some(C::Bool(false)),
+            _ => None,
+        },
+        "float32" | "float64" => text.parse().ok().map(C::Float),
+        "string" | "wstring" => Some(C::Str(
+            text.trim_matches(|c| c == '"' || c == '\'').to_string(),
+        )),
+        _ => text
+            .parse::<i64>()
+            .ok()
+            .or_else(|| {
+                text.strip_prefix("0x")
+                    .and_then(|h| i64::from_str_radix(h, 16).ok())
+            })
+            .map(C::Int),
+    }
+}
+
+/// Whether a predicate's value and operator fit a scalar field of type `ty`
+/// (play_launch phase 103 D2): a bool field takes a bool, a number field a
+/// number, a string field a string; `lt`/`le`/`gt`/`ge` need a number. A
+/// constant name fits any field (its own type is the message's). `None`:
+/// it fits; `Some(why)`: it cannot be true or false at run time.
+fn predicate_kind_mismatch(ty: &str, pred: &ValuePredicate) -> Option<String> {
+    use ros_launch_manifest_types::CompareOp as Op;
+    let base = ty.split('[').next().unwrap_or(ty);
+    let base = base.split("<=").next().unwrap_or(base);
+    let field_kind = match base {
+        "bool" => "bool",
+        "string" | "wstring" => "string",
+        _ => "number",
+    };
+    let value_kind = match &pred.value {
+        PredicateValue::Bool(_) => "bool",
+        PredicateValue::Int(_) | PredicateValue::Float(_) => "number",
+        PredicateValue::Str(_) => "string",
+        PredicateValue::Constant(_) => field_kind,
+    };
+    let ordering = matches!(pred.op, Op::Lt | Op::Le | Op::Gt | Op::Ge);
+    if value_kind != field_kind {
+        Some(format!("a {field_kind} field compared with a {value_kind}"))
+    } else if ordering && field_kind != "number" {
+        Some(format!(
+            "`{}` orders numbers, and the field is a {field_kind}",
+            pred.op.symbol()
+        ))
+    } else {
+        None
+    }
+}
+
 // ---------------------------------------------------------------------------
 // when-requires-reported, when-field-unknown
 // ---------------------------------------------------------------------------
@@ -522,7 +600,13 @@ fn check_predicate_field(
                     }
                 ))
             } else {
-                None
+                predicate_kind_mismatch(&ty, pred).map(|why| {
+                    format!(
+                        "{where_}: {owner} compares '{}' ({ty}) with `{}`: {why}. A mismatch is \
+                         never true at run time, so the predicate would be unjudged",
+                        pred.field, pred.value
+                    )
+                })
             }
         }
         FieldLookup::NotScalar { ty } => Some(format!(
@@ -561,6 +645,65 @@ fn check_predicate_field(
     }
 }
 
+/// `fault-class-unobservable` (play_launch phase 103 D8): `repetition` and
+/// `resequencing` are judged on each publisher's stamps, so on a monitored
+/// topic whose message carries none (`header.stamp` or a top-level `stamp`)
+/// nothing judges them. Said where the `.msg` resolves; silent where it does
+/// not (`when-field-unknown` already reports an unresolved type).
+pub(crate) fn check_stamp_classes(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
+    for h in &index.hazards {
+        let wanted: Vec<&str> = h
+            .decl
+            .on
+            .iter()
+            .filter_map(|k| match k {
+                FaultKind::Repetition => Some("repetition"),
+                FaultKind::Resequencing => Some("resequencing"),
+                _ => None,
+            })
+            .collect();
+        if wanted.is_empty() {
+            continue;
+        }
+        for topic in h.guards.iter().flat_map(|g| g.members.iter()) {
+            let Some(ty) = index
+                .topics
+                .get(topic)
+                .map(|t| t.msg_type.clone())
+                .filter(|t| !t.is_empty())
+            else {
+                continue;
+            };
+            let has = |f: &str| {
+                matches!(
+                    lookup_field(&ty, f),
+                    FieldLookup::Scalar { .. } | FieldLookup::NotScalar { .. }
+                )
+            };
+            let unresolved = matches!(lookup_field(&ty, "header"), FieldLookup::Unresolved { .. });
+            if unresolved || has("header.stamp") || has("stamp") {
+                continue;
+            }
+            let at = format!("hazards.{}.on", h.name);
+            diags.push(diag(
+                "fault-class-unobservable",
+                Severity::Warning,
+                format!(
+                    "{}: hazard '{}' asks for {} on '{topic}', whose type {ty} carries no stamp \
+                     (`header.stamp` or `stamp`). These classes are judged on a publisher's \
+                     successive stamps, so nothing judges them here. They detect an application \
+                     re-sending or reordering its own stamps, not a channel fault, which DDS's \
+                     sequence numbers already mask",
+                    site(index, h.scope_id, &at),
+                    h.name,
+                    wanted.join(" and ")
+                ),
+                at.clone(),
+            ));
+        }
+    }
+}
+
 /// `when-requires-reported` and `when-field-unknown`, over every hazard and
 /// function that carries a predicate.
 pub(crate) fn check_predicates(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
@@ -569,10 +712,8 @@ pub(crate) fn check_predicates(index: &ManifestIndex, diags: &mut Vec<Diagnostic
             continue;
         };
         let at = format!("hazards.{}.when", h.name);
-        if !h.decl.on.contains(&FaultKind::Reported) {
-            let on = if h.decl.on.is_empty() {
-                "`on:` omitted, which means omission, late and loss".to_string()
-            } else {
+        if !h.decl.classes().contains(&FaultKind::Reported) {
+            let on = {
                 let names: Vec<&str> = h
                     .decl
                     .on
@@ -671,24 +812,24 @@ pub(crate) fn check_predicates(index: &ManifestIndex, diags: &mut Vec<Diagnostic
 /// the hazard guards the function by name) AND the fault's classes reach its
 /// kind: a `reported` fault removes the VALUE functions on its topic, an
 /// omission, late or loss fault removes both kinds, because silence also
-/// means "not known to be in range". An omitted `on:` is the three silence
-/// classes, as everywhere else.
+/// means "not known to be in range". An omitted `on:` is rlm's default
+/// classes (`HazardDecl::classes`), which include `reported`.
 pub(crate) fn removed_by(h: &ResolvedHazard, index: &ManifestIndex) -> BTreeSet<String> {
-    let silence = h.decl.on.is_empty()
-        || h.decl.on.iter().any(|k| {
-            // A repeated, reordered or inserted message leaves the value
-            // as unknown as silence does (rlm v0.3.13).
-            matches!(
-                k,
-                FaultKind::Omission
-                    | FaultKind::Late
-                    | FaultKind::Loss
-                    | FaultKind::Repetition
-                    | FaultKind::Resequencing
-                    | FaultKind::Insertion
-            )
-        });
-    let reported = h.decl.on.contains(&FaultKind::Reported);
+    let classes = h.decl.classes();
+    let silence = classes.iter().any(|k| {
+        // A repeated, reordered or inserted message leaves the value
+        // as unknown as silence does (rlm v0.3.13).
+        matches!(
+            k,
+            FaultKind::Omission
+                | FaultKind::Late
+                | FaultKind::Loss
+                | FaultKind::Repetition
+                | FaultKind::Resequencing
+                | FaultKind::Insertion
+        )
+    });
+    let reported = classes.contains(&FaultKind::Reported);
     let guarded: BTreeSet<&str> = h
         .guards
         .iter()
@@ -729,159 +870,17 @@ pub(crate) fn removed_by(h: &ResolvedHazard, index: &ManifestIndex) -> BTreeSet<
 /// The fix-it every deprecated spelling ends with.
 const MIGRATE_HINT: &str = "`play_launch migrate <contract> --write` rewrites it";
 
-/// `deprecated-spelling` and `enters-unknown-mode`.
+/// `reaction-names-mode` and `enters-unknown-mode`.
 ///
 /// A hazard's `reaction:` that names a mode is the pre-0.1.59 spelling of
-/// `enters:`. It is told apart the way the ladder resolves it (a mode of
-/// the hazard's scope first), so the warning fires exactly where the old
-/// spelling means a ladder. `enters:` must name a mode: it is never read as
-/// a path. `exit.on` is the old spelling of `exit.holds`.
-///
-/// G3: an `external_topics:` entry is the second place for
-/// `topics.<name>.external`, and a path's `input:` list the legacy spelling
-/// of `trigger: { input: [...] }`. Both still check as before (the loader
-/// merges the externals, and the path's trigger is `effective_trigger()`);
-/// each gets one warning naming the kept spelling.
+/// `enters:`, refused since rlm v0.3.15. It is told apart the way the ladder
+/// resolves it (a mode of the hazard's scope first), which only the consumer
+/// can do, so the refusal is here and not in the parser. `enters:` must name
+/// a mode: it is never read as a path. (The G3 spellings, `external_topics:`,
+/// a path's `input:` and a topic's `max_transport`, and `exit.on` are parse
+/// errors since v0.3.15.)
 pub(crate) fn check_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
-    let mut manifests: Vec<_> = index.manifests.values().collect();
-    manifests.sort_by_key(|m| m.scope_id);
-    for m in manifests {
-        g3_spellings(index, m.scope_id, &m.manifest, "", diags);
-    }
     g4_spellings(index, diags);
-}
-
-/// The G3 warnings for one manifest level (and its inline includes, under
-/// `prefix`).
-fn g3_spellings(
-    index: &ManifestIndex,
-    scope_id: usize,
-    manifest: &ros_launch_manifest_types::Manifest,
-    prefix: &str,
-    diags: &mut Vec<Diagnostic>,
-) {
-    for (name, e) in &manifest.external_topics {
-        let at = format!("{prefix}external_topics.{name}");
-        let side = match e.side {
-            ros_launch_manifest_types::ExternalSide::Pub => "pub",
-            ros_launch_manifest_types::ExternalSide::Sub => "sub",
-            ros_launch_manifest_types::ExternalSide::Both => "both",
-        };
-        let ty = e
-            .msg_type
-            .as_deref()
-            .map(|t| format!(", type: {t}"))
-            .unwrap_or_default();
-        diags.push(diag(
-            "deprecated-spelling",
-            Severity::Warning,
-            format!(
-                "{}: topic '{name}': the `external_topics:` section is deprecated; a topic's \
-                 external side is stated on the topic, `topics: {{ {name}: {{ external: \
-                 {side}{ty} }} }}`. Fix: move the entry under `topics:`; {MIGRATE_HINT}",
-                site(index, scope_id, &at)
-            ),
-            at,
-        ));
-    }
-    let legacy = |at: String, path: &str, p: &ros_launch_manifest_types::PathDecl| {
-        let list = p.input.join(", ");
-        let fix = if p.trigger.is_some() {
-            "delete it (the `trigger:` beside it is what is read)".to_string()
-        } else {
-            format!("write `trigger: {{ input: [{list}] }}`")
-        };
-        diag(
-            "deprecated-spelling",
-            Severity::Warning,
-            format!(
-                "{}: path '{path}': `input: [{list}]` is the legacy spelling of `trigger: {{ \
-                 input: [...] }}`. Fix: {fix}; {MIGRATE_HINT}",
-                site(index, scope_id, &at)
-            ),
-            at,
-        )
-    };
-    for (name, p) in &manifest.paths {
-        if !p.input.is_empty() {
-            diags.push(legacy(format!("{prefix}paths.{name}.input"), name, p));
-        }
-    }
-    for (node, decl) in &manifest.nodes {
-        for (name, p) in &decl.paths {
-            if !p.input.is_empty() {
-                diags.push(legacy(
-                    format!("{prefix}nodes.{node}.paths.{name}.input"),
-                    &format!("{node}/{name}"),
-                    p,
-                ));
-            }
-        }
-    }
-    // G3 (the bound part, v0.1.60): a topic's `max_transport` is the
-    // default of every subscriber that states none; the transport is the
-    // subscriber's. Named: the subscribers that read it (across the tree).
-    let ns = index
-        .manifests
-        .get(&scope_id)
-        .map(|m| m.ns.as_str())
-        .unwrap_or("/");
-    for (name, t) in &manifest.topics {
-        let Some(d) = t.max_transport.duration() else {
-            continue;
-        };
-        let at = format!("{prefix}topics.{name}.max_transport");
-        let fqn = super::manifest_loader::qualify_name(ns, name);
-        let mut inheriting: Vec<String> = Vec::new();
-        if let Some(rt) = index.topics.get(&fqn) {
-            for sub in &rt.subscribers {
-                let own = super::manifest_loader::split_endpoint_ref_for_check(sub)
-                    .and_then(|(node, ep)| {
-                        let (_, _, decl) = contract_node(index, &node)?;
-                        Some(decl.subscribers.get(&ep)?.max_transport.is_some())
-                    })
-                    .unwrap_or(false);
-                if !own {
-                    inheriting.push(format!("'{sub}'"));
-                }
-            }
-        }
-        let read_as = if inheriting.is_empty() {
-            "No subscriber reads it (each states its own, or the topic has none), so it \
-             charges nothing. Fix: delete it"
-                .to_string()
-        } else {
-            format!(
-                "It is read as the transport of {} subscriber(s) that state none: {}. Fix: \
-                 write `max_transport: {d}` on each of them and delete this key; `play_launch \
-                 migrate <contract> --write` does it when they are declared in the same contract",
-                inheriting.len(),
-                inheriting.join(", ")
-            )
-        };
-        diags.push(diag(
-            "deprecated-spelling",
-            Severity::Warning,
-            format!(
-                "{}: topic '{fqn}': `max_transport: {d}` on a topic is deprecated; a transport \
-                 is the hop into one subscriber and is stated on it, \
-                 `nodes.<n>.sub.<ep>.max_transport`. {read_as}",
-                site(index, scope_id, &at)
-            ),
-            at,
-        ));
-    }
-    for (name, inc) in &manifest.includes {
-        if let Some(inner) = inc.inline() {
-            g3_spellings(
-                index,
-                scope_id,
-                inner,
-                &format!("{prefix}includes.{name}."),
-                diags,
-            );
-        }
-    }
 }
 
 fn g4_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
@@ -913,36 +912,18 @@ fn g4_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
         {
             let where_ = site(index, h.scope_id, &format!("{at}.reaction"));
             diags.push(diag(
-                "deprecated-spelling",
-                Severity::Warning,
+                "reaction-names-mode",
+                Severity::Error,
                 format!(
-                    "{where_}: hazard '{}': `reaction: {r}` names a mode. A hazard enters a \
-                     mode with `enters: {r}`; `reaction:` names an event chain. Fix: rename the \
-                     key to `enters`; {MIGRATE_HINT}",
+                    "{where_}: hazard '{}': `reaction: {r}` names a mode, the spelling rlm \
+                     v0.3.15 removed (deprecated since v0.1.59). A hazard enters a mode with \
+                     `enters: {r}`; `reaction:` names an event chain. Fix: rename the key to \
+                     `enters`; {MIGRATE_HINT}",
                     h.name
                 ),
                 format!("{at}.reaction"),
             ));
         }
-    }
-    for m in &index.modes {
-        let Some(exit) = &m.decl.exit else { continue };
-        if !exit.spelled_on {
-            continue;
-        }
-        let at = format!("modes.{}.exit.on", m.name);
-        let where_ = site(index, m.scope_id, &at);
-        diags.push(diag(
-            "deprecated-spelling",
-            Severity::Warning,
-            format!(
-                "{where_}: mode '{}': `exit: {{ on: {} }}` is the old spelling; an exit names \
-                 the function that holds, `exit: {{ holds: {}, to: {} }}` (`on` names fault \
-                 classes). Fix: rename the key to `holds`; {MIGRATE_HINT}",
-                m.name, exit.holds, exit.holds, exit.to
-            ),
-            at,
-        ));
     }
 }
 
@@ -1057,7 +1038,7 @@ pub(crate) fn check_windows_and_exits(
             continue;
         };
         let eat = format!("{at}.exit");
-        let hk = if exit.spelled_on { "on" } else { "holds" };
+        let hk = "holds";
         let where_ = site(index, m.scope_id, &eat);
         // mode-exit-target
         match in_scope(&exit.to) {

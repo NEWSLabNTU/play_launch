@@ -257,7 +257,23 @@ fn effective_qos(
 }
 
 /// A `when:` predicate, lowered (rlm v0.1.46). A message constant name is
-/// carried as `{ constant: NAME }`, never as a string literal.
+/// carried as `{ constant: NAME }`, never as a string literal, and since
+/// rlm v0.3.15 with its value, read from the `.msg` of the first of
+/// `topics` whose definition resolves it (play_launch phase 103 D1).
+fn predicate_on(
+    index: &ManifestIndex,
+    topics: &[String],
+    p: &ros_launch_manifest_types::ValuePredicate,
+) -> model::PredicateContract {
+    let mut out = predicate(p);
+    if let model::PredicateValueContract::Constant { constant, value } = &mut out.value {
+        *value = topics
+            .iter()
+            .find_map(|t| super::value_rules::constant_value(index, t, &p.field, constant));
+    }
+    out
+}
+
 fn predicate(p: &ros_launch_manifest_types::ValuePredicate) -> model::PredicateContract {
     use ros_launch_manifest_types::{CompareOp as C, PredicateValue as V};
     model::PredicateContract {
@@ -276,6 +292,7 @@ fn predicate(p: &ros_launch_manifest_types::ValuePredicate) -> model::PredicateC
             V::Float(f) => model::PredicateValueContract::Float(*f),
             V::Constant(c) => model::PredicateValueContract::Constant {
                 constant: c.clone(),
+                value: None,
             },
             V::Str(s) => model::PredicateValueContract::Str(s.clone()),
         },
@@ -399,7 +416,6 @@ fn sub_contract(
 
 /// One `links.<name>` as the model carries it (phase 97).
 pub(crate) fn link_contract(l: &ros_launch_manifest_types::LinkDecl) -> model::LinkContract {
-    use ros_launch_manifest_types::SuperviseReaction as R;
     let source = l.max_transport.source.as_ref();
     model::LinkContract {
         max_transport_ms: l.max_transport.ms().unwrap_or(0.0),
@@ -408,16 +424,6 @@ pub(crate) fn link_contract(l: &ros_launch_manifest_types::LinkDecl) -> model::L
         run: source
             .and_then(|s| s.measured.as_ref())
             .and_then(|m| m.run.clone()),
-        monitor: l.monitor.as_ref().map(|m| match &m.reaction {
-            R::Reaction(r) => model::LinkMonitorContract {
-                reaction: Some(r.clone()),
-                enters: None,
-            },
-            R::Enters(e) => model::LinkMonitorContract {
-                reaction: None,
-                enters: Some(e.clone()),
-            },
-        }),
     }
 }
 
@@ -1311,7 +1317,6 @@ pub fn build_system_model(
         );
         let tc = model::TopicContract {
             rate_hz: t.rate_hz,
-            max_transport_ms: t.max_transport_ms,
             drop: t.drop.as_ref().map(drop_contract),
             qos: t.qos.as_ref().map(qos_contract),
             on_silence_after_ms: t.on_silence_after_ms,
@@ -1672,7 +1677,10 @@ pub fn build_system_model(
             model::FunctionContract {
                 members: f.group.members.clone(),
                 all_of: f.group.all_of,
-                when: f.when.as_ref().map(predicate),
+                when: f
+                    .when
+                    .as_ref()
+                    .map(|p| predicate_on(index, &f.group.members, p)),
                 m: f.m,
             },
         );
@@ -1726,7 +1734,13 @@ pub fn build_system_model(
                 commands: m
                     .commands
                     .iter()
-                    .map(|(t, ps)| (t.clone(), ps.iter().map(predicate).collect()))
+                    .map(|(t, ps)| {
+                        let on = std::slice::from_ref(t);
+                        (
+                            t.clone(),
+                            ps.iter().map(|p| predicate_on(index, on, p)).collect(),
+                        )
+                    })
                     .collect(),
                 sources: index
                     .manifests
@@ -1795,7 +1809,10 @@ pub fn build_system_model(
                     .decl
                     .entry()
                     .map(|r| scope_scoped_key(&scope_key(Some(h.scope_id)), r)),
-                when: h.decl.when.as_ref().map(predicate),
+                when: h.decl.when.as_ref().map(|p| {
+                    let on: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
+                    predicate_on(index, &on, p)
+                }),
                 ftti_derived: derived_source(h.decl.ftti.as_ref()),
                 detection_ms: h.decl.detection.ms(),
                 detection_derived: derived_source(h.decl.detection.as_ref()),
@@ -2833,33 +2850,6 @@ mod tests {
         assert_eq!(
             path.trigger,
             Some(EffectiveTrigger::Timer { rate_hz: 50.0 })
-        );
-    }
-
-    /// The legacy form keeps working: `effective_trigger` derives an input
-    /// trigger from a non-empty `input:` list.
-    #[test]
-    fn legacy_input_list_still_lowers() {
-        let dump = dump_with_launch_fields();
-        let mut index = ManifestIndex::default();
-        index
-            .node_paths
-            .push(crate::ros::manifest_loader::ResolvedNodePath {
-                node_fqn: "/perception/detector".to_string(),
-                path_name: "detect".to_string(),
-                path: ros_launch_manifest_types::PathDecl {
-                    input: vec!["points".to_string()],
-                    output: vec!["objects".to_string()],
-                    ..Default::default()
-                },
-                scope_id: 0,
-            });
-        let model =
-            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
-
-        assert_eq!(
-            model.contracts.node_paths["/perception/detector/detect"].input,
-            vec!["/perception/detector/points".to_string()]
         );
     }
 

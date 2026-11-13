@@ -60,54 +60,54 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/gate",
-            path: "report",
+            node: "/estop_op",
+            path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "on_timer",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 2,
             coarse_group: None,
             tie_group: Some(
                 2,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
         },
         RankItem {
             node: "/planner",
@@ -117,7 +117,7 @@ RankedPlan {
             tie_group: Some(
                 3,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=300)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=300)",
         },
     ],
     warnings: [],
@@ -126,54 +126,54 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/gate",
-            path: "report",
+            node: "/estop_op",
+            path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "on_timer",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 2,
             coarse_group: None,
             tie_group: Some(
                 2,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
         },
         RankItem {
             node: "/planner",
@@ -183,7 +183,7 @@ RankedPlan {
             tie_group: Some(
                 3,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=300)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=300)",
         },
     ],
     warnings: [],
@@ -191,6 +191,16 @@ RankedPlan {
 == contract_call_late_effect/launch/bringup.launch.xml
 RankedPlan {
     items: [
+        RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
         RankItem {
             node: "/sys/watchdog",
             path: "brake",
@@ -200,6 +210,16 @@ RankedPlan {
                 0,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/comfort_op",
+            path: "operate",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
         },
         RankItem {
             node: "/sys/handler",
@@ -220,16 +240,6 @@ RankedPlan {
                 2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
-        },
-        RankItem {
-            node: "/sys/estop_op",
-            path: "brake",
-            fine_group: 3,
-            coarse_group: None,
-            tie_group: Some(
-                3,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
         },
         RankItem {
             node: "/sys/horn_op",
@@ -241,22 +251,22 @@ RankedPlan {
             ),
             provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
         },
-        RankItem {
-            node: "/sys/comfort_op",
-            path: "operate",
-            fine_group: 4,
-            coarse_group: None,
-            tie_group: Some(
-                4,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
-        },
     ],
     warnings: [],
 }
 == contract_call_rejected/launch/bringup.launch.xml
 RankedPlan {
     items: [
+        RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
         RankItem {
             node: "/sys/watchdog",
             path: "brake",
@@ -286,16 +296,6 @@ RankedPlan {
                 2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
-        },
-        RankItem {
-            node: "/sys/estop_op",
-            path: "brake",
-            fine_group: 3,
-            coarse_group: None,
-            tie_group: Some(
-                3,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
         },
     ],
     warnings: [],
@@ -304,6 +304,16 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
             node: "/sys/watchdog",
             path: "brake",
             fine_group: 0,
@@ -312,6 +322,16 @@ RankedPlan {
                 0,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/comfort_op",
+            path: "operate",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
         },
         RankItem {
             node: "/sys/handler",
@@ -332,26 +352,6 @@ RankedPlan {
                 2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
-        },
-        RankItem {
-            node: "/sys/estop_op",
-            path: "brake",
-            fine_group: 3,
-            coarse_group: None,
-            tie_group: Some(
-                3,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
-        },
-        RankItem {
-            node: "/sys/comfort_op",
-            path: "operate",
-            fine_group: 4,
-            coarse_group: None,
-            tie_group: Some(
-                4,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
         },
     ],
     warnings: [],
@@ -360,6 +360,16 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
             node: "/sys/watchdog",
             path: "brake",
             fine_group: 0,
@@ -368,6 +378,16 @@ RankedPlan {
                 0,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/comfort_op",
+            path: "operate",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
         },
         RankItem {
             node: "/sys/handler",
@@ -388,26 +408,6 @@ RankedPlan {
                 2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
-        },
-        RankItem {
-            node: "/sys/estop_op",
-            path: "brake",
-            fine_group: 3,
-            coarse_group: None,
-            tie_group: Some(
-                3,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
-        },
-        RankItem {
-            node: "/sys/comfort_op",
-            path: "operate",
-            fine_group: 4,
-            coarse_group: None,
-            tie_group: Some(
-                4,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
         },
     ],
     warnings: [],
@@ -416,6 +416,16 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
             node: "/sys/watchdog",
             path: "brake",
             fine_group: 0,
@@ -424,6 +434,16 @@ RankedPlan {
                 0,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/comfort_op",
+            path: "operate",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
         },
         RankItem {
             node: "/sys/handler",
@@ -444,26 +464,6 @@ RankedPlan {
                 2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
-        },
-        RankItem {
-            node: "/sys/estop_op",
-            path: "brake",
-            fine_group: 3,
-            coarse_group: None,
-            tie_group: Some(
-                3,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
-        },
-        RankItem {
-            node: "/sys/comfort_op",
-            path: "operate",
-            fine_group: 4,
-            coarse_group: None,
-            tie_group: Some(
-                4,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
         },
     ],
     warnings: [],
@@ -472,6 +472,16 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
             node: "/sys/watchdog",
             path: "brake",
             fine_group: 0,
@@ -480,6 +490,16 @@ RankedPlan {
                 0,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/comfort_op",
+            path: "operate",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
         },
         RankItem {
             node: "/sys/handler",
@@ -500,26 +520,6 @@ RankedPlan {
                 2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
-        },
-        RankItem {
-            node: "/sys/estop_op",
-            path: "brake",
-            fine_group: 3,
-            coarse_group: None,
-            tie_group: Some(
-                3,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
-        },
-        RankItem {
-            node: "/sys/comfort_op",
-            path: "operate",
-            fine_group: 4,
-            coarse_group: None,
-            tie_group: Some(
-                4,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
         },
     ],
     warnings: [],
@@ -528,6 +528,16 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
             node: "/sys/watchdog",
             path: "brake",
             fine_group: 0,
@@ -536,6 +546,16 @@ RankedPlan {
                 0,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/comfort_op",
+            path: "operate",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
         },
         RankItem {
             node: "/sys/handler",
@@ -556,26 +576,6 @@ RankedPlan {
                 2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
-        },
-        RankItem {
-            node: "/sys/estop_op",
-            path: "brake",
-            fine_group: 3,
-            coarse_group: None,
-            tie_group: Some(
-                3,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
-        },
-        RankItem {
-            node: "/sys/comfort_op",
-            path: "operate",
-            fine_group: 4,
-            coarse_group: None,
-            tie_group: Some(
-                4,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
         },
     ],
     warnings: [],
@@ -584,6 +584,16 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
             node: "/sys/watchdog",
             path: "brake",
             fine_group: 0,
@@ -592,6 +602,16 @@ RankedPlan {
                 0,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/comfort_op",
+            path: "operate",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
         },
         RankItem {
             node: "/sys/handler",
@@ -612,26 +632,6 @@ RankedPlan {
                 2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
-        },
-        RankItem {
-            node: "/sys/estop_op",
-            path: "brake",
-            fine_group: 3,
-            coarse_group: None,
-            tie_group: Some(
-                3,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
-        },
-        RankItem {
-            node: "/sys/comfort_op",
-            path: "operate",
-            fine_group: 4,
-            coarse_group: None,
-            tie_group: Some(
-                4,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=10)",
         },
     ],
     warnings: [],
@@ -3780,138 +3780,18 @@ RankedPlan {
 }
 == contract_spelling_deprecated/launch/bringup.launch.xml
 RankedPlan {
-    items: [
-        RankItem {
-            node: "/handler",
-            path: "on_timer",
-            fine_group: 0,
-            coarse_group: None,
-            tie_group: Some(
-                0,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
-        },
-        RankItem {
-            node: "/handler",
-            path: "call_mrm",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
-        },
-        RankItem {
-            node: "/handler",
-            path: "driver_exit",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
-            fine_group: 2,
-            coarse_group: None,
-            tie_group: Some(
-                2,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
-        },
-    ],
+    items: [],
     warnings: [],
 }
 == contract_spelling_deprecated_g3/launch/bringup.launch.xml
 RankedPlan {
-    items: [
-        RankItem {
-            node: "/perception/tracker",
-            path: "main",
-            fine_group: 0,
-            coarse_group: Some(
-                "image_to_tracks",
-            ),
-            tie_group: None,
-            provenance: "derived(chain_aware: image_to_tracks segment drain 1/2)",
-        },
-        RankItem {
-            node: "/perception/detector",
-            path: "main",
-            fine_group: 0,
-            coarse_group: Some(
-                "image_to_tracks",
-            ),
-            tie_group: None,
-            provenance: "derived(chain_aware: image_to_tracks segment drain 2/2)",
-        },
-    ],
+    items: [],
     warnings: [],
 }
 == contract_spelling_deprecated_g3b/launch/bringup.launch.xml
 RankedPlan {
-    items: [
-        RankItem {
-            node: "/safety/brake_controller",
-            path: "brake",
-            fine_group: 0,
-            coarse_group: Some(
-                "safety.stop",
-            ),
-            tie_group: None,
-            provenance: "derived(chain_aware: safety.stop segment drain 1/2)",
-        },
-        RankItem {
-            node: "/safety/obstacle_detector",
-            path: "detect",
-            fine_group: 0,
-            coarse_group: Some(
-                "safety.stop",
-            ),
-            tie_group: None,
-            provenance: "derived(chain_aware: safety.stop segment drain 2/2)",
-        },
-        RankItem {
-            node: "/safety/lidar_driver",
-            path: "sample",
-            fine_group: 1,
-            coarse_group: Some(
-                "safety.stop",
-            ),
-            tie_group: None,
-            provenance: "derived(chain_aware: safety.stop boundary RM period=20ms)",
-        },
-        RankItem {
-            node: "/safety/obstacle_detector",
-            path: "declare_lost",
-            fine_group: 2,
-            coarse_group: None,
-            tie_group: Some(
-                2,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=2)",
-        },
-        RankItem {
-            node: "/safety/brake_controller",
-            path: "emergency_stop",
-            fine_group: 3,
-            coarse_group: None,
-            tie_group: Some(
-                3,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=5)",
-        },
-    ],
-    warnings: [
-        ChainFeasibleWithoutWcet {
-            chain: "safety.stop",
-            boundaries_without_wcet: [
-                "/safety/lidar_driver/sample",
-            ],
-        },
-    ],
+    items: [],
+    warnings: [],
 }
 == contract_spelling_deprecated_n1/launch/bringup.launch.xml
 RankedPlan {
@@ -3932,54 +3812,54 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/gate",
-            path: "report",
+            node: "/estop_op",
+            path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "on_timer",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 2,
             coarse_group: None,
             tie_group: Some(
                 2,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
         },
         RankItem {
             node: "/planner",
@@ -3989,7 +3869,7 @@ RankedPlan {
             tie_group: Some(
                 3,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=300)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=300)",
         },
     ],
     warnings: [],
@@ -3998,54 +3878,54 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/gate",
-            path: "report",
+            node: "/estop_op",
+            path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "on_timer",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 2,
             coarse_group: None,
             tie_group: Some(
                 2,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
         },
         RankItem {
             node: "/planner",
@@ -4055,7 +3935,7 @@ RankedPlan {
             tie_group: Some(
                 3,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=300)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=300)",
         },
     ],
     warnings: [],
@@ -4064,54 +3944,54 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/gate",
-            path: "report",
+            node: "/estop_op",
+            path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "on_timer",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 2,
             coarse_group: None,
             tie_group: Some(
                 2,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
         },
         RankItem {
             node: "/planner",
@@ -4121,7 +4001,7 @@ RankedPlan {
             tie_group: Some(
                 3,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=300)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=300)",
         },
     ],
     warnings: [],
@@ -4130,54 +4010,54 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/gate",
-            path: "report",
+            node: "/estop_op",
+            path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "on_timer",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 2,
             coarse_group: None,
             tie_group: Some(
                 2,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
         },
         RankItem {
             node: "/planner",
@@ -4187,7 +4067,7 @@ RankedPlan {
             tie_group: Some(
                 3,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=300)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=300)",
         },
     ],
     warnings: [],
@@ -4196,64 +4076,64 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/gate",
-            path: "report",
+            node: "/estop_op",
+            path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 2,
             coarse_group: None,
             tie_group: Some(
                 2,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
         },
         RankItem {
-            node: "/holder",
-            path: "hold",
+            node: "/planner",
+            path: "follow",
             fine_group: 3,
             coarse_group: None,
             tie_group: Some(
                 3,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=50)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=300)",
         },
         RankItem {
-            node: "/planner",
-            path: "follow",
+            node: "/holder",
+            path: "hold",
             fine_group: 4,
             coarse_group: None,
             tie_group: Some(
                 4,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=300)",
+            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=50)",
         },
     ],
     warnings: [],
@@ -4262,54 +4142,54 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/gate",
-            path: "report",
+            node: "/estop_op",
+            path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/estop_op",
+            path: "on_timer_ok",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
+            fine_group: 2,
             coarse_group: None,
             tie_group: Some(
-                1,
+                2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
-            fine_group: 2,
-            coarse_group: None,
-            tie_group: Some(
-                2,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer_ok",
-            fine_group: 2,
-            coarse_group: None,
-            tie_group: Some(
-                2,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
         },
         RankItem {
             node: "/planner",
@@ -4319,7 +4199,7 @@ RankedPlan {
             tie_group: Some(
                 3,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=300)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=300)",
         },
     ],
     warnings: [],
@@ -4328,44 +4208,44 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/handler",
+            node: "/estop_op",
             path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
             ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "on_timer",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
+            fine_group: 2,
             coarse_group: None,
             tie_group: Some(
-                1,
+                2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 2,
             coarse_group: None,
             tie_group: Some(
                 2,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
         },
     ],
     warnings: [],
@@ -4379,54 +4259,54 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/gate",
-            path: "report",
+            node: "/estop_op",
+            path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "on_timer",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 2,
             coarse_group: None,
             tie_group: Some(
                 2,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
         },
         RankItem {
             node: "/planner",
@@ -4436,7 +4316,7 @@ RankedPlan {
             tie_group: Some(
                 3,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=300)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=300)",
         },
     ],
     warnings: [],
@@ -4445,54 +4325,54 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/gate",
-            path: "report",
+            node: "/estop_op",
+            path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
+            fine_group: 2,
             coarse_group: None,
             tie_group: Some(
-                1,
+                2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
         },
         RankItem {
             node: "/handler",
             path: "on_timer",
-            fine_group: 2,
-            coarse_group: None,
-            tie_group: Some(
-                2,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=200)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 3,
             coarse_group: None,
             tie_group: Some(
                 3,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=200)",
         },
         RankItem {
             node: "/planner",
@@ -4502,7 +4382,7 @@ RankedPlan {
             tie_group: Some(
                 4,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=300)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=300)",
         },
     ],
     warnings: [],
@@ -4531,34 +4411,34 @@ RankedPlan {
             provenance: "derived(chain_aware: sys.notice boundary RM period=100ms)",
         },
         RankItem {
-            node: "/handler",
+            node: "/estop_op",
             path: "on_timer",
             fine_group: 2,
             coarse_group: None,
             tie_group: Some(
                 2,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
         },
         RankItem {
             node: "/handler",
-            path: "driver_exit",
+            path: "on_timer",
             fine_group: 3,
             coarse_group: None,
             tie_group: Some(
                 3,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
-            node: "/estop_op",
-            path: "on_timer",
+            node: "/handler",
+            path: "driver_exit",
             fine_group: 4,
             coarse_group: None,
             tie_group: Some(
                 4,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
         },
     ],
     warnings: [
@@ -4574,44 +4454,44 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/handler",
+            node: "/estop_op",
             path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
             ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "on_timer",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
+            fine_group: 2,
             coarse_group: None,
             tie_group: Some(
-                1,
+                2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 2,
             coarse_group: None,
             tie_group: Some(
                 2,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
         },
     ],
     warnings: [],
@@ -4620,44 +4500,44 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/handler",
+            node: "/estop_op",
             path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
             ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "on_timer",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
+            fine_group: 2,
             coarse_group: None,
             tie_group: Some(
-                1,
+                2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 2,
-            coarse_group: None,
-            tie_group: Some(
-                2,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 3,
             coarse_group: None,
             tie_group: Some(
                 3,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
         },
     ],
     warnings: [],
@@ -4666,44 +4546,44 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/handler",
+            node: "/estop_op",
             path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
             ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "on_timer",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
+            fine_group: 2,
             coarse_group: None,
             tie_group: Some(
-                1,
+                2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 2,
             coarse_group: None,
             tie_group: Some(
                 2,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
         },
     ],
     warnings: [],
@@ -4712,44 +4592,44 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/handler",
+            node: "/estop_op",
             path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
             ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/handler",
+            path: "on_timer",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
+            fine_group: 2,
             coarse_group: None,
             tie_group: Some(
-                1,
+                2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 2,
             coarse_group: None,
             tie_group: Some(
                 2,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=149)",
         },
     ],
     warnings: [],
@@ -4758,54 +4638,54 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/gate",
-            path: "report",
+            node: "/estop_op",
+            path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "on_timer",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 2,
             coarse_group: None,
             tie_group: Some(
                 2,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
         },
         RankItem {
             node: "/planner",
@@ -4815,7 +4695,7 @@ RankedPlan {
             tie_group: Some(
                 3,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=300)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=300)",
         },
     ],
     warnings: [],
@@ -4876,54 +4756,54 @@ RankedPlan {
 RankedPlan {
     items: [
         RankItem {
-            node: "/gate",
-            path: "report",
+            node: "/estop_op",
+            path: "on_timer",
             fine_group: 0,
             coarse_group: None,
             tie_group: Some(
                 0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=33.333333333333336)",
+        },
+        RankItem {
+            node: "/gate",
+            path: "report",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "driver_exit",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "on_timer",
-            fine_group: 0,
+            fine_group: 1,
             coarse_group: None,
             tie_group: Some(
-                0,
+                1,
             ),
             provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=100)",
         },
         RankItem {
             node: "/handler",
             path: "call_mrm",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
-            ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
-        },
-        RankItem {
-            node: "/estop_op",
-            path: "on_timer",
             fine_group: 2,
             coarse_group: None,
             tie_group: Some(
                 2,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=33.333333333333336)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=110)",
         },
         RankItem {
             node: "/planner",
@@ -4933,7 +4813,7 @@ RankedPlan {
             tie_group: Some(
                 3,
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=300)",
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=300)",
         },
     ],
     warnings: [],

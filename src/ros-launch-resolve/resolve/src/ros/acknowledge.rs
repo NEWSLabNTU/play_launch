@@ -362,56 +362,11 @@ mod tests {
         assert_eq!(index.total_warnings, 1);
     }
 
-    /// Phase 98 N6 at R+1 (rlm v0.3.9): every refused old rule id (the
-    /// M3 ids), and a path through a refused key (`guards`), is an error
-    /// naming the new spelling and matches nothing, so the finding stays a
-    /// warning (one case per id).
-    #[test]
-    fn a_refused_old_rule_id_or_path_is_an_error_naming_the_new_one() {
-        use ros_launch_manifest_types::rule_names::RENAMED_RULES;
-        let mut cases: Vec<(String, String, String, String)> = RENAMED_RULES
-            .iter()
-            .filter(|r| r.stage == Stage::Refused)
-            .map(|r| (r.old.into(), r.new.into(), "p".into(), "p".into()))
-            .collect();
-        assert_eq!(cases.len(), 3, "the M3 ids");
-        cases.push((
-            "reaction-unguarded".into(),
-            "reaction-unguarded".into(),
-            "hazards.h.guards[0]".into(),
-            "hazards.h.monitors[0]".into(),
-        ));
-        for (old, new, at, new_at) in cases {
-            let mut index = ManifestIndex::default();
-            index.manifests.insert(
-                0,
-                scope(
-                    0,
-                    "a",
-                    vec![ack(&old, &at)],
-                    vec![diag(&new, Severity::Warning, &new_at)],
-                ),
-            );
-            index.total_warnings = 1;
-            apply(&mut index);
-            assert_eq!(index.acknowledged.len(), 0, "{old} {at}");
-            assert_eq!(
-                rules(&index.merge_diagnostics),
-                vec![("ack-renamed", "acknowledged[0]")],
-                "{old} {at}"
-            );
-            let m = &index.merge_diagnostics[0].message;
-            assert!(
-                m.contains(&format!("`rule: {new}`")) && m.contains(&format!("`at: {new_at}`")),
-                "{m}"
-            );
-            assert_eq!(index.total_errors, 1);
-        }
-    }
-
-    /// Phase 98 N5 at R+2 (rlm v0.3.9): an S1-S5 old id, or a path through
-    /// an S1-S5 key, gets no rename message any more; it matches nothing
-    /// and reads as `ack-stale`, like any other id that matches nothing.
+    /// Phase 98 N5 at R+2 (rlm v0.3.9; the M3 ids and `guards` since rlm
+    /// v0.3.15, play_launch phase 104 S1): a retired old id, or a path
+    /// through a retired key, gets no rename message any more; it matches
+    /// nothing and reads as `ack-stale`, like any other id that matches
+    /// nothing. No rename is left at the refused stage.
     #[test]
     fn a_retired_old_rule_id_or_path_reads_as_ack_stale() {
         use ros_launch_manifest_types::rule_names::RENAMED_RULES;
@@ -420,12 +375,22 @@ mod tests {
             .filter(|r| r.stage == Stage::Retired)
             .map(|r| (r.old.into(), r.new.into(), "p".into(), "p".into()))
             .collect();
-        assert_eq!(cases.len(), 11, "the S1-S5 ids");
+        assert_eq!(cases.len(), 14, "the S1-S5 ids and the M3 ids");
+        assert!(
+            !RENAMED_RULES.iter().any(|r| r.stage == Stage::Refused),
+            "a refused rename is overdue for retirement (rlm `rule_names::overdue`)"
+        );
         cases.push((
             "reaction-unguarded".into(),
             "reaction-unguarded".into(),
             "modes.m.window".into(),
             "modes.m.min_dwell".into(),
+        ));
+        cases.push((
+            "reaction-unguarded".into(),
+            "reaction-unguarded".into(),
+            "hazards.h.guards[0]".into(),
+            "hazards.h.monitors[0]".into(),
         ));
         for (old, new, at, new_at) in cases {
             let mut index = ManifestIndex::default();

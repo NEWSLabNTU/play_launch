@@ -221,8 +221,6 @@ pub struct TopicOut {
     pub msg_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_hz: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_transport_ms: Option<f64>,
     /// The rate derived from the timers that drive the topic.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub derived_rate_hz: Option<f64>,
@@ -406,7 +404,6 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             fqn: t.fqn.clone(),
             msg_type: t.msg_type.clone(),
             rate_hz: t.rate_hz,
-            max_transport_ms: t.max_transport_ms,
             derived_rate_hz: t.derived_rate_hz,
             external: index.externals.get(&t.fqn).map(|s| {
                 use ros_launch_manifest_types::ExternalSide as S;
@@ -453,9 +450,7 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
                 required,
                 min_rate_hz: props.and_then(|p| p.min_rate_hz.hz()),
                 max_age_ms: props.and_then(|p| p.max_age.ms()),
-                max_transport_ms: props
-                    .and_then(|p| p.max_transport.ms())
-                    .or(topic.max_transport_ms),
+                max_transport_ms: props.and_then(|p| p.max_transport.ms()),
                 on_violation: props.and_then(|p| p.on_violation.as_ref()).map(|ov| {
                     OnViolationOut {
                         reaction: ov.reaction.clone(),
@@ -867,7 +862,7 @@ nodes:
     pub: [output]
     paths:
       passthrough:
-        input: [scan]
+        trigger: { input: [scan] }
         output: [output]
         max_latency: 20.0ms
   localizer:
@@ -904,7 +899,7 @@ topics:
     sub: [localizer/odom]
 paths:
   end_to_end:
-    input: [scan]
+    trigger: { input: [scan] }
     output: [filtered]
     max_latency: 50.0ms
 "#;

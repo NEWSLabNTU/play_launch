@@ -158,24 +158,46 @@ pub struct HazardWatch {
     pub off_host_sinks: Vec<String>,
 }
 
-/// The scope path a hazard's `reaction:` finally reaches (phase 75).
+/// The event chains a hazard's reaction runs, in order (phase 75; the
+/// meaning rlm v0.3.15 states, play_launch phase 103 D4).
 ///
-/// A reaction naming a scope path IS that path — phase 71's form. One
-/// naming a MODE walks its `fallback` ladder and takes the last rung's
-/// `reaction`, because that rung is the floor the system is guaranteed to
-/// reach. Every consumer that asks "what topic does the reaction command?"
-/// has to go through this, or a mode-shaped reaction reads as no reaction
-/// at all — which is exactly what `measure` reported the first time.
-pub fn terminal_reaction_path(contracts: &model::Contracts, reaction: &str) -> Option<String> {
+/// A reaction naming an event chain IS that chain, one level. One naming a
+/// MODE is the mode the hazard takes away, and its reaction is that mode's
+/// `fallback:` sequence: each level by its own `reaction:`. The named mode's
+/// own `reaction:` is not part of it. The checker charges each of these
+/// levels; the observer and `measure` read the same list, so the first
+/// level that answers is the reaction. (Before, they read only the LAST
+/// level, so a reaction that a higher level gave in time was not seen.)
+pub fn reaction_paths(contracts: &model::Contracts, reaction: &str) -> Vec<String> {
     let Some(mode) = contracts.modes.get(reaction) else {
-        return Some(reaction.to_string());
+        return vec![reaction.to_string()];
     };
-    let last = mode.fallback.last()?;
-    contracts
-        .modes
-        .get(last)
-        .and_then(|m| m.reaction.clone())
-        .or_else(|| Some(last.clone()))
+    mode.fallback
+        .iter()
+        .filter_map(|level| contracts.modes.get(level).and_then(|m| m.reaction.clone()))
+        .collect()
+}
+
+/// The topics a hazard's reaction commands: the outputs of every event
+/// chain in [`reaction_paths`], in order, each once.
+pub fn reaction_sinks(contracts: &model::Contracts, reaction: Option<&String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for path in reaction
+        .map(|r| reaction_paths(contracts, r))
+        .unwrap_or_default()
+    {
+        for t in contracts
+            .scope_paths
+            .get(&path)
+            .map(|p| p.output.clone())
+            .unwrap_or_default()
+        {
+            if !out.contains(&t) {
+                out.push(t);
+            }
+        }
+    }
+    out
 }
 
 impl ContractView {
@@ -466,15 +488,9 @@ impl ContractView {
             });
         }
         for (key, h) in &m.contracts.hazards {
-            view.hazard_classes.insert(key.clone(), h.on.clone());
+            view.hazard_classes.insert(key.clone(), h.classes());
             let guards: Vec<String> = h.monitors.iter().flat_map(|g| g.members.clone()).collect();
-            let sinks: Vec<String> = h
-                .reaction
-                .as_ref()
-                .and_then(|r| terminal_reaction_path(&m.contracts, r))
-                .and_then(|r| m.contracts.scope_paths.get(&r))
-                .map(|p| p.output.clone())
-                .unwrap_or_default();
+            let sinks: Vec<String> = reaction_sinks(&m.contracts, h.reaction.as_ref());
             let settle_ms = m
                 .contracts
                 .node_paths
@@ -549,6 +565,22 @@ impl ContractView {
             .into_iter()
             .map(|f| (f.topic, f.path))
             .collect();
+        // Phase 103 D1: a constant the resolver could not resolve (its
+        // `.msg` was not on the ament index when the model was built) cannot
+        // be judged. Say so once, naming it, rather than read it as held.
+        for (site, p) in unresolved_constants(m) {
+            tracing::warn!(
+                "{site}: the predicate on '{}' names the constant {}, whose value the model \
+                 does not carry (its message definition was not found when the model was \
+                 built); it is not judged at run time. Resolve with the workspace that \
+                 provides the message sourced",
+                p.field,
+                match &p.value {
+                    model::PredicateValueContract::Constant { constant, .. } => constant.as_str(),
+                    _ => "?",
+                }
+            );
+        }
         for (key, f) in &m_functions {
             if let Some(when) = &f.when {
                 view.value_fns.insert(
@@ -620,8 +652,76 @@ impl ContractView {
     }
 }
 
+/// Every predicate whose constant the model carries without a value (phase
+/// 103 D1), with where it is.
+pub(crate) fn unresolved_constants(
+    m: &model::SystemModel,
+) -> Vec<(String, &model::PredicateContract)> {
+    let unresolved = |p: &model::PredicateContract| {
+        matches!(
+            p.value,
+            model::PredicateValueContract::Constant { value: None, .. }
+        )
+    };
+    let mut out = Vec::new();
+    for (k, f) in &m.contracts.functions {
+        if let Some(p) = f.when.as_ref().filter(|p| unresolved(p)) {
+            out.push((format!("function '{k}'"), p));
+        }
+    }
+    for (k, h) in &m.contracts.hazards {
+        if let Some(p) = h.when.as_ref().filter(|p| unresolved(p)) {
+            out.push((format!("hazard '{k}'"), p));
+        }
+    }
+    for (k, md) in &m.contracts.modes {
+        for (t, ps) in &md.commands {
+            for p in ps.iter().filter(|p| unresolved(p)) {
+                out.push((format!("mode '{k}' commands on '{t}'"), p));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
+    /// Phase 103 D4: a hazard that enters mode M reacts by M's fallback
+    /// sequence, every level in order by its own `reaction:`. M's own
+    /// `reaction:` is not part of it. The observer used to read only the
+    /// last level.
+    #[test]
+    fn a_mode_reaction_is_every_level_of_its_fallback() {
+        let mut c = model::Contracts::default();
+        let mode = |reaction: Option<&str>, fallback: &[&str]| model::ModeContract {
+            reaction: reaction.map(str::to_string),
+            fallback: fallback.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        };
+        c.modes
+            .insert("engaged".into(), mode(Some("own"), &["tor", "stop"]));
+        c.modes.insert("tor".into(), mode(Some("tor_chain"), &[]));
+        c.modes.insert("stop".into(), mode(Some("stop_chain"), &[]));
+        assert_eq!(
+            reaction_paths(&c, "engaged"),
+            vec!["tor_chain".to_string(), "stop_chain".to_string()]
+        );
+        assert_eq!(reaction_paths(&c, "a_chain"), vec!["a_chain".to_string()]);
+        for (k, out) in [("tor_chain", "/tor"), ("stop_chain", "/brake")] {
+            c.scope_paths.insert(
+                k.into(),
+                model::PathContract {
+                    output: vec![out.to_string()],
+                    ..Default::default()
+                },
+            );
+        }
+        assert_eq!(
+            reaction_sinks(&c, Some(&"engaged".to_string())),
+            vec!["/tor".to_string(), "/brake".to_string()]
+        );
+    }
+
     use super::*;
 
     /// The two constructors must agree: a model carrying the same facts as
@@ -641,7 +741,6 @@ mod tests {
                 subscribers: vec!["/a/filter/points".to_string()],
                 rate_hz: Some(10.0),
                 derived_rate_hz: None,
-                max_transport_ms: None,
                 drop: Some(ros_launch_manifest_types::DropSpec {
                     max_count: Some(ros_launch_manifest_types::spelled(
                         ros_launch_manifest_types::field_table::Context::Drop,

@@ -69,7 +69,29 @@ pub(super) fn eval(pred: &model::PredicateContract, kind: u8, bits: u64) -> Opti
                 _ => None,
             }
         }
-        V::Constant { .. } => None,
+        // rlm v0.3.15 (play_launch phase 103 D1): the model carries the
+        // constant's value, read from the `.msg` by the resolver, and the
+        // field is compared with it exactly as with a written literal. A
+        // constant the resolver could not resolve is `None` here: unjudged,
+        // and `ContractView` reports it once at startup, never read as held.
+        V::Constant { value, .. } => {
+            use ros_launch_manifest_model::ConstantValue as C;
+            let literal = match value.as_ref()? {
+                C::Bool(b) => V::Bool(*b),
+                C::Int(i) => V::Int(*i),
+                C::Float(f) => V::Float(*f),
+                C::Str(s) => V::Str(s.clone()),
+            };
+            eval(
+                &ros_launch_manifest_model::PredicateContract {
+                    field: pred.field.clone(),
+                    op: pred.op,
+                    value: literal,
+                },
+                kind,
+                bits,
+            )
+        }
     }
 }
 
@@ -166,17 +188,27 @@ mod tests {
         let s = p(CompareOp::NotEquals, V::Str("MANUAL".into()));
         assert_eq!(eval(&s, 5, fnv1a(b"MANUAL")), Some(false));
         assert_eq!(eval(&s, 5, fnv1a(b"AUTO")), Some(true));
+        // A constant the resolver could not resolve is unjudged...
         let c = p(
             CompareOp::Equals,
             V::Constant {
                 constant: "MANUAL".into(),
+                value: None,
             },
         );
-        assert_eq!(
-            eval(&c, 3, 1),
-            None,
-            "a constant's value is not in the model"
+        assert_eq!(eval(&c, 3, 1), None, "an unresolved constant is unjudged");
+        // ...and one it resolved is compared by value (phase 103 D1: before
+        // rlm v0.3.15 every constant was unjudged, so `not_equals: MANUAL`
+        // read as held whatever the field said).
+        let manual = p(
+            CompareOp::NotEquals,
+            V::Constant {
+                constant: "MANUAL".into(),
+                value: Some(ros_launch_manifest_model::ConstantValue::Int(4)),
+            },
         );
+        assert_eq!(eval(&manual, 3, 4), Some(false), "the field is MANUAL");
+        assert_eq!(eval(&manual, 3, 1), Some(true), "the field is not MANUAL");
     }
 
     #[test]

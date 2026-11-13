@@ -6,6 +6,52 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Removed (contracts; rlm v0.3.15, phase 104 S1):** five spellings
+  deprecated since rlm v0.1.59/v0.1.60 are refused, each naming its
+  replacement: `external_topics:` (write `topics.<t>.external`), a topic's
+  `max_transport` (state it on the subscriber, or name a `link:`), a path's
+  `input:` (write `trigger: { input: [...] }`), `exit: { on }` (write
+  `holds:`) and a mode named in a hazard's `reaction:`
+  (`error[reaction-names-mode]`; write `enters:`). `links.<l>.monitor`,
+  parsed and read by nothing, is refused too. `play_launch migrate
+  <contract> --write` rewrites each. A contract using one exits 3.
+- **Removed (`--export-graph`):** a topic's `max_transport_ms`; a
+  subscriber edge's `max_transport_ms` is its own.
+- **Fixed (run time, phase 103 D1):** a predicate naming a message
+  constant (`not_equals: MANUAL`) was never judged at run time: the model
+  carried the name and not the value, so a value function read as held
+  and `safe-state-violated` never fired on such a level. The model now
+  carries the value, read from the `.msg` at resolve time, and the observer
+  compares the field with it; a constant that could not be resolved is
+  reported once at startup.
+- **Fixed (`check`, D2):** a predicate value of the wrong kind for its
+  field (a bool on a `uint8`, an ordering on a string) is an error; it could
+  never be true at run time.
+- **Fixed (`check`, D3):** criticality derived from a hazard that enters a
+  mode credits the nodes of every level of its fallback sequence (it read
+  only a hazard that names an event chain, so the reacting nodes of a
+  mode-form hazard derived no integrity). Schedules derived from such
+  contracts change accordingly.
+- **Changed (D4):** a hazard's `enters: M` is the mode the hazard takes
+  away, and its reaction is M's fallback sequence (rlm v0.3.15 states it).
+  The run-time observer and `measure` read every level of it, not only the
+  last, so a higher level that answers in time is the reaction.
+- **Changed (D5):** an omitted `on:` means omission, late, loss, reported
+  and overrun (rlm `FaultKind::DEFAULT`), one definition for every
+  realizer. `when:` beside an omitted `on:` is no longer
+  `when-requires-reported`.
+- **Fixed (`check`, D6):** an `independence` entry naming a node absent
+  from the model (another host's) passed clean; it is
+  `warning[independence-unchecked]`.
+- **Fixed (`check`, D7):** a reaction route through an action keeps the
+  settle in its fallback total and names the action; an action endpoint
+  declared under a node's `srv:`/`cli:` is `error[action-as-service]`.
+- **Added (`check`, D8):** `warning[fault-class-unobservable]` when `on:`
+  asks for `repetition`/`resequencing` on a topic whose type carries no
+  stamp.
+
 ## 0.31.0 - 2026-11-10
 
 - **Added (contracts; rlm v0.3.13 and v0.3.14, phase 102): the safety

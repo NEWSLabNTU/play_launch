@@ -350,7 +350,6 @@ pub fn build_global_graph(index: &ManifestIndex) -> GlobalDataflowGraph {
         let topic_view = TopicView {
             publishers: topic.publishers.clone(),
             subscribers: topic.subscribers.clone(),
-            max_transport_ms: topic.max_transport_ms,
             sub_max_transport_ms: sub_node_eps
                 .iter()
                 .filter_map(|(ep_ref, sub_node, sub_ep)| {
@@ -1494,7 +1493,6 @@ mod tests {
                     subscribers: subs.iter().map(|s| s.to_string()).collect(),
                     rate_hz: None,
                     derived_rate_hz: None,
-                    max_transport_ms: None,
                     drop: None,
                     scope_ids: vec![0],
                     on_silence_after_ms: None,

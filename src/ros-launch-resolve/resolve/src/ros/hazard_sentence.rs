@@ -133,14 +133,13 @@ pub fn sentence(index: &ManifestIndex, h: &ResolvedHazard) -> String {
             }
         })
         .collect();
-    let classes = if d.on.is_empty() {
-        "any fault class".to_string()
-    } else {
-        d.on.iter()
-            .map(|k| format!("{k:?}").to_lowercase())
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
+    // An omitted `on:` is rlm's default classes (v0.3.15), named as such.
+    let classes = d
+        .classes()
+        .iter()
+        .map(|k| format!("{k:?}").to_lowercase())
+        .collect::<Vec<_>>()
+        .join(", ");
     if watched.is_empty() {
         s.push_str(": it watches nothing");
     } else {

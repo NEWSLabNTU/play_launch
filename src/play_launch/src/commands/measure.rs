@@ -106,15 +106,11 @@ fn hazard_specs(model: &SystemModel) -> Vec<HazardSpec> {
         .iter()
         .map(|(key, h)| {
             let guards: Vec<String> = h.monitors.iter().flat_map(|g| g.members.clone()).collect();
-            // Phase 75: the reaction may name a MODE, and the sink is then
-            // the terminal rung's path — the floor of its ladder.
-            let sinks: Vec<String> = h
-                .reaction
-                .as_ref()
-                .and_then(|r| crate::runtime_enforcement::view::terminal_reaction_path(c, r))
-                .and_then(|r| c.scope_paths.get(&r))
-                .map(|p| p.output.clone())
-                .unwrap_or_default();
+            // Phase 75: the reaction may name a MODE, and the sinks are then
+            // its fallback sequence's (phase 103 D4: every level, not only
+            // the last, as the checker charges them).
+            let sinks: Vec<String> =
+                crate::runtime_enforcement::view::reaction_sinks(c, h.reaction.as_ref());
             // The sink's settle: any node path whose safe_state emits onto a
             // sink topic.
             let settle_ms = c

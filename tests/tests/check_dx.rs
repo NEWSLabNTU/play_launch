@@ -280,8 +280,9 @@ fn no_color_turns_colour_off_on_a_terminal() {
     assert!(String::from_utf8_lossy(&plain).contains("error[rate-hierarchy]"));
 }
 
-/// T7 (I7): every `max_transport` declaration, subscriber- or topic-level,
-/// that no reaction route charges gets one `declared-not-charged` info
+/// T7 (I7): every `max_transport` declaration (subscriber-level; the
+/// topic-level one was removed in rlm v0.3.15) that no reaction route
+/// charges gets one `declared-not-charged` info
 /// naming the key. This fixture has no hazard, so neither is on a guard
 /// edge; T1 (`takeover_link_is_charged_on_the_guard_edge`) is the charged
 /// case.
@@ -290,13 +291,9 @@ fn a_transport_bound_says_it_is_not_charged() {
     let out = check("contract_transport_notice", &[]);
     let s = text(&out);
     assert_eq!(out.status.code(), Some(0), "{s}");
-    assert_eq!(s.matches("info[declared-not-charged]").count(), 2, "{s}");
+    assert_eq!(s.matches("info[declared-not-charged]").count(), 1, "{s}");
     assert!(
         s.contains("`nodes.control_node.sub.scan.max_transport: 57ms` on '/dx/control_node/scan'"),
-        "{s}"
-    );
-    assert!(
-        s.contains("`topics./dx/cmd.max_transport: 3ms` on topic '/dx/cmd'"),
         "{s}"
     );
     assert!(

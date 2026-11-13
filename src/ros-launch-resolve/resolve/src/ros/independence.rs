@@ -107,6 +107,43 @@ pub(crate) fn check_independence(
     for ind in &index.independence {
         let at = format!("independence[{}]", ind.index);
         let where_ = site(index, ind.scope_id, &format!("independence.{}", ind.index));
+        // play_launch phase 103 D6: an entry naming no node of this model
+        // (another host's node, a typo, a function no node publishes) shares
+        // nothing, so every pair with it passed. It is unchecked, and said.
+        for entry in &ind.of {
+            let nodes = nodes_of(index, graph, ind, entry);
+            let absent: Vec<&String> = nodes
+                .iter()
+                .filter(|n| !graph.nodes.contains_key(n.as_str()))
+                .collect();
+            if nodes.is_empty() || !absent.is_empty() {
+                let what = if nodes.is_empty() {
+                    format!("'{entry}' names no node of this model")
+                } else if nodes.len() == 1 && nodes.contains(entry) {
+                    format!("'{entry}' is absent from this model")
+                } else {
+                    format!(
+                        "'{entry}' names {}, absent from this model",
+                        absent
+                            .iter()
+                            .map(|n| format!("'{n}'"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                diags.push(diag(
+                    "independence-unchecked",
+                    Severity::Warning,
+                    format!(
+                        "{where_}: {what} -- a node on another host, a misspelling, or a \
+                         function no node publishes. A node absent from the model shares \
+                         nothing with anything, so its pairs are UNCHECKED, not independent. \
+                         One resolved model is one host"
+                    ),
+                    format!("{at}.of"),
+                ));
+            }
+        }
         for ((a, na), (b, nb)) in pairs(index, graph, ind) {
             for fact in &ind.not_sharing {
                 let shared: Vec<String> = na

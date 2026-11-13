@@ -247,8 +247,8 @@ The rules that read it:
   <node>/<subscriber>` names the input standstill is seen on; the
   observation delay is derived from the contract, never written on the
   supervision: that input's period (the slowest of its topic's `rate_hz`
-  and its `min_rate_hz`) + its `max_transport` (the subscriber's, else the
-  topic's). No `observes`, no period or no transport: `supervised-unlowered`
+  and its `min_rate_hz`) + the subscriber's `max_transport` (or its
+  `link:`'s). No `observes`, no period or no transport: `supervised-unlowered`
   says which. The overrun row for the degradation level charges the time before the
   settle + the settle at the hazard's entry speed + the observation + the
   detection + the reaction's route and settle:
@@ -456,8 +456,7 @@ image built from the model never evaluates the extension.
 
 ## Two notices about what the arithmetic reads
 
-- `info[declared-not-charged]`: a `max_transport` declaration (subscriber- or
-  topic-level). The fault-reaction arithmetic (hazard detection, reaction
+- `info[declared-not-charged]`: a subscriber's `max_transport` declaration. The fault-reaction arithmetic (hazard detection, reaction
   routes, the table above) does not charge it yet; path and chain latencies
   do. One line per declaration, with the contract line. It goes away when
   phase 85 I1 charges the key on the guard edge.

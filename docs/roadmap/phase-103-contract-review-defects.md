@@ -1,6 +1,7 @@
 # Phase 103 - defects the grammar review found
 
-**Status (2026-11-13): planned.** The review of the contract grammar (rlm
+**Status (2026-11-13): D1-D9 implemented** (rlm v0.3.15, play_launch
+Unreleased); D4 and D5 decided the same day (below). The review of the contract grammar (rlm
 `docs/design/grammar-revision/`, ten topics) found defects in what ships
 today. None needs a grammar change, and two are silent, one of them
 fail-unsafe, so they are fixed before the revision itself (phase 104).
@@ -35,18 +36,36 @@ realizer-neutral; a fix there reaches both realizers.
 D1, D2 and the rlm half of D7 and D9 go in one rlm release; nano-ros bumps
 once for it.
 
-## Decisions needed
+## Decisions (2026-11-13)
 
-- **D4, entering a mode.** The candidates: (a) the checker's meaning:
-  entering mode M walks M's `fallback` from its first level, and the time
-  charged is each level's route; (b) the mode's own `reaction` is what runs
-  on entry, and `fallback` is consulted only when M itself is lost. Only the
-  shape `{ fallback: [self], reaction: X }` agrees with all three readings
-  today. The topic file `T3.md` has the evidence.
-- **D5, the omitted `on:`.** Every class (strictest, rlm's current text)
-  or the timing classes only (omission, late, loss; what play_launch says).
-  Every class makes `repetition` fire on a state topic that re-sends a
-  stamp, which T7 found on Autoware's gear and operation-mode topics.
+- **D4, entering a mode: the mode lost, its fallback walked.** A hazard's
+  `enters: M` names the mode the hazard takes away (every contract wrote it
+  so: the island's `enters: l3_engaged`, rt_av_demo's `enters: driving`),
+  and its reaction is M's `fallback:` sequence, each level by its own
+  `reaction:`; M's own `reaction:` is not run. This was the checker's
+  arithmetic; rlm's field table now states it, the observer and `measure`
+  read every level (they read only the last), and nano-ros's
+  `ftti_budget::reaction_path` follows (nano-ros phase 560 W1).
+  `supervise.enters` keeps its own meaning, the level a miss enters, whose
+  own `reaction:` runs; that the two keys share a name is phase 104 S3's.
+- **D5, the omitted `on:`: the five classes before v0.3.13.** omission,
+  late, loss, reported, overrun, as `FaultKind::DEFAULT` in rlm, read by
+  every realizer through `classes()`. A class added since counts only where
+  named, so adding one never changes an existing hazard. Chosen over the
+  three timing classes after the cost was stated: the checker had read
+  three (`reported` "is never implied"), and now implies `reported` too,
+  which removes a value function on a guard topic for an `on:`-less hazard
+  and drops `when-requires-reported` where `on:` is omitted.
+
+## What changed in the fixtures
+
+- D3 moved 30 committed plans: 31 nodes from no criticality to high and 15
+  to medium, every one a node reacting for a hazard that enters a mode, and
+  no other change (compared provenance by provenance, before and after).
+- The plans of the three deprecated-spelling fixtures and
+  `contract_transport_notice` are gone: the first are refused now (their
+  tests check the refusal and that `migrate` repairs them), and the last
+  lost its topic-level transport.
 
 ## Acceptance
 

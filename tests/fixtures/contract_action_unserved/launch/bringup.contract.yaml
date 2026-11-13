@@ -13,6 +13,9 @@
 # alone the suppression removed a check and nothing re-emitted it: this file
 # used to report "1 clean, 0 with errors" and exit 0.
 #
+# An action's endpoints are named in `actions.<a>.server|client` only; under a
+# node's `srv:`/`cli:` they are `action-as-service` (play_launch phase 103 D7).
+#
 # The two clean rows are what makes the rule falsifiable in both directions --
 # a loop that reported every action with a client would pass a test that only
 # asserted the first row.
@@ -20,10 +23,6 @@ version: 1
 
 nodes:
   mission_planner:
-    cli:
-      navigate: {}
-      dock_request: {}
-      recover: {}
     pub:
       route: {}
     paths:
@@ -37,9 +36,7 @@ nodes:
       route:
         min_rate_hz: 10
 
-  dock_controller:
-    srv:
-      dock: {}
+  dock_controller: {}
 
 topics:
   /nav/route:

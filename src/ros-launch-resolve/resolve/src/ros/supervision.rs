@@ -272,21 +272,12 @@ fn observation(
             )
         })?;
     let period = 1000.0 / hz;
-    let (transport, term) = match (
-        props.max_transport.as_ref().and_then(Bound::ms),
-        topic.and_then(|(name, t)| {
-            t.max_transport
-                .as_ref()
-                .and_then(Bound::ms)
-                .map(|ms| (name, ms))
-        }),
-    ) {
-        (Some(ms), _) => (ms, format!("nodes.{n}.sub.{ep}.max_transport")),
-        (None, Some((name, ms))) => (ms, format!("topics.{name}.max_transport")),
-        (None, None) => {
+    let (transport, term) = match props.max_transport.as_ref().and_then(Bound::ms) {
+        Some(ms) => (ms, format!("nodes.{n}.sub.{ep}.max_transport")),
+        None => {
             return Err(format!(
                 "`observes: {o}`: its transport is unknown: state `max_transport` on the \
-                 subscriber (or its topic), with its source"
+                 subscriber (or name its `link:`), with its source"
             ));
         }
     };

@@ -1,6 +1,10 @@
 # Phase 104 - the contract grammar revision
 
-**Status (2026-11-13): planned, methods explored, nothing decided.** Design
+**Status (2026-11-13): S1 done** (rlm v0.3.15) except two items left
+for a decision: `tolerance` (its declaration is read by `sync-budget`, and
+both corpus uses have no `sync:`, so deleting it changes meaning) and
+`transport-inline` (whether an inline subscriber transport is ever right
+beside `links:`). S2 decided with phase 103 D4/D5. S3 and S4 planned. Design
 of record: rlm `docs/design/grammar-revision/` (an overview and one file per
 topic, T1-T10, each with the verified issues, counts over 192 contracts,
 every method compared, and a recommendation). This phase orders that work.

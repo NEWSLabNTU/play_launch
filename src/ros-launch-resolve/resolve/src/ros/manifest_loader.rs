@@ -197,8 +197,6 @@ pub struct ResolvedTopic {
     /// when the rate is not derivable (`once`, `spontaneous`, an external
     /// publisher, a cycle) — never zero, which would be a claim.
     pub derived_rate_hz: Option<f64>,
-    /// Worst-case transport latency (ms, must agree across all declaring scopes).
-    pub max_transport_ms: Option<f64>,
     /// Drop tolerance (must agree across all declaring scopes if declared).
     pub drop: Option<ros_launch_manifest_types::DropSpec>,
     /// All scope IDs that declared this topic.
@@ -414,19 +412,6 @@ fn node_term(index: &ManifestIndex, fqn: &str, rel: &str) -> Option<TermKey> {
         .map(|(scope, name, _)| (scope, format!("nodes.{name}.{rel}")))
 }
 
-/// `topics.<t>.max_transport` of the manifest that states the topic-level
-/// transport of `topic_fqn`.
-fn topic_transport_term(index: &ManifestIndex, topic_fqn: &str) -> Option<TermKey> {
-    let mut ms: Vec<&ResolvedManifest> = index.manifests.values().collect();
-    ms.sort_by_key(|m| m.scope_id);
-    ms.into_iter().find_map(|m| {
-        m.manifest.topics.iter().find_map(|(t, d)| {
-            (d.max_transport.is_some() && qualify_name(&m.ns, t) == topic_fqn)
-                .then(|| (m.scope_id, format!("topics.{t}.max_transport")))
-        })
-    })
-}
-
 /// `services.<s>.max_transport` of the manifest that states the request leg
 /// of `service_fqn` (phase 95).
 fn service_transport_term(index: &ManifestIndex, service_fqn: &str) -> Option<TermKey> {
@@ -452,12 +437,8 @@ pub(crate) fn walk_terms(
 ) -> Vec<(TermKey, f64)> {
     let mut out: Vec<(TermKey, f64)> = Vec::new();
     if let Some(l) = w.link.as_ref().filter(|_| !after_deadline) {
-        let key = if l.from == "sub" {
-            split_endpoint_ref_for_check(&l.sub_ref)
-                .and_then(|(n, ep)| node_term(index, &n, &format!("sub.{ep}.max_transport")))
-        } else {
-            topic_transport_term(index, &l.topic)
-        };
+        let key = split_endpoint_ref_for_check(&l.sub_ref)
+            .and_then(|(n, ep)| node_term(index, &n, &format!("sub.{ep}.max_transport")));
         out.extend(key.map(|k| (k, l.ms)));
     }
     // Phase 95: the request leg of each call on the route (twice on a
@@ -1111,7 +1092,6 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // Cross-check external_topics type against internal topic type.
     // When both an `external_topics:` entry and a `topics:` entry of
     // the same FQN exist with `type:` set, they must agree.
-    check_external_topic_consistency(index);
 
     // Dangling topic: 0 publishers across the merged tree
     for (fqn, topic) in &index.topics {
@@ -1225,6 +1205,41 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
                 path: format!("actions.{fqn}"),
                 span: None,
             });
+        }
+        // Phase 103 D7: an action's endpoint is not a service's. Written
+        // under a node's `srv:`/`cli:` it parsed, and the walk and the image's
+        // pool sizing then read an action as a service.
+        for (side, refs, key) in [
+            ("server", &action.servers, "srv"),
+            ("client", &action.clients, "cli"),
+        ] {
+            for r in refs {
+                let Some((node, ep)) = split_endpoint_ref_for_check(r) else {
+                    continue;
+                };
+                let Some((_, name, decl)) = super::value_rules::contract_node(index, &node) else {
+                    continue;
+                };
+                let declared = if key == "srv" {
+                    decl.srv.contains_key(&ep)
+                } else {
+                    decl.cli.contains_key(&ep)
+                };
+                if declared {
+                    index.merge_diagnostics.push(Diagnostic {
+                        rule_id: "action-as-service".to_string(),
+                        severity: Severity::Error,
+                        message: format!(
+                            "action '{fqn}' names {side} '{r}', which node '{name}' declares under \
+                             `{key}:` -- a service endpoint. An action is three services and two \
+                             topics, and its endpoint is named only in `actions.<a>.{side}`. Fix: \
+                             delete `{key}.{ep}` from the node"
+                        ),
+                        path: format!("nodes.{name}.{key}.{ep}"),
+                        span: None,
+                    });
+                }
+            }
         }
     }
 
@@ -1498,31 +1513,6 @@ fn note_declared_not_charged(index: &mut ManifestIndex) {
                     });
                 }
             }
-        }
-        for (topic, decl) in &m.manifest.topics {
-            let Some(t) = decl.max_transport.duration() else {
-                continue;
-            };
-            let key = format!("topics.{topic}.max_transport");
-            if index
-                .charged_transport
-                .contains(&qualify_name(&m.ns, topic))
-            {
-                continue;
-            }
-            out.push(Diagnostic {
-                rule_id: "declared-not-charged".to_string(),
-                severity: Severity::Info,
-                message: format!(
-                    "{}: `{key}: {}ms` on topic '{}' {tail}{}",
-                    super::value_rules::site(index, m.scope_id, &key),
-                    fmt_ms(t.as_millis_f64()),
-                    qualify_name(&m.ns, topic),
-                    others(m.scope_id, &key)
-                ),
-                path: key,
-                span: None,
-            });
         }
     }
     index.merge_diagnostics.extend(out);
@@ -1873,17 +1863,17 @@ fn max_age_evaluated(props: &ros_launch_manifest_types::EndpointProps) -> bool {
 /// The fault classes a hazard's FDTI must cover (phase 82), and whether the
 /// contract named them. An explicit `on:` is a claim about each class it
 /// names, so a class no detector counts for is `hazard-unguarded`. An
-/// omitted `on:` claims every class the guard's detectors can observe --
-/// omission, late and loss -- and the interval is the max over those that
-/// some detector covers, so omitting the key is never more lenient than
-/// naming the slowest of them. `reported` is never implied: it says the
-/// guard IS a detector's output, which only the author can know.
+/// omitted `on:` claims rlm's default classes (`FaultKind::DEFAULT`, since
+/// v0.3.15: omission, late, loss, reported, overrun; play_launch phase 103
+/// D5), and the interval is the max over those that some detector covers,
+/// so omitting the key is never more lenient than naming the slowest of
+/// them, and a class no detector covers is not claimed.
 fn hazard_fault_kinds(
     on: &[ros_launch_manifest_types::FaultKind],
 ) -> (Vec<ros_launch_manifest_types::FaultKind>, bool) {
     use ros_launch_manifest_types::FaultKind as F;
     if on.is_empty() {
-        (vec![F::Omission, F::Late, F::Loss], false)
+        (F::DEFAULT.to_vec(), false)
     } else {
         (on.to_vec(), true)
     }
@@ -2710,14 +2700,12 @@ pub(crate) fn walk_reaction_at(
             // Phase 85 I1: the guard edge. Only at the guard: past it the
             // walk charges path latencies and clocks, as before.
             if depth == 0 {
-                // The one precedence (phase 97 P1, rlm `edge_transport_ms`):
-                // the subscriber's own value (its link's, when it names one),
-                // else the topic's.
+                // The subscriber's own transport (its link's, when it names
+                // one): since rlm v0.3.15 the only place a transport is
+                // stated.
                 let own = props.and_then(|p| p.max_transport.ms());
-                let charged =
-                    ros_launch_manifest_types::edge_transport_ms(own, topic.max_transport_ms);
-                if let Some(ms) = charged.filter(|ms| *ms > 0.0) {
-                    let from = if own.is_some() { "sub" } else { "topic" };
+                if let Some(ms) = own.filter(|ms| *ms > 0.0) {
+                    let from = "sub";
                     candidate.route_ms += ms;
                     candidate.link = Some(GuardLink {
                         sub_ref: sub_ref.clone(),
@@ -4327,9 +4315,37 @@ fn check_fault_reaction(
             &mut budgets,
             &mut diags,
         );
+        // Phase 103 D7: with no walk, the settle is still the plant's: the
+        // safe state a path commands on the reaction's own output. It used to
+        // be dropped, so a route the walk could not follow (through an action)
+        // printed a total short by the whole settle.
+        let sink_publishes = |np: &ResolvedNodePath, ep: &str| {
+            let r = format!("{}/{ep}", np.node_fqn);
+            reaction
+                .output_topics
+                .iter()
+                .any(|t| topics.get(t).is_some_and(|tp| tp.publishers.contains(&r)))
+        };
         let settle = match &walk {
             Some(w) => settle_of(w, &floor_name, &mut diags),
-            None => super::value_rules::Settle::default(),
+            None => node_paths
+                .iter()
+                .find_map(|np| {
+                    let ss = np.path.safe_state.as_ref()?;
+                    sink_publishes(np, &ss.emits).then_some((np, ss))
+                })
+                .map(|(np, ss)| {
+                    super::value_rules::settle_for(
+                        index,
+                        h,
+                        &floor_name,
+                        &np.node_fqn,
+                        &np.path_name,
+                        ss,
+                        &mut diags,
+                    )
+                })
+                .unwrap_or_default(),
         };
         let settle_ms = settle.ms;
         let declared_ms = reaction.path.max_latency.ms();
@@ -4369,13 +4385,53 @@ fn check_fault_reaction(
                 )
             }
             (None, Some(d)) => {
+                // Phase 103 D7: the walk crosses topics and services, never an
+                // action. Name an action a reacting node serves or calls, so
+                // the reason the route stops is not a mystery.
+                let guard_subs: BTreeSet<String> = h
+                    .guards
+                    .iter()
+                    .flat_map(|g| g.members.iter())
+                    .filter_map(|t| topics.get(t))
+                    .flat_map(|t| t.subscribers.iter())
+                    .filter_map(|r| split_endpoint_ref_for_check(r).map(|(n, _)| n))
+                    .collect();
+                let sink_pubs: BTreeSet<String> = reaction
+                    .output_topics
+                    .iter()
+                    .filter_map(|t| topics.get(t))
+                    .flat_map(|t| t.publishers.iter())
+                    .filter_map(|r| split_endpoint_ref_for_check(r).map(|(n, _)| n))
+                    .collect();
+                let actions: Vec<String> = index
+                    .actions
+                    .values()
+                    .filter(|a| {
+                        a.servers.iter().chain(a.clients.iter()).any(|r| {
+                            split_endpoint_ref_for_check(r).is_some_and(|(n, _)| {
+                                guard_subs.contains(&n) || sink_pubs.contains(&n)
+                            })
+                        })
+                    })
+                    .map(|a| format!("'{}'", a.fqn))
+                    .collect();
+                let through = if actions.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        " The route may cross action {}: the reaction walk follows topics and \
+                         services, not actions.",
+                        actions.join(", ")
+                    )
+                };
                 diags.push(Diagnostic {
                     rule_id: "reaction-unreachable".to_string(),
                     severity: Severity::Error,
                     message: format!(
                         "hazard '{}': no chain of `on_violation` reactions leads from its guards \
                          to '{}' — the reaction '{reaction_name}' is declared but nothing \
-                         would run it. Using its declared max_latency ({d:.2}ms) as the route",
+                         would run it.{through} Using its declared max_latency ({d:.2}ms) as the \
+                         route, plus the settle",
                         h.name,
                         reaction.output_topics.join(", ")
                     ),
@@ -4607,6 +4663,7 @@ fn check_fault_reaction(
 
     // Phase 83: the rules the four takeover keys stand on by themselves.
     super::value_rules::check_predicates(index, &mut diags);
+    super::value_rules::check_stamp_classes(index, &mut diags);
     super::value_rules::check_spellings(index, &mut diags);
     super::value_rules::check_windows_and_exits(index, graph, &index.launch_params, &mut diags);
     super::value_rules::check_param_bindings(index, &index.launch_params, &mut diags);
@@ -4781,19 +4838,12 @@ fn apply_mode_overrides(
                                 applied += 1;
                             }
                         }
-                        "max_transport" => {
-                            if let Some(v) = dur() {
-                                set_bound(&mut t.max_transport, Context::Topic, "max_transport", v);
-                                applied += 1;
-                            }
-                        }
                         _ => {}
                     }
                 }
                 if let Some(t) = index.topics.get_mut(&fqn) {
                     match field {
                         "rate_hz" => t.rate_hz = num(),
-                        "max_transport" => t.max_transport_ms = dur().map(|d| d.as_millis_f64()),
                         _ => {}
                     }
                 }
@@ -5031,7 +5081,6 @@ pub(crate) fn override_site<'t>(
             .get(middle)
             .is_some_and(|t| match field {
                 "rate_hz" => t.rate_hz.is_some(),
-                "max_transport" => t.max_transport.is_some(),
                 _ => false,
             })
             .then_some((OverrideSite::Topic { name: middle }, field)),
@@ -5141,6 +5190,7 @@ fn derive_criticality_from_hazards(
     let services = index.services.clone();
     let node_paths = index.node_paths.clone();
     let scope_paths = index.scope_paths.clone();
+    let modes = index.modes.clone();
     let mut diags: Vec<Diagnostic> = Vec::new();
     let mut derived: BTreeMap<String, DerivedCriticality> = BTreeMap::new();
 
@@ -5229,21 +5279,35 @@ fn derive_criticality_from_hazards(
             }
         }
 
-        // Reacts: the walk to the safe state.
-        // A scope path the hazard reacts by: `reaction:` only. `enters:`
-        // names a mode and is never read as a path (the deprecated
-        // `reaction: <mode>` finds no path here, as before).
-        if let Some(reaction_name) = &h.decl.reaction
-            && let Some(reaction) = scope_paths
-                .iter()
-                .find(|p| p.scope_id == h.scope_id && &p.path_name == reaction_name)
-        {
-            let sinks: HashSet<&str> = reaction.output_topics.iter().map(String::as_str).collect();
+        // Reacts: the walk to the safe state, through every level the
+        // hazard can land on (play_launch phase 103 D3). The levels are the
+        // ones the reaction walk charges (`resolve_ladder`): a chain is one
+        // level, `enters: <mode>` is that mode's fallback sequence less the
+        // levels the fault removes. Before, only the chain form was read, so
+        // a hazard that entered a mode credited no integrity to the nodes
+        // that react for it.
+        if let Some(reaction_name) = h.decl.entry() {
+            let removed = super::value_rules::removed_by(h, index);
+            let mut scratch = Vec::new();
+            let levels = resolve_ladder(h, reaction_name, &modes, &removed, &mut scratch, "")
+                .map(|(rungs, _)| rungs)
+                .unwrap_or_default();
             let guards: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
-            if let Some(w) = walk_reaction(&guards, &sinks, &topics, &services, &node_paths, graph)
-            {
-                for hop in &w.hops {
-                    assign(&hop.node, mk("reacts"));
+            for (_, path) in &levels {
+                let Some(reaction) = scope_paths
+                    .iter()
+                    .find(|p| p.scope_id == h.scope_id && &p.path_name == path)
+                else {
+                    continue;
+                };
+                let sinks: HashSet<&str> =
+                    reaction.output_topics.iter().map(String::as_str).collect();
+                if let Some(w) =
+                    walk_reaction(&guards, &sinks, &topics, &services, &node_paths, graph)
+                {
+                    for hop in &w.hops {
+                        assign(&hop.node, mk("reacts"));
+                    }
                 }
             }
         }
@@ -5994,40 +6058,6 @@ fn check_cross_scope_on_demand(
     index.merge_diagnostics.extend(out);
 }
 
-/// Cross-check `external_topics:` entries against the merged
-/// `index.topics`. When an external entry declares a `type:` that
-/// disagrees with an internal `topics:` declaration of the same FQN,
-/// emit a `consistency` error.
-fn check_external_topic_consistency(index: &mut ManifestIndex) {
-    let mut diags = Vec::new();
-    for resolved in index.manifests.values() {
-        let ns = &resolved.ns;
-        for (key, decl) in &resolved.manifest.external_topics {
-            let Some(ext_type) = &decl.msg_type else {
-                continue;
-            };
-            let fqn = qualify_name(ns, key);
-            let Some(internal) = index.topics.get(&fqn) else {
-                continue;
-            };
-            if internal.msg_type != *ext_type {
-                diags.push(Diagnostic {
-                    rule_id: "consistency".to_string(),
-                    severity: Severity::Error,
-                    message: format!(
-                        "topic '{fqn}' external_topics type '{ext_type}' (in scope {}) \
-                         disagrees with internal type '{}'",
-                        resolved.scope_id, internal.msg_type
-                    ),
-                    path: format!("external_topics.{key}.type"),
-                    span: None,
-                });
-            }
-        }
-    }
-    index.merge_diagnostics.extend(diags);
-}
-
 /// Build the merged `externals` map from every loaded manifest's
 /// top-level `external_topics:` block and per-topic `external:` flag.
 /// Keys are qualified to FQN against the declaring scope's namespace.
@@ -6049,10 +6079,6 @@ fn collect_externals(index: &mut ManifestIndex) {
 
     for resolved in index.manifests.values() {
         let ns = &resolved.ns;
-        for (key, decl) in &resolved.manifest.external_topics {
-            let fqn = qualify_name(ns, key);
-            merge(&mut externals, fqn, decl.side);
-        }
         for (key, topic) in &resolved.manifest.topics {
             if let Some(side) = topic.external {
                 let fqn = qualify_name(ns, key);
@@ -6660,7 +6686,6 @@ fn resolve_topics(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestI
                     // whole tree is merged — a rate propagates across scopes,
                     // so it cannot be known while one scope is being read.
                     derived_rate_hz: None,
-                    max_transport_ms: topic_decl.max_transport.ms(),
                     drop: topic_decl.drop.clone(),
                     scope_ids: vec![scope.id],
                     on_silence_after_ms: topic_decl
@@ -6772,7 +6797,6 @@ fn derive_topics_from_remaps(dump: &LaunchDump, index: &mut ManifestIndex) {
                     subscribers: Vec::new(),
                     rate_hz: None,
                     derived_rate_hz: None,
-                    max_transport_ms: None,
                     drop: None,
                     scope_ids: record.scope_id.into_iter().collect(),
                     on_silence_after_ms: None,
@@ -6863,29 +6887,6 @@ fn merge_topic(
         }
     } else if existing.rate_hz.is_none() {
         existing.rate_hz = decl.rate_hz;
-    }
-
-    // Validate max_transport_ms agreement
-    if let (Some(a), Some(b)) = (existing.max_transport_ms, decl.max_transport.ms()) {
-        if (a - b).abs() > f64::EPSILON {
-            diagnostics.push(Diagnostic {
-                rule_id: "consistency".to_string(),
-                severity: Severity::Error,
-                message: format!(
-                    "topic '{}' max_transport_ms mismatch: {} vs {} in scope {} ({}/{})",
-                    existing.fqn,
-                    a,
-                    b,
-                    scope.id,
-                    scope.pkg().unwrap_or("?"),
-                    scope.file().unwrap_or("?"),
-                ),
-                path: format!("topics.{topic_name}.max_transport_ms"),
-                span: None,
-            });
-        }
-    } else if existing.max_transport_ms.is_none() {
-        existing.max_transport_ms = decl.max_transport.ms();
     }
 
     // Validate QoS agreement
@@ -8503,11 +8504,14 @@ mod tests {
 
         assert_eq!(index.total_errors, 0);
 
-        // All 3 nodes have periodic paths with empty input
+        // No node path is input-triggered.
         for np in &index.node_paths {
             assert!(
-                np.path.input.is_empty(),
-                "node {} path {} should have empty input (periodic)",
+                !matches!(
+                    np.path.effective_trigger(),
+                    ros_launch_manifest_types::EffectiveTrigger::Input(_)
+                ),
+                "node {} path {} should not be input-triggered",
                 np.node_fqn,
                 np.path_name
             );
@@ -9363,16 +9367,13 @@ mod tests {
     }
 
     /// W1: across the classes a hazard claims, the MAX governs, and saying
-    /// less never buys slack. `on:` omitted claims omission, late and loss
+    /// less never buys slack. `on:` omitted claims rlm's default classes
     /// and is timed by the slowest one some detector covers; an explicit
     /// set is unguarded for each class nothing covers.
     #[test]
     fn a_hazard_is_timed_by_the_slowest_class_it_claims() {
         use ros_launch_manifest_types::FaultKind as F;
-        assert_eq!(
-            hazard_fault_kinds(&[]),
-            (vec![F::Omission, F::Late, F::Loss], false)
-        );
+        assert_eq!(hazard_fault_kinds(&[]), (F::DEFAULT.to_vec(), false));
         assert_eq!(
             hazard_fault_kinds(&[F::Omission, F::Reported]),
             (vec![F::Omission, F::Reported], true)
@@ -10001,7 +10002,7 @@ mod tests {
 version: 1
 paths:
   e2e:
-    input: points_raw
+    trigger: { input: [points_raw] }
     output: [cmd]
     max_latency: 30ms
 "#;

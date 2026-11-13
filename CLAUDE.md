@@ -699,6 +699,27 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-11-13**: **The grammar review's defects, and the removal release**
+  (phases 103 and 104 S1, rlm v0.3.15; design rlm
+  `docs/design/grammar-revision/`). rlm is the runtime-agnostic
+  specification, play_launch the Linux realizer, nano-ros the RTOS one: a
+  meaning is stated once in rlm and both follow. Refused now, each naming
+  its replacement (`migrate` rewrites them): `external_topics:`, a topic's
+  `max_transport`, a path's `input:`, `exit.on`, `links.<l>.monitor`, and a
+  mode in a hazard's `reaction:` (`reaction-names-mode`, the consumer's,
+  since only it can tell a mode from a chain). Fixed: a constant predicate
+  is judged at run time (the model carries its value, `constant_value`
+  reads the `.msg`); a predicate value must fit its field; criticality is
+  derived through the ladder (`resolve_ladder`), so a mode-form hazard's
+  reacting nodes carry integrity; an absent node in `independence` is
+  `independence-unchecked`; a route through an action keeps its settle and
+  names it; `fault-class-unobservable` for stamp classes on an unstamped
+  type. Two things a later change must keep: an omitted `on:` is
+  `FaultKind::DEFAULT` read through `classes()`, never re-spelled in a
+  realizer; and a hazard's `enters: M` is the mode it takes away, its
+  reaction M's fallback levels (`reaction_paths`), while `supervise.enters`
+  is the level entered.
+
 - **2026-11-09**: **The safety model explained, extended and evaluated**
   (phase 102 M3-M5). `check --explain` prints each hazard as one sentence
   (`ros/hazard_sentence.rs`: requirement, monitors and classes, bound,

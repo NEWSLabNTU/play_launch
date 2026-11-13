@@ -2697,35 +2697,55 @@ fn a_written_criticality_on_a_reached_node_is_an_error() {
     assert!(out.contains("(2 errors,"), "{out}");
 }
 
-/// Phase 90 G4: the pre-0.1.59 spellings (`reaction: <mode>` on a hazard,
-/// `exit: { on }`) still check exactly as the current ones do, with one
-/// `deprecated-spelling` warning each naming the new key and `migrate`.
+/// Phase 90 G4, refused since rlm v0.3.15 (play_launch phase 104 S1):
+/// `exit: { on }` is a parse error naming `holds:`, and `reaction: <mode>`
+/// is `error[reaction-names-mode]` naming `enters:`. `migrate --write`
+/// gives a contract that checks exactly as its current twin does.
 #[test]
-fn deprecated_spellings_warn_and_check_like_the_current_ones() {
-    let (code, old) = check_takeover("contract_spelling_deprecated", &["--explain"]);
+fn removed_spellings_are_refused_and_migrate_to_the_current_twin() {
+    let (code, old) = check_takeover("contract_spelling_deprecated", &[]);
+    assert_eq!(code, 3, "exit.on is a parse error:\n{old}");
+    assert!(
+        old.contains("Removed in v0.3.15") && old.contains("`holds:`"),
+        "{old}"
+    );
+
+    let (_tmp, dir) = fixture_copy("contract_spelling_deprecated");
+    let contract = dir.join("bringup.contract.yaml");
+    // Only `exit.on` fixed by hand: the mode in `reaction:` is the consumer's
+    // refusal, one per hazard.
+    let text = std::fs::read_to_string(&contract).unwrap();
+    std::fs::write(
+        &contract,
+        text.replace("on: driver_took_over", "holds: driver_took_over"),
+    )
+    .unwrap();
+    let launch = dir.join("bringup.launch.xml");
+    let (_, half) = check_launch_takeover(&launch, &[]);
+    assert_eq!(
+        half.matches("error[reaction-names-mode]").count(),
+        2,
+        "{half}"
+    );
+    assert!(
+        half.contains(
+            "hazard 'hpc_loss': `reaction: engaged` names a mode, the spelling rlm \
+             v0.3.15 removed"
+        ),
+        "{half}"
+    );
+
+    std::fs::write(&contract, &text).unwrap();
+    let (code, out) = migrate(&contract, &["--write"]);
+    assert_eq!(code, 0, "{out}");
+    let (code_old, old) = check_launch_takeover(&launch, &["--explain"]);
     let (code_new, new) = check_takeover("contract_takeover_jitter", &["--explain"]);
-    assert_eq!((code, code_new), (0, 0), "{old}");
-    let deprecated: Vec<&str> = old
-        .lines()
-        .filter(|l| l.contains("warning[deprecated-spelling]"))
-        .collect();
-    assert_eq!(deprecated.len(), 3, "{old}");
-    for needle in [
-        "hazard 'hpc_loss': `reaction: engaged` names a mode. A hazard enters a mode with `enters: engaged`",
-        "hazard 'odd_exit': `reaction: engaged` names a mode",
-        "mode 'takeover': `exit: { on: driver_took_over }` is the old spelling",
-        "`exit: { holds: driver_took_over, to: manual }`",
-        "`play_launch migrate <contract> --write` rewrites it",
-    ] {
-        assert!(old.contains(needle), "expected `{needle}`:\n{old}");
-    }
-    assert!(!new.contains("deprecated-spelling"), "{new}");
-    // Everything else is the migrated twin's: the same findings and sums.
+    assert_eq!((code_old, code_new), (0, 0), "{old}");
     let findings = |out: &str| {
         let mut v: Vec<String> = out
             .lines()
             .filter(|l| l.contains("info[") || l.contains("error[") || l.contains("warning["))
-            .filter(|l| !l.contains("deprecated-spelling"))
+            .filter(|l| !l.contains("deprecated-implicit-extension"))
             .map(without_lines)
             .collect();
         v.sort();
@@ -2797,6 +2817,27 @@ fn check_launch(launch: &std::path::Path, extra: &[&str]) -> (i32, String) {
     )
 }
 
+/// `check_launch` with the takeover fixtures' message definitions on the
+/// ament index, as `check_takeover` runs them.
+fn check_launch_takeover(launch: &std::path::Path, extra: &[&str]) -> (i32, String) {
+    let ament = fixtures::repo_root().join("tests/fixtures/contract_takeover/ament");
+    let prefix = match std::env::var("AMENT_PREFIX_PATH") {
+        Ok(p) if !p.is_empty() => format!("{}:{p}", ament.display()),
+        _ => ament.display().to_string(),
+    };
+    let out = play_launch_cmd()
+        .arg("check")
+        .args(extra)
+        .arg(launch)
+        .env("AMENT_PREFIX_PATH", prefix)
+        .output()
+        .expect("play_launch check runs");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr),
+    )
+}
+
 /// A fixture's `launch/` directory copied into a temporary directory, so a
 /// test can migrate it in place.
 fn fixture_copy(dir: &str) -> (tempfile::TempDir, std::path::PathBuf) {
@@ -2828,36 +2869,20 @@ fn migrate(file: &std::path::Path, args: &[&str]) -> (i32, String) {
     )
 }
 
-/// Phase 90 G3: an `external_topics:` entry and a path's legacy `input:`
-/// still check as before, with one `deprecated-spelling` warning each naming
-/// the kept spelling and `migrate`; after `migrate --write` the contract
-/// checks to the same findings and `--explain` sums, without them.
+/// Phase 90 G3, refused since rlm v0.3.15: an `external_topics:` entry
+/// and a path's legacy `input:` are parse errors naming the kept spelling;
+/// `migrate --write` rewrites both and the contract checks.
 #[test]
-fn g3_deprecated_spellings_warn_and_migrate_to_the_same_verdict() {
+fn g3_removed_spellings_are_refused_and_migrate_to_a_contract_that_checks() {
     let (_tmp, dir) = fixture_copy("contract_spelling_deprecated_g3");
     let launch = dir.join("bringup.launch.xml");
     let contract = dir.join("bringup.contract.yaml");
-    let (code, old) = check_launch(&launch, &["--explain"]);
-    assert_eq!(code, 0, "{old}");
-    let deprecated: Vec<&str> = old
-        .lines()
-        .filter(|l| l.contains("warning[deprecated-spelling]"))
-        .collect();
-    assert_eq!(deprecated.len(), 5, "{old}");
-    for needle in [
-        "topic '/image': the `external_topics:` section is deprecated; a topic's external side \
-         is stated on the topic, `topics: { /image: { external: pub, type: \
-         sensor_msgs/msg/Image } }`",
-        "topic '/diagnostics': the `external_topics:` section is deprecated",
-        "path 'detector/main': `input: [image]` is the legacy spelling of `trigger: { input: \
-         [...] }`. Fix: write `trigger: { input: [image] }`",
-        "path 'tracker/main': `input: [boxes]` is the legacy spelling of `trigger: { input: \
-         [...] }`. Fix: delete it (the `trigger:` beside it is what is read)",
-        "path 'image_to_tracks': `input: [/image]` is the legacy spelling",
-        "`play_launch migrate <contract> --write` rewrites it",
-    ] {
-        assert!(old.contains(needle), "expected `{needle}`:\n{old}");
-    }
+    let (code, old) = check_launch(&launch, &[]);
+    assert_eq!(code, 3, "{old}");
+    assert!(
+        old.contains("Removed in v0.3.15") && old.contains("topics.<name>.external"),
+        "{old}"
+    );
 
     let (code, out) = migrate(&contract, &["--write"]);
     assert_eq!(code, 0, "{out}");
@@ -2871,59 +2896,26 @@ fn g3_deprecated_spellings_warn_and_migrate_to_the_same_verdict() {
         "{migrated}"
     );
     assert_eq!(migrate(&contract, &["--check"]).0, 0);
-
     let (code_new, new) = check_launch(&launch, &["--explain"]);
     assert_eq!(code_new, 0, "{new}");
-    assert!(!new.contains("deprecated-spelling"), "{new}");
-    let findings = |out: &str| {
-        let mut v: Vec<String> = out
-            .lines()
-            .filter(|l| {
-                l.contains("info[")
-                    || l.contains("error[")
-                    || l.contains("warning[")
-                    || l.contains("note[")
-            })
-            .filter(|l| !l.contains("deprecated-spelling") && !l.contains("explicit-trigger"))
-            .map(without_lines)
-            .collect();
-        v.sort();
-        v
-    };
-    assert_eq!(findings(&old), findings(&new));
+    assert!(!new.contains("Removed in"), "{new}");
 }
 
-/// Phase 90 G3 (the bound part): a topic-level `max_transport` warns once
-/// per topic, naming the subscribers that read it (or that none does), and
-/// `migrate` moves it onto the one subscriber of the same file; the topic
-/// with no subscriber is left for a hand edit. The migrated contract checks
-/// to the same findings and `--explain` sums.
+/// Phase 90 G3 (the bound part), refused since rlm v0.3.15: a topic-level
+/// `max_transport` is a parse error naming the subscriber. `migrate` moves
+/// it onto the one subscriber of the same file and leaves the topic with no
+/// subscriber for a hand edit, which the next check names.
 #[test]
-fn g3b_a_topic_transport_warns_and_migrates_to_the_same_verdict() {
+fn g3b_a_topic_transport_is_refused_and_migrates_onto_its_subscriber() {
     let (_tmp, dir) = fixture_copy("contract_spelling_deprecated_g3b");
     let launch = dir.join("bringup.launch.xml");
     let contract = dir.join("bringup.contract.yaml");
-    let (code, old) = check_launch(&launch, &["--explain"]);
-    assert_eq!(code, 0, "{old}");
-    let deprecated = |out: &str| {
-        out.lines()
-            .filter(|l| l.contains("warning[deprecated-spelling]"))
-            .map(str::to_string)
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(deprecated(&old).len(), 2, "{old}");
-    for needle in [
-        "topic '/safety/obstacles': `max_transport: 3ms` on a topic is deprecated; a transport \
-         is the hop into one subscriber and is stated on it, `nodes.<n>.sub.<ep>.max_transport`. \
-         It is read as the transport of 1 subscriber(s) that state none: \
-         '/safety/brake_controller/obstacles'. Fix: write `max_transport: 3ms` on each of them \
-         and delete this key",
-        "topic '/safety/brake_cmd': `max_transport: 1ms` on a topic is deprecated",
-        "No subscriber reads it (each states its own, or the topic has none), so it charges \
-         nothing. Fix: delete it",
-    ] {
-        assert!(old.contains(needle), "expected `{needle}`:\n{old}");
-    }
+    let (code, old) = check_launch(&launch, &[]);
+    assert_eq!(code, 3, "{old}");
+    assert!(
+        old.contains("Removed in v0.3.15") && old.contains("subscriber"),
+        "{old}"
+    );
 
     let (code, out) = migrate(&contract, &["--write"]);
     assert_eq!(code, 0, "{out}");
@@ -2936,57 +2928,16 @@ fn g3b_a_topic_transport_warns_and_migrates_to_the_same_verdict() {
     );
     let migrated = std::fs::read_to_string(&contract).unwrap();
     assert!(
-        migrated.contains("        max_age: 60ms\n")
-            && migrated.contains("        max_transport: 3ms\n")
+        migrated.contains("        max_transport: 3ms\n")
             && migrated.contains("    max_transport: 1ms\n"),
         "the subscriber states 3ms; /safety/brake_cmd is left:\n{migrated}"
     );
-
-    let (code_new, new) = check_launch(&launch, &["--explain"]);
-    assert_eq!(code_new, 0, "{new}");
-    assert_eq!(
-        deprecated(&new).len(),
-        1,
-        "only the hand edit is left:\n{new}"
-    );
-    let findings = |out: &str| {
-        let mut v: Vec<String> = out
-            .lines()
-            .filter(|l| {
-                l.contains("info[")
-                    || l.contains("error[")
-                    || l.contains("warning[")
-                    || l.contains("note[")
-            })
-            .filter(|l| {
-                !l.contains("deprecated-spelling")
-                    && !l.contains("declared-not-charged")
-                    // Phase 97: the migrated subscriber value is written
-                    // inline, which `transport-inline` notes (a link
-                    // would state it once); the topic value was not.
-                    && !l.contains("transport-inline")
-                    // Phase 91 E8: `migrate` also names the ASIL scale.
-                    && !l.contains("deprecated-implicit-extension")
-            })
-            .map(without_lines)
-            .collect();
-        v.sort();
-        v
-    };
-    assert_eq!(findings(&old), findings(&new));
-    // `declared-not-charged` names the key, which moved from the topic to
-    // the subscriber: one each, before and after.
-    let ndc = |out: &str| out.matches("info[declared-not-charged]").count();
-    assert_eq!(ndc(&old), ndc(&new), "{old}\n---\n{new}");
-    let table = |out: &str| {
-        out.lines()
-            .skip_while(|l| !l.starts_with("HAZARD"))
-            .take_while(|l| !l.is_empty())
-            .map(str::to_string)
-            .collect::<Vec<_>>()
-    };
-    assert!(!table(&old).is_empty(), "{old}");
-    assert_eq!(table(&old), table(&new));
+    let (code, left) = check_launch(&launch, &[]);
+    assert_eq!(code, 3, "the hand edit is left:\n{left}");
+    std::fs::write(&contract, migrated.replace("    max_transport: 1ms\n", "")).unwrap();
+    let (code, new) = check_launch(&launch, &["--explain"]);
+    assert_eq!(code, 0, "{new}");
+    assert!(new.contains("HAZARD"), "{new}");
 }
 
 /// Phase 98 N4: the keys renamed in rlm v0.3.3 (`window:`, `severity:`,
@@ -4697,7 +4648,7 @@ fn each_unreadable_contract_value_names_its_rule() {
             "contract_values_node_missing",
             "param-node-missing",
             vec![
-                "error[param-node-missing]: bringup.contract.yaml:17: `topics./in.max_transport` \
+                "error[param-node-missing]: bringup.contract.yaml:17: `topics./in.rate_hz` \
                  is under no node, so `$(param timeout)` must name one: `$(param <node> \
                  timeout)`. Nodes of this contract with a `timeout` parameter: handler.",
             ],
@@ -5000,4 +4951,159 @@ fn a_call_on_a_reaction_route_is_bounded_or_reported() {
     assert!(s5.contains("error[degradation-level-time]"), "{s5}");
     assert!(!s5.contains("[call-"), "{s5}");
     assert!(check_fixture("contract_call_late_effect").contains("warning[call-late-effect]"));
+}
+
+// ── Phase 103: defects the contract grammar review found ──
+
+/// A fixture copied with one text edit (`from` must occur), for the
+/// negative and positive variants below.
+fn edited_copy(dir: &str, from: &str, to: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let (tmp, dst) = fixture_copy(dir);
+    let c = dst.join("bringup.contract.yaml");
+    let text = std::fs::read_to_string(&c).unwrap();
+    assert!(text.contains(from), "{dir}: `{from}` not in the contract");
+    std::fs::write(&c, text.replacen(from, to, 1)).unwrap();
+    (tmp, dst)
+}
+
+/// D1: a predicate naming a message constant carries the constant's value
+/// in the model (rlm v0.3.15), read from the `.msg`, so the run time can
+/// compare the field with it. Before, the model carried `constant: MANUAL`
+/// alone and the observer read the predicate as held, silently.
+#[test]
+fn a_constant_predicate_carries_its_value_in_the_model() {
+    let root = fixtures::repo_root().join("tests/fixtures");
+    let ament = root.join("contract_takeover/ament");
+    let prefix = match std::env::var("AMENT_PREFIX_PATH") {
+        Ok(p) if !p.is_empty() => format!("{}:{p}", ament.display()),
+        _ => ament.display().to_string(),
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let model = tmp.path().join("m.yaml");
+    let out = play_launch_cmd()
+        .arg("resolve")
+        .arg(root.join("contract_takeover/launch/bringup.launch.xml"))
+        .arg("-o")
+        .arg(&model)
+        .env("AMENT_PREFIX_PATH", prefix)
+        .output()
+        .expect("play_launch resolve runs");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = std::fs::read_to_string(&model).unwrap();
+    assert!(
+        text.contains("constant: MANUAL\n          value: 4\n"),
+        "`uint8 MANUAL = 4` reaches the model:\n{text}"
+    );
+}
+
+/// D2: a predicate value of the wrong kind for its field is an error; it
+/// could never be true at run time, so it was a predicate nothing judged.
+#[test]
+fn a_predicate_value_must_fit_its_field() {
+    let (_tmp, dir) = edited_copy(
+        "contract_takeover",
+        "when: { field: mode, not_equals: MANUAL }",
+        "when: { field: mode, not_equals: true }",
+    );
+    let (_, out) = check_launch_takeover(&dir.join("bringup.launch.xml"), &[]);
+    assert!(
+        out.contains(
+            "function 'driver_took_over' compares 'mode' (uint8) with `true`: a number field \
+             compared with a bool"
+        ),
+        "{out}"
+    );
+    // The fixture as committed (a constant on a uint8) is not reported.
+    let (_, ok) = check_takeover("contract_takeover", &[]);
+    assert!(!ok.contains("a number field compared with"), "{ok}");
+}
+
+/// D6: an `independence` entry naming a node this model does not have (a
+/// node on another host) shares nothing, so its pairs passed clean. It is
+/// unchecked, and said.
+#[test]
+fn independence_naming_an_absent_node_is_unchecked() {
+    let (_tmp, dir) = edited_copy(
+        "contract_independence_ok",
+        "  - of: [lidar_a, lidar_b]",
+        "  - of: [lidar_a, /robot2/lidar_c]",
+    );
+    let (_, out) = check_launch(&dir.join("bringup.launch.xml"), &[]);
+    assert!(
+        out.contains(
+            "warning[independence-unchecked]: bringup.contract.yaml:21: '/robot2/lidar_c' is \
+             absent from this model"
+        ),
+        "{out}"
+    );
+    let (_, ok) = check_fixture_out("contract_independence_ok");
+    assert!(!ok.contains("absent from this model"), "{ok}");
+}
+
+/// D7: a reaction route through an action is refused (the walk follows
+/// topics and services), and the fallback names the action and keeps the
+/// settle: 100 detection + 100 declared + 200 settle = 400ms, where it
+/// printed 200ms. An action endpoint declared under `srv:`/`cli:` is
+/// refused.
+#[test]
+fn a_route_through_an_action_keeps_its_settle_and_names_the_action() {
+    let (_tmp, dir) = edited_copy(
+        "contract_fault_service",
+        "services:\n  /safety/stop:\n    type: std_srvs/srv/Trigger",
+        "actions:\n  /safety/stop:\n    type: demo/action/Stop",
+    );
+    let (_, out) = check_launch(&dir.join("bringup.launch.xml"), &[]);
+    assert!(
+        out.contains("The route may cross action '/safety/stop'"),
+        "{out}"
+    );
+    assert!(
+        out.contains(
+            "reaction 300.00ms (declared max_latency 100.00ms (no reaction route) + settle \
+             200.00ms) = 400.00ms"
+        ),
+        "{out}"
+    );
+    assert_eq!(out.matches("error[action-as-service]").count(), 2, "{out}");
+    assert!(
+        out.contains("node 'brake_controller' declares under `srv:` -- a service endpoint"),
+        "{out}"
+    );
+}
+
+/// D8: `repetition`/`resequencing` on a topic whose type carries no stamp is
+/// a warning: nothing judges them there.
+#[test]
+fn a_stamp_class_on_an_unstamped_topic_is_unobservable() {
+    let (_tmp, dir) = edited_copy(
+        "contract_fault",
+        "    on: omission\n",
+        "    on: [omission, repetition]\n",
+    );
+    let (_, out) = check_launch(&dir.join("bringup.launch.xml"), &[]);
+    assert!(
+        out.contains(
+            "warning[fault-class-unobservable]: bringup.contract.yaml:21: hazard 'drive_blind' \
+             asks for repetition on '/safety/scan', whose type std_msgs/msg/String carries no \
+             stamp"
+        ),
+        "{out}"
+    );
+    let (_, ok) = check_fixture_out("contract_fault");
+    assert!(!ok.contains("fault-class-unobservable"), "{ok}");
+}
+
+/// `play_launch check` on a fixture's launch file: (exit code, output).
+fn check_fixture_out(dir: &str) -> (i32, String) {
+    check_launch(
+        &fixtures::repo_root()
+            .join("tests/fixtures")
+            .join(dir)
+            .join("launch/bringup.launch.xml"),
+        &[],
+    )
 }

@@ -1,10 +1,9 @@
-# Phase 85 T7 (I7) -- clean, with two transport bounds the fault-reaction
+# Phase 85 T7 (I7) -- clean, with a transport bound the fault-reaction
 # arithmetic does not read: the subscriber-level one on control_node/scan
-# (the island's shape, `max_transport: 57ms` on the handler's input) and a
-# topic-level default on /dx/cmd (absolute: the nodes sit in /dx, the
-# launch scope at /). Each must produce one
-# info[declared-not-charged] until phase 85 I1 charges the key; then T1
-# takes over.
+# (the island's shape, `max_transport: 57ms` on the handler's input). It
+# must produce one info[declared-not-charged] until phase 85 I1 charges the
+# key; then T1 takes over. (The topic-level default this fixture also
+# carried was removed in rlm v0.3.15.)
 version: 1
 
 nodes:
@@ -37,4 +36,3 @@ topics:
   /dx/cmd:
     type: std_msgs/msg/String
     pub: [control_node/cmd]
-    max_transport: 3ms

@@ -1,8 +1,9 @@
 //! Issue #0042 — one derivation, one answer, where a contract overrides
 //! transport per subscriber.
 //!
-//! `max_transport` is declarable on a topic AND on a subscriber endpoint, and
-//! the endpoint wins where it is declared. Two things computed that
+//! `max_transport` was declarable on a topic AND on a subscriber endpoint,
+//! the endpoint winning where declared; since rlm v0.3.15 only the
+//! subscriber states it. Two things computed that
 //! precedence: the resolver's `manifest_graph::build_global_graph`, from the
 //! `ManifestIndex`, and the manifest crate's `derive`, from the
 //! `SystemModel`. Only the first could see the endpoint value, because
@@ -90,7 +91,7 @@ fn a_subscribers_max_transport_reaches_the_model() {
     );
 
     // Phase 90 G3: the other subscriber states the 10ms it used to inherit
-    // from the topic, and the topic states none.
+    // from the topic (a topic-level value is refused since rlm v0.3.15).
     assert_eq!(
         model
             .contracts
@@ -99,15 +100,6 @@ fn a_subscribers_max_transport_reaches_the_model() {
             .and_then(|s| s.max_transport_ms),
         Some(10.0),
         "{INHERITING_SUB} states its own 10ms"
-    );
-    assert_eq!(
-        model
-            .contracts
-            .topics
-            .get("/et/objects")
-            .and_then(|t| t.max_transport_ms),
-        None,
-        "no topic-level default"
     );
 }
 

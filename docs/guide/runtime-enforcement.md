@@ -233,7 +233,7 @@ creates `/rosout` and `/parameter_events` publishers before a line of user
 code runs, and no author writes a requirement about them, so the runtime view
 seeds `/rosout`, `/rosout_agg` and `/parameter_events` as known topics and
 `graph-deviation-runtime` never fires on them. This is a seeding of the
-*runtime* view only — the contracts' own `external_topics:` set is untouched,
+*runtime* view only — the contracts' own `external:` marks are untouched,
 and the static checker does not know about it.
 
 **The teardown is a real teardown.** On the first violation at or above the

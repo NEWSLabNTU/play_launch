@@ -600,11 +600,9 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
            max_latency: 10ms
    ```
 
-   A path written with only the legacy `input:` list still parses (it
-   derives an input trigger), but the `explicit-trigger` lint asks you to
-   spell it `trigger: { input: [...] }` — and following that advice is
-   safe: the route derivation reads the effective trigger, whichever
-   spelling you used.
+   The legacy `input:` list is refused (since rlm v0.3.15); write
+   `trigger: { input: [...] }`, which `play_launch migrate <contract>
+   --write` does for you.
 
 2. **State the requirement — the two ends and the budget.** A top-level
    `paths:` entry in the root contract (or your overlay) names the topic
