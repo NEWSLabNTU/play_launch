@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.34.0 - 2026-11-14
 
 - **Added (contracts; rlm v0.3.18, milestone M1g, #24):** the
   fallback-sequence keys, in `check`, the run-time observer and `measure`.
