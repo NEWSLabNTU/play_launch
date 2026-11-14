@@ -6,6 +6,14 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Fixed (contracts):** `independence`'s CPU half is judged only on a
+  POSIX (or native) plan. A platform file for another target, such as a
+  Zephyr image's, carries no Linux placement, and its realizer places the
+  threads, so `check --target zephyr` reported every pair as sharing every
+  CPU. Those pairs now stay unchecked there.
+
 ## 0.35.0 - 2026-11-15
 
 - **Changed (contracts; rlm v0.3.22, phase 104 S3):** a supervised

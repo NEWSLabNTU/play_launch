@@ -1621,6 +1621,28 @@ fn independence_is_checked_against_the_deployment() {
     assert!(!iso.contains("interference-shared-process"), "{iso}");
 }
 
+/// The CPU half of `independence` reads a Linux placement. A platform file
+/// for another target (a Zephyr image's, which nano-ros places) carries
+/// none, so the pairs stay unchecked there; a POSIX plan that pins nothing
+/// puts every node on every CPU, which is sharing.
+#[test]
+fn cpu_independence_is_judged_on_a_posix_plan_only() {
+    let (_tmp, dir) = fixture_copy("contract_independence_ok");
+    for target in ["posix", "zephyr"] {
+        std::fs::write(
+            dir.join(format!("bringup.system.{target}.yaml")),
+            format!("target: {target}\npriority_assignment: manual\n"),
+        )
+        .unwrap();
+    }
+    let launch = dir.join("bringup.launch.xml");
+    let (_, zephyr) = check_launch(&launch, &["--target", "zephyr"]);
+    assert!(zephyr.contains("bringup.system.zephyr.yaml"), "{zephyr}");
+    assert!(!zephyr.contains("must not share a CPU"), "{zephyr}");
+    let (_, posix) = check_launch(&launch, &[]);
+    assert!(posix.contains("must not share a CPU"), "{posix}");
+}
+
 /// rlm v0.3.13 (phase 101 T2): a respawning LiDAR's restart is credited only
 /// from a run, and only when detection + `respawn_delay` + its startup fits
 /// the FTTI. The two runs are hand-written, startup 150 ms and 400 ms.

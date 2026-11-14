@@ -274,7 +274,13 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
             &resolved.path,
             &inputs.target,
         )?;
-        independence_cpus = Some(crate::ros::independence::node_cpus(&derived.plan));
+        // The CPU half of `independence` reads a Linux placement. For another
+        // target the plan carries none: its realizer (nano-ros) places the
+        // threads, so the pairs stay unchecked rather than read as sharing
+        // every CPU.
+        if matches!(derived.target.as_str(), "posix" | "native") {
+            independence_cpus = Some(crate::ros::independence::node_cpus(&derived.plan));
+        }
         if inputs.explain {
             crate::ros::sched_loader::print_explain(&derived, resolved, Some(&index));
             let note = crate::ros::sched_loader::render_composable_task_note(
