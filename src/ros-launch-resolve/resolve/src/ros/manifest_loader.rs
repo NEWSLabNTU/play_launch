@@ -2112,6 +2112,9 @@ pub(crate) struct ReactionWalk {
     /// sink (phase 95). The success branch is already in `route_ms`; the
     /// failure branch and the rules are the rung's (`judge_calls`).
     pub(crate) calls: Vec<CallCross>,
+    /// The cycles the walk met and did not follow round (#23), each as the
+    /// paths of one lap, `node/path -> ... -> node/path`, smallest first.
+    pub(crate) cycles: BTreeSet<String>,
 }
 
 /// A service call a reaction route crosses (phase 95): the client path whose
@@ -2155,6 +2158,10 @@ fn keep_longest(best: &mut Option<ReactionWalk>, mut cand: ReactionWalk) {
     match best {
         None => *best = Some(cand),
         Some(b) => {
+            // A cycle met on either branch was met (#23).
+            let cycles: BTreeSet<String> = b.cycles.union(&cand.cycles).cloned().collect();
+            b.cycles = cycles.clone();
+            cand.cycles = cycles;
             let (mut winner, loser) = if cand.route_ms > b.route_ms {
                 (
                     std::mem::take(&mut cand.calls),
@@ -2412,9 +2419,18 @@ pub(crate) fn walk_reaction_at(
         services: &BTreeMap<String, ResolvedService>,
         node_paths: &[ResolvedNodePath],
         graph: &super::manifest_graph::GlobalDataflowGraph,
+        lap: &mut Lap,
     ) -> Option<ReactionWalk> {
         let mut best: Option<ReactionWalk> = None;
         for path in hop_paths {
+            // #23: a path already on this branch closes a cycle (a state
+            // edge or a latched request lets one through `causal-dag`).
+            // Going round again only adds the same hops, and the walk used
+            // to do so until its depth limit, charging each lap. Record the
+            // cycle and leave this branch here.
+            if lap.meets(node_fqn, &path.path_name) {
+                continue;
+            }
             // Phase 85 D1: a sampling hop waits one period plus the timer's
             // release jitter, when the timer states one.
             let (sampling_ms, jitter_ms) = match path.path.effective_trigger() {
@@ -2489,6 +2505,7 @@ pub(crate) fn walk_reaction_at(
                     hops: vec![hop],
                     link: None,
                     calls: Vec::new(),
+                    cycles: BTreeSet::new(),
                 };
                 continuing(&mut w);
                 w
@@ -2496,15 +2513,24 @@ pub(crate) fn walk_reaction_at(
                 // Continue from every topic this reaction publishes onto and
                 // every service it calls.
                 let mut longest: Option<ReactionWalk> = None;
+                lap.branch
+                    .push((node_fqn.to_string(), path.path_name.clone()));
                 for out_ep in &path.path.output {
                     let out_ref = format!("{node_fqn}/{out_ep}");
                     for (t_fqn, t) in topics {
                         if !t.publishers.contains(&out_ref) {
                             continue;
                         }
-                        if let Some(mut w) =
-                            from_topic(t_fqn, depth + 1, sinks, topics, services, node_paths, graph)
-                        {
+                        if let Some(mut w) = from_topic(
+                            t_fqn,
+                            depth + 1,
+                            sinks,
+                            topics,
+                            services,
+                            node_paths,
+                            graph,
+                            lap,
+                        ) {
                             continuing(&mut w);
                             w.route_ms += hop_ms;
                             w.hops.insert(0, hop.clone());
@@ -2526,6 +2552,7 @@ pub(crate) fn walk_reaction_at(
                             services,
                             node_paths,
                             graph,
+                            lap,
                         ) {
                             let c = call_cross(node_fqn, &path.path_name, out_ep, s_fqn, s, graph);
                             w.route_ms += hop_ms + c.transport_ms;
@@ -2535,6 +2562,7 @@ pub(crate) fn walk_reaction_at(
                         }
                     }
                 }
+                lap.branch.pop();
                 // A safe state commanded HERE and carried to the sink by the
                 // hops below: the settle is this path's unless a hop nearer
                 // the sink declares its own.
@@ -2639,6 +2667,7 @@ pub(crate) fn walk_reaction_at(
             .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn from_topic(
         topic_fqn: &str,
         depth: usize,
@@ -2647,6 +2676,7 @@ pub(crate) fn walk_reaction_at(
         services: &BTreeMap<String, ResolvedService>,
         node_paths: &[ResolvedNodePath],
         graph: &super::manifest_graph::GlobalDataflowGraph,
+        lap: &mut Lap,
     ) -> Option<ReactionWalk> {
         if depth > 16 {
             return None;
@@ -2694,6 +2724,7 @@ pub(crate) fn walk_reaction_at(
             };
             let Some(mut candidate) = advance(
                 &node_fqn, hop_paths, sampled, depth, sinks, topics, services, node_paths, graph,
+                lap,
             ) else {
                 continue;
             };
@@ -2735,6 +2766,7 @@ pub(crate) fn walk_reaction_at(
     /// on through that timer as a sampling hop, exactly as it does past a
     /// `state: true` subscriber: in both cases the reaction stops being a
     /// message and starts waiting for a clock, and the wait is one period.
+    #[allow(clippy::too_many_arguments)]
     fn from_service(
         service_fqn: &str,
         depth: usize,
@@ -2743,6 +2775,7 @@ pub(crate) fn walk_reaction_at(
         services: &BTreeMap<String, ResolvedService>,
         node_paths: &[ResolvedNodePath],
         graph: &super::manifest_graph::GlobalDataflowGraph,
+        lap: &mut Lap,
     ) -> Option<ReactionWalk> {
         if depth > 16 {
             return None;
@@ -2771,6 +2804,7 @@ pub(crate) fn walk_reaction_at(
             };
             if let Some(candidate) = advance(
                 &node_fqn, hop_paths, sampled, depth, sinks, topics, services, node_paths, graph,
+                lap,
             ) {
                 keep_longest(&mut best, candidate);
             }
@@ -2778,6 +2812,7 @@ pub(crate) fn walk_reaction_at(
         best
     }
 
+    let mut lap = Lap::default();
     let (starts, depth) = match start {
         WalkStart::Guards(g) => (g, 0),
         WalkStart::Topics(t) => (t, 1),
@@ -2786,18 +2821,91 @@ pub(crate) fn walk_reaction_at(
                 .iter()
                 .filter(|p| p.node_fqn == node && p.path_name == path)
                 .collect();
-            return advance(
-                node, hop_paths, false, 1, sinks, topics, services, node_paths, graph,
+            let best = advance(
+                node, hop_paths, false, 1, sinks, topics, services, node_paths, graph, &mut lap,
             );
+            return best.map(|w| lap.onto(w));
         }
     };
     let mut best: Option<ReactionWalk> = None;
     for g in starts {
-        if let Some(w) = from_topic(g, depth, sinks, topics, services, node_paths, graph) {
+        if let Some(w) = from_topic(
+            g, depth, sinks, topics, services, node_paths, graph, &mut lap,
+        ) {
             keep_longest(&mut best, w);
         }
     }
-    best
+    best.map(|w| lap.onto(w))
+}
+
+/// `reaction-cycle` (info, #23): a reaction route the checker charged met a
+/// cycle, which the walk followed once and did not go round again. Info, not
+/// a warning: a loop closed by a state edge or a latched request is legal
+/// (`causal-dag` accepts it), and with the walk cut the route charged is a
+/// route some fault can take, so nothing is wrong with the number. It is
+/// said because the loop lengthens the route by up to one lap, and the
+/// author may not mean the reaction to depend on its own output. Reported
+/// once per cycle, at its first path: the message names no hazard, so the
+/// diagnostics' de-duplication folds every walk that meets it.
+fn note_reaction_cycles(walk: Option<&ReactionWalk>, diags: &mut Vec<Diagnostic>) {
+    for c in walk.into_iter().flat_map(|w| w.cycles.iter()) {
+        let first = c.split(" -> ").next().unwrap_or_default();
+        let path = match first.rsplit_once('/') {
+            Some((node, p)) => format!("nodes.{node}.paths.{p}"),
+            None => String::new(),
+        };
+        diags.push(Diagnostic {
+            rule_id: "reaction-cycle".to_string(),
+            severity: Severity::Info,
+            message: format!(
+                "a reaction route meets a cycle, {c}: a state edge or a latched request lets \
+                 the reaction reach a path already on its way. The walk takes each path once \
+                 on a branch, so the route holds at most one lap of it; if no reaction should \
+                 run round this loop, break it (the path that closes it need not read the \
+                 output it leads back to)"
+            ),
+            path,
+            span: None,
+        });
+    }
+}
+
+/// The paths on the reaction walk's current branch, and the cycles it met
+/// (#23).
+#[derive(Default)]
+struct Lap {
+    branch: Vec<(String, String)>,
+    cycles: BTreeSet<String>,
+}
+
+impl Lap {
+    /// Is `node/path` already on this branch? If so, record the lap from
+    /// its first visit, rotated to start at its smallest path so the same
+    /// cycle entered elsewhere reads the same.
+    fn meets(&mut self, node: &str, path: &str) -> bool {
+        let Some(i) = self.branch.iter().position(|(n, p)| n == node && p == path) else {
+            return false;
+        };
+        let mut ring: Vec<String> = self.branch[i..]
+            .iter()
+            .map(|(n, p)| format!("{n}/{p}"))
+            .collect();
+        let start = ring
+            .iter()
+            .enumerate()
+            .min_by(|a, b| a.1.cmp(b.1))
+            .map_or(0, |(j, _)| j);
+        ring.rotate_left(start);
+        ring.push(ring[0].clone());
+        self.cycles.insert(ring.join(" -> "));
+        true
+    }
+
+    /// The walk, carrying every cycle met on any branch.
+    fn onto(self, mut w: ReactionWalk) -> ReactionWalk {
+        w.cycles.extend(self.cycles);
+        w
+    }
 }
 
 /// What the calls a rung's route crosses make of its route (phase 95).
@@ -4178,6 +4286,7 @@ fn check_fault_reaction(
                 &node_paths,
                 graph,
             );
+            note_reaction_cycles(walk.as_ref(), &mut diags);
             // Phase 85 I1: the guard edge's link is charged unless a window's
             // deadline is what starts this rung.
             let after_deadline = !windows.is_empty();
@@ -4451,6 +4560,7 @@ fn check_fault_reaction(
             &node_paths,
             graph,
         );
+        note_reaction_cycles(walk.as_ref(), &mut diags);
         let floor_name = rungs.last().map(|(n, _)| n.clone()).unwrap_or_default();
         check_window_expiry(
             &mut windows,
@@ -4815,6 +4925,7 @@ fn check_fault_reaction(
     super::value_rules::check_predicates(index, &mut diags);
     super::value_rules::check_stamp_classes(index, &mut diags);
     super::value_rules::check_spellings(index, &mut diags);
+    super::value_rules::check_enters_removed(index, &mut diags);
     super::value_rules::check_windows_and_exits(index, graph, &index.launch_params, &mut diags);
     super::value_rules::check_param_bindings(index, &index.launch_params, &mut diags);
     super::budget_book::check_budget_rule(index, &mut diags);

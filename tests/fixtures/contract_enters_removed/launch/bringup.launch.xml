@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<!-- play_launch#22: the 2-of-2 twin of contract_enters_not_removed. Losing
+     the radar removes the visibility group, so the hazard takes away the
+     mode it enters and `enters-not-removed` stays quiet. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="radar"   namespace="/s"/>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="camera"  namespace="/s"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="monitor" namespace="/s"/>
+</launch>

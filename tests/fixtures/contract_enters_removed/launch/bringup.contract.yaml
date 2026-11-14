@@ -1,0 +1,94 @@
+# play_launch#22 (rlm#10): `enters-not-removed`, the quiet case.
+#
+# `visibility` is a redundant group over radar and camera, held while 2 of
+# its 2 members hold (`m: 2`). `radar_loss` loses one member, so 2 - 1 < 2:
+# the group is removed, and with it `active`, the mode the hazard enters.
+# `contract_enters_not_removed` is the same contract with `m: 1`, where the
+# loss of the radar removes nothing `active` requires.
+version: 1
+use:
+  iso26262: "^1"
+
+functions:
+  visibility:
+    all_of: [/s/radar, /s/camera]
+    m: 2
+
+modes:
+  active:
+    requires: [visibility]
+    fallback: [stopped]
+  stopped:
+    requires: []
+    reaction: s.stop
+
+hazards:
+  radar_loss:
+    integrity: ASIL_B
+    description: the radar stops; visibility can no longer be estimated
+    monitors: [/s/radar]
+    on: omission
+    ftti: 1s
+    enters: active
+
+nodes:
+  radar:
+    pub:
+      radar: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [radar]
+        max_latency: 2ms
+
+  camera:
+    pub:
+      camera: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [camera]
+        max_latency: 2ms
+
+  monitor:
+    sub:
+      radar:
+        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
+        on_violation:
+          on: [omission]
+          reaction: stop
+          within: 10ms
+      camera:
+        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
+        on_violation:
+          on: [omission]
+          reaction: stop
+          within: 10ms
+    pub:
+      stop_cmd: {}
+    paths:
+      stop:
+        trigger: { input: [radar, camera] }
+        output: [stop_cmd]
+        max_latency: 5ms
+        safe_state: { emits: stop_cmd, settle: 200ms }
+
+paths:
+  s.stop:
+    trigger: { input: [/s/radar] }
+    output: [/s/stop_cmd]
+    max_latency: 100ms
+
+topics:
+  /s/radar:
+    type: std_msgs/msg/String
+    pub: [radar/radar]
+    sub: [monitor/radar]
+  /s/camera:
+    type: std_msgs/msg/String
+    pub: [camera/camera]
+    sub: [monitor/camera]
+  /s/stop_cmd:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [monitor/stop_cmd]

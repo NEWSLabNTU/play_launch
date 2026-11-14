@@ -1,0 +1,131 @@
+# play_launch#23: the reaction walk meets a cycle closed by a state edge.
+#
+#   /s/scan -> sm.on_fault -> /s/level -> operator.act -> /s/cmd (the floor)
+#                               |
+#                               +-> acceptor (state: true, 2 Hz tick)
+#                                     -> /s/accepted -> sm.on_exit -> /s/level
+#
+# `hold` dwells and exits back up when `accepted` holds; the state machine
+# takes /s/accepted on a path trigger (the exit) and publishes the level
+# again, which the acceptor samples on its next tick: a cycle, legal because
+# the acceptor's subscription is a state edge. The walk used to follow it
+# round until its depth limit, charging the acceptor's 500 ms period once
+# per lap on a route no fault takes. It now walks each path at most once on
+# a branch and reports the cycle once (`info[reaction-cycle]`).
+version: 1
+use:
+  iso26262: "^1"
+
+functions:
+  scan_alive: [/s/scan]
+  accepted: [/s/accepted]
+
+modes:
+  active:
+    requires: [scan_alive]
+    fallback: [hold, stop]
+  hold:
+    requires: []
+    reaction: s.hold
+    min_dwell: { duration: 2s, param: sm.hold_timeout }
+    exit: { holds: accepted, to: active }
+  stop:
+    requires: []
+    reaction: s.stop
+
+hazards:
+  scan_loss:
+    integrity: ASIL_B
+    description: the lidar stops
+    monitors: [/s/scan]
+    on: omission
+    ftti: 10s
+    enters: active
+
+nodes:
+  lidar:
+    pub:
+      scan: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 20 } }
+        output: [scan]
+        max_latency: 2ms
+
+  sm:
+    params:
+      hold_timeout: { type: double }
+    sub:
+      scan:
+        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
+        on_violation:
+          on: [omission]
+          reaction: on_fault
+          within: 10ms
+      accepted: {}
+    pub:
+      level: {}
+    paths:
+      on_fault:
+        trigger: { input: [scan] }
+        output: [level]
+        max_latency: 2ms
+      # The exit: the acceptance takes the system back up.
+      on_exit:
+        trigger: { input: [accepted] }
+        output: [level]
+        max_latency: 2ms
+      # The dwell's owner reads its deadline on this tick.
+      on_tick:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [level]
+        max_latency: 2ms
+
+  acceptor:
+    sub:
+      level: { state: true }
+    pub:
+      accepted: {}
+    paths:
+      on_tick:
+        trigger: { timer: { rate_hz: 2 } }
+        output: [accepted]
+        max_latency: 5ms
+
+  operator:
+    sub:
+      level: {}
+    pub:
+      cmd: {}
+    paths:
+      act:
+        trigger: { input: [level] }
+        output: [cmd]
+        max_latency: 5ms
+        safe_state: { emits: cmd, settle: 500ms }
+
+paths:
+  s.hold:
+    trigger: { input: [/s/scan] }
+    output: [/s/level]
+  s.stop:
+    trigger: { input: [/s/scan] }
+    output: [/s/cmd]
+
+topics:
+  /s/scan:
+    type: std_msgs/msg/String
+    pub: [lidar/scan]
+    sub: [sm/scan]
+  /s/level:
+    type: std_msgs/msg/String
+    pub: [sm/level]
+    sub: [acceptor/level, operator/level]
+  /s/accepted:
+    type: std_msgs/msg/String
+    pub: [acceptor/accepted]
+    sub: [sm/accepted]
+  /s/cmd:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [operator/cmd]

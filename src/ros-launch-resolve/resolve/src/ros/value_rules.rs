@@ -863,6 +863,149 @@ pub(crate) fn removed_by(h: &ResolvedHazard, index: &ManifestIndex) -> BTreeSet<
     out
 }
 
+/// [`removed_by`] with a redundant group's `m` counted (rlm#10,
+/// play_launch#22): an `all_of` group of n members, held while at least `m`
+/// of them hold (`m` omitted: 1), that the fault loses k members of is
+/// removed only when `n - k < m`. A group the hazard monitors by name is
+/// lost outright, whatever its `m`.
+///
+/// `removed_by` stays as it is for the ladder and the floor: there "can the
+/// fault take it away" errs toward yes, so a rung is never charged, nor a
+/// floor accepted, on a group the fault might have removed. This set is the
+/// other direction, what the fault is sure to remove, which is what
+/// `enters-not-removed` asks of the mode a hazard enters.
+pub(crate) fn removed_counting_m(h: &ResolvedHazard, index: &ManifestIndex) -> BTreeSet<String> {
+    let mut out = removed_by(h, index);
+    let guarded: BTreeSet<&str> = h
+        .guards
+        .iter()
+        .flat_map(|g| g.members.iter().map(String::as_str))
+        .collect();
+    let named: BTreeSet<&str> = h
+        .decl
+        .monitors
+        .iter()
+        .flat_map(|g| g.members.iter().map(String::as_str))
+        .collect();
+    for f in index
+        .functions
+        .iter()
+        .filter(|f| f.scope_id == h.scope_id && f.group.all_of)
+    {
+        if named.contains(f.name.as_str()) {
+            continue;
+        }
+        let (n, k, m) = group_count(f, &guarded);
+        if n - k >= m {
+            out.remove(&f.name);
+        }
+    }
+    out
+}
+
+/// `(n, k, m)` of a redundant group: its member count, how many of them the
+/// guard topics take, and how many must hold (`m`, default 1).
+fn group_count(
+    f: &super::manifest_loader::ResolvedFunction,
+    guarded: &BTreeSet<&str>,
+) -> (usize, usize, usize) {
+    let n = f.group.members.len();
+    let k = f
+        .group
+        .members
+        .iter()
+        .filter(|t| guarded.contains(t.as_str()))
+        .count();
+    (n, k, f.m.unwrap_or(1) as usize)
+}
+
+/// `enters-not-removed` (warning; rlm#10, play_launch#22): a hazard enters
+/// the mode it takes away. The functions its fault removes, a redundant
+/// group's `m` counted ([`removed_counting_m`]), must include at least one
+/// the entered mode `requires`. Otherwise the hazard names a fallback
+/// sequence its own fault never starts, and a wrong `m` (a 2-of-2 group
+/// written `m: 1`) changes no row. `enters:` naming no mode is
+/// `enters-unknown-mode`, reported by [`check_spellings`].
+pub(crate) fn check_enters_removed(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
+    for h in &index.hazards {
+        let Some(enters) = &h.decl.enters else {
+            continue;
+        };
+        let Some(mode) = index
+            .modes
+            .iter()
+            .find(|m| m.scope_id == h.scope_id && &m.name == enters)
+        else {
+            continue;
+        };
+        let ns = index
+            .manifests
+            .get(&h.scope_id)
+            .map(|r| r.ns.clone())
+            .unwrap_or_default();
+        let removed = removed_counting_m(h, index);
+        let is_function = |name: &str| {
+            index
+                .functions
+                .iter()
+                .any(|f| f.scope_id == h.scope_id && f.name == name)
+        };
+        let hit = mode.decl.requires.iter().any(|req| {
+            removed.contains(req)
+                || (!is_function(req)
+                    && removed.contains(&super::manifest_loader::qualify_name(&ns, req)))
+        });
+        if hit {
+            continue;
+        }
+        let guarded: BTreeSet<&str> = h
+            .guards
+            .iter()
+            .flat_map(|g| g.members.iter().map(String::as_str))
+            .collect();
+        // Say why each redundant group the fault touches still stands.
+        let standing: Vec<String> = mode
+            .decl
+            .requires
+            .iter()
+            .filter_map(|req| {
+                let f = index
+                    .functions
+                    .iter()
+                    .find(|f| f.scope_id == h.scope_id && &f.name == req && f.group.all_of)?;
+                let (n, k, m) = group_count(f, &guarded);
+                (k > 0).then(|| {
+                    format!(
+                        "'{req}' is held while {m} of its {n} members hold and the fault \
+                         loses {k}, leaving {}",
+                        n - k
+                    )
+                })
+            })
+            .collect();
+        let why = if standing.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", standing.join("; "))
+        };
+        let at = format!("hazards.{}.enters", h.name);
+        let where_ = site(index, h.scope_id, &at);
+        diags.push(diag(
+            "enters-not-removed",
+            Severity::Warning,
+            format!(
+                "{where_}: hazard '{}' enters mode '{enters}', but its fault removes none of \
+                 the functions '{enters}' requires [{}]{why}. A hazard enters the mode it \
+                 takes away; otherwise it names a fallback sequence its own fault never starts. \
+                 Check `enters:`, and a redundant group's `m`",
+                h.name,
+                mode.decl.requires.join(", ")
+            ),
+            at,
+        ));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Spellings (phase 90 G3, G4)
 // ---------------------------------------------------------------------------
