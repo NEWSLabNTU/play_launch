@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.33.1 - 2026-11-14
 
 - **Fixed (`check`, #20):** a degradation level below a dwell is charged
   from the dwell's deadline along a timer path of the dwell's owner when
