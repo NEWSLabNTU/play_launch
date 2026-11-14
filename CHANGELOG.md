@@ -14,6 +14,21 @@ allowance heavily.
   deprecated in 0.33.0. `play_launch migrate <contract> --write` writes the
   link. `info[declared-not-charged]` names the link a subscriber's
   transport comes from.
+- **Added (`check`, #22):** `warning[enters-not-removed]`, the rule text of
+  rlm#10. A hazard's `enters:` must name a mode its fault takes away: the
+  functions the fault removes, a redundant group's `m` counted (a group of
+  n members losing k is removed only when `n - k < m`), must include at
+  least one the mode `requires`. A 2-of-2 group written `m: 1` used to give
+  the same rows as `m: 2`; it is now this warning. The ladder and the
+  floor (`fallback-without-mrc`) still read the fault's removals without
+  `m`, erring toward "can be taken away".
+- **Fixed (`check`, #23):** the reaction walk no longer goes round a cycle
+  closed by a state edge or a latched request (a dwelling level's exit
+  back up, then the ladder down again). It used to follow the cycle until
+  its depth limit and charge every lap's sampling; it now takes each path
+  once on a branch and reports the cycle once, `info[reaction-cycle]` at
+  the cycle's first path. Routes through such a cycle shrink to at most
+  one lap.
 
 ## 0.33.1 - 2026-11-14
 

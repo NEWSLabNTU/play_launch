@@ -2026,6 +2026,64 @@ fn mode_rules_fire_on_a_broken_ladder() {
     );
 }
 
+/// #22 (rlm#10): a hazard must take away the mode it `enters:`, a redundant
+/// group's `m` counted. The two fixtures differ only in `m` on a 2-member
+/// group whose radar the hazard loses: with `m: 2` the group is removed (2 -
+/// 1 < 2) and the rule is quiet; with `m: 1` it stands (2 - 1 >= 1) and the
+/// rule warns. Before #22 the two gave identical rows.
+#[test]
+fn enters_not_removed_counts_the_groups_m() {
+    let quiet = check_fixture("contract_enters_removed");
+    assert!(quiet.contains("fault-reaction-time"), "{quiet}");
+    assert!(
+        !quiet.contains("enters-not-removed"),
+        "a 2-of-2 group loses its radar, so `active` is taken away:\n{quiet}"
+    );
+    let out = check_fixture("contract_enters_not_removed");
+    for needle in [
+        "warning[enters-not-removed]",
+        "hazard 'radar_loss' enters mode 'active'",
+        "requires [visibility]",
+        "'visibility' is held while 1 of its 2 members hold and the fault loses 1, leaving 1",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    // A warning, so the contract still passes.
+    assert!(out.contains("(0 errors, 2 warnings)"), "{out}");
+}
+
+/// #23: a cycle closed by a state edge (an acceptor samples the state
+/// machine's level on its 2 Hz tick, and its acceptance is the dwelling
+/// level's exit back up) is walked once on a branch and reported once. The
+/// walk used to go round it until its depth limit, charging the acceptor's
+/// 500 ms period on every lap: seven laps, 3656 ms of route instead of 614.
+#[test]
+fn the_reaction_walk_does_not_unroll_a_state_cycle() {
+    let out = check_fixture("contract_reaction_cycle");
+    assert_eq!(
+        out.matches("/s/acceptor/on_tick (+500.00ms sampling)")
+            .count(),
+        1,
+        "one lap at most:\n{out}"
+    );
+    assert!(
+        out.contains(
+            "reaction route /s/sm/on_tick (+100.00ms sampling) -> /s/acceptor/on_tick \
+             (+500.00ms sampling) -> /s/sm/on_exit -> /s/operator/act = 614.00ms"
+        ),
+        "{out}"
+    );
+    assert_eq!(out.matches("info[reaction-cycle]").count(), 1, "{out}");
+    assert!(
+        out.contains(
+            "a reaction route meets a cycle, /s/acceptor/on_tick -> /s/sm/on_exit -> \
+             /s/acceptor/on_tick"
+        ),
+        "{out}"
+    );
+    assert!(out.contains("(0 errors, 1 warnings)"), "{out}");
+}
+
 /// Phase 83: `check` on a takeover fixture, with the fixture's own `.msg`
 /// stand-ins on `AMENT_PREFIX_PATH` so `when-field-unknown` resolves fields
 /// without an Autoware install. Returns (exit code, stdout + stderr).

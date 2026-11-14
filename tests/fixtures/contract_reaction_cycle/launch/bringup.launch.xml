@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!-- play_launch#23: a reaction walk around a state cycle. The state
+     machine's level is read by an acceptor on its tick, whose acceptance is
+     the dwelling level's exit back up; the state machine takes it and
+     publishes the level again. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="lidar"    namespace="/s"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="sm"       namespace="/s">
+    <param name="hold_timeout" value="2.0"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="listener" name="acceptor" namespace="/s"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="operator" namespace="/s"/>
+</launch>

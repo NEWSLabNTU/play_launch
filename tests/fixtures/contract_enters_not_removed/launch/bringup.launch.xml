@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<!-- play_launch#22: a hazard that enters a mode its fault does not take
+     away. Radar and camera feed a 1-of-2 visibility group; losing the radar
+     leaves the group held, so the mode the hazard enters is still available. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="radar"   namespace="/s"/>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="camera"  namespace="/s"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="monitor" namespace="/s"/>
+</launch>
