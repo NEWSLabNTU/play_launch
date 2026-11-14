@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.35.0 - 2026-11-15
 
 - **Changed (contracts; rlm v0.3.22, phase 104 S3):** a supervised
   budget's `supervision: { tick, switch }` is read from the target's
