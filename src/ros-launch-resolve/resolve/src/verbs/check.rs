@@ -123,6 +123,7 @@ impl CheckInputs {
                 crate::ros::rlm_lock::LockMode::Prefer
             },
             process_per_composable: self.process_per_composable,
+            supervision: None,
         })
     }
 }
@@ -198,7 +199,16 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // Load and check manifests: overlay > provider sidecar. The provider
     // channel is on by default, so `check` works with no manifest flags at
     // all whenever the launch file ships sidecar contracts.
-    let sources = inputs.contract_sources()?;
+    let mut sources = inputs.contract_sources()?;
+    // rlm v0.3.22: the supervision terms are the target's platform file's,
+    // and the overrun rows are built while loading, so they are read first.
+    sources.supervision = crate::ros::sched_loader::platform_supervision(
+        &dump,
+        inputs.sched.as_deref(),
+        sources.overlay.as_deref(),
+        sources.provider,
+        &inputs.target,
+    );
     let mut index = manifest_loader::load_manifests(&dump, &sources)?;
     if inputs.strict {
         crate::ros::extensions::strict(&mut index);

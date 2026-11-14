@@ -64,11 +64,20 @@ pub fn build_checked_model(
         process_per_composable,
     } = inputs;
 
+    let overlay = manifest_loader::discover_overlay_root(contracts)?;
+    let supervision = crate::ros::sched_loader::platform_supervision(
+        dump,
+        sched,
+        overlay.as_deref(),
+        !no_provider_contracts,
+        target,
+    );
     let sources = crate::ros::manifest_loader::ContractSources {
-        overlay: manifest_loader::discover_overlay_root(contracts)?,
+        overlay,
         provider: !no_provider_contracts,
         lock: Default::default(),
         process_per_composable,
+        supervision,
     };
     let mut index = manifest_loader::load_manifests(dump, &sources)?;
     // Phase 85 D8 on the model path: what a contract acknowledges is

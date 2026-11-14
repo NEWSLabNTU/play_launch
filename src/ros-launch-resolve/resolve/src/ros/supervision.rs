@@ -407,9 +407,14 @@ pub(crate) fn lowered_route(
     })
 }
 
-/// The platform terms that apply to scope `scope_id`: its own
-/// `supervision:`, else the root contract's.
+/// The platform terms that apply to scope `scope_id`: the platform file's
+/// `supervision:` for the target being checked (rlm v0.3.22), else, for one
+/// release, the deprecated contract copy: the scope's own, else the root
+/// contract's.
 fn platform(index: &ManifestIndex, scope_id: usize) -> Option<&SupervisionPlatform> {
+    if let Some(p) = &index.platform_supervision {
+        return Some(p);
+    }
     let own = index
         .manifests
         .get(&scope_id)
@@ -429,8 +434,8 @@ pub(crate) fn detection(index: &ManifestIndex, s: &Supervised) -> Result<(f64, S
         .and_then(|p| p.tick)
         .map(|d| d.as_millis_f64())
         .ok_or_else(|| {
-            "the detection delay is unknown: state the monitor's tick (`supervision: { tick }` \
-             at the contract's top)"
+            "the detection delay is unknown: state the monitor's tick in the platform file \
+             (`supervision: { tick }` in `<stem>.system.<target>.yaml`)"
                 .to_string()
         })?;
     match s.sv.mechanism {
@@ -440,7 +445,7 @@ pub(crate) fn detection(index: &ManifestIndex, s: &Supervised) -> Result<(f64, S
                 .map(|d| d.as_millis_f64())
                 .ok_or_else(|| {
                     "the detection delay is unknown: a `timer` supervision adds the interrupt \
-                     and thread switch, `supervision: { switch }`"
+                     and thread switch, the platform file's `supervision: { switch }`"
                         .to_string()
                 })?;
             Ok((

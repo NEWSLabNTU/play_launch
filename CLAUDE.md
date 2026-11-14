@@ -699,7 +699,7 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
-- **2026-11-15**: **The S3 renames** (phase 104, rlm v0.3.19 to v0.3.21;
+- **2026-11-15**: **The S3 renames** (phase 104, rlm v0.3.19 to v0.3.22;
   decisions in rlm `docs/design/grammar-revision/README.md`, "S3
   decisions"). One key per meaning: `capabilities:` (was `functions:`), a
   hazard's `leaves:` (was `enters:`, which `supervise.enters` uses for the
@@ -718,7 +718,15 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   `HazardDecl::enters`, `Manifest::functions`), so `model_builder` maps the
   new contract keys onto them (`model_field`, a resolved override's
   `field`); and an override's rate value is carried in Hz by rlm, so
-  `set_endpoint_field` still reads a number.
+  `set_endpoint_field` still reads a number. v0.3.22 moved `supervision:
+  { tick, switch }` to the target's platform file: `check`, `resolve` and
+  the model path resolve it BEFORE `load_manifests`
+  (`sched_loader::platform_supervision` into
+  `ContractSources::supervision`), because the overrun rows are built while
+  loading; a contract's copy is read only where no platform file states
+  the terms. And a deprecation's schedule counts published releases (rlm
+  `rule_names::PUBLISHED`): add the rlm tag there when a play_launch
+  release that pins it is published, or the overdue tests drift.
 
 - **2026-11-14**: **`tolerance` removed, an inline subscriber transport
   deprecated** (phase 104 S1's last two decisions, rlm v0.3.16). A path's

@@ -1,0 +1,6 @@
+# rlm v0.3.22: this target's terms of a supervised budget's detection
+# delay, which the contract stated as a root `supervision:` before. Nothing
+# else is scheduled: `manual` with no overrides derives no plan.
+target: posix
+priority_assignment: manual
+supervision: { tick: 1ms, switch: 1ms }

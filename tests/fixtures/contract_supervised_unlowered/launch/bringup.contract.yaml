@@ -6,7 +6,7 @@ version: 1
 use:
   vehicle.braking: "^1"
 
-supervision: { tick: 1ms, switch: 0.05ms }
+# supervision: in bringup.system.posix.yaml since rlm v0.3.22
 
 integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 

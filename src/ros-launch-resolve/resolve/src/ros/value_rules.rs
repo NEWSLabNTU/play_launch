@@ -1054,6 +1054,26 @@ pub(crate) fn check_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>
             ));
         }
         call_spellings(index, m.scope_id, &m.manifest, diags);
+        // rlm v0.3.22: the supervision terms are the platform file's.
+        if m.manifest.supervision.is_some() {
+            let used = if index.platform_supervision.is_some() {
+                "The platform file states them, so this copy is not read"
+            } else {
+                "It reads for one release, as no platform file states them"
+            };
+            diags.push(diag(
+                "deprecated-spelling",
+                Severity::Warning,
+                format!(
+                    "{}: a contract's `supervision: {{ tick, switch }}` is deprecated (rlm \
+                     v0.3.22): the terms are facts of the target's processor and scheduler, \
+                     stated in its platform file (`supervision:` in \
+                     `<stem>.system.<target>.yaml`). {used}. Fix: move the block there",
+                    site(index, m.scope_id, "supervision"),
+                ),
+                "supervision".to_string(),
+            ));
+        }
     }
     g4_spellings(index, diags);
 }

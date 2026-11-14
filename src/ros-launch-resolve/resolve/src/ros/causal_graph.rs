@@ -931,6 +931,7 @@ paths:
             provider: false,
             lock: Default::default(),
             process_per_composable: false,
+            supervision: None,
         };
         crate::ros::manifest_loader::load_manifests(&dump, &sources)
             .expect("synthetic manifest loads")

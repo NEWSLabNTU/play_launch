@@ -1184,6 +1184,7 @@ impl CommonOptions {
             provider: !self.contract_opts.no_provider_contracts,
             lock: Default::default(),
             process_per_composable: self.containers.container_mode == ContainerMode::Isolated,
+            supervision: None,
         })
     }
 }

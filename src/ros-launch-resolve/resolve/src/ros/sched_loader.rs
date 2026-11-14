@@ -2418,6 +2418,23 @@ pub fn root_scope(dump: &LaunchDump) -> Option<&crate::ros::launch_dump::ScopeEn
 ///
 /// Returns `None` when nothing resolves in any channel — the caller's
 /// existing "no `--sched`" behavior (scheduling disabled) applies unchanged.
+/// The platform file's `supervision: { tick, switch }` for `target` (rlm
+/// v0.3.22), through the same channels as [`resolve_platform_file`]. `None`
+/// when no platform file resolves, states none, or does not parse (the
+/// scheduling check reports a file that does not parse).
+pub fn platform_supervision(
+    dump: &LaunchDump,
+    explicit: Option<&Path>,
+    overlay_root: Option<&Path>,
+    provider: bool,
+    target: &str,
+) -> Option<ros_launch_manifest_types::SupervisionPlatform> {
+    let resolved = resolve_platform_file(dump, explicit, overlay_root, provider, target)?;
+    ros_launch_manifest_sched::parse_platform_file(&resolved.path)
+        .ok()?
+        .supervision
+}
+
 pub fn resolve_platform_file(
     dump: &LaunchDump,
     explicit: Option<&Path>,
@@ -3398,6 +3415,7 @@ overrides:
             reservations,
             resources: ros_launch_manifest_sched::PlatformResources::default(),
             overrides: Default::default(),
+            supervision: None,
         }
     }
 

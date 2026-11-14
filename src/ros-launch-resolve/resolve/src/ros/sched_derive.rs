@@ -858,6 +858,7 @@ mod tests {
             provider: true,
             lock: Default::default(),
             process_per_composable: false,
+            supervision: None,
         };
         crate::ros::manifest_loader::load_manifests(dump, &sources)
             .unwrap_or_else(|e| panic!("{name}: load manifests: {e}"))

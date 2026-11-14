@@ -14,8 +14,10 @@ progress**: the decisions are rlm `docs/design/grammar-revision/README.md`,
 which `supervise.enters` uses in the opposite direction) and a client's
 `enters: <mode>` (was a mode under `reaction:`); v0.3.20 `event_chains:`
 (was a manifest level's `paths:`); v0.3.21 rates with a unit (`min_rate:
-100Hz`). Still to come in R: `supervision` in the per-target platform
-file, and T4/T3's relocations (`early` to `vehicle.braking` with a
+100Hz`); v0.3.22 `supervision` in the per-target platform file. S1's
+open question is answered there too: a schedule counts published releases
+(rlm `rule_names::PUBLISHED`), not tags. Still to come in R: T4/T3's
+relocations (`early` to `vehicle.braking` with a
 domain-free run-time form, `observes` as a map, `policy` as `check
 --deny`, service links, `integrity_levels` to `use:`). S4 planned. Design
 of record: rlm `docs/design/grammar-revision/` (an overview and one file per
@@ -55,8 +57,8 @@ Autoware.
 
 Each topic file ends with its open questions; the ones that block a stage:
 
-- S1: what an overdue deprecation is measured against: an rlm tag, a
-  play_launch release, or nano-ros's pin (§6 says all three).
+- S1: decided 2026-11-15 (rlm v0.3.22): an overdue deprecation is
+  measured in published play_launch releases, the rlm tags they shipped.
 - S3: decided 2026-11-15 (rlm `grammar-revision/README.md`): `reaction:`
   kept for a path or chain and a mode named only by `enters:`/`leaves:`;
   `capabilities`; root `paths:` becomes `event_chains:` (S5 reopened);

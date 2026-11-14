@@ -62,6 +62,11 @@ pub struct ContractSources {
     /// no process (`independence`'s `process`, phase 102 M2). `false`, the
     /// default, assumes the shared case of `observable` and `stock`.
     pub process_per_composable: bool,
+    /// The platform file's `supervision: { tick, switch }` (rlm v0.3.22),
+    /// resolved for the target being checked: the terms of a supervised
+    /// budget's detection delay. `None`: no platform file states them, and a
+    /// contract's deprecated root `supervision:` is read instead.
+    pub supervision: Option<ros_launch_manifest_types::SupervisionPlatform>,
 }
 
 /// Discover the overlay root shared by contracts and platform files (Phase
@@ -517,6 +522,8 @@ fn walk_keys(index: &ManifestIndex, w: &ReactionWalk, after_deadline: bool) -> V
 pub struct ManifestIndex {
     /// Copied from [`ContractSources::process_per_composable`].
     pub process_per_composable: bool,
+    /// Copied from [`ContractSources::supervision`].
+    pub platform_supervision: Option<ros_launch_manifest_types::SupervisionPlatform>,
     /// Every node's resolved launch parameter values, keyed by node FQN
     /// (phase 83): what `dwell-param` and a braking-profile settle read.
     pub launch_params: HashMap<String, BTreeMap<String, super::value_rules::LaunchParam>>,
@@ -704,6 +711,7 @@ pub fn load_manifests(
     let mut index = ManifestIndex {
         lock_mode: sources.lock,
         process_per_composable: sources.process_per_composable,
+        platform_supervision: sources.supervision.clone(),
         ..ManifestIndex::default()
     };
     let mut loaded = 0usize;
@@ -8229,6 +8237,7 @@ mod tests {
             provider: false,
             lock: Default::default(),
             process_per_composable: false,
+            supervision: None,
         };
         load_manifests(dump, &sources).unwrap()
     }
@@ -10287,6 +10296,7 @@ mod tests {
             provider: true,
             lock: Default::default(),
             process_per_composable: false,
+            supervision: None,
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert_eq!(index.manifests[&0].channel, ContractChannel::Overlay);
@@ -10298,6 +10308,7 @@ mod tests {
             provider: true,
             lock: Default::default(),
             process_per_composable: false,
+            supervision: None,
         };
         let dump = make_dump(vec![scope_with_path(
             0,
@@ -10322,6 +10333,7 @@ mod tests {
             provider: true,
             lock: Default::default(),
             process_per_composable: false,
+            supervision: None,
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert!(index.manifests.is_empty());
@@ -10346,6 +10358,7 @@ mod tests {
             provider: false,
             lock: Default::default(),
             process_per_composable: false,
+            supervision: None,
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert!(index.manifests.is_empty());
@@ -10368,6 +10381,7 @@ mod tests {
             provider: false,
             lock: Default::default(),
             process_per_composable: false,
+            supervision: None,
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert_eq!(index.manifests.len(), 1);
@@ -10630,6 +10644,7 @@ paths:
             provider: false,
             lock: Default::default(),
             process_per_composable: false,
+            supervision: None,
         };
         load_manifests(dump, &sources).unwrap()
     }

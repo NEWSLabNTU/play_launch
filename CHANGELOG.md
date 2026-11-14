@@ -8,6 +8,17 @@ allowance heavily.
 
 ## Unreleased
 
+- **Changed (contracts; rlm v0.3.22, phase 104 S3):** a supervised
+  budget's `supervision: { tick, switch }` is read from the target's
+  platform file (`<stem>.system.<target>.yaml`), resolved before the
+  contracts load so the overrun rows use it; `check`, `resolve` and
+  `launch`'s model all resolve it. A contract's root `supervision:` is
+  deprecated: it reads for one release where no platform file states the
+  terms, and `warning[deprecated-spelling]` says whether it was read. The
+  four supervised fixtures carry the terms in a `bringup.system.posix.yaml`.
+- **Changed (rlm v0.3.22):** a deprecation's schedule counts published
+  releases (the rlm tags a play_launch release shipped), not rlm tags, so
+  the S3 renames, spread over four tags, are in their first release.
 - **Changed (contracts; rlm v0.3.21, phase 104 S3):** a rate is a value
   with its unit: `min_rate: 100Hz`, `max_rate:`, a topic's `rate:`, a
   timer's `trigger.timer.rate:` and an arrival curve's `rate:` (were

@@ -9,7 +9,7 @@
 version: 1
 use:
   iso26262: "^1"
-supervision: { tick: 1ms, switch: 1ms }
+# supervision: in bringup.system.posix.yaml since rlm v0.3.22
 
 capabilities:
   hpc_alive: [/availability]

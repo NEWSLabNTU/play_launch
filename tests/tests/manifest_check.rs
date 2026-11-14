@@ -2949,6 +2949,38 @@ fn without_lines(l: &str) -> String {
     out
 }
 
+/// rlm v0.3.22 (S3): the supervision terms are the platform file's. A
+/// contract's root `supervision:` still reads, deprecated, where no platform
+/// file states them, and is not read beside one.
+#[test]
+fn a_contracts_supervision_gives_way_to_the_platform_files() {
+    let (_tmp, dir) = fixture_copy("contract_supervised");
+    let contract = dir.join("bringup.contract.yaml");
+    let text = std::fs::read_to_string(&contract).unwrap();
+    std::fs::write(
+        &contract,
+        format!("supervision: {{ tick: 2ms, switch: 0.05ms }}\n{text}"),
+    )
+    .unwrap();
+    let (_, both) = check_launch(&dir.join("bringup.launch.xml"), &[]);
+    assert!(
+        both.contains("warning[deprecated-spelling]")
+            && both.contains("The platform file states them, so this copy is not read"),
+        "{both}"
+    );
+    assert!(
+        both.contains("tick 1.00ms + switch 0.05ms (timer)"),
+        "{both}"
+    );
+    std::fs::remove_file(dir.join("bringup.system.posix.yaml")).unwrap();
+    let (_, old) = check_launch(&dir.join("bringup.launch.xml"), &[]);
+    assert!(
+        old.contains("It reads for one release, as no platform file states them"),
+        "{old}"
+    );
+    assert!(old.contains("tick 2.00ms + switch 0.05ms (timer)"), "{old}");
+}
+
 /// rlm v0.3.19 (S3): each pre-v0.3.19 spelling reads for one release with a
 /// `deprecated-spelling` warning naming the new key, and a client's
 /// `enters:` naming no mode is an error.
@@ -3935,6 +3967,7 @@ fn check_supervised_edited(edit: impl Fn(String) -> String) -> Option<(i32, Stri
         launch_dir.join("bringup.launch.xml"),
     )
     .unwrap();
+    copy_platform_files(&src, &launch_dir);
     let contract = std::fs::read_to_string(src.join("bringup.contract.yaml")).unwrap();
     std::fs::write(launch_dir.join("bringup.contract.yaml"), edit(contract)).unwrap();
     let out = resolve_cmd(&bin)
@@ -3959,8 +3992,9 @@ fn check_supervised_edited(edit: impl Fn(String) -> String) -> Option<(i32, Stri
 fn an_executor_supervision_over_a_long_callback_follows_the_policy() {
     let Some((code, out)) = check_supervised_edited(|c| {
         c.replacen(
-            "supervision: { tick: 1ms, switch: 0.05ms }",
-            "supervision: { tick: 1ms, switch: 0.05ms }\npolicy: { unsupervised_measured: error }",
+            "# supervision: in bringup.system.posix.yaml since rlm v0.3.22",
+            "# supervision: in bringup.system.posix.yaml since rlm v0.3.22\npolicy: { \
+             unsupervised_measured: error }",
             1,
         )
     }) else {
@@ -4244,6 +4278,7 @@ fn check_resolve_edited_explain(edit: impl Fn(String) -> String) -> Option<(i32,
         launch_dir.join("bringup.launch.xml"),
     )
     .unwrap();
+    copy_platform_files(&src, &launch_dir);
     let contract = std::fs::read_to_string(src.join("bringup.contract.yaml")).unwrap();
     std::fs::write(launch_dir.join("bringup.contract.yaml"), edit(contract)).unwrap();
     let out = resolve_cmd(&bin)
@@ -4376,6 +4411,7 @@ fn a_lowered_settle_supervision_reaches_the_model() {
         launch_dir.join("bringup.launch.xml"),
     )
     .unwrap();
+    copy_platform_files(&src, &launch_dir);
     let contract = std::fs::read_to_string(src.join("bringup.contract.yaml")).unwrap();
     std::fs::write(
         launch_dir.join("bringup.contract.yaml"),
@@ -4468,6 +4504,7 @@ fn a_settle_response_check_charges_its_own_row() {
         launch_dir.join("bringup.launch.xml"),
     )
     .unwrap();
+    copy_platform_files(&src, &launch_dir);
     let contract = std::fs::read_to_string(src.join("bringup.contract.yaml")).unwrap();
     std::fs::write(
         launch_dir.join("bringup.contract.yaml"),
@@ -5316,4 +5353,15 @@ fn check_fixture_out(dir: &str) -> (i32, String) {
             .join("launch/bringup.launch.xml"),
         &[],
     )
+}
+
+/// A fixture's platform files (`bringup.system.<target>.yaml`) beside its
+/// launch file: since rlm v0.3.22 they carry the supervision terms.
+fn copy_platform_files(src: &std::path::Path, dst: &std::path::Path) {
+    for e in std::fs::read_dir(src).unwrap().flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.contains(".system.") && name.ends_with(".yaml") {
+            std::fs::copy(e.path(), dst.join(&name)).unwrap();
+        }
+    }
 }
