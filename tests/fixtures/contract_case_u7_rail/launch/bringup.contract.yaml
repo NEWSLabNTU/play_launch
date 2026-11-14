@@ -79,7 +79,7 @@ nodes:
         max_latency: 2ms
         safe_state: { emits: brake_cmd, settle: 500ms }
 
-paths:
+event_chains:
   overspeed.stop:
     trigger: { input: [/overspeed] }
     output: [/brake_cmd, /traction_cmd]

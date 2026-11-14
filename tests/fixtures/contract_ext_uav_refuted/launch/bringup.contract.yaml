@@ -84,7 +84,7 @@ nodes:
             slow_altitude: slow_altitude
             land_speed: land_speed
 
-paths:
+event_chains:
   safety.stop:
     trigger: { input: [/safety/scan] }
     output: [/safety/brake_cmd]

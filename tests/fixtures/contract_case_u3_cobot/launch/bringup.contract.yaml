@@ -123,7 +123,7 @@ nodes:
         max_latency: 2ms
         safe_state: { emits: joint_speed, settle: 100ms }
 
-paths:
+event_chains:
   person_in_warning_zone.stop:
     trigger: { input: [/in_warning_zone] }
     output: [/joint_speed]

@@ -76,7 +76,7 @@ nodes:
   trip_logger:
     criticality: low           # no hazard reaches it: the label stands
 
-paths:
+event_chains:
   safety.stop:
     trigger: { input: [/safety/scan] }
     output: [/safety/brake_cmd]

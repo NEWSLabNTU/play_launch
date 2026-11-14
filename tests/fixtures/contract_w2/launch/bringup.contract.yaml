@@ -74,7 +74,7 @@ nodes:
 # to `rt` and `guard`, which is what makes a reservation derivable at all.
 # 40ms holds the honest total: 20ms sampling_cost (the 50 Hz period) + 13ms
 # event segment (rt 5 + guard 8) = 33ms.
-paths:
+event_chains:
   tick_to_out:
     trigger: { input: [/w/tick] }
     output: [/w/out]

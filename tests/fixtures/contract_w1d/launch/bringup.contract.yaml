@@ -57,7 +57,7 @@ topics:
     external: sub
     pub: [fuser/fused]
 
-paths:
+event_chains:
   # The route crosses a 10Hz boundary, so it carries 100ms of sampling jitter
   # on its own — a 5ms requirement is unreachable by any scheduling.
   # -> jitter-feasibility

@@ -32,7 +32,7 @@ modes:
     requires: []
     reaction: sys.emergency_stop
 
-paths:
+event_chains:
   sys.comfortable:
     trigger: { input: [/availability] }
     output: [/slow_cmd]

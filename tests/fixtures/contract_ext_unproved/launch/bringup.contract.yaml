@@ -77,7 +77,7 @@ nodes:
           emits: brake_cmd
           settle: { valve_stroke: 2s }
 
-paths:
+event_chains:
   safety.stop:
     trigger: { input: [/safety/scan] }
     output: [/safety/brake_cmd]

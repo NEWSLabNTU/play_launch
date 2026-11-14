@@ -108,7 +108,7 @@ nodes:
         output: [log]
         max_latency: 10ms
 
-paths:
+event_chains:
   sys.hold:
     trigger: { input: [/heartbeat] }
     output: [/hold_ref]

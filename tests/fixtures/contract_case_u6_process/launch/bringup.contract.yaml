@@ -76,7 +76,7 @@ nodes:
         max_latency: 2ms
         safe_state: { emits: valve_position, settle: 1s }
 
-paths:
+event_chains:
   overpressure.stop:
     trigger: { input: [/overpressure] }
     output: [/valve_position]

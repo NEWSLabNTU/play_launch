@@ -149,7 +149,7 @@ Built-in mappers:
 |---|---|---|
 | `rate_monotonic` | the node's fastest timer trigger (`trigger: { timer: { rate_hz } }` on one of its paths); a topic's `rate_hz` or a publisher's `min_rate_hz` is a promise the runtime monitors read, never a rate the mapper ranks by (Phase 78) | higher rate → higher priority |
 | `deadline_monotonic` | the node's tightest declared path `max_latency` | tighter deadline → higher priority |
-| `chain_aware` (Phase 44, routes derived since Phase 68) | the routes **derived** for each scope `paths:` entry (§1.7) plus the same rate/deadline facts as a fallback for everything not on a route | route members ranked by criticality + drain-toward-sink; everything else falls back to criticality-bucketed RM/DM |
+| `chain_aware` (Phase 44, routes derived since Phase 68) | the routes **derived** for each `event_chains:` entry (§1.7) plus the same rate/deadline facts as a fallback for everything not on a route | route members ranked by criticality + drain-toward-sink; everything else falls back to criticality-bucketed RM/DM |
 | `manual` | nothing: every node starts in the default task | `overrides:` alone place nodes (§4) |
 
 `rate_monotonic`/`deadline_monotonic` rank each node from **its own**
@@ -160,7 +160,7 @@ sensor→filter→control path, a perception→planning→control corridor): it
 ranks the members of a derived route by their position in the pipeline
 (drain-toward-sink) instead of their local rate/deadline alone, and the
 end-to-end budget you state gets `chain-latency` /
-`chain-sampling-feasibility` checking for free. With no scope `paths:`
+`chain-sampling-feasibility` checking for free. With no `event_chains:`
 declared, `chain_aware` degrades to exactly the criticality-RM/DM fallback
 (§1.7) — it's a safe default even before you've stated a budget.
 
@@ -514,7 +514,7 @@ play_launch measure <run-dir> --model <model.yaml>              # observed cost 
 
 A single node's declared rate or deadline (§1.1) only tells the mapper
 about that node in isolation. An **end-to-end requirement** is stated as a
-**event chain**: a top-level `paths:` entry (root contract or overlay)
+**event chain**: a top-level `event_chains:` entry (`paths:` before rlm v0.3.20) (root contract or overlay)
 naming where the requirement starts, where it ends, and a budget. The
 route between those two ends — which nodes, in which order, through which
 topics — is **derived** from the `trigger:`/`output:` facts the nodes
@@ -605,7 +605,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    --write` does for you.
 
 2. **State the requirement — the two ends and the budget.** A top-level
-   `paths:` entry in the root contract (or your overlay) names the topic
+   `event_chains:` entry in the root contract (or your overlay) names the topic
    where the requirement starts, the topic where it ends, and the budget.
    Topic names are absolute, because the nodes usually sit in different
    namespaces (§[Cross-scope end-to-end budgets](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.3.6/docs/launch-manifest.md#cross-scope-event-chains)):
@@ -740,7 +740,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    silently invisible.
 
 **Migrating a contract that still says `chains:`.** It no longer parses;
-the error names the replacement. Rewrite it as one scope `paths:` entry per
+the error names the replacement. Rewrite it as one `event_chains:` entry per
 chain: the first `via:` topic becomes `trigger: { input: [...] }`, the last
 segment's output topic becomes `output:`, `max_latency:` stays. Drop
 `segments:` entirely (the graph knows the route) and drop `semantics:` with

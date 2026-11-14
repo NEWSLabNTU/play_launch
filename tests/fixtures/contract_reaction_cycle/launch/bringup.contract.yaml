@@ -104,7 +104,7 @@ nodes:
         max_latency: 5ms
         safe_state: { emits: cmd, settle: 500ms }
 
-paths:
+event_chains:
   s.hold:
     trigger: { input: [/s/scan] }
     output: [/s/level]

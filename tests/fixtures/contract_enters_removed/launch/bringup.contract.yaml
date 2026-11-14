@@ -73,7 +73,7 @@ nodes:
         max_latency: 5ms
         safe_state: { emits: stop_cmd, settle: 200ms }
 
-paths:
+event_chains:
   s.stop:
     trigger: { input: [/s/radar] }
     output: [/s/stop_cmd]

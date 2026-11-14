@@ -79,7 +79,7 @@ nodes:
             brake_build_up: 2.5s
             a_safe: { 0 km/h: 0.65 m/s^2, 100 km/h: 0.60 m/s^2 }   # a 1% fall included
 
-paths:
+event_chains:
   safety.stop:
     trigger: { input: [/safety/scan] }
     output: [/safety/brake_cmd]

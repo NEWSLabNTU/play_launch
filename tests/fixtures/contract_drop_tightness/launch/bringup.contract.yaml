@@ -27,7 +27,7 @@ topics:
     external: sub
     pub: [tracker/tracks]
 
-paths:
+event_chains:
   e2e:
     trigger: { input: [/sensing/raw] }
     output: [/perception/tracks]

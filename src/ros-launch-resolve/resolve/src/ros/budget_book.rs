@@ -62,7 +62,7 @@ pub(crate) fn enumerate(m: &Manifest) -> Vec<(String, f64)> {
         }
     }
     for (p, pd) in &m.paths {
-        note(format!("paths.{p}"), pd);
+        note(format!("event_chains.{p}"), pd);
     }
     m.bounds()
         .into_iter()
@@ -263,7 +263,7 @@ fn checks_of(
         out.push(by);
     }
     // A scope path's name may hold dots (`island.tor`).
-    if key.starts_with("paths.") {
+    if key.starts_with("event_chains.") {
         if key.ends_with(".max_latency") {
             out.push("chain-latency".to_string());
             out.push("runtime monitor (max-latency-runtime)".to_string());

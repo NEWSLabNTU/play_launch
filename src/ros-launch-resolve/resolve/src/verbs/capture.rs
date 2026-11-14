@@ -573,7 +573,7 @@ fn header(run: &Path, model: &Path, endpoints: usize, nodes: usize, topics: usiz
 # cannot observe one: a measured rate is a fact about one execution, and
 # whether that rate is REQUIRED is a decision only you can record. So there is
 # no `rate_hz`, no `min_rate_hz`, no `max_latency`, no `max_age`, no
-# `max_jitter`, no `paths:` and no `criticality` below — add them, and the
+# `max_jitter`, no `event_chains:` and no `criticality` below — add them, and the
 # file becomes a contract instead of a description. Observed numbers are here
 # as comments, which is where they belong until you decide otherwise
 # (`play_launch measure <run-dir> --model <m.yaml>` does the same for costs).

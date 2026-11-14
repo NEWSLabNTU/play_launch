@@ -45,7 +45,7 @@ modes:
     requires: [perception]        # the fault takes this away too
     reaction: safety.stop
     overrides:
-      paths:
+      event_chains:
         # The path declares no max_jitter, so this pins nothing: reported,
         # and NOT applied — an override the rule rejects must not reach the
         # arithmetic, or one declaration gets two answers.
@@ -60,7 +60,7 @@ modes:
     requires: []
     reaction: safety.stop
     overrides:
-      paths:
+      event_chains:
         safety.stop: { max_latency: 20ms }
 
 hazards:
@@ -131,7 +131,7 @@ nodes:
         max_latency: 900ms
         safe_state: { emits: status, settle: 0ms }
 
-paths:
+event_chains:
   # A rung whose route is far too slow for the hazard's 500ms.
   safety.slow:
     trigger: { input: [/safety/scan] }

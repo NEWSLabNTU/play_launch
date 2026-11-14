@@ -67,7 +67,7 @@ nodes:
         max_latency: 5ms
         safe_state: { emits: brake, settle: 200ms }
 
-paths:
+event_chains:
   safety.stop:
     trigger: { input: [/scan_a, /scan_b] }
     output: [/brake]

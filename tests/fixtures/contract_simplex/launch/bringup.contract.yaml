@@ -101,7 +101,7 @@ nodes:
         max_latency: 1ms
         safe_state: { emits: cmd, settle: 100ms }
 
-paths:
+event_chains:
   switch_to_safe:
     trigger: { input: [/envelope_ok] }
     output: [/cmd]

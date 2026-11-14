@@ -55,7 +55,7 @@ external_topics:
     side: both
     type: diagnostic_msgs/msg/DiagnosticArray
 
-paths:
+event_chains:
   image_to_tracks:
     input: /image
     output: [/tracks]

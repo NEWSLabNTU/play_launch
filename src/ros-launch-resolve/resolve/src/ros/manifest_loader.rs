@@ -2986,7 +2986,7 @@ fn fallback_route(
         None => sp.path.max_latency.ms().map(|ms| {
             (
                 ms,
-                vec![(h.scope_id, format!("paths.{path_name}.max_latency"))],
+                vec![(h.scope_id, format!("event_chains.{path_name}.max_latency"))],
             )
         }),
     }
@@ -4367,7 +4367,7 @@ fn check_fault_reaction(
                     .path
                     .max_latency
                     .as_ref()
-                    .map(|_| (h.scope_id, format!("paths.{rung_path}.max_latency")))
+                    .map(|_| (h.scope_id, format!("event_chains.{rung_path}.max_latency")))
                     .into_iter()
                     .collect(),
             };
@@ -4975,7 +4975,7 @@ fn check_fault_reaction(
                 Some(_) if floor_call_terms.is_some() => floor_call_terms.clone().unwrap(),
                 Some(w) => walk_keys(index, w, floor_after_deadline),
                 None if declared_ms.is_some() => {
-                    vec![(h.scope_id, format!("paths.{terminal}.max_latency"))]
+                    vec![(h.scope_id, format!("event_chains.{terminal}.max_latency"))]
                 }
                 None => Vec::new(),
             },
@@ -5220,7 +5220,7 @@ fn apply_mode_overrides(
         let num = || ov.value.parse::<f64>().ok();
 
         match section {
-            "paths" => {
+            "event_chains" => {
                 if let Some(m) = index.manifests.get_mut(&scope_id)
                     && let Some(p) = m.manifest.paths.get_mut(middle)
                     && set_path_field(p, field, &dur)
@@ -5484,7 +5484,7 @@ pub(crate) fn override_site<'t>(
     let (section, rest) = target.split_once('.')?;
     let (middle, field) = rest.rsplit_once('.')?;
     match section {
-        "paths" => m
+        "event_chains" => m
             .manifest
             .paths
             .get(middle)
@@ -6104,7 +6104,7 @@ fn check_scope_path_critical_path(
                         route.join(" -> "),
                         w.route_ms,
                     ),
-                    path: format!("paths.{}", scope_path.path_name),
+                    path: format!("event_chains.{}", scope_path.path_name),
                     span: None,
                 });
             }
@@ -6150,7 +6150,7 @@ fn check_scope_path_critical_path(
                     cp.sampling_cost_ms,
                     cp.nodes.join(" → "),
                 ),
-                path: format!("paths.{}.max_jitter", scope_path.path_name),
+                path: format!("event_chains.{}.max_jitter", scope_path.path_name),
                 span: None,
             });
         }
@@ -6183,7 +6183,7 @@ fn check_scope_path_critical_path(
                     cp.sampling_cost_ms,
                     cp.nodes.join(" \u{2192} "),
                 ),
-                path: format!("paths.{}", scope_path.path_name),
+                path: format!("event_chains.{}", scope_path.path_name),
                 span: None,
             });
         }
@@ -6215,7 +6215,7 @@ fn check_scope_path_critical_path(
                         String::new()
                     },
                 ),
-                path: format!("paths.{}", scope_path.path_name),
+                path: format!("event_chains.{}", scope_path.path_name),
                 span: None,
             });
         }
@@ -6229,7 +6229,7 @@ fn check_scope_path_critical_path(
     // route was computed: a path with no traceable route keeps the fallback,
     // which is then the only estimate there is.
     for (scope_id, path_name) in superseded {
-        let key = format!("paths.{path_name}");
+        let key = format!("event_chains.{path_name}");
         if let Some(m) = index.manifests.get_mut(&scope_id) {
             let before = m.diagnostics.len();
             m.diagnostics
@@ -6325,20 +6325,20 @@ fn check_scope_path_drop_tightness(
                         super::value_rules::site(
                             index,
                             sp.scope_id,
-                            &format!("paths.{}.drop", sp.path_name)
+                            &format!("event_chains.{}.drop", sp.path_name)
                         ),
                         sp.path_name,
                         whole.drop_rate() * 100.0,
                         part.drop_rate() * 100.0
                     ),
-                    path: format!("paths.{}.drop", sp.path_name),
+                    path: format!("event_chains.{}.drop", sp.path_name),
                     span: None,
                 });
             }
         }
     }
     for (scope_id, path_name) in traced {
-        let key = format!("paths.{path_name}.drop");
+        let key = format!("event_chains.{path_name}.drop");
         if let Some(m) = index.manifests.get_mut(&scope_id) {
             let before = m.diagnostics.len();
             m.diagnostics
@@ -6430,7 +6430,7 @@ fn check_route_exclusion_blocking(
                  node is assumed to serialise, matching rclcpp's default callback group",
                 notes.join("; ")
             ),
-            path: format!("paths.{path_name}"),
+            path: format!("event_chains.{path_name}"),
             span: None,
         });
     }
@@ -7060,7 +7060,7 @@ fn check_path_budget_overflow(index: &mut ManifestIndex) {
                         ancestor.scope_id,
                         ancestor_lat,
                     ),
-                    path: format!("paths.{}", child.path_name),
+                    path: format!("event_chains.{}", child.path_name),
                     span: None,
                 });
             }

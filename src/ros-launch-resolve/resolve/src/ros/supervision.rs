@@ -184,7 +184,7 @@ pub(crate) fn supervised(index: &ManifestIndex) -> Vec<Supervised> {
                 ),
                 None => (
                     None,
-                    key.strip_prefix("paths.")
+                    key.strip_prefix("event_chains.")
                         .and_then(|r| r.strip_suffix(".safe_state.settle"))
                         .map(str::to_string),
                 ),

@@ -79,7 +79,7 @@ nodes:
             jerk: target_jerk
             response: 256ms
 
-paths:
+event_chains:
   safety.stop:
     trigger: { input: [/safety/scan] }
     output: [/safety/brake_cmd]

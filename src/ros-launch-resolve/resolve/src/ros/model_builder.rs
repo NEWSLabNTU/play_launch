@@ -1581,7 +1581,12 @@ pub fn build_system_model(
             None,
         );
         if let Some(m) = index.manifests.get(&p.scope_id) {
-            c.sources = value_sources(&m.manifest, &format!("paths.{}", p.path_name));
+            // `event_chains.` since rlm v0.3.20; a file still writing
+            // `paths:` records its references under the key it wrote.
+            c.sources = value_sources(&m.manifest, &format!("event_chains.{}", p.path_name));
+            if c.sources.is_empty() {
+                c.sources = value_sources(&m.manifest, &format!("paths.{}", p.path_name));
+            }
         }
         contracts.scope_paths.insert(
             scope_scoped_key(&scope_key(Some(p.scope_id)), &p.path_name),

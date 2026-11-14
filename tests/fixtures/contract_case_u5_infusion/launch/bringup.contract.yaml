@@ -79,7 +79,7 @@ nodes:
         max_latency: 2ms
         safe_state: { emits: pump_rate, settle: 200ms }
 
-paths:
+event_chains:
   occlusion.stop:
     trigger: { input: [/occluded] }
     output: [/pump_rate, /alarm]

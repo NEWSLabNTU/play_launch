@@ -116,7 +116,7 @@ topics:
     type: std_msgs/msg/String
     pub: [sink/cmd]
 
-paths:
+event_chains:
   fan:
     trigger: { input: [/et/raw] }
     output: [/et/cmd]

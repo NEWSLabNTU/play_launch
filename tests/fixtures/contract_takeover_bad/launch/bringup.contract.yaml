@@ -87,7 +87,7 @@ modes:
     reaction: sys.estop
     min_dwell: 30s
 
-paths:
+event_chains:
   sys.tor:
     trigger: { input: [/availability] }
     output: [/tor_state]

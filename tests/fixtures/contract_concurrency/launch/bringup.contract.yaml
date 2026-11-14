@@ -85,7 +85,7 @@ topics:
     pub: [segmenter/seg]
     rate_hz: 30
 
-paths:
+event_chains:
   # True critical path: 20 (to_boxes) + 10 (tracker) = 30ms. Before phase 68
   # W1.a this was charged 45ms — the node's max over ALL paths.
   to_tracks:

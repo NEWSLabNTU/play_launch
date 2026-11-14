@@ -72,7 +72,7 @@ nodes:
           emits: brake_cmd
           settle: { duration: 180ms, source: measured }
 
-paths:
+event_chains:
   safety.stop:
     trigger: { input: [/safety/scan] }
     output: [/safety/brake_cmd]

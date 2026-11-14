@@ -1948,7 +1948,7 @@ fn a_mode_overrides_target_is_resolved_to_the_models_keys() {
         .collect();
     let want = [
         (
-            "paths.safety.stop.max_latency",
+            "event_chains.safety.stop.max_latency",
             T::ScopePaths,
             "bringup.launch.xml/safety.stop",
             "max_latency",

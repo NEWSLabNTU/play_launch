@@ -74,7 +74,7 @@ nodes:
 # the mapper falling back to budget ranking, this three-node system produces
 # the same two priorities by coincidence, which is how a false pass looked
 # before the derived-route seam was built.
-paths:
+event_chains:
   points_to_cmd:
     trigger: { input: [/perception/points_raw] }
     output: [/control/cmd]

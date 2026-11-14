@@ -80,7 +80,7 @@ modes:
   manual:
     requires: []
 
-paths:
+event_chains:
   sys.tor:
     trigger: { input: [/availability] }
     output: [/tor_state]

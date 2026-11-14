@@ -72,7 +72,7 @@ hazards:
     ftti: 1500ms
     reaction: system.emergency_stop
 
-paths:
+event_chains:
   # The comfortable-stop route: the MRM operator's slower behaviour, through
   # the same handler and gate. 110 (handler) + 34 (operator) + 100 (gate) is
   # the emergency route; comfortable stop decelerates over ~4 s, so its own

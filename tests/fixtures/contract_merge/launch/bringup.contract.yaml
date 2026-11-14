@@ -39,7 +39,7 @@ services:
     type: std_srvs/srv/Trigger
     server: [planner/compute]
 
-paths:
+event_chains:
   e2e:
     trigger: { input: [/sensing/points] }
     output: [/perception/objects]

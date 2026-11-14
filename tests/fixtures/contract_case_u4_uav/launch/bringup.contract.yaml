@@ -80,7 +80,7 @@ nodes:
         max_latency: 2ms
         safe_state: { emits: flight_mode, settle: 500ms }
 
-paths:
+event_chains:
   battery_low.stop:
     trigger: { input: [/battery_low] }
     output: [/flight_mode]

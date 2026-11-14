@@ -61,7 +61,7 @@ modes:
   manual:
     requires: []
 
-paths:
+event_chains:
   sys.notice:
     trigger: { input: [/odd] }
     output: [/tor_state]

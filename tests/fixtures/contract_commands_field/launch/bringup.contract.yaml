@@ -83,7 +83,7 @@ nodes:
         max_latency: 2ms
         safe_state: { emits: cmd_vel_filtered, settle: 300ms }
 
-paths:
+event_chains:
   safety.stop:
     trigger: { input: [/too_close] }
     output: [/cmd_vel_filtered]

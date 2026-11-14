@@ -23,7 +23,7 @@ modes:
     # In degraded mode the chain may take longer: the override pins a value
     # over the scalar declared on the path, which stays a scalar.
     overrides:
-      paths:
+      event_chains:
         safety.stop: { max_latency: 200ms }
   stopped:
     requires: []
@@ -92,7 +92,7 @@ nodes:
         max_latency: 5ms
         safe_state: { emits: brake_cmd, settle: 200ms }
 
-paths:
+event_chains:
   safety.stop:
     trigger: { input: [/safety/scan] }
     output: [/safety/brake_cmd]

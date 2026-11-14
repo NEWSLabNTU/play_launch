@@ -148,7 +148,7 @@ nodes:
 # and the deadline is missed. The budget is deliberately not tight — a chain
 # that only just fits would miss for arithmetic reasons rather than scheduling
 # ones, and would prove nothing.
-paths:
+event_chains:
   lidar_to_brake:
     trigger: { input: [/safety/scan] }
     output: [/safety/brake_cmd]

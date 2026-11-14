@@ -89,7 +89,7 @@ nodes:
                 inputs: { entry_speed: 1.5 m/s, decel: 7.5 m/s^2 }
                 trace: ["v0 / a = 1.5 / 7.5 = 200 ms"]
 
-paths:
+event_chains:
   safety.stop:
     trigger: { input: [/safety/scan] }
     output: [/safety/brake_cmd]

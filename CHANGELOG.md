@@ -8,6 +8,15 @@ allowance heavily.
 
 ## Unreleased
 
+- **Changed (contracts; rlm v0.3.20, phase 104 S3):** an end-to-end
+  requirement is written under `event_chains:` (was a manifest level's
+  `paths:`; a node's internal `paths:` keep the word), as AUTOSAR TIMEX and
+  the rule ids (`chain-latency`) already call it. A mode's `overrides:`
+  names one under `event_chains.`. Diagnostic paths, budget-book keys and
+  override targets say `event_chains.<c>...`; `paths:` reads for one release
+  with `warning[deprecated-spelling]`, an `acknowledged:` path through it
+  still matches, and `play_launch migrate` rewrites both. Fixtures, the
+  examples and the guides are migrated (104 files, verdicts unchanged).
 - **Changed (contracts; rlm v0.3.19, phase 104 S3):** one key per meaning.
   `functions:` is `capabilities:`; a hazard's `enters:` is `leaves:` (the
   mode its fault takes away, where `supervise.enters` names the level a miss

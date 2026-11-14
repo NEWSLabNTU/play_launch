@@ -52,7 +52,7 @@ node's ROS name (issue #0017). Only the model can tell the two apart.
 and `topics:` with the message type and both sides of the wiring.
 
 **It emits no requirements.** No `rate_hz`, no `min_rate_hz`, no
-`max_latency`, no `max_age`, no `max_jitter`, no `paths:`, no `criticality`.
+`max_latency`, no `max_age`, no `max_jitter`, no `event_chains:`, no `criticality`.
 Not because they are hard to guess but because they are not observable. A run
 can tell you a topic published at 9.97 Hz; it cannot tell you whether 10 Hz was
 *required*, and that difference is the whole of what a contract is for. The

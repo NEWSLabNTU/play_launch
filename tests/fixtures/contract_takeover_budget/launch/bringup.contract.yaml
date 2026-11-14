@@ -88,7 +88,7 @@ modes:
     requires: []
     reaction: sys.estop_ok
 
-paths:
+event_chains:
   sys.tor:
     trigger: { input: [/availability] }
     output: [/tor_state]

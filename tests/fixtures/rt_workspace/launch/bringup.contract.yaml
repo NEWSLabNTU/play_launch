@@ -67,7 +67,7 @@ nodes:
 #                   invented WCETs")
 #   event segment = filter's 5ms + control's 10ms = 15ms
 #   total         = 25ms, inside the 30ms budget with 5ms of honest slack.
-paths:
+event_chains:
   points_to_cmd:
     trigger: { input: [/perception/points_raw] }
     output: [/control/cmd]

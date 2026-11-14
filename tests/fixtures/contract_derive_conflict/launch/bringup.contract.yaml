@@ -77,7 +77,7 @@ nodes:
             duration: 4.2s
             source: { derived: { by: vehicle.braking, version: 1.0.0 } }
 
-paths:
+event_chains:
   safety.stop:
     trigger: { input: [/safety/scan] }
     output: [/safety/brake_cmd]
