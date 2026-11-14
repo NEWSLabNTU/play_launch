@@ -409,8 +409,9 @@ mod tests {
     #[test]
     fn the_rule_reproduces_the_islands_budgets() {
         let m = parse_manifest_str(
-            "version: 1\nnodes:\n  h:\n    sub:\n      a:\n        max_transport: { duration: \
-             56ms, source: { measured: { max: 46.42ms, n: 12, margin: 0.2 } } }\n    paths:\n      \
+            "version: 1\nlinks:\n  l:\n    max_transport: { duration: 56ms, source: { \
+             measured: { max: 46.42ms, n: 12, margin: 0.2 } } }\nnodes:\n  h:\n    sub:\n      \
+             a:\n        link: l\n    paths:\n      \
              r:\n        trigger: { input: [a] }\n        max_latency: { duration: 149ms, source: \
              { measured: { margin: 0.2, terms: { tick: { period: 100ms, max: 14.84ms }, work: { \
              max: 25.04ms } } } } }\n",

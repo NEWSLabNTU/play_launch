@@ -71,10 +71,10 @@ nodes:
       takeover_timeout: { type: double }
     sub:
       availability:
-        max_transport: 57ms
+        link: handler_availability
         qos: { lease_duration: 500ms }
         on_violation: { on: [omission, reported], reaction: call_mrm }
-      control_mode: { max_transport: 143ms }
+      control_mode: { link: handler_control_mode }
     pub:
       tor_state: {}
     cli:
@@ -159,3 +159,7 @@ services:
     type: std_srvs/srv/Trigger
     server: [estop_op/operate]
     client: [handler/estop_operate]
+
+links:
+  handler_availability: { max_transport: 57ms }
+  handler_control_mode: { max_transport: 143ms }

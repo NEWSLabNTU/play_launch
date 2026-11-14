@@ -6,6 +6,15 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Removed (contracts; rlm v0.3.17, phase 104 S1):** a `max_transport`
+  written on a subscriber is refused (exit 3), naming the link form:
+  `links.<l>: { max_transport }` and `sub.<ep>.link: <l>`. It was
+  deprecated in 0.33.0. `play_launch migrate <contract> --write` writes the
+  link. `info[declared-not-charged]` names the link a subscriber's
+  transport comes from.
+
 ## 0.33.1 - 2026-11-14
 
 - **Fixed (`check`, #20):** a degradation level below a dwell is charged

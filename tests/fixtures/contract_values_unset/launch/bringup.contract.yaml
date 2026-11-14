@@ -1,6 +1,8 @@
 # Phase 94: param-unset. No launch source sets `init_timeout` on /handler,
 # so the node runs its compiled-in default, which the contract cannot see.
-# `grace` is unset too, and its `default:` is what the contract reads.
+# `grace` is unset too, and its `default:` is what the contract reads (on a
+# path's budget: a subscriber states no transport of its own since rlm
+# v0.3.17, and a link has no node to read a parameter of).
 version: 1
 nodes:
   source:
@@ -12,11 +14,20 @@ nodes:
     sub:
       in:
         max_age: $(param init_timeout) s
-        max_transport: $(param grace) s
+    pub:
+      cmd: {}
+    paths:
+      main:
+        trigger: { input: [in] }
+        output: [cmd]
+        max_latency: $(param grace) s
 
 topics:
   /in:
     type: std_msgs/msg/String
     pub: [source/out]
     sub: [handler/in]
+  /cmd:
+    type: std_msgs/msg/String
+    pub: [handler/cmd]
 

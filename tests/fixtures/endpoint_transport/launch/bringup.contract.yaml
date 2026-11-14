@@ -59,7 +59,7 @@ nodes:
   # the toolchain can be held to because it places both processes.
   fast:
     sub:
-      objects: { max_transport: 0ms }
+      objects: { link: fast_objects }
     pub:
       out: {}
     paths:
@@ -71,7 +71,7 @@ nodes:
   # On another machine: the network's 10ms.
   slow:
     sub:
-      objects: { max_transport: 10ms }
+      objects: { link: slow_objects }
     pub:
       out: {}
     paths:
@@ -121,3 +121,7 @@ paths:
     trigger: { input: [/et/raw] }
     output: [/et/cmd]
     max_latency: 1ms
+
+links:
+  fast_objects: { max_transport: 0ms }
+  slow_objects: { max_transport: 10ms }

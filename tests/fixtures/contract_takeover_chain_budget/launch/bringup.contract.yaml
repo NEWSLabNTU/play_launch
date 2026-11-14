@@ -86,6 +86,7 @@ links:
     max_transport:
       duration: 57ms
       source: { measured: { max: 47.43ms, n: 18, margin: 0.2, run: "fixture" } }
+  handler_control_mode: { max_transport: 143ms }
 
 nodes:
   handler:
@@ -96,7 +97,7 @@ nodes:
         link: host_serial
         qos: { lease_duration: 500ms }
         on_violation: { on: [omission, reported], reaction: call_mrm }
-      control_mode: { max_transport: 143ms }
+      control_mode: { link: handler_control_mode }
     pub:
       tor_state: {}
     cli:

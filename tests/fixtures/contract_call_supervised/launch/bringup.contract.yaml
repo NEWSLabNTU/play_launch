@@ -85,7 +85,7 @@ nodes:
       availability:
         qos: { liveliness: manual_by_topic, lease_duration: 500ms }
         on_violation: { on: [omission], reaction: call_mrm }
-      odom: { min_rate_hz: 10, state: true, max_transport: 5ms }
+      odom: { min_rate_hz: 10, state: true, link: handler_odom }
     cli:
       operate: { call: async, max_transport: 1.5ms }
     paths:
@@ -141,3 +141,6 @@ services:
     type: std_srvs/srv/Trigger
     server: [comfort_op/operate]
     client: [handler/operate]
+
+links:
+  handler_odom: { max_transport: 5ms }

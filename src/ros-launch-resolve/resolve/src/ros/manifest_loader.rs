@@ -1397,8 +1397,8 @@ fn check_endpoint_unwired(index: &mut ManifestIndex) {
 }
 
 /// `declared-not-charged` (phase 85 I7): an info per `max_transport`
-/// declaration, sub-level or topic-level, that the fault-reaction arithmetic
-/// does not charge.
+/// declaration (a subscriber's, through its link; a client's; a service's)
+/// that the fault-reaction arithmetic does not charge.
 ///
 /// Phase 85 I1 charges the key on a reaction route's GUARD EDGE (the hop
 /// into the subscriber that detects the fault) and nowhere else in the
@@ -1499,12 +1499,24 @@ fn note_declared_not_charged(index: &mut ManifestIndex) {
                     if side == "sub" && index.charged_transport.contains(&fqn) {
                         continue;
                     }
+                    // A subscriber's transport is its link's (rlm v0.3.17
+                    // refuses one written on the subscriber): the term keeps
+                    // the subscriber's key (the `--explain` budget table and
+                    // the fault arithmetic key it so), the site and the text
+                    // name the link the author wrote.
+                    let (site_key, on) = match &props.link {
+                        Some(l) => (
+                            format!("links.{l}.max_transport"),
+                            format!("'{fqn}' (link '{l}')"),
+                        ),
+                        None => (key.clone(), format!("'{fqn}'")),
+                    };
                     out.push(Diagnostic {
                         rule_id: "declared-not-charged".to_string(),
                         severity: Severity::Info,
                         message: format!(
-                            "{}: `{key}: {}ms` on '{fqn}' {tail}{}",
-                            super::value_rules::site(index, m.scope_id, &key),
+                            "{}: `{key}: {}ms` on {on} {tail}{}",
+                            super::value_rules::site(index, m.scope_id, &site_key),
                             fmt_ms(t.as_millis_f64()),
                             others(m.scope_id, &key)
                         ),

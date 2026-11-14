@@ -1,6 +1,7 @@
 # Phase 85 T1 (I1) -- the island's shape: the availability verdict comes
 # from a publisher OUTSIDE the tree (the HPC's gate, behind a UART), and the
-# handler's subscriber states the link as `max_transport: 57ms`. call_mrm
+# handler's subscriber names a 57 ms link (unsourced here; the measured
+# twin is contract_takeover_named_link). call_mrm
 # holds the tick and the work only (149 ms = 100 + 18 + 31); the link is the
 # guard edge's, and the checker charges it there:
 #
@@ -82,10 +83,10 @@ nodes:
       takeover_timeout: { type: double }
     sub:
       availability:
-        max_transport: 57ms
+        link: handler_availability
         qos: { lease_duration: 500ms }
         on_violation: { on: [omission, reported], reaction: call_mrm }
-      control_mode: { max_transport: 143ms }
+      control_mode: { link: handler_control_mode }
     pub:
       tor_state: {}
     cli:
@@ -170,3 +171,7 @@ services:
     type: std_srvs/srv/Trigger
     server: [estop_op/operate]
     client: [handler/estop_operate]
+
+links:
+  handler_availability: { max_transport: 57ms }
+  handler_control_mode: { max_transport: 143ms }

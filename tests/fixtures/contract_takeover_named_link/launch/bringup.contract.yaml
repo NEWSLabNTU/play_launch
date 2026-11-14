@@ -1,8 +1,8 @@
 # Phase 97 P2 -- contract_takeover_link with its UART stated once as a named
 # link, with the measurement it came from. The numbers are the same as
 # contract_takeover_link's: a subscriber that names a link is charged the
-# link's max_transport exactly as a written one, so every total and route
-# below must equal that fixture's. `--explain` names the link and the
+# link's max_transport whatever the link's source, so every total and route
+# below must equal that fixture's (whose link states none). `--explain` names the link and the
 # number's source on the guard edge.
 # Phase 85 T1 (I1) -- the island's shape: the availability verdict comes
 # from a publisher OUTSIDE the tree (the HPC's gate, behind a UART), and the
@@ -87,6 +87,7 @@ links:
     max_transport:
       duration: 57ms
       source: { measured: { max: 47.43ms, n: 18, margin: 0.2, run: "fixture" } }
+  handler_control_mode: { max_transport: 143ms }
 
 nodes:
   handler:
@@ -97,7 +98,7 @@ nodes:
         link: host_serial
         qos: { lease_duration: 500ms }
         on_violation: { on: [omission, reported], reaction: call_mrm }
-      control_mode: { max_transport: 143ms }
+      control_mode: { link: handler_control_mode }
     pub:
       tor_state: {}
     cli:

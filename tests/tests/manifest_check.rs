@@ -2115,9 +2115,7 @@ fn takeover_ladder_fits_and_explains_itself() {
 /// Phase 97 P2: the same contract with its UART as a named link
 /// (`links.host_serial`, measured): every row and route is the one the
 /// inline `max_transport` gives (one reader), and the route names the link
-/// and the number's source. The inline subscriber value it replaced is no
-/// longer reported; the driver's 143 ms still is, as `deprecated-spelling`
-/// since rlm v0.3.16 (`transport-inline`, an info, before).
+/// and the number's source.
 #[test]
 fn a_named_link_is_charged_as_the_inline_value_and_named() {
     let (code, out) = check_takeover("contract_takeover_named_link", &["--explain"]);
@@ -2130,13 +2128,17 @@ fn a_named_link_is_charged_as_the_inline_value_and_named() {
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
-    assert!(!out.contains("link-unsourced"), "{out}");
-    let inline: Vec<_> = out
+    // The measured link is sourced; the driver's 143 ms, a link since rlm
+    // v0.3.17 refused a subscriber's own value, is not.
+    let unsourced: Vec<_> = out
         .lines()
-        .filter(|l| l.contains("[deprecated-spelling]"))
+        .filter(|l| l.contains("[link-unsourced]"))
         .collect();
-    assert_eq!(inline.len(), 1, "only control_mode's: {inline:?}");
-    assert!(inline[0].contains("control_mode"), "{inline:?}");
+    assert_eq!(unsourced.len(), 1, "only control_mode's: {unsourced:?}");
+    assert!(
+        unsourced[0].contains("handler_control_mode"),
+        "{unsourced:?}"
+    );
 }
 
 /// The safety island's emergency-stop chain: its route crosses a service the
@@ -2206,9 +2208,9 @@ fn takeover_link_is_charged_on_the_guard_edge() {
         "odd_exit  comfortable  level    100.00  10206.00  192.33   9996.67 derived  20495.00  30000.00   9505.00",
         "odd_exit  estop        mrc      100.00  10206.00  182.33   4165.33 derived  14653.67  30000.00  15346.33",
         "hpc_loss/estop: route = link 57.00ms (max_transport into '/handler/availability', \
-         sub-level) + path 182.33ms",
+         sub-level; link 'handler_availability') + path 182.33ms",
         "odd_exit/takeover: route = link 57.00ms (max_transport into '/handler/availability', \
-         sub-level) + path 149.00ms",
+         sub-level; link 'handler_availability') + path 149.00ms",
         "odd_exit/comfortable: route = path 149.00ms; the guard edge's link (57.00ms into \
          '/handler/availability') is not charged after a dwell's deadline",
         "odd_exit/takeover: lasts at least 10000.00ms once on, and ends within 10149.00ms",
@@ -2224,7 +2226,10 @@ fn takeover_link_is_charged_on_the_guard_edge() {
         "{out}"
     );
     assert!(
-        out.contains("`nodes.handler.sub.control_mode.max_transport: 143ms`"),
+        out.contains(
+            "`nodes.handler.sub.control_mode.max_transport: 143ms` on '/handler/control_mode' \
+             (link 'handler_control_mode')"
+        ),
         "{out}"
     );
 }
@@ -2751,8 +2756,10 @@ fn a_written_criticality_on_a_reached_node_is_an_error() {
 
 /// Phase 90 G4, refused since rlm v0.3.15 (play_launch phase 104 S1):
 /// `exit: { on }` is a parse error naming `holds:`, and `reaction: <mode>`
-/// is `error[reaction-names-mode]` naming `enters:`. `migrate --write`
-/// gives a contract that checks exactly as its current twin does.
+/// is `error[reaction-names-mode]` naming `enters:`; since rlm v0.3.17 a
+/// subscriber's own `max_transport` is a parse error naming a link.
+/// `migrate --write` gives a contract that checks exactly as its current
+/// twin does.
 #[test]
 fn removed_spellings_are_refused_and_migrate_to_the_current_twin() {
     let (code, old) = check_takeover("contract_spelling_deprecated", &[]);
@@ -2764,12 +2771,17 @@ fn removed_spellings_are_refused_and_migrate_to_the_current_twin() {
 
     let (_tmp, dir) = fixture_copy("contract_spelling_deprecated");
     let contract = dir.join("bringup.contract.yaml");
-    // Only `exit.on` fixed by hand: the mode in `reaction:` is the consumer's
-    // refusal, one per hazard.
+    // The parse errors fixed by hand (`exit.on`, the inline transports): the
+    // mode in `reaction:` is the consumer's refusal, one per hazard.
     let text = std::fs::read_to_string(&contract).unwrap();
     std::fs::write(
         &contract,
-        text.replace("on: driver_took_over", "holds: driver_took_over"),
+        format!(
+            "{}\nlinks:\n  a: {{ max_transport: 57ms }}\n  c: {{ max_transport: 143ms }}\n",
+            text.replace("on: driver_took_over", "holds: driver_took_over")
+                .replace("max_transport: 57ms", "link: a")
+                .replace("{ max_transport: 143ms }", "{ link: c }")
+        ),
     )
     .unwrap();
     let launch = dir.join("bringup.launch.xml");
@@ -3937,8 +3949,8 @@ fn a_lowered_supervision_reaches_the_model() {
 /// `contract_supervised` with the comfortable settle supervised to
 /// standstill (rlm v0.1.62): a 943 ms measured response, `supervise: {
 /// enters: estop, mechanism: timer, observes: handler/kinematic_state }`,
-/// and the observed input (10 Hz, `max_transport` 56 ms). `extra` edits the
-/// result further.
+/// and the observed input (10 Hz, through a measured 56 ms link). `extra`
+/// edits the result further.
 fn supervised_settle(c: String, extra: impl Fn(String) -> String) -> String {
     let c = c
         .replacen(
@@ -3951,7 +3963,7 @@ fn supervised_settle(c: String, extra: impl Fn(String) -> String) -> String {
         .replacen(
             "      control_mode: {}\n",
             "      control_mode: {}\n      kinematic_state:\n        min_rate_hz: 10\n        \
-             max_transport: { duration: 56ms, source: { measured: { max: 46.42ms, n: 12, margin: 0.2 } } }\n",
+             link: odometry\n",
             1,
         )
         .replacen(
@@ -3960,6 +3972,10 @@ fn supervised_settle(c: String, extra: impl Fn(String) -> String) -> String {
              sub: [handler/kinematic_state]\n    rate_hz: 10\n  /tor_state:\n",
             1,
         );
+    let c = format!(
+        "{c}\nlinks:\n  odometry:\n    max_transport: {{ duration: 56ms, source: {{ measured: {{ \
+         max: 46.42ms, n: 12, margin: 0.2 }} }} }}\n"
+    );
     extra(c)
 }
 
@@ -4114,14 +4130,7 @@ fn a_supervised_settle_without_its_observation_is_refused() {
             "how late standstill is seen is unknown: name the input it is seen on",
         ),
         (
-            |c: String| {
-                c.replacen(
-                    "        max_transport: { duration: 56ms, source: { measured: { max: 46.42ms, \
-                     n: 12, margin: 0.2 } } }\n",
-                    "",
-                    1,
-                )
-            },
+            |c: String| c.replacen("        link: odometry\n", "", 1),
             "`observes: handler/kinematic_state`: its transport is unknown",
         ),
         (
@@ -4683,7 +4692,7 @@ fn each_unreadable_contract_value_names_its_rule() {
             "contract_values_unset",
             "param-unset",
             vec![
-                "error[param-unset]: bringup.contract.yaml:14: `$(param init_timeout) s`: no \
+                "error[param-unset]: bringup.contract.yaml:16: `$(param init_timeout) s`: no \
                  launch source sets `init_timeout` on /handler (sources: bringup.launch.xml), so \
                  it runs the code's default, which a contract cannot see. Set it in the launch \
                  file, or declare `params: { init_timeout: { type: double, default: ",

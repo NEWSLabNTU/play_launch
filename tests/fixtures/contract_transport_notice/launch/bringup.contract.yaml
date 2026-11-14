@@ -1,6 +1,6 @@
 # Phase 85 T7 (I7) -- clean, with a transport bound the fault-reaction
 # arithmetic does not read: the subscriber-level one on control_node/scan
-# (the island's shape, `max_transport: 57ms` on the handler's input). It
+# (the island's shape, a 57 ms link on the handler's input). It
 # must produce one info[declared-not-charged] until phase 85 I1 charges the
 # key; then T1 takes over. (The topic-level default this fixture also
 # carried was removed in rlm v0.3.15.)
@@ -19,7 +19,7 @@ nodes:
   control_node:
     sub:
       scan:
-        max_transport: 57ms
+        link: control_node_scan
     pub:
       cmd: {}
     paths:
@@ -36,3 +36,6 @@ topics:
   /dx/cmd:
     type: std_msgs/msg/String
     pub: [control_node/cmd]
+
+links:
+  control_node_scan: { max_transport: 57ms }
