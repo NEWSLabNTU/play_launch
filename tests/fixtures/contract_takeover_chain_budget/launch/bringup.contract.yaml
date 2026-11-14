@@ -105,7 +105,7 @@ nodes:
       estop_operate: {}
     paths:
       on_timer:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [tor_state]
         max_latency: 100ms
       call_mrm:
@@ -143,7 +143,7 @@ nodes:
       cmd: {}
     paths:
       on_timer:
-        trigger: { timer: { rate_hz: 30 } }
+        trigger: { timer: { rate: 30Hz } }
         output: [cmd]
         safe_state:
           emits: cmd
@@ -155,7 +155,7 @@ topics:
     external: pub
     pub: [/gate/availability]
     sub: [handler/availability]
-    rate_hz: 10
+    rate: 10Hz
   /control_mode:
     type: demo_msgs/msg/ControlMode
     external: pub

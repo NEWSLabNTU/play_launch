@@ -58,28 +58,28 @@ nodes:
       odom: {}
     paths:
       sample:
-        trigger: { timer: { rate_hz: 50 } }
+        trigger: { timer: { rate: 50Hz } }
         output: [scan, imu, odom]
         max_latency: 2ms
 
   obstacle_detector:
     sub:
       scan:
-        min_rate_hz: 50
+        min_rate: 50Hz
         qos: { liveliness: manual_by_topic, lease_duration: 100ms, deadline: 40ms }
         on_violation:
           on: [omission, late]
           reaction: declare_scan_lost
           within: 10ms
       imu:
-        min_rate_hz: 50
+        min_rate: 50Hz
         max_age: 30ms
         on_violation:
           on: [omission]
           reaction: declare_imu_lost
           within: 10ms
       odom:
-        min_rate_hz: 50
+        min_rate: 50Hz
         max_age: 30ms
         on_violation:
           on: [omission]

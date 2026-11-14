@@ -33,14 +33,14 @@ nodes:
       scan: {}
     paths:
       sample:
-        trigger: { timer: { rate_hz: 50 } }
+        trigger: { timer: { rate: 50Hz } }
         output: [scan]
         max_latency: 2ms
 
   obstacle_detector:
     sub:
       scan:
-        min_rate_hz: 50
+        min_rate: 50Hz
         qos: { liveliness: manual_by_topic, lease_duration: 100ms }
         on_violation:
           on: [omission]

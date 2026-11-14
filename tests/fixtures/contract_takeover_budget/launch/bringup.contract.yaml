@@ -108,7 +108,7 @@ nodes:
       availability: {}
     paths:
       report:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [availability]
         max_latency: 20ms
 
@@ -175,13 +175,13 @@ nodes:
       ok_cmd: {}
     paths:
       on_timer:
-        trigger: { timer: { rate_hz: 30 } }
+        trigger: { timer: { rate: 30Hz } }
         output: [cmd]
         safe_state:
           emits: cmd
           settle: { decel: target_decel, jerk: target_jerk }
       on_timer_ok:
-        trigger: { timer: { rate_hz: 30 } }
+        trigger: { timer: { rate: 30Hz } }
         output: [ok_cmd]
         safe_state:
           emits: ok_cmd

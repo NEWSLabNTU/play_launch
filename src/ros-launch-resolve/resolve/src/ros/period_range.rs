@@ -638,7 +638,7 @@ fn range_of(
         node: t.node.clone(),
         path: t.path.clone(),
         scope_id: t.scope_id,
-        key: format!("nodes.{}.paths.{}.trigger.timer.rate_hz", t.local, t.path),
+        key: format!("nodes.{}.paths.{}.trigger.timer.rate", t.local, t.path),
         period_ms: t.period_ms,
         rows,
         upper,
@@ -915,7 +915,7 @@ mod tests {
         assert_eq!(found.len(), 1, "{found:#?}");
         let d = found[0];
         assert_eq!(d.severity, Severity::Error);
-        assert_eq!(d.path, "nodes.brake.paths.on_timer.trigger.timer.rate_hz");
+        assert_eq!(d.path, "nodes.brake.paths.on_timer.trigger.timer.rate");
         assert!(
             d.message.contains(
                 "/safety/brake/on_timer is allocated a period of 100ms, above the longest \

@@ -4,7 +4,7 @@ version: 1
 nodes:
   source:
     pub:
-      out: { min_rate_hz: $(var rate) Hz }
+      out: { min_rate: $(var rate) Hz }
   handler:
     sub:
       in: {}

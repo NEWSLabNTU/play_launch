@@ -11,11 +11,11 @@ version: 1
 nodes:
   source:
     pub:
-      out: { min_rate_hz: 10 }
-      out2: { min_rate_hz: 10 }
+      out: { min_rate: 10Hz }
+      out2: { min_rate: 10Hz }
     paths:
       tick:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [out, out2]
   handler:
     params:
@@ -30,10 +30,10 @@ nodes:
       status: {}
     paths:
       fast:
-        trigger: { timer: { rate_hz: 10, param: update_rate } }
+        trigger: { timer: { rate: 10Hz, param: update_rate } }
         output: [status]
       slow:
-        trigger: { timer: { rate_hz: 1, period_param: slow_period } }
+        trigger: { timer: { rate: 1Hz, period_param: slow_period } }
         output: [status]
       read:
         trigger: { input: [in, in2] }

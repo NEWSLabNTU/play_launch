@@ -10,10 +10,10 @@ version: 1
 
 nodes:
   detector:
-    sub: { image: { min_rate_hz: 30 } }
+    sub: { image: { min_rate: 30Hz } }
     pub:
-      boxes: { min_rate_hz: 30 }
-      masks: { min_rate_hz: 30 }
+      boxes: { min_rate: 30Hz }
+      masks: { min_rate: 30Hz }
     concurrency:
       exclusive:
         - [to_boxes, to_masks]
@@ -34,8 +34,8 @@ nodes:
         max_latency: 35ms
 
   tracker:
-    sub: { boxes: { min_rate_hz: 30 } }
-    pub: { tracks: { min_rate_hz: 30 } }
+    sub: { boxes: { min_rate: 30Hz } }
+    pub: { tracks: { min_rate: 30Hz } }
     paths:
       main:
         trigger: { input: [boxes] }
@@ -43,8 +43,8 @@ nodes:
         max_latency: 10ms
 
   segmenter:
-    sub: { masks: { min_rate_hz: 30 } }
-    pub: { seg: { min_rate_hz: 30 } }
+    sub: { masks: { min_rate: 30Hz } }
+    pub: { seg: { min_rate: 30Hz } }
     paths:
       main:
         trigger: { input: [masks] }
@@ -58,7 +58,7 @@ topics:
     # is required — without this, `dangling-entity` is right to complain.
     external: pub
     sub: [detector/image]
-    rate_hz: 30
+    rate: 30Hz
     qos:
       reliability: reliable
       deadline: 33ms
@@ -68,22 +68,22 @@ topics:
     type: std_msgs/msg/String
     pub: [detector/boxes]
     sub: [tracker/boxes]
-    rate_hz: 30
+    rate: 30Hz
   /perception/masks:
     type: std_msgs/msg/String
     pub: [detector/masks]
     sub: [segmenter/masks]
-    rate_hz: 30
+    rate: 30Hz
   /tracks:
     type: std_msgs/msg/String
     external: sub
     pub: [tracker/tracks]
-    rate_hz: 30
+    rate: 30Hz
   /seg:
     type: std_msgs/msg/String
     external: sub
     pub: [segmenter/seg]
-    rate_hz: 30
+    rate: 30Hz
 
 event_chains:
   # True critical path: 20 (to_boxes) + 10 (tracker) = 30ms. Before phase 68

@@ -14,4 +14,4 @@ topics:
     type: std_msgs/msg/String
     pub: [source/out]
     sub: [handler/in]
-    rate_hz: $(param timeout) Hz
+    rate: $(param timeout) Hz

@@ -57,7 +57,7 @@ nodes:
       cmd_adv: {}
     paths:
       control:
-        trigger: { timer: { rate_hz: 50 } }
+        trigger: { timer: { rate: 50Hz } }
         output: [cmd_adv]
         max_latency: 10ms
   safety_ctrl:
@@ -65,7 +65,7 @@ nodes:
       cmd_safe: {}
     paths:
       control:
-        trigger: { timer: { rate_hz: 50 } }
+        trigger: { timer: { rate: 50Hz } }
         output: [cmd_safe]
         max_latency: 2ms
   envelope_monitor:

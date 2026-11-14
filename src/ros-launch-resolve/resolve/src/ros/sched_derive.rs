@@ -235,7 +235,7 @@ mod tests {
                         ros_launch_manifest_types::EndpointProps {
                             min_rate_hz: Some(ros_launch_manifest_types::spelled(
                                 ros_launch_manifest_types::field_table::Context::Endpoint,
-                                "min_rate_hz",
+                                "min_rate",
                                 30.0,
                             )),
                             ..Default::default()
@@ -262,7 +262,7 @@ mod tests {
                         ros_launch_manifest_types::EndpointProps {
                             min_rate_hz: Some(ros_launch_manifest_types::spelled(
                                 ros_launch_manifest_types::field_table::Context::Endpoint,
-                                "min_rate_hz",
+                                "min_rate",
                                 30.0,
                             )),
                             ..Default::default()

@@ -59,7 +59,7 @@ nodes:
       mpc_cmd: {}
     paths:
       control:
-        trigger: { timer: { rate_hz: 30 } }
+        trigger: { timer: { rate: 30Hz } }
         output: [mpc_cmd]
         max_latency: 20ms
 
@@ -70,7 +70,7 @@ nodes:
       fallback_cmd: {}
     paths:
       control:
-        trigger: { timer: { rate_hz: 50 } }
+        trigger: { timer: { rate: 50Hz } }
         output: [fallback_cmd]
         max_latency: 5ms
 
@@ -82,7 +82,7 @@ nodes:
       control: {}
     paths:
       on_timer:
-        trigger: { timer: { rate_hz: 100 } }
+        trigger: { timer: { rate: 100Hz } }
         output: [control]
         max_latency: 2ms
 

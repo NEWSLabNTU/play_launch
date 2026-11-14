@@ -841,7 +841,7 @@ impl RuleEngine {
             {
                 to_emit.push(format!(
                     "topic '{fqn}' publisher '{pub_ref}' measured rate {:.2} Hz \
-                     < declared min_rate_hz ({min})",
+                     < declared min_rate ({min} Hz)",
                     measured_hz
                 ));
             }
@@ -2467,7 +2467,7 @@ mod tests {
         let pub_props = ros_launch_manifest_types::EndpointProps {
             min_rate_hz: Some(ros_launch_manifest_types::spelled(
                 ros_launch_manifest_types::field_table::Context::Endpoint,
-                "min_rate_hz",
+                "min_rate",
                 30.0,
             )),
             ..Default::default()
@@ -2754,7 +2754,7 @@ mod tests {
             ros_launch_manifest_types::EndpointProps {
                 min_rate_hz: Some(ros_launch_manifest_types::spelled(
                     ros_launch_manifest_types::field_table::Context::Endpoint,
-                    "min_rate_hz",
+                    "min_rate",
                     30.0,
                 )),
                 ..Default::default()

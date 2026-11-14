@@ -172,6 +172,7 @@ fn capture_emits_no_requirement() {
     for key in [
         "rate_hz:",
         "min_rate_hz:",
+        "min_rate:",
         "max_latency",
         "max_age",
         "max_jitter",

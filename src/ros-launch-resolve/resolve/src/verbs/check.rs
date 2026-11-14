@@ -1449,7 +1449,7 @@ pub fn emit_diagnostics_params(index: &manifest_loader::ManifestIndex) -> String
         ));
     }
     if out.lines().count() <= 4 {
-        out.push_str("# (no subscriber declares min_rate_hz, max_rate_hz or max_age)\n");
+        out.push_str("# (no subscriber declares min_rate, max_rate or max_age)\n");
     }
     out
 }

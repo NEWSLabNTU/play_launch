@@ -25,7 +25,7 @@ nodes:
       raw: {}
     paths:
       tick:
-        trigger: { timer: { rate_hz: 100 } }
+        trigger: { timer: { rate: 100Hz } }
         output: [raw]
 
   filter:
@@ -34,7 +34,7 @@ nodes:
     pub:
       # Promises exactly what the graph derives (100 Hz) — a second copy.
       # -> derivable-min-rate
-      filtered: { min_rate_hz: 100 }
+      filtered: { min_rate: 100Hz }
     paths:
       clean:
         trigger: { input: [raw] }
@@ -46,11 +46,11 @@ nodes:
       a: {}
       # Requires 150 Hz from /rates/filtered, which derives to 100 Hz.
       # -> derived-rate-hierarchy
-      b: { min_rate_hz: 150 }
+      b: { min_rate: 150Hz }
     pub:
       # Promises 300 Hz where the graph derives 200 — more than its own
       # triggers can produce. -> min-rate-mismatch
-      merged: { min_rate_hz: 300 }
+      merged: { min_rate: 300Hz }
     paths:
       combine:
         trigger: { input: [a, b] }
@@ -84,11 +84,11 @@ topics:
     type: std_msgs/msg/String
     pub: [filter/filtered]
     sub: [merger/b]
-    rate_hz: 100        # agrees with the derivation — redundant
+    rate: 100Hz        # agrees with the derivation — redundant
   /rates/merged:
     type: std_msgs/msg/String
     pub: [merger/merged]
-    rate_hz: 100        # DISAGREES: two 100 Hz inputs, no sync, so 200 Hz
+    rate: 100Hz        # DISAGREES: two 100 Hz inputs, no sync, so 200 Hz
   /rates/bulk:
     type: std_msgs/msg/String
     pub: []

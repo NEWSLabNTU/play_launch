@@ -44,7 +44,7 @@ nodes:
       scan: {}
     paths:
       sample:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [scan]
         max_latency: 5ms
   safety_node:
@@ -62,7 +62,7 @@ nodes:
       cmd_vel: {}
     paths:
       plan:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [cmd_vel]
         max_latency: 20ms
   gate:

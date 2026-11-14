@@ -9,7 +9,7 @@ nodes:
     criticality: high
     sub:
       objects:
-        min_rate_hz: 5
+        min_rate: 5Hz
         max_age: 200ms
         required: true
         # The hop's 5ms, on the link it crosses (phase 90 G3: it was the

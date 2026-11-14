@@ -36,7 +36,7 @@ nodes:
       scan_a: {}
     paths:
       sample:
-        trigger: { timer: { rate_hz: 20 } }
+        trigger: { timer: { rate: 20Hz } }
         output: [scan_a]
         max_latency: 2ms
   lidar_b:
@@ -44,7 +44,7 @@ nodes:
       scan_b: {}
     paths:
       sample:
-        trigger: { timer: { rate_hz: 20 } }
+        trigger: { timer: { rate: 20Hz } }
         output: [scan_b]
         max_latency: 2ms
   logger:

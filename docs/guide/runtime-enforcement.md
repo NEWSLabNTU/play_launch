@@ -36,7 +36,7 @@ nodes:
   talker:
     pub:
       chatter:
-        min_rate_hz: 1000
+        min_rate: 1000Hz
   listener:
     sub:
       chatter: {}
@@ -67,13 +67,13 @@ while:
 
 ```
 WARN  [runtime] topic '/pure_test/chatter' publisher '/pure_test/talker/chatter'
-      measured rate 1.20 Hz < declared min_rate_hz (1000) (rate-hierarchy-runtime)
+      measured rate 1.20 Hz < declared min_rate (1000 Hz) (rate-hierarchy-runtime)
 ```
 
 and in the bundle, `play_log/<ts>/runtime_violations.jsonl`:
 
 ```json
-{"rule_id":"rate-hierarchy-runtime","severity":"error","fqn":"/pure_test/chatter","message":"topic '/pure_test/chatter' publisher '/pure_test/talker/chatter' measured rate 1.20 Hz < declared min_rate_hz (1000)","timestamp_ns":2174550538351001}
+{"rule_id":"rate-hierarchy-runtime","severity":"error","fqn":"/pure_test/chatter","message":"topic '/pure_test/chatter' publisher '/pure_test/talker/chatter' measured rate 1.20 Hz < declared min_rate (1000 Hz)","timestamp_ns":2174550538351001}
 ```
 
 Run the same thing with `--enforce-rules strict` and it stops being a report:
@@ -266,7 +266,7 @@ a rule with none is comparing the running system against itself.
 | `graph-deviation-runtime` | warning | the model's topic set — `structure.topics` (declared `topics:` plus topics derived from the launch file's own remaps) and `contracts.externals` | a publisher or subscription is created on a topic that set does not contain. The three rcl-internal topics are exempt |
 | `consistency-runtime` | error | `topics.<t>.type` | the runtime message type (from rosidl introspection) disagrees with the declared one |
 | `qos-match-runtime` | error | — (observed QoS on both sides) | an observed publisher's reliability or durability cannot satisfy an observed subscriber's, at endpoint creation; and on every DDS `OFFERED_QOS_INCOMPATIBLE` / `REQUESTED_QOS_INCOMPATIBLE` |
-| `rate-hierarchy-runtime` | error | `nodes.<n>.pub.<e>.min_rate_hz` | the measured publish rate falls below the declared floor. Needs ≥0.5 s of publishing; re-checked every 1024 publishes and at least every 5 s, so a 1 Hz topic cannot escape its contract by never reaching a count |
+| `rate-hierarchy-runtime` | error | `nodes.<n>.pub.<e>.min_rate` | the measured publish rate falls below the declared floor. Needs ≥0.5 s of publishing; re-checked every 1024 publishes and at least every 5 s, so a 1 Hz topic cannot escape its contract by never reaching a count |
 | `max-age-runtime` | error | `nodes.<n>.sub.<e>.max_age` | `now − header.stamp` at a take exceeds the declared age. Read on the consumer's poll, so it can overstate age by up to the 10 ms poll interval |
 | `drop-rate-runtime` | error / warning | `topics.<t>.drop.max_count` | error: the worst subscriber's measured `(published − taken) / published` exceeds the declared budget, checked every 256 takes. warning: a DDS `MESSAGE_LOST` event |
 | `max-latency-runtime` | error | `paths.<p>.max_latency` (event chain) | the same `header.stamp` reaches the path's output topic later than the budget allows after its publish on the input topic |

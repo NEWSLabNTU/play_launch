@@ -48,7 +48,7 @@ nodes:
       scan: {}
     paths:
       sample:
-        trigger: { timer: { rate_hz: 20 } }
+        trigger: { timer: { rate: 20Hz } }
         output: [scan]
         max_latency: 2ms
 
@@ -77,7 +77,7 @@ nodes:
         max_latency: 2ms
       # The dwell's owner reads its deadline on this tick.
       on_tick:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [level]
         max_latency: 2ms
 
@@ -88,7 +88,7 @@ nodes:
       accepted: {}
     paths:
       on_tick:
-        trigger: { timer: { rate_hz: 2 } }
+        trigger: { timer: { rate: 2Hz } }
         output: [accepted]
         max_latency: 5ms
 

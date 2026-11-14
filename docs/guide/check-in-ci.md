@@ -203,7 +203,7 @@ info above the table.
   many periods the row charges (read off the rows by re-running the
   arithmetic one millisecond longer). The checks a period reaches are then
   re-run with longer periods, and a rule that fires first (a publisher's or
-  subscriber's `min_rate_hz`, a dwell's expiry) is a limit of its own; so is
+  subscriber's `min_rate`, a dwell's expiry) is a limit of its own; so is
   a `max_age` the node evaluates on that tick (`mechanism: application` or
   `diagnostics`). A finding about a `source: derived` budget is not a limit:
   the budget is recomputed with the period, and the notes name it. `none`
@@ -215,7 +215,7 @@ info above the table.
   analysed `max_latency`, else the platform file's `budget` for the node.
   `unknown` when a timer on the executor states none.
 
-A timer whose `rate_hz` states `source: allocated` must lie inside the range:
+A timer whose `rate` states `source: allocated` must lie inside the range:
 `error[period-range]` otherwise, and `warning[period-range]` while the lower
 end is unknown.
 
@@ -246,8 +246,8 @@ The rules that read it:
   a vehicle not at standstill by then starts the reaction. `observes:
   <node>/<subscriber>` names the input standstill is seen on; the
   observation delay is derived from the contract, never written on the
-  supervision: that input's period (the slowest of its topic's `rate_hz`
-  and its `min_rate_hz`) + the transport of the subscriber's `link:`
+  supervision: that input's period (the slowest of its topic's `rate`
+  and its `min_rate`) + the transport of the subscriber's `link:`
   (a `max_transport` written on the subscriber itself is still read, and
   reported as `deprecated-spelling`; `play_launch migrate` moves it onto
   a link). No `observes`, no period or no transport: `supervised-unlowered`

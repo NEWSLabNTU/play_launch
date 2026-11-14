@@ -63,6 +63,14 @@ fn resolved_override(
             (model::OverrideTable::SubEndpoints, node_key(node, name))
         }
     };
+    // The field keeps the name the model and its readers use: since rlm
+    // v0.3.21 the contract's rate keys lose `_hz`, the model's do not.
+    let field = match field {
+        "min_rate" => "min_rate_hz",
+        "max_rate" => "max_rate_hz",
+        "rate" => "rate_hz",
+        other => other,
+    };
     Some(model::ResolvedOverride {
         table,
         key,
@@ -533,7 +541,12 @@ fn model_field(rest: &str) -> String {
         .or_else(|| rest.strip_suffix(".value"))
         .unwrap_or(rest);
     match rest {
-        "trigger.timer.rate_hz" => return "rate_hz".to_string(),
+        "trigger.timer.rate" | "trigger.timer.rate_hz" => return "rate_hz".to_string(),
+        // rlm v0.3.21: the contract's rate keys lose `_hz`; the model's keep it.
+        "min_rate" => return "min_rate_hz".to_string(),
+        "max_rate" => return "max_rate_hz".to_string(),
+        "rate" => return "rate_hz".to_string(),
+        "arrival_curve.rate" => return "arrival_curve.rate_hz".to_string(),
         "trigger.timer.jitter" => return "timer_jitter_ms".to_string(),
         "min_dwell" => return "min_dwell.duration_ms".to_string(),
         // rlm v0.3.18: a dwell range's ends.

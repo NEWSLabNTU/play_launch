@@ -22,7 +22,7 @@ nodes:
 
   planner:
     sub:
-      limit: { min_rate_hz: 10 }
+      limit: { min_rate: 10Hz }
 
 topics:
   /limit:

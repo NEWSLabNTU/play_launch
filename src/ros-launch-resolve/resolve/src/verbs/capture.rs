@@ -12,7 +12,7 @@
 //! a topic published at 9.97 Hz; it cannot say whether 10 Hz was *required*,
 //! and a contract states requirements. So this emits `nodes:`, their endpoints
 //! and `topics:` with types and wiring — and puts every measured number in as
-//! a COMMENT. It emits no `rate_hz`, no `min_rate_hz`, no `max_latency`, no
+//! a COMMENT. It emits no `rate`, no `min_rate`, no `max_latency`, no
 //! `max_age`, no `max_jitter`, no `paths:` and no `criticality`. Same
 //! discipline `play_launch measure` follows when it prints costs as comments
 //! under a header saying where they belong; the two are meant to be met
@@ -572,7 +572,7 @@ fn header(run: &Path, model: &Path, endpoints: usize, nodes: usize, topics: usiz
 # This file states what the run WIRED. It states no requirement, because a run
 # cannot observe one: a measured rate is a fact about one execution, and
 # whether that rate is REQUIRED is a decision only you can record. So there is
-# no `rate_hz`, no `min_rate_hz`, no `max_latency`, no `max_age`, no
+# no `rate`, no `min_rate`, no `max_latency`, no `max_age`, no
 # `max_jitter`, no `event_chains:` and no `criticality` below — add them, and the
 # file becomes a contract instead of a description. Observed numbers are here
 # as comments, which is where they belong until you decide otherwise
@@ -902,7 +902,7 @@ fn build(
         if let Some(pub_count) = fact.pub_count {
             comments.push(format!(
                 "observed: {} published, {} taken, {} Hz mean over {:.1} s. A FACT about this \
-                 run, not a requirement — if a rate is required, say so with `rate_hz:` and \
+                 run, not a requirement — if a rate is required, say so with `rate:` and \
                  the tool will check it.",
                 pub_count as u64,
                 fact.take_count.unwrap_or(0.0) as u64,
@@ -1196,6 +1196,7 @@ mod tests {
         for key in [
             "rate_hz:",
             "min_rate_hz:",
+            "min_rate:",
             "max_latency",
             "max_age",
             "max_jitter",

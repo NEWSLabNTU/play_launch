@@ -8,6 +8,17 @@ allowance heavily.
 
 ## Unreleased
 
+- **Changed (contracts; rlm v0.3.21, phase 104 S3):** a rate is a value
+  with its unit: `min_rate: 100Hz`, `max_rate:`, a topic's `rate:`, a
+  timer's `trigger.timer.rate:` and an arrival curve's `rate:` (were
+  `min_rate_hz: 100` and so on). A bare number is refused, and so is a
+  period (`10ms`). The `_hz` keys read for one release as a number of Hz
+  with `warning[deprecated-spelling]`; `play_launch migrate` rewrites them,
+  numbers gaining `Hz` and `$(param ...) Hz` kept as written. Messages say
+  `min_rate (10 Hz)`, diagnostic paths and the `--explain` value table name
+  the new keys, and a mode override's resolved field and the model keep
+  `*_rate_hz`. 118 fixtures, the examples and the guides are migrated,
+  verdicts unchanged.
 - **Changed (contracts; rlm v0.3.20, phase 104 S3):** an end-to-end
   requirement is written under `event_chains:` (was a manifest level's
   `paths:`; a node's internal `paths:` keep the word), as AUTOSAR TIMEX and

@@ -4,10 +4,10 @@ version: 1
 nodes:
   source:
     pub:
-      out: { min_rate_hz: $(param handlr update_rate) Hz }
+      out: { min_rate: $(param handlr update_rate) Hz }
   handler:
     sub:
-      in: { min_rate_hz: $(param /safety/handler update_rate) Hz }
+      in: { min_rate: $(param /safety/handler update_rate) Hz }
 
 topics:
   /in:

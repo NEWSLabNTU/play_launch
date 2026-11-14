@@ -51,7 +51,7 @@ node's ROS name (issue #0017). Only the model can tell the two apart.
 **It emits structure and facts**: `nodes:` with their `pub:`/`sub:` endpoints,
 and `topics:` with the message type and both sides of the wiring.
 
-**It emits no requirements.** No `rate_hz`, no `min_rate_hz`, no
+**It emits no requirements.** No `rate`, no `min_rate`, no
 `max_latency`, no `max_age`, no `max_jitter`, no `event_chains:`, no `criticality`.
 Not because they are hard to guess but because they are not observable. A run
 can tell you a topic published at 9.97 Hz; it cannot tell you whether 10 Hz was
@@ -173,12 +173,12 @@ nodes:
   lidar_driver:
     paths:
       sample:
-        trigger: { timer: { rate_hz: $(param rate_hz) Hz } }   # the node's parameter
+        trigger: { timer: { rate: $(param rate_hz) Hz } }   # the node's parameter
         output: [scan]
   obstacle_detector:
     sub:
       scan:
-        min_rate_hz: $(let lidar_rate)
+        min_rate: $(let lidar_rate)
         qos: { liveliness: manual_by_topic, lease_duration: $(param watchdog_ms) ms }
         max_age: 3 / $(let lidar_rate)
 ```
@@ -189,10 +189,10 @@ and `check --explain` says where each value came from:
 ```text
 -- Values read from the launch tree (--explain) --
 bringup.contract.yaml:
-  /safety/lidar_driver paths.sample.trigger.timer.rate_hz = 100 Hz  <- $(param rate_hz) Hz
+  /safety/lidar_driver paths.sample.trigger.timer.rate = 100 Hz  <- $(param rate_hz) Hz
                                                                     <- /safety/lidar_driver rate_hz = 100 Hz, <param> bringup.launch.xml:34 = $(var lidar_hz)
                                                                     <- lidar_hz = 100, command line
-  /safety/obstacle_detector sub.scan.min_rate_hz = 100 Hz           <- $(let lidar_rate)
+  /safety/obstacle_detector sub.scan.min_rate = 100 Hz           <- $(let lidar_rate)
                                                                     <- let lidar_rate: $(var lidar_hz) Hz = 100 Hz, bringup.contract.yaml:19
                                                                     <- lidar_hz = 100 Hz, command line
 ```

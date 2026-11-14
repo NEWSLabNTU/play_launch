@@ -256,10 +256,10 @@ fn observation(
     if let Some((name, t)) = topic
         && let Some(hz) = t.rate_hz
     {
-        rates.push((hz, format!("{name} rate_hz {hz}")));
+        rates.push((hz, format!("{name} rate {hz} Hz")));
     }
     if let Some(hz) = props.min_rate_hz.as_ref().and_then(Bound::hz) {
-        rates.push((hz, format!("{o} min_rate_hz {hz}")));
+        rates.push((hz, format!("{o} min_rate {hz} Hz")));
     }
     let (hz, rate_how) = rates
         .into_iter()
@@ -267,8 +267,8 @@ fn observation(
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .ok_or_else(|| {
             format!(
-                "`observes: {o}`: its period is unknown: state its topic's `rate_hz` or its \
-                 `min_rate_hz`"
+                "`observes: {o}`: its period is unknown: state its topic's `rate` or its \
+                 `min_rate`"
             )
         })?;
     let period = 1000.0 / hz;

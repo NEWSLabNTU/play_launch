@@ -14,16 +14,16 @@ version: 1
 
 nodes:
   detector:
-    sub: { image: { min_rate_hz: 10 } }
-    pub: { boxes: { min_rate_hz: 10 } }
+    sub: { image: { min_rate: 10Hz } }
+    pub: { boxes: { min_rate: 10Hz } }
     paths:
       main:
         input: image
         output: [boxes]
         max_latency: 20ms
   tracker:
-    sub: { boxes: { min_rate_hz: 10 } }
-    pub: { tracks: { min_rate_hz: 10 } }
+    sub: { boxes: { min_rate: 10Hz } }
+    pub: { tracks: { min_rate: 10Hz } }
     paths:
       main:
         input: [boxes]
@@ -35,17 +35,17 @@ topics:
   /image:
     type: sensor_msgs/msg/Image
     sub: [detector/image]
-    rate_hz: 10
+    rate: 10Hz
   /perception/boxes:
     type: std_msgs/msg/String
     pub: [detector/boxes]
     sub: [tracker/boxes]
-    rate_hz: 10
+    rate: 10Hz
   /tracks:
     type: std_msgs/msg/String
     external: sub
     pub: [tracker/tracks]
-    rate_hz: 10
+    rate: 10Hz
 
 external_topics:
   /image:

@@ -27,14 +27,14 @@ nodes:
       route: {}
     paths:
       plan:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [route]
         max_latency: 5ms
 
   route_monitor:
     sub:
       route:
-        min_rate_hz: 10
+        min_rate: 10Hz
 
   dock_controller: {}
 

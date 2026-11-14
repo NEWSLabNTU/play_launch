@@ -7,7 +7,7 @@ nodes:
     lifecycle: true
     pub:
       objects:
-        min_rate_hz: 10
+        min_rate: 10Hz
     paths:
       main:
         output: [objects]
@@ -17,7 +17,7 @@ topics:
   objects:
     type: std_msgs/msg/String
     pub: [detector/objects]
-    rate_hz: 10
+    rate: 10Hz
     drop:
       max_count: 1 / 20
       max_consecutive: 3

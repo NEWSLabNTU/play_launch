@@ -1670,12 +1670,12 @@ fn derive_and_check_topic_rates(
                 rule_id: "rate-mismatch".to_string(),
                 severity: Severity::Warning,
                 message: format!(
-                    "topic '{fqn}' declares rate_hz {declared} but the graph derives \
+                    "topic '{fqn}' declares rate {declared} Hz but the graph derives \
                      {hz:.4} Hz from the timers that drive it. One of the two is wrong, \
                      and nothing else checks this — a declared rate is a second copy of \
                      something the `trigger:`/`output:` facts already determine"
                 ),
-                path: format!("topics.{fqn}.rate_hz"),
+                path: format!("topics.{fqn}.rate"),
                 span: None,
             });
         } else {
@@ -1683,11 +1683,11 @@ fn derive_and_check_topic_rates(
                 rule_id: "derivable-rate".to_string(),
                 severity: Severity::Info,
                 message: format!(
-                    "topic '{fqn}' declares rate_hz {declared}, which the graph already \
+                    "topic '{fqn}' declares rate {declared} Hz, which the graph already \
                      derives from the timers that drive it. The declaration is redundant \
                      and can be deleted"
                 ),
-                path: format!("topics.{fqn}.rate_hz"),
+                path: format!("topics.{fqn}.rate"),
                 span: None,
             });
         }
@@ -5248,7 +5248,7 @@ fn apply_mode_overrides(
                     && let Some(t) = m.manifest.topics.get_mut(middle)
                 {
                     match field {
-                        "rate_hz" => {
+                        "rate" => {
                             if let Some(v) = num() {
                                 t.rate_hz = Some(v);
                                 applied += 1;
@@ -5259,7 +5259,7 @@ fn apply_mode_overrides(
                 }
                 if let Some(t) = index.topics.get_mut(&fqn) {
                     match field {
-                        "rate_hz" => t.rate_hz = num(),
+                        "rate" => t.rate_hz = num(),
                         _ => {}
                     }
                 }
@@ -5354,12 +5354,12 @@ fn set_endpoint_field(
     num: &dyn Fn() -> Option<f64>,
 ) -> bool {
     match field {
-        "min_rate_hz" => match num() {
-            Some(v) => set_bound(&mut e.min_rate_hz, Context::Endpoint, "min_rate_hz", v),
+        "min_rate" => match num() {
+            Some(v) => set_bound(&mut e.min_rate_hz, Context::Endpoint, "min_rate", v),
             None => return false,
         },
-        "max_rate_hz" => match num() {
-            Some(v) => set_bound(&mut e.max_rate_hz, Context::Endpoint, "max_rate_hz", v),
+        "max_rate" => match num() {
+            Some(v) => set_bound(&mut e.max_rate_hz, Context::Endpoint, "max_rate", v),
             None => return false,
         },
         "max_age" => match dur() {
@@ -5495,7 +5495,7 @@ pub(crate) fn override_site<'t>(
             .topics
             .get(middle)
             .is_some_and(|t| match field {
-                "rate_hz" => t.rate_hz.is_some(),
+                "rate" => t.rate_hz.is_some(),
                 _ => false,
             })
             .then_some((OverrideSite::Topic { name: middle }, field)),
@@ -5569,8 +5569,8 @@ fn path_field_declared(p: &ros_launch_manifest_types::PathDecl, field: &str) -> 
 
 fn endpoint_field_declared(e: &ros_launch_manifest_types::EndpointProps, field: &str) -> bool {
     match field {
-        "min_rate_hz" => e.min_rate_hz.is_some(),
-        "max_rate_hz" => e.max_rate_hz.is_some(),
+        "min_rate" => e.min_rate_hz.is_some(),
+        "max_rate" => e.max_rate_hz.is_some(),
         "max_age" => e.max_age.is_some(),
         "max_transport" => e.max_transport.is_some(),
         _ => false,
@@ -5977,13 +5977,13 @@ fn derive_and_check_endpoint_rates(
                     .and_then(|n| n.publishers.get(&ep))
                     .and_then(|p| p.min_rate_hz.hz())
             {
-                let path = format!("nodes.{node_fqn}.pub.{ep}.min_rate_hz");
+                let path = format!("nodes.{node_fqn}.pub.{ep}.min_rate");
                 if agrees(declared, hz) {
                     diags.push(Diagnostic {
                         rule_id: "derivable-min-rate".to_string(),
                         severity: Severity::Info,
                         message: format!(
-                            "publisher '{pub_ref}' promises min_rate_hz {declared}, which the \
+                            "publisher '{pub_ref}' promises min_rate {declared} Hz, which the \
                              graph already derives for '{fqn}' from the timers that drive it. \
                              The declaration is redundant and can be deleted"
                         ),
@@ -5995,7 +5995,7 @@ fn derive_and_check_endpoint_rates(
                         rule_id: "min-rate-mismatch".to_string(),
                         severity: Severity::Warning,
                         message: format!(
-                            "publisher '{pub_ref}' promises min_rate_hz {declared} on '{fqn}', \
+                            "publisher '{pub_ref}' promises min_rate {declared} Hz on '{fqn}', \
                              but the timers that drive it derive only {hz:.4} Hz. The endpoint \
                              guarantees more than its own triggers can produce"
                         ),
@@ -6020,11 +6020,11 @@ fn derive_and_check_endpoint_rates(
                     rule_id: "derived-rate-hierarchy".to_string(),
                     severity: Severity::Warning,
                     message: format!(
-                        "subscriber '{sub_ref}' requires min_rate_hz {needed} on '{fqn}', but \
+                        "subscriber '{sub_ref}' requires min_rate {needed} Hz on '{fqn}', but \
                          the timers that drive it derive only {hz:.4} Hz. The requirement \
                          cannot be met by any scheduling assignment — the source is too slow"
                     ),
-                    path: format!("nodes.{node_fqn}.sub.{ep}.min_rate_hz"),
+                    path: format!("nodes.{node_fqn}.sub.{ep}.min_rate"),
                     span: None,
                 });
             }
@@ -6492,10 +6492,10 @@ fn check_cross_scope_rate_hierarchy(
                     rule_id: "rate-hierarchy".to_string(),
                     severity: Severity::Error,
                     message: format!(
-                        "topic '{fqn}' rate_hz ({rate}) > publisher '{pub_ref}' \
-                         min_rate_hz ({pub_min}) — publisher cannot sustain channel rate"
+                        "topic '{fqn}' rate ({rate} Hz) > publisher '{pub_ref}' \
+                         min_rate ({pub_min} Hz) — publisher cannot sustain channel rate"
                     ),
-                    path: format!("topics.{fqn}.rate_hz"),
+                    path: format!("topics.{fqn}.rate"),
                     span: None,
                 });
             }
@@ -6526,9 +6526,9 @@ fn check_cross_scope_rate_hierarchy(
                     message: format!(
                         "topic '{fqn}' effective delivery rate ({effective_delivery:.2} \
                          = {rate} × (1 - {drop_rate:.3})) < subscriber '{sub_ref}' \
-                         min_rate_hz ({sub_min})"
+                         min_rate ({sub_min} Hz)"
                     ),
-                    path: format!("topics.{fqn}.rate_hz"),
+                    path: format!("topics.{fqn}.rate"),
                     span: None,
                 });
             }
@@ -6581,10 +6581,10 @@ fn check_cross_scope_on_demand(
                 rule_id: "rate-hierarchy".to_string(),
                 severity: Severity::Error,
                 message: format!(
-                    "topic '{fqn}' rate_hz ({rate}) beside aperiodic publisher '{first}', which \
+                    "topic '{fqn}' rate ({rate} Hz) beside aperiodic publisher '{first}', which \
                      promises no rate (`aperiodic: true`)"
                 ),
-                path: format!("topics.{fqn}.rate_hz"),
+                path: format!("topics.{fqn}.rate"),
                 span: None,
             });
         }
@@ -6603,7 +6603,7 @@ fn check_cross_scope_on_demand(
                     rule_id: "rate-hierarchy".to_string(),
                     severity: Severity::Error,
                     message: format!(
-                        "subscriber '{sub_ref}' requires min_rate_hz ({rate}) of topic '{fqn}', \
+                        "subscriber '{sub_ref}' requires min_rate ({rate} Hz) of topic '{fqn}', \
                          but every publisher of it is aperiodic (`aperiodic: true` on \
                          '{first}') and promises no rate"
                     ),
@@ -7429,7 +7429,7 @@ fn merge_topic(
                 rule_id: "consistency".to_string(),
                 severity: Severity::Error,
                 message: format!(
-                    "topic '{}' rate_hz mismatch: {} (existing) vs {} in scope {} ({}/{})",
+                    "topic '{}' rate mismatch: {} (existing) vs {} in scope {} ({}/{})",
                     existing.fqn,
                     a,
                     b,
@@ -7437,7 +7437,7 @@ fn merge_topic(
                     scope.pkg().unwrap_or("?"),
                     scope.file().unwrap_or("?"),
                 ),
-                path: format!("topics.{topic_name}.rate_hz"),
+                path: format!("topics.{topic_name}.rate"),
                 span: None,
             });
         }

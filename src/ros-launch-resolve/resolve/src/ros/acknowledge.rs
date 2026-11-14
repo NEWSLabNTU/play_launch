@@ -423,11 +423,11 @@ mod tests {
             scope(
                 0,
                 "a",
-                vec![ack("derivable-rate", "topics./t.rate_hz")],
+                vec![ack("derivable-rate", "topics./t.rate")],
                 vec![],
             ),
         );
-        index.merge_diagnostics = vec![diag("derivable-rate", Severity::Info, "topics./t.rate_hz")];
+        index.merge_diagnostics = vec![diag("derivable-rate", Severity::Info, "topics./t.rate")];
         apply(&mut index);
         assert!(index.merge_diagnostics.is_empty());
         assert_eq!(index.acknowledged.len(), 1);

@@ -24,13 +24,13 @@ nodes:
       points_raw: {}
     paths:
       tick:
-        trigger: { timer: { rate_hz: 100 } }
+        trigger: { timer: { rate: 100Hz } }
         output: [points_raw]
 
   filter_component:
     sub:
       points_raw:
-        min_rate_hz: 100
+        min_rate: 100Hz
     pub:
       points_filtered: {}
     paths:
@@ -46,7 +46,7 @@ nodes:
     criticality: high
     sub:
       points_filtered:
-        min_rate_hz: 100
+        min_rate: 100Hz
         max_age: 50ms
     pub:
       cmd: {}

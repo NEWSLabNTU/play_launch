@@ -16,26 +16,26 @@ acknowledged:
     at: topics./control/cmd
     reason: an error dressed as a decision
   - rule: derivable-min-rate
-    at: nodes./control/control_node.pub.cmd.min_rate_hz
+    at: nodes./control/control_node.pub.cmd.min_rate
     reason: the promise is kept written out for the reviewer
 
 nodes:
   sensor_node:
     pub:
       points_raw:
-        min_rate_hz: 100
+        min_rate: 100Hz
     paths:
       tick:
-        trigger: { timer: { rate_hz: 100 } }
+        trigger: { timer: { rate: 100Hz } }
         output: [points_raw]
 
   control_node:
     sub:
       points_raw:
-        min_rate_hz: 100
+        min_rate: 100Hz
     pub:
       cmd:
-        min_rate_hz: 100
+        min_rate: 100Hz
     paths:
       control:
         trigger: { input: [points_raw] }
@@ -48,9 +48,9 @@ topics:
     type: std_msgs/msg/String
     pub: [sensor_node/points_raw]
     sub: [control_node/points_raw]
-    rate_hz: 500
+    rate: 500Hz
 
   /control/cmd:
     type: std_msgs/msg/String
     pub: [control_node/cmd]
-    rate_hz: 500
+    rate: 500Hz

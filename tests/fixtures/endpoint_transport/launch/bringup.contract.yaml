@@ -46,7 +46,7 @@ version: 1
 nodes:
   producer:
     sub:
-      raw: { min_rate_hz: 10 }
+      raw: { min_rate: 10Hz }
     pub:
       objects: {}
     paths:

@@ -13,16 +13,16 @@ nodes:
   other:
     sub:
       cmd:
-        min_rate_hz: 1 / $(var timeout @other) s
+        min_rate: 1 / $(var timeout @other) s
         max_age: $(var timeout) s
   inner:
     pub:
       status:
-        min_rate_hz: $(var inner_hz @inner) Hz
-        max_rate_hz: $(var inner_hz) Hz
+        min_rate: $(var inner_hz @inner) Hz
+        max_rate: $(var inner_hz) Hz
   source:
     pub:
-      cmd: { min_rate_hz: $(var child_hz) Hz }
+      cmd: { min_rate: $(var child_hz) Hz }
 
 topics:
   /cmd:

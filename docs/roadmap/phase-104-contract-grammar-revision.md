@@ -12,8 +12,12 @@ progress**: the decisions are rlm `docs/design/grammar-revision/README.md`,
 "S3 decisions". Release R ships in parts, one rlm tag each: v0.3.19
 `capabilities:` (was `functions:`), a hazard's `leaves:` (was `enters:`,
 which `supervise.enters` uses in the opposite direction) and a client's
-`enters: <mode>` (was a mode under `reaction:`); then `event_chains:`, rates
-with a unit, and `supervision` in the platform file. S4 planned. Design
+`enters: <mode>` (was a mode under `reaction:`); v0.3.20 `event_chains:`
+(was a manifest level's `paths:`); v0.3.21 rates with a unit (`min_rate:
+100Hz`). Still to come in R: `supervision` in the per-target platform
+file, and T4/T3's relocations (`early` to `vehicle.braking` with a
+domain-free run-time form, `observes` as a map, `policy` as `check
+--deny`, service links, `integrity_levels` to `use:`). S4 planned. Design
 of record: rlm `docs/design/grammar-revision/` (an overview and one file per
 topic, T1-T10, each with the verified issues, counts over 192 contracts,
 every method compared, and a recommendation). This phase orders that work.

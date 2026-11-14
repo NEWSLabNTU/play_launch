@@ -25,7 +25,7 @@ nodes:
       scan: {}
     paths:
       tick:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [scan]
 
   control_node:

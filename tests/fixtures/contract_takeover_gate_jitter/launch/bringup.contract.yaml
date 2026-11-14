@@ -84,7 +84,7 @@ nodes:
       availability: {}
     paths:
       on_timer:
-        trigger: { timer: { rate_hz: 10, jitter: 6ms } }
+        trigger: { timer: { rate: 10Hz, jitter: 6ms } }
         output: [availability]
         max_latency: 20ms
 
@@ -104,7 +104,7 @@ nodes:
       estop_operate: {}
     paths:
       on_timer:
-        trigger: { timer: { rate_hz: 10, jitter: 18ms } }
+        trigger: { timer: { rate: 10Hz, jitter: 18ms } }
         output: [tor_state]
         max_latency: 100ms
       call_mrm:
@@ -142,7 +142,7 @@ nodes:
       cmd: {}
     paths:
       on_timer:
-        trigger: { timer: { rate_hz: 30, jitter: 5ms } }
+        trigger: { timer: { rate: 30Hz, jitter: 5ms } }
         output: [cmd]
         safe_state:
           emits: cmd

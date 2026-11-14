@@ -43,14 +43,14 @@ modes:
       nodes:
         obstacle_detector:
           sub:
-            scan: { min_rate_hz: 25 }
+            scan: { min_rate: 25Hz }
           paths:
             detect: { max_latency: 20ms }
         brake_controller:
           sub:
             obstacles: { max_age: 120ms }
       topics:
-        /safety/scan: { rate_hz: 25 }
+        /safety/scan: { rate: 25Hz }
   stopped:
     requires: []
     reaction: safety.stop
@@ -70,14 +70,14 @@ nodes:
       scan: {}
     paths:
       sample:
-        trigger: { timer: { rate_hz: 50 } }
+        trigger: { timer: { rate: 50Hz } }
         output: [scan]
         max_latency: 2ms
 
   obstacle_detector:
     sub:
       scan:
-        min_rate_hz: 50
+        min_rate: 50Hz
         qos: { liveliness: manual_by_topic, lease_duration: 100ms }
         on_violation:
           on: [omission]
@@ -125,7 +125,7 @@ event_chains:
 topics:
   /safety/scan:
     type: std_msgs/msg/String
-    rate_hz: 50
+    rate: 50Hz
     pub: [lidar_driver/scan]
     sub: [obstacle_detector/scan]
   /safety/obstacles:

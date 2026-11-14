@@ -4,10 +4,10 @@ version: 1
 nodes:
   driver:
     pub:
-      image: { min_rate_hz: $(var cam_hz) Hz }
+      image: { min_rate: $(var cam_hz) Hz }
     paths:
       grab:
-        trigger: { timer: { rate_hz: $(var cam_hz) Hz } }
+        trigger: { timer: { rate: $(var cam_hz) Hz } }
         output: [image]
 
 topics:

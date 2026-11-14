@@ -59,7 +59,7 @@ nodes:
       distance: {}
     paths:
       sample:
-        trigger: { timer: { rate_hz: 20 } }
+        trigger: { timer: { rate: 20Hz } }
         output: [distance]
         max_latency: 2ms
   in_warning_zone_monitor:
@@ -77,7 +77,7 @@ nodes:
       distance_s: {}
     paths:
       sample:
-        trigger: { timer: { rate_hz: 20 } }
+        trigger: { timer: { rate: 20Hz } }
         output: [distance_s]
         max_latency: 2ms
   in_stop_zone_monitor:
@@ -95,7 +95,7 @@ nodes:
       setpoint: {}
     paths:
       plan:
-        trigger: { timer: { rate_hz: 20 } }
+        trigger: { timer: { rate: 20Hz } }
         output: [setpoint]
         max_latency: 10ms
   controller:

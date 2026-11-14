@@ -26,11 +26,11 @@ nodes:
     pub: { tick: {} }
     paths:
       sample:
-        trigger: { timer: { rate_hz: 50 } }
+        trigger: { timer: { rate: 50Hz } }
         output: [tick]
 
   rt:
-    sub: { tick: { min_rate_hz: 50 } }
+    sub: { tick: { min_rate: 50Hz } }
     pub: { a: {}, b: {} }
     # Claims its two callbacks may run concurrently -> a per-thread
     # reservation cannot cover them (phase 60 F2).
@@ -43,7 +43,7 @@ nodes:
       pb: { trigger: { input: [tick] }, output: [b], max_latency: 5ms }
 
   guard:
-    sub: { a: { min_rate_hz: 50 } }
+    sub: { a: { min_rate: 50Hz } }
     pub: { out: {} }
     criticality: high
     paths:
@@ -58,7 +58,7 @@ nodes:
           action: abort
 
   slow:
-    sub: { b: { min_rate_hz: 50 } }
+    sub: { b: { min_rate: 50Hz } }
     pub: { log: {} }
     paths:
       record:

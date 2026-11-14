@@ -39,7 +39,7 @@ nodes:
       line_pressure: {}
     paths:
       sample:
-        trigger: { timer: { rate_hz: 20 } }
+        trigger: { timer: { rate: 20Hz } }
         output: [line_pressure]
         max_latency: 2ms
   occluded_monitor:
@@ -57,7 +57,7 @@ nodes:
       setpoint: {}
     paths:
       plan:
-        trigger: { timer: { rate_hz: 20 } }
+        trigger: { timer: { rate: 20Hz } }
         output: [setpoint]
         max_latency: 10ms
   controller:

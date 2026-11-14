@@ -74,7 +74,7 @@ nodes:
       availability: {}
     paths:
       report:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [availability]
         max_latency: 20ms
 
@@ -97,7 +97,7 @@ nodes:
       # the 100 ms tick + a 10 ms call) is where the late notice is charged
       # (`dwell-expiry`).
       on_timer:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [tor_state]
         max_latency: 100ms
       call_mrm:
@@ -142,7 +142,7 @@ nodes:
         output: [cmd]
         max_latency: 300ms
       on_tick:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [comfort_operate]
         max_latency: 5ms
 
@@ -156,7 +156,7 @@ nodes:
       cmd: {}
     paths:
       on_timer:
-        trigger: { timer: { rate_hz: 30 } }
+        trigger: { timer: { rate: 30Hz } }
         output: [cmd]
         safe_state:
           emits: cmd

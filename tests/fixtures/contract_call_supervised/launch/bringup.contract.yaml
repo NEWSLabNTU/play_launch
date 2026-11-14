@@ -48,7 +48,7 @@ nodes:
       availability: {}
     paths:
       report:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [availability]
         max_latency: 20ms
 
@@ -85,7 +85,7 @@ nodes:
       availability:
         qos: { liveliness: manual_by_topic, lease_duration: 500ms }
         on_violation: { on: [omission], reaction: call_mrm }
-      odom: { min_rate_hz: 10, state: true, link: handler_odom }
+      odom: { min_rate: 10Hz, state: true, link: handler_odom }
     cli:
       operate: { call: async, max_transport: 1.5ms }
     paths:
@@ -133,7 +133,7 @@ topics:
   /odom:
     type: nav_msgs/msg/Odometry
     external: pub
-    rate_hz: 10
+    rate: 10Hz
     sub: [handler/odom]
 
 services:

@@ -65,7 +65,7 @@ nodes:
   lidar_driver:
     pub:
       scan:
-        min_rate_hz: $(let lidar_rate)
+        min_rate: $(let lidar_rate)
         # Phase 74: applied to the node as qos_overrides parameters. With
         # `manual_by_topic` liveliness every publish asserts the writer is
         # alive, so a publisher that stops lapses at the lease and the
@@ -75,7 +75,7 @@ nodes:
         qos: { liveliness: manual_by_topic, lease_duration: $(param obstacle_detector watchdog_ms) ms }
     paths:
       sample:
-        trigger: { timer: { rate_hz: $(param rate_hz) Hz } }
+        trigger: { timer: { rate: $(param rate_hz) Hz } }
         output: [scan]
         # The boundary's own execution cost. Without it the feasibility check
         # counts this hop as ZERO and says so ("feasible ON INCOMPLETE
@@ -86,7 +86,7 @@ nodes:
   obstacle_detector:
     sub:
       scan:
-        min_rate_hz: $(let lidar_rate)
+        min_rate: $(let lidar_rate)
         # The detector: `watchdog_ms` without a scan is a lost lidar, read
         # from bringup.launch.xml, where the node applies it itself.
         qos: { liveliness: manual_by_topic, lease_duration: $(param watchdog_ms) ms }
@@ -97,7 +97,7 @@ nodes:
           mechanism: qos      # DDS detects (the lease); the watchdog only reacts
     pub:
       obstacles:
-        min_rate_hz: $(let lidar_rate)
+        min_rate: $(let lidar_rate)
     paths:
       detect:
         trigger: { input: [scan] }
@@ -112,7 +112,7 @@ nodes:
   brake_controller:
     sub:
       obstacles:
-        min_rate_hz: $(let lidar_rate)
+        min_rate: $(let lidar_rate)
         max_age: 60ms
         on_violation:
           on: [late, omission]
@@ -121,7 +121,7 @@ nodes:
           mechanism: application
     pub:
       brake_cmd:
-        min_rate_hz: $(let lidar_rate)
+        min_rate: $(let lidar_rate)
     paths:
       brake:
         trigger: { input: [obstacles] }

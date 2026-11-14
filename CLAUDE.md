@@ -699,6 +699,27 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-11-15**: **The S3 renames** (phase 104, rlm v0.3.19 to v0.3.21;
+  decisions in rlm `docs/design/grammar-revision/README.md`, "S3
+  decisions"). One key per meaning: `capabilities:` (was `functions:`), a
+  hazard's `leaves:` (was `enters:`, which `supervise.enters` uses for the
+  opposite direction; rules `leaves-unknown-mode`, `leaves-not-removed`), a
+  client's `enters: <mode>` beside `reaction: <chain>`, `event_chains:`
+  (was a manifest level's `paths:`; a node's `paths:` keep the word), and
+  rates as values with a unit (`min_rate: 100Hz`, `rate:`, never a bare
+  number). Every old spelling reads for one release: rlm's parser notes
+  it in `Manifest::deprecated_spellings` and `value_rules::check_spellings`
+  is the one warning loop (plus the consumer-only case, a client's mode
+  under `reaction:`); `migrate` rewrites each. Three things a later change
+  must keep: diagnostic paths name the CURRENT key (`hazards.<h>.leaves`,
+  `event_chains.<c>...`, `...min_rate`) while `site()` finds the line the
+  file wrote, through rlm's `SpanIndex` aliases and `leaves_key`; the model
+  and the Rust field names did not move (`*_rate_hz`, `scope_paths`,
+  `HazardDecl::enters`, `Manifest::functions`), so `model_builder` maps the
+  new contract keys onto them (`model_field`, a resolved override's
+  `field`); and an override's rate value is carried in Hz by rlm, so
+  `set_endpoint_field` still reads a number.
+
 - **2026-11-14**: **`tolerance` removed, an inline subscriber transport
   deprecated** (phase 104 S1's last two decisions, rlm v0.3.16). A path's
   `tolerance` is `sync.max_interval` under another name and is refused;

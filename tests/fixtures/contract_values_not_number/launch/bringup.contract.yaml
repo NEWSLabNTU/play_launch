@@ -6,7 +6,7 @@ nodes:
       out: {}
   handler:
     sub:
-      in: { min_rate_hz: $(param mode) Hz }
+      in: { min_rate: $(param mode) Hz }
 
 topics:
   /in:

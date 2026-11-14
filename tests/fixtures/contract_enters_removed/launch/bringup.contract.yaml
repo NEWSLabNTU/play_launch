@@ -37,7 +37,7 @@ nodes:
       radar: {}
     paths:
       sample:
-        trigger: { timer: { rate_hz: 20 } }
+        trigger: { timer: { rate: 20Hz } }
         output: [radar]
         max_latency: 2ms
 
@@ -46,7 +46,7 @@ nodes:
       camera: {}
     paths:
       sample:
-        trigger: { timer: { rate_hz: 20 } }
+        trigger: { timer: { rate: 20Hz } }
         output: [camera]
         max_latency: 2ms
 

@@ -9,18 +9,18 @@ nodes:
     paths:
       # A 10Hz clock boundary: 100ms of sampling jitter, whatever it costs.
       tick:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [raw, aux]
 
   fuser:
     sub:
       raw:
-        min_rate_hz: 10
+        min_rate: 10Hz
         # Wants data up to 500ms old on a topic whose lifespan is 50ms:
         # DDS has already discarded it. -> lifespan-age
         max_age: 500ms
       aux:
-        min_rate_hz: 10
+        min_rate: 10Hz
     pub:
       fused: {}
     paths:

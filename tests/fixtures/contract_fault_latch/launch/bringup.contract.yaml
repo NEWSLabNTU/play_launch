@@ -41,14 +41,14 @@ nodes:
       scan: {}
     paths:
       sample:
-        trigger: { timer: { rate_hz: 50 } }
+        trigger: { timer: { rate: 50Hz } }
         output: [scan]
         max_latency: 2ms
 
   obstacle_detector:
     sub:
       scan:
-        min_rate_hz: 50
+        min_rate: 50Hz
         qos: { liveliness: manual_by_topic, lease_duration: 100ms }
         on_violation:
           on: [omission]
@@ -72,7 +72,7 @@ nodes:
       # The tick that acts on the latch. Nothing names `stop` as a trigger, so
       # the reaction waits up to one period (33.33ms at 30 Hz) for this path.
       apply_brake:
-        trigger: { timer: { rate_hz: 30 } }
+        trigger: { timer: { rate: 30Hz } }
         output: [brake_cmd]
         max_latency: 5ms
         safe_state: { emits: brake_cmd, settle: 200ms }

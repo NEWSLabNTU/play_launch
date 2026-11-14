@@ -30,10 +30,10 @@ nodes:
       status: {}
     paths:
       on_timer:
-        trigger: { timer: { rate_hz: { value: 10, source: allocated } } }
+        trigger: { timer: { rate: { value: 10Hz, source: allocated } } }
         output: [status]
       report:
-        trigger: { timer: { rate_hz: 5 } }
+        trigger: { timer: { rate: 5Hz } }
         output: [status]
         max_latency:
           duration: 20ms
@@ -54,10 +54,10 @@ nodes:
     sub:
       stop_req: { state: true }
     pub:
-      brake_cmd: { min_rate_hz: 15 }
+      brake_cmd: { min_rate: 15Hz }
     paths:
       on_timer:
-        trigger: { timer: { rate_hz: { value: 10, source: allocated } } }
+        trigger: { timer: { rate: { value: 10Hz, source: allocated } } }
         output: [brake_cmd]
         max_latency:
           duration: 10ms

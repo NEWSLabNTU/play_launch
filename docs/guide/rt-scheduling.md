@@ -147,7 +147,7 @@ Built-in mappers:
 
 | mapper | derives from | ordering |
 |---|---|---|
-| `rate_monotonic` | the node's fastest timer trigger (`trigger: { timer: { rate_hz } }` on one of its paths); a topic's `rate_hz` or a publisher's `min_rate_hz` is a promise the runtime monitors read, never a rate the mapper ranks by (Phase 78) | higher rate → higher priority |
+| `rate_monotonic` | the node's fastest timer trigger (`trigger: { timer: { rate } }` on one of its paths); a topic's `rate` or a publisher's `min_rate` is a promise the runtime monitors read, never a rate the mapper ranks by (Phase 78) | higher rate → higher priority |
 | `deadline_monotonic` | the node's tightest declared path `max_latency` | tighter deadline → higher priority |
 | `chain_aware` (Phase 44, routes derived since Phase 68) | the routes **derived** for each `event_chains:` entry (§1.7) plus the same rate/deadline facts as a fallback for everything not on a route | route members ranked by criticality + drain-toward-sink; everything else falls back to criticality-bucketed RM/DM |
 | `manual` | nothing: every node starts in the default task | `overrides:` alone place nodes (§4) |
@@ -315,7 +315,7 @@ The three parameters are derived, not written:
 | parameter | derived from |
 |---|---|
 | `runtime` | the node's declared `budget` — the **only** legitimate source. A deadline is not a cost |
-| `period` | `1/rate_hz`, propagated along the node's chain from that chain's source |
+| `period` | `1/rate`, propagated along the node's chain from that chain's source |
 | `deadline` | the declared deadline, else the period |
 
 `reservations:` sits beside `priority_assignment:` rather than in `resources:` because it is
@@ -400,7 +400,7 @@ contract[scope 0, rt_demo/bringup.launch.xml]: provider(.../launch/bringup.contr
 
 Two things this shows that surprise people. `filter_component` is *not* ranked
 by `rate_monotonic`: its path is `trigger: { input: [...] }` with no timer of
-its own, and since Phase 78 a topic's `rate_hz` or a publisher's `min_rate_hz`
+its own, and since Phase 78 a topic's `rate` or a publisher's `min_rate`
 is a promise the runtime monitors read, never a rate this mapper ranks by —
 that is what `chain_aware` is for (§1.7). And had a second node declared a
 100 Hz timer, it would appear on the **same** priority as `sensor_node`, not one
@@ -584,7 +584,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
      sensor_node:
        paths:
          tick:
-           trigger: { timer: { rate_hz: 100 } }   # clock boundary — the one rate fact
+           trigger: { timer: { rate: 100Hz } }   # clock boundary — the one rate fact
            output: [points_raw]
      filter_component:
        paths:
@@ -645,7 +645,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
 
    The boundary contributes its *period* — the cost of crossing a clock —
    not an execution time, because `tick` declares no cost of its own. A
-   timer that states a release jitter (`trigger: { timer: { rate_hz: 100,
+   timer that states a release jitter (`trigger: { timer: { rate: 100,
    jitter: 2ms } }`) contributes period + jitter: a tick released late is a
    longer wait on the same clock.
    `check` says so rather than treating absent as zero:
@@ -681,8 +681,8 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    ```
 
    The same derivation also tells you which of your *other* numbers are
-   consequences: a topic's `rate_hz` propagated from the timer that drives
-   it, or a publisher's `min_rate_hz` one hop downstream of it, is reported
+   consequences: a topic's `rate` propagated from the timer that drives
+   it, or a publisher's `min_rate` one hop downstream of it, is reported
    as `derivable-rate` / `derivable-min-rate` (info) when it agrees with the
    graph and `rate-mismatch` / `min-rate-mismatch` (warning) when it does
    not. `rt_workspace` deleted every such copy — the 100 Hz timer is its one

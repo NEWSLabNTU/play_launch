@@ -1954,7 +1954,7 @@ fn a_mode_overrides_target_is_resolved_to_the_models_keys() {
             "max_latency",
         ),
         (
-            "nodes.obstacle_detector.sub.scan.min_rate_hz",
+            "nodes.obstacle_detector.sub.scan.min_rate",
             T::SubEndpoints,
             "/safety/obstacle_detector/scan",
             "min_rate_hz",
@@ -1972,7 +1972,7 @@ fn a_mode_overrides_target_is_resolved_to_the_models_keys() {
             "max_age",
         ),
         (
-            "topics./safety/scan.rate_hz",
+            "topics./safety/scan.rate",
             T::Topics,
             "/safety/scan",
             "rate_hz",
@@ -2382,7 +2382,7 @@ fn an_on_demand_publisher_promises_no_rate() {
     let out = check_fixture("contract_on_demand_bad");
     assert!(
         out.contains(
-            "error[rate-hierarchy]: subscriber 'planner/limit' requires min_rate_hz (10), but \
+            "error[rate-hierarchy]: subscriber 'planner/limit' requires min_rate (10 Hz), but \
              every publisher of the topic is aperiodic (`aperiodic: true` on 'operator/limit') \
              and promises no rate"
         ),
@@ -4142,7 +4142,7 @@ fn a_supervised_settle_charges_the_whole_settle() {
                   `nodes.comfort_op.paths.operate.safe_state.settle` overruns, before it \
                   10640.00ms + settle 10939.67ms (profile 9996.67ms + response 943.00ms) + \
                   observation 156.00ms (/handler/kinematic_state: period 100.00ms \
-                  (/kinematic_state rate_hz 10) + max_transport 56.00ms) + detection 1.05ms \
+                  (/kinematic_state rate 10 Hz) + max_transport 56.00ms) + detection 1.05ms \
                   (tick 1.00ms + switch 0.05ms (timer)) + reaction event chain 'sys.estop' \
                   143.33ms + settle 4165.33ms = 26045.38ms fits the fault-tolerant time \
                   interval 30000.00ms with 3954.62ms of slack";
@@ -4208,7 +4208,7 @@ fn a_resuming_supervision_charges_the_gap_once() {
                   `nodes.comfort_op.paths.operate.safe_state.settle` overruns, before it \
                   10640.00ms + settle 10939.67ms (profile 9996.67ms + response 943.00ms) + \
                   observation 156.00ms (/handler/kinematic_state: period 100.00ms \
-                  (/kinematic_state rate_hz 10) + max_transport 56.00ms) + detection 1.05ms \
+                  (/kinematic_state rate 10 Hz) + max_transport 56.00ms) + detection 1.05ms \
                   (tick 1.00ms + switch 0.05ms (timer)) + reaction event chain 'sys.estop' \
                   143.33ms + resume gap 101.05ms (3 periods of /estop_op/on_timer 33.33ms + \
                   detection 1.05ms (tick 1.00ms + switch 0.05ms (timer))) + settle 4165.33ms = \
@@ -4445,7 +4445,7 @@ fn a_settle_response_check_charges_its_own_row() {
          `nodes.comfort_op.paths.operate.safe_state.settle.supervise.early`, before it \
          10640.00ms + response check at 1943.00ms (shed 0.1 m/s by then, else a miss) + \
          observation 156.00ms (/handler/kinematic_state: period 100.00ms (/kinematic_state \
-         rate_hz 10) + max_transport 56.00ms) + detection 1.05ms (tick 1.00ms + switch 0.05ms \
+         rate 10 Hz) + max_transport 56.00ms) + detection 1.05ms (tick 1.00ms + switch 0.05ms \
          (timer)) + reaction event chain 'sys.estop' 143.33ms + settle 4165.33ms = 17048.72ms \
          fits the fault-tolerant time interval 30000.00ms with 12951.28ms of slack",
         // The whole settle's row stays.
@@ -4738,7 +4738,7 @@ fn contract_values_island_reads_the_launch_tree_and_keeps_its_verdicts() {
         "/estop_op paths.on_timer.safe_state.settle.jerk = -1.5 m/s^3",
         // Where each core value came from.
         "-- Values read from the launch tree (--explain) --",
-        "/handler paths.on_timer.trigger.timer.rate_hz = 10 Hz",
+        "/handler paths.on_timer.trigger.timer.rate = 10 Hz",
         "<- /handler update_rate = 10 Hz, handler.param.yaml",
         "/handler sub.availability.qos.lease_duration = 500 ms",
         "<- /handler lease_ms = 500 ms, <param> bringup.launch.xml:12 = $(var lease_ms)\n",
@@ -4858,7 +4858,7 @@ fn each_unreadable_contract_value_names_its_rule() {
             "contract_values_node_missing",
             "param-node-missing",
             vec![
-                "error[param-node-missing]: bringup.contract.yaml:17: `topics./in.rate_hz` \
+                "error[param-node-missing]: bringup.contract.yaml:17: `topics./in.rate` \
                  is under no node, so `$(param timeout)` must name one: `$(param <node> \
                  timeout)`. Nodes of this contract with a `timeout` parameter: handler.",
             ],
@@ -4937,7 +4937,7 @@ fn a_contract_bound_twice_is_evaluated_per_instance() {
     assert!(!out.contains("[/sensing/left]: `$(var"), "{out}");
     for needle in [
         "camera.contract.yaml [/sensing/left]:",
-        "/sensing/left/driver paths.grab.trigger.timer.rate_hz = 30 Hz",
+        "/sensing/left/driver paths.grab.trigger.timer.rate = 30 Hz",
         "<- cam_hz = 30 Hz, include argument bringup.launch.xml:9",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
@@ -4986,12 +4986,12 @@ fn rt_av_demo_rates_follow_the_command_line() {
     assert_eq!(code, 0, "{fast}");
     for needle in [
         "lidar_to_brake boundary RM period=10ms",
-        "/safety/lidar_driver paths.sample.trigger.timer.rate_hz = 100 Hz",
+        "/safety/lidar_driver paths.sample.trigger.timer.rate = 100 Hz",
         // W2.3: the parameter followed to the `$(var)` it was written as,
         // and on to the command line.
         "<- /safety/lidar_driver rate_hz = 100 Hz, <param> bringup.launch.xml:34 = $(var lidar_hz)\n",
         "<- lidar_hz = 100, command line\n",
-        "/safety/brake_controller sub.obstacles.min_rate_hz = 100 Hz",
+        "/safety/brake_controller sub.obstacles.min_rate = 100 Hz",
         "<- lidar_hz = 100 Hz, command line",
     ] {
         assert!(fast.contains(needle), "expected `{needle}`:\n{fast}");
@@ -5038,11 +5038,11 @@ fn a_contract_reads_the_configuration_where_a_node_was_declared() {
          assigned at <let> bringup.launch.xml:12, out of scope here)",
         "/gate sub.cmd.max_age = 500 ms",
         "<- timeout = 0.5 s, <let> bringup.launch.xml:7\n",
-        "/other sub.cmd.min_rate_hz = 0.5 Hz",
+        "/other sub.cmd.min_rate = 0.5 Hz",
         "<- timeout = 2 s, <let> bringup.launch.xml:9\n",
-        "/inner pub.status.min_rate_hz = 5 Hz",
+        "/inner pub.status.min_rate = 5 Hz",
         "<- inner_hz = 5 Hz, <let> bringup.launch.xml:12\n",
-        "/source pub.cmd.min_rate_hz = 20 Hz",
+        "/source pub.cmd.min_rate = 20 Hz",
         "<- child_hz = 20 Hz, <let> child.launch.xml:5\n",
         "(2 errors, 0 warnings)",
     ] {
