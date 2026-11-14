@@ -458,6 +458,9 @@ pub struct HazardSpec {
     /// Any detector on the route reports through `/diagnostics`, so the
     /// first publish there after the fault is the observable detection mark.
     pub via_diagnostics: bool,
+    /// rlm v0.3.18 (#6): the levels the hazard runs that state their own
+    /// deadline, each judged on the first publish on its outputs.
+    pub levels: Vec<crate::runtime_enforcement::view::LevelDeadline>,
 }
 
 /// One guard that went silent during the run, and what followed.
@@ -479,6 +482,9 @@ pub struct HazardObservation {
     /// How long the guard had been publishing before it stopped — so a
     /// topic that never started is not reported as one that died.
     pub alive_ms: f64,
+    /// rlm v0.3.18 (#6): per level of `HazardSpec::levels`, in order, the
+    /// first publish on its outputs after the fault.
+    pub levels_ns: Vec<Option<u64>>,
 }
 
 impl HazardObservation {
@@ -593,6 +599,24 @@ pub fn observe_hazards(run: &Run, hazards: &[HazardSpec]) -> Vec<HazardObservati
                 reacted_ns: reaction.map(|e| e.t),
                 observed_at_take: reaction.is_some_and(|e| e.d == Dir::Take),
                 alive_ms: (last - pubs[0]) as f64 / 1e6,
+                levels_ns: spec
+                    .levels
+                    .iter()
+                    .map(|l| {
+                        run.events
+                            .iter()
+                            .filter(|e| e.d == Dir::Publish && e.t > last)
+                            .filter(|e| {
+                                fqn_of(e.h).is_some_and(|f| l.outputs.iter().any(|o| o == f))
+                            })
+                            .filter(|e| match e.stamp_key() {
+                                Some(k) => !guard_stamps.contains(&k),
+                                None => e.t > last + median_gap,
+                            })
+                            .map(|e| e.t)
+                            .min()
+                    })
+                    .collect(),
             });
         }
     }
@@ -969,6 +993,7 @@ mod tests {
             settle_ms: Some(200.0),
             within: vec![],
             via_diagnostics: false,
+            levels: Vec::new(),
         };
         let obs = observe_hazards(&run, std::slice::from_ref(&spec));
         assert_eq!(obs.len(), 1, "{obs:?}");
@@ -982,7 +1007,21 @@ mod tests {
         // A guard still publishing at the end is not a fault.
         let mut alive = run.clone();
         alive.events.push(ev(scan, last_scan + 3_000_000_000, 7));
-        assert!(observe_hazards(&alive, &[spec]).is_empty());
+        assert!(observe_hazards(&alive, std::slice::from_ref(&spec)).is_empty());
+
+        // rlm v0.3.18 (#6): a level with its own deadline is timed from the
+        // fault to the first provenance-free publish on its output.
+        let leveled = HazardSpec {
+            levels: vec![crate::runtime_enforcement::view::LevelDeadline {
+                level: "brake".into(),
+                outputs: vec!["/safety/brake_cmd".into()],
+                within_ms: 100.0,
+                settle_ms: Some(20.0),
+            }],
+            ..spec
+        };
+        let obs = observe_hazards(&run, std::slice::from_ref(&leveled));
+        assert_eq!(obs[0].levels_ns, vec![Some(last_scan + 130_000_000)]);
     }
 
     /// Phase 83 F2: a sink published OFF-HOST (the island's braking command,
@@ -1030,6 +1069,7 @@ mod tests {
             settle_ms: None,
             within: vec![],
             via_diagnostics: false,
+            levels: Vec::new(),
         };
         let obs = observe_hazards(&run, std::slice::from_ref(&spec));
         assert_eq!(obs.len(), 1, "{obs:?}");

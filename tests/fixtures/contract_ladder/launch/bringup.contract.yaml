@@ -1,0 +1,215 @@
+# rlm v0.3.18 (M1g; rlm#3-#7, play_launch#24) -- the fallback-sequence keys
+# on contract_takeover's system.
+#
+#   takeover  a dwell RANGE, 8-15 s, bound to handler.takeover_timeout (10 s,
+#             inside it); levels below are charged 15 s. `advance` leaves it
+#             early on the driver's answer.
+#   hold      available only after the HPC is lost (`requires_lost`), its
+#             own deadline `within: 700ms`, and an exit back UP to takeover
+#             when the HPC is alive again (a re-entry).
+#   estop     the minimal risk condition.
+#
+# odd_exit (reported) removes hpc_in_odd only: takeover is run and charged
+# 15 s, hold is skipped (the HPC is not lost), comfortable is judged:
+# 120 + (110 + 15000) + 410 + 9996.67 = 25636.67 ms < 30 s.
+# hpc_loss (omission) removes hpc_alive: takeover and comfortable are
+# skipped, hold is run: 500 + 110 = 610 ms < its within 700 ms (87 %, the
+# binding row), and the floor is charged hold's 2 s dwell.
+version: 1
+use:
+  vehicle.braking: "^1"
+
+integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
+
+functions:
+  hpc_alive: [/availability]
+  hpc_in_odd:
+    of: [/availability]
+    when: { field: autonomous, equals: false }
+  driver_took_over:
+    of: [/control_mode]
+    when: { field: mode, not_equals: MANUAL }
+
+hazards:
+  odd_exit:
+    integrity: ASIL_B
+    monitors: [/availability]
+    on: reported
+    when: { field: autonomous, equals: false }
+    entry_speed: 8.33 m/s
+    ftti: 30s
+    enters: engaged
+  hpc_loss:
+    integrity: ASIL_D
+    monitors: [/availability]
+    on: omission
+    entry_speed: 3.0 m/s
+    ftti: 6s
+    enters: engaged
+
+modes:
+  engaged:
+    requires: [hpc_alive, hpc_in_odd]
+    fallback: [takeover, hold, comfortable, estop]
+  takeover:
+    requires: [hpc_alive]
+    reaction: sys.tor
+    min_dwell: { duration: { min: 8s, max: 15s }, param: handler.takeover_timeout }
+    advance: { holds: driver_took_over }
+    exit: { holds: driver_took_over, to: manual }
+  hold:
+    requires_lost: [hpc_alive]
+    reaction: sys.tor
+    min_dwell: { duration: 2s, param: handler.hold_timeout }
+    within: 700ms
+    exit: { holds: hpc_alive, to: takeover }
+    commands:
+      /tor_state:
+        - { field: data, equals: true }
+  comfortable:
+    requires: [hpc_alive]
+    reaction: sys.comfortable
+    # A predicate's value read from the launch tree (rlm#7), with no unit:
+    # the estop operator's parameter, -2.5.
+    commands:
+      /planner_cmd:
+        - { field: data, ge: $(param estop_op target_acceleration) }
+  estop:
+    requires: []
+    reaction: sys.estop
+  manual:
+    requires: []
+
+paths:
+  sys.tor:
+    trigger: { input: [/availability] }
+    output: [/tor_state]
+  sys.comfortable:
+    trigger: { input: [/availability] }
+    output: [/planner_cmd]
+  sys.estop:
+    trigger: { input: [/availability] }
+    output: [/estop_cmd]
+
+nodes:
+  gate:
+    pub:
+      availability: {}
+    paths:
+      report:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [availability]
+        max_latency: 20ms
+
+  handler:
+    params:
+      takeover_timeout: { type: double }
+      hold_timeout: { type: double }
+    sub:
+      availability:
+        qos: { lease_duration: 500ms }
+        on_violation: { on: [omission, reported], reaction: call_mrm }
+      control_mode: {}
+    pub:
+      tor_state: {}
+    cli:
+      comfort_operate: { timeout: 10ms, on_timeout: { reaction: estop } }
+      estop_operate: {}
+    paths:
+      # Phase 84: the handler holds the request on its tick and reads the
+      # deadline there, so the rung below's first hop (call_mrm, 110 ms =
+      # the 100 ms tick + a 10 ms call) is where the late notice is charged
+      # (`dwell-expiry`).
+      on_timer:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [tor_state]
+        max_latency: 100ms
+      call_mrm:
+        trigger: { input: [availability] }
+        output: [tor_state, comfort_operate, estop_operate]
+        max_latency: 110ms
+      driver_exit:
+        trigger: { input: [control_mode] }
+        output: [tor_state]
+        max_latency: 100ms
+
+  comfort_op:
+    params:
+      min_acceleration: { type: double }
+      min_jerk: { type: double }
+    srv:
+      operate: {}
+    pub:
+      velocity_limit: {}
+    paths:
+      # A service callback that publishes (brief D F3): the walk continues
+      # through it, and its safe state is carried to the planner's command.
+      operate:
+        trigger: { input: [operate] }
+        output: [velocity_limit]
+        safe_state:
+          emits: velocity_limit
+          settle: { decel: min_acceleration, jerk: min_jerk }
+
+  planner:
+    sub:
+      velocity_limit: {}
+    pub:
+      cmd: {}
+    paths:
+      follow:
+        trigger: { input: [velocity_limit] }
+        output: [cmd]
+        max_latency: 300ms
+
+  estop_op:
+    params:
+      target_acceleration: { type: double }
+      target_jerk: { type: double }
+    srv:
+      operate: {}
+    pub:
+      cmd: {}
+    paths:
+      on_timer:
+        trigger: { timer: { rate_hz: 30 } }
+        output: [cmd]
+        safe_state:
+          emits: cmd
+          settle: { decel: target_acceleration, jerk: target_jerk }
+
+topics:
+  /availability:
+    type: demo_msgs/msg/Availability
+    pub: [gate/availability]
+    sub: [handler/availability]
+  /control_mode:
+    type: demo_msgs/msg/ControlMode
+    external: pub
+    sub: [handler/control_mode]
+  /tor_state:
+    type: std_msgs/msg/Bool
+    external: sub
+    pub: [handler/tor_state]
+  /velocity_limit:
+    type: std_msgs/msg/Float64
+    pub: [comfort_op/velocity_limit]
+    sub: [planner/velocity_limit]
+  /planner_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [planner/cmd]
+  /estop_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [estop_op/cmd]
+
+services:
+  /comfort/operate:
+    type: std_srvs/srv/Trigger
+    server: [comfort_op/operate]
+    client: [handler/comfort_operate]
+  /estop/operate:
+    type: std_srvs/srv/Trigger
+    server: [estop_op/operate]
+    client: [handler/estop_operate]

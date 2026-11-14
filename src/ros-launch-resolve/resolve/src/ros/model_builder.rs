@@ -295,6 +295,9 @@ fn predicate(p: &ros_launch_manifest_types::ValuePredicate) -> model::PredicateC
                 value: None,
             },
             V::Str(s) => model::PredicateValueContract::Str(s.clone()),
+            // rlm v0.3.18: a value read from the launch tree that did not
+            // evaluate (its error is reported): carried as written, unjudged.
+            V::Read(r) => model::PredicateValueContract::Read { read: r.clone() },
         },
     }
 }
@@ -533,6 +536,9 @@ fn model_field(rest: &str) -> String {
         "trigger.timer.rate_hz" => return "rate_hz".to_string(),
         "trigger.timer.jitter" => return "timer_jitter_ms".to_string(),
         "min_dwell" => return "min_dwell.duration_ms".to_string(),
+        // rlm v0.3.18: a dwell range's ends.
+        "min_dwell.duration.min" => return "min_dwell.duration_ms".to_string(),
+        "min_dwell.duration.max" => return "min_dwell.max_ms".to_string(),
         "safe_state.settle" => return "safe_state.settle_ms".to_string(),
         "on_timeout.retry.backoff" => return "on_timeout.backoff_ms".to_string(),
         _ => {}
@@ -1714,6 +1720,9 @@ pub fn build_system_model(
                 // consumer can look the value up without re-resolving.
                 min_dwell: m.decl.min_dwell.as_ref().map(|w| model::DwellContract {
                     duration_ms: w.ms().unwrap_or_default(),
+                    // rlm v0.3.18: a range's `max`, what the levels below
+                    // are charged.
+                    max_ms: m.decl.dwell_max.map(|d| d.as_millis_f64()),
                     param: w.param.as_ref().and_then(ParamBinding::as_ref).map(|p| {
                         let ns = index
                             .manifests
@@ -1730,6 +1739,11 @@ pub fn build_system_model(
                     on: key(&e.holds),
                     to: key(&e.to),
                 }),
+                advance: m.decl.advance.as_ref().map(|a| model::AdvanceContract {
+                    holds: key(&a.holds),
+                }),
+                requires_lost: m.decl.requires_lost.iter().map(|r| key(r)).collect(),
+                within_ms: m.decl.within.ms(),
                 commands: m
                     .commands
                     .iter()

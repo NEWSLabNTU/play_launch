@@ -66,6 +66,10 @@ pub struct ContractView {
     /// contract asks for them: a stamp re-sent at rate is right for a state
     /// topic (phase 88's `stale_stamp`), so an omitted `on:` does not.
     pub hazard_classes: BTreeMap<String, Vec<model::FaultKind>>,
+    /// rlm v0.3.18 (#6): per hazard key, the levels it runs that state their
+    /// own deadline (`modes.<m>.within`), judged on the first publish on the
+    /// level's output after the fault (`level-within`).
+    pub level_deadlines: BTreeMap<String, Vec<LevelDeadline>>,
     /// Node FQNs some contract describes: every node of a launch scope that
     /// has a contract (`ScopeInfo.manifest`), plus the owner of any endpoint,
     /// path, concurrency or parameter entry a contract states about a node
@@ -115,6 +119,11 @@ pub struct ModeWatch {
     pub requires: Vec<RequiredFn>,
     /// Fallback levels, in order, by mode key.
     pub fallback: Vec<String>,
+    /// rlm v0.3.18 (#4): at least one of these must be lost for this mode
+    /// to be selected as a level; empty means no such condition.
+    pub requires_lost: Vec<RequiredFn>,
+    /// rlm v0.3.18 (#5): an exit that re-enters a level above this one.
+    pub exit: Option<ExitWatch>,
     /// Commanded topic FQN to the predicates every message on it satisfies
     /// while this level is active.
     pub commands: BTreeMap<String, Vec<model::PredicateContract>>,
@@ -123,6 +132,26 @@ pub struct ModeWatch {
     /// it (`LevelRoute.route_ms`). `None` when no hazard's walk reached it,
     /// and then the invariant is not judged.
     pub bound_ms: Option<f64>,
+}
+
+/// A level's own deadline, as the observer judges it (rlm v0.3.18): the
+/// first publish on one of `outputs` after the fault, plus the settle of the
+/// safe state commanded there, against `within_ms`.
+#[derive(Debug, Clone, Default)]
+pub struct LevelDeadline {
+    pub level: String,
+    pub outputs: Vec<String>,
+    pub within_ms: f64,
+    pub settle_ms: Option<f64>,
+}
+
+/// An exit that re-enters a level above (rlm v0.3.18, #5).
+#[derive(Debug, Clone, Default)]
+pub struct ExitWatch {
+    /// The function whose holding takes the exit.
+    pub holds: RequiredFn,
+    /// The mode key re-entered.
+    pub to: String,
 }
 
 /// A value function (rlm v0.1.46): lost while its predicate holds on a
@@ -176,6 +205,94 @@ pub fn reaction_paths(contracts: &model::Contracts, reaction: &str) -> Vec<Strin
         .iter()
         .filter_map(|level| contracts.modes.get(level).and_then(|m| m.reaction.clone()))
         .collect()
+}
+
+/// The levels of a hazard's fallback sequence it runs (rlm v0.3.18), as
+/// `(mode key, event chain)`: the checker's `degradation_levels` when it
+/// wrote them, which leave out a level the fault removes and a level that
+/// `requires_lost` a function the fault does not remove; else every level.
+pub fn run_levels(
+    contracts: &model::Contracts,
+    h: &model::HazardContract,
+) -> Vec<(String, String)> {
+    let Some(reaction) = h.reaction.as_ref() else {
+        return Vec::new();
+    };
+    let Some(mode) = contracts.modes.get(reaction) else {
+        return vec![(reaction.clone(), reaction.clone())];
+    };
+    let bare = |k: &str| k.rsplit_once('/').map_or(k, |(_, n)| n).to_string();
+    mode.fallback
+        .iter()
+        .filter(|level| {
+            h.degradation_levels.is_empty()
+                || h.degradation_levels.iter().any(|l| l.level == bare(level))
+        })
+        .filter_map(|level| {
+            contracts
+                .modes
+                .get(level)
+                .and_then(|m| m.reaction.clone())
+                .map(|p| (level.clone(), p))
+        })
+        .collect()
+}
+
+/// The levels a hazard runs that state their own deadline (rlm v0.3.18,
+/// #6), each with its outputs and the settle of the safe state commanded
+/// there (the largest, when several paths command one).
+pub fn level_deadlines(m: &model::SystemModel, h: &model::HazardContract) -> Vec<LevelDeadline> {
+    let settle_on = |outputs: &[String]| {
+        m.contracts
+            .node_paths
+            .values()
+            .filter_map(|p| {
+                let ss = p.safe_state.as_ref()?;
+                outputs
+                    .iter()
+                    .any(|t| {
+                        m.structure
+                            .topics
+                            .get(t)
+                            .is_some_and(|w| w.publishers.contains(&ss.emits))
+                    })
+                    .then_some(ss.settle_ms)
+                    .flatten()
+            })
+            .fold(None, |a: Option<f64>, v| Some(a.map_or(v, |x| x.max(v))))
+    };
+    run_levels(&m.contracts, h)
+        .into_iter()
+        .filter_map(|(level, path)| {
+            let within_ms = m.contracts.modes.get(&level)?.within_ms?;
+            let outputs = m.contracts.scope_paths.get(&path)?.output.clone();
+            Some(LevelDeadline {
+                settle_ms: settle_on(&outputs),
+                level,
+                outputs,
+                within_ms,
+            })
+        })
+        .collect()
+}
+
+/// The topics a hazard's reaction commands: the outputs of every event
+/// chain of the levels it runs ([`run_levels`]), in order, each once.
+pub fn hazard_sinks(contracts: &model::Contracts, h: &model::HazardContract) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (_, path) in run_levels(contracts, h) {
+        for t in contracts
+            .scope_paths
+            .get(&path)
+            .map(|p| p.output.clone())
+            .unwrap_or_default()
+        {
+            if !out.contains(&t) {
+                out.push(t);
+            }
+        }
+    }
+    out
 }
 
 /// The topics a hazard's reaction commands: the outputs of every event
@@ -364,6 +481,20 @@ impl ContractView {
             });
         }
         for m in &index.modes {
+            let to_fn = |r: &String| {
+                index
+                    .functions
+                    .iter()
+                    .find(|f| f.scope_id == m.scope_id && &f.name == r)
+                    .map(|f| RequiredFn {
+                        members: f.group.members.clone(),
+                        all_of: f.group.all_of,
+                        m: f.m,
+                        value_fn: None,
+                    })
+                    .unwrap_or_else(|| RequiredFn::topics(vec![super::qualify("", r)]))
+            };
+            let requires_lost: Vec<RequiredFn> = m.decl.requires_lost.iter().map(to_fn).collect();
             let requires = m
                 .decl
                 .requires
@@ -386,6 +517,7 @@ impl ContractView {
                 key: m.name.clone(),
                 requires,
                 fallback: m.decl.fallback.clone(),
+                requires_lost,
                 ..ModeWatch::default()
             });
         }
@@ -490,7 +622,12 @@ impl ContractView {
         for (key, h) in &m.contracts.hazards {
             view.hazard_classes.insert(key.clone(), h.classes());
             let guards: Vec<String> = h.monitors.iter().flat_map(|g| g.members.clone()).collect();
-            let sinks: Vec<String> = reaction_sinks(&m.contracts, h.reaction.as_ref());
+            let sinks: Vec<String> = hazard_sinks(&m.contracts, h);
+            // rlm v0.3.18 (#6): the levels it runs that state a deadline.
+            let deadlines = level_deadlines(m, h);
+            if !deadlines.is_empty() {
+                view.level_deadlines.insert(key.clone(), deadlines);
+            }
             let settle_ms = m
                 .contracts
                 .node_paths
@@ -569,6 +706,15 @@ impl ContractView {
         // `.msg` was not on the ament index when the model was built) cannot
         // be judged. Say so once, naming it, rather than read it as held.
         for (site, p) in unresolved_constants(m) {
+            if let model::PredicateValueContract::Read { read } = &p.value {
+                tracing::warn!(
+                    "{site}: the predicate on '{}' reads `{read}`, which the model carries \
+                     unevaluated (the launch tree gave it no value when the model was built); \
+                     it is not judged at run time",
+                    p.field
+                );
+                continue;
+            }
             tracing::warn!(
                 "{site}: the predicate on '{}' names the constant {}, whose value the model \
                  does not carry (its message definition was not found when the model was \
@@ -640,10 +786,34 @@ impl ContractView {
                     view.silence_handled.insert(topic.clone());
                 }
             }
+            let required = |r: &String| {
+                m_functions
+                    .get(r)
+                    .map(|f| RequiredFn {
+                        members: f.members.clone(),
+                        all_of: f.all_of,
+                        m: f.m,
+                        value_fn: f.when.as_ref().map(|_| r.clone()),
+                    })
+                    .unwrap_or_else(|| RequiredFn::topics(vec![r.clone()]))
+            };
+            // rlm v0.3.18 (#5): an exit to a level of a fallback sequence is
+            // a re-entry the observer follows.
+            let exit = mc.exit.as_ref().and_then(|e| {
+                m_modes
+                    .values()
+                    .any(|x| x.fallback.contains(&e.to))
+                    .then(|| ExitWatch {
+                        holds: required(&e.on),
+                        to: e.to.clone(),
+                    })
+            });
             view.modes.push(ModeWatch {
                 key: key.clone(),
                 requires,
                 fallback: mc.fallback.clone(),
+                requires_lost: mc.requires_lost.iter().map(required).collect(),
+                exit,
                 commands: mc.commands.clone(),
                 bound_ms,
             });
@@ -661,6 +831,7 @@ pub(crate) fn unresolved_constants(
         matches!(
             p.value,
             model::PredicateValueContract::Constant { value: None, .. }
+                | model::PredicateValueContract::Read { .. }
         )
     };
     let mut out = Vec::new();

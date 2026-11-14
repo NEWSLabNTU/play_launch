@@ -618,6 +618,11 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
         "SLACK",
     ];
     let mut table: Vec<Vec<String>> = vec![head.iter().map(|h| h.to_string()).collect()];
+    // rlm v0.3.18: a level's own deadline, once any level states one.
+    let with_within = rows.iter().any(|r| r.within_ms.is_some());
+    if with_within {
+        table[0].insert(9, "WITHIN".to_string());
+    }
     if with_sources {
         table[0].push("SOURCES".to_string());
         table[0].push("LEVEL".to_string());
@@ -632,14 +637,29 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
             LevelRole::Overrun => "overrun",
         };
         let settle = match (r.role, r.settle_ms) {
-            (LevelRole::Dwell, _) => format!("dwell >={}", ms(r.window_ms)),
+            // rlm v0.3.18: a dwelling level's own row may end at a settle.
+            (LevelRole::Dwell, Some(v)) => format!("{v:.2} {}", r.settle_how),
+            (LevelRole::Dwell, None) => format!("dwell >={}", ms(r.window_ms)),
             (_, Some(v)) => format!("{v:.2} {}", r.settle_how),
             (LevelRole::Skipped, None) => "-".to_string(),
             (_, None) => "unknown".to_string(),
         };
-        let slack = match (r.total_ms, r.ftti_ms) {
-            (Some(t), Some(f)) => format!("{:.2}", f - t),
-            _ => "-".to_string(),
+        // A dwelling level is judged against its `within` only (rlm
+        // v0.3.18), every other level against the FTTI and its `within`:
+        // SLACK is the least over the deadlines the row is judged by.
+        let ftti_judged = if r.role == LevelRole::Dwell {
+            None
+        } else {
+            r.ftti_ms
+        };
+        let slack = match r.total_ms {
+            Some(t) => [ftti_judged, r.within_ms]
+                .into_iter()
+                .flatten()
+                .map(|d| d - t)
+                .fold(None, |a: Option<f64>, v| Some(a.map_or(v, |a| a.min(v))))
+                .map_or("-".to_string(), |v| format!("{v:.2}")),
+            None => "-".to_string(),
         };
         let windows = if r.role == LevelRole::Skipped {
             "-".to_string()
@@ -655,9 +675,12 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
             ms(r.route_ms),
             settle,
             ms(r.total_ms),
-            ms(r.ftti_ms),
+            ms(ftti_judged),
             slack,
         ];
+        if with_within {
+            cells.insert(9, ms(r.within_ms));
+        }
         // Phase 10 B7: where the row's stated terms come from. Phase 93: the
         // row's level is its weakest term's (unsupervised < supervised <
         // bound), and the unsupervised terms are named.
@@ -746,7 +769,7 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
             .zip(&widths)
             .enumerate()
             .map(|(c, (cell, w))| {
-                if !(3..10).contains(&c) {
+                if !(3..if with_within { 11 } else { 10 }).contains(&c) {
                     format!("{cell:<w$}")
                 } else {
                     format!("{cell:>w$}")
@@ -764,7 +787,8 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
          edge's link (`max_transport` into the detecting subscriber), except after a dwell's \
          deadline.\n  DEGRADATION is the level of the hazard's fallback sequence (a mode, or the \
          event chain of a one-level reaction); role `mrc` is the minimal risk condition, \
-         its last level.\n",
+         its last level. A `dwell` row is judged against its own WITHIN only; DWELLS \
+         below it charges a dwell range's `max`.\n",
     );
     if with_sources {
         out.push_str(
@@ -779,6 +803,7 @@ pub fn render_budgets(index: &manifest_loader::ManifestIndex) -> String {
         out.push_str(&n);
         out.push('\n');
     }
+    out.push_str(&render_binding(index));
     out.push_str(&render_stated(index));
     out.push_str(&render_reaction_totals(index));
     out.push_str(&crate::ros::extensions::render_resolution(index));
@@ -1073,6 +1098,103 @@ fn render_derived(index: &manifest_loader::ManifestIndex) -> String {
         for step in &d.trace {
             out.push_str(&format!("    {step}\n"));
         }
+    }
+    out
+}
+
+/// The rows of one hazard the binding row is chosen from (rlm v0.3.18,
+/// `ros_launch_manifest_derive::levels`): every level it runs whose total is
+/// known, skipped levels and supervised-overrun rows left out.
+pub fn level_rows(
+    index: &manifest_loader::ManifestIndex,
+    scope_id: usize,
+    hazard: &str,
+) -> (Vec<ros_launch_manifest_derive::levels::Row>, Option<f64>) {
+    use manifest_loader::LevelRole;
+    use ros_launch_manifest_derive::levels::{Role, Row};
+    let mut ftti = None;
+    let rows = index
+        .budgets
+        .iter()
+        .filter(|r| r.scope_id == scope_id && r.hazard == hazard)
+        .filter_map(|r| {
+            let role = match r.role {
+                LevelRole::Level => Role::Level,
+                LevelRole::Dwell => Role::Dwell,
+                LevelRole::Mrc => Role::Mrc,
+                LevelRole::Skipped | LevelRole::Overrun => return None,
+            };
+            ftti = ftti.or(r.ftti_ms);
+            Some(Row {
+                level: r.rung.clone(),
+                role,
+                total_ms: r.total_ms?,
+                within_ms: r.within_ms,
+            })
+        })
+        .collect();
+    (rows, ftti)
+}
+
+/// `check --explain`'s binding rows (rlm v0.3.18, #6; play_launch #24): per
+/// hazard, the judged row that takes the largest share of its deadline,
+/// and every level's deadline. Before, `--explain` gave only the minimal
+/// risk condition's total (below), which is not the row that binds when a
+/// level above it is slower.
+pub fn render_binding(index: &manifest_loader::ManifestIndex) -> String {
+    use ros_launch_manifest_derive::levels::{Deadline, Role, binding, judgements};
+    let mut out = String::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for b in &index.budgets {
+        if !seen.insert((b.scope_id, b.hazard.clone())) {
+            continue;
+        }
+        let (rows, ftti) = level_rows(index, b.scope_id, &b.hazard);
+        let Some(j) = binding(&rows, ftti) else {
+            continue;
+        };
+        if out.is_empty() {
+            out.push_str(
+                "\n-- Binding rows (--explain, ms; the judged row with the largest share of \
+                 its deadline) --\n",
+            );
+        }
+        let r = &rows[j.row];
+        let role = match r.role {
+            Role::Level => "level",
+            Role::Dwell => "dwell",
+            Role::Mrc => "mrc",
+        };
+        let which = match j.deadline {
+            Deadline::Ftti => "ftti",
+            Deadline::Within => "within",
+        };
+        out.push_str(&format!(
+            "{}  '{}' ({role})  {:.2} against {which} {:.2}: {:.0}%, slack {:.2}{}\n",
+            b.hazard,
+            r.level,
+            j.total_ms,
+            j.deadline_ms,
+            100.0 * j.share(),
+            j.slack_ms(),
+            if j.fits() { "" } else { "  MISSED" }
+        ));
+        let each: Vec<String> = judgements(&rows, ftti)
+            .iter()
+            .map(|k| {
+                format!(
+                    "'{}' {:.2}/{} {:.2}",
+                    rows[k.row].level,
+                    k.total_ms,
+                    match k.deadline {
+                        Deadline::Ftti => "ftti",
+                        Deadline::Within => "within",
+                    },
+                    k.deadline_ms
+                )
+            })
+            .collect();
+        out.push_str(&format!("    levels: {}\n", each.join(", ")));
     }
     out
 }

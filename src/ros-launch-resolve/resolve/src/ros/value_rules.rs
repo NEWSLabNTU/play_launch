@@ -523,7 +523,8 @@ fn predicate_kind_mismatch(ty: &str, pred: &ValuePredicate) -> Option<String> {
     };
     let value_kind = match &pred.value {
         PredicateValue::Bool(_) => "bool",
-        PredicateValue::Int(_) | PredicateValue::Float(_) => "number",
+        // rlm v0.3.18: a value read from the launch tree is a number.
+        PredicateValue::Int(_) | PredicateValue::Float(_) | PredicateValue::Read(_) => "number",
         PredicateValue::Str(_) => "string",
         PredicateValue::Constant(_) => field_kind,
     };
@@ -1109,10 +1110,45 @@ pub(crate) fn check_windows_and_exits(
                 format!("{at}.fallback"),
             ));
         }
+        // rlm v0.3.18 (#4): the minimal risk condition is always available.
+        if let Some(last) = m.decl.fallback.last()
+            && let Some(floor) = in_scope(last)
+            && !floor.decl.requires_lost.is_empty()
+        {
+            diags.push(diag(
+                "requires-lost-at-mrc",
+                Severity::Error,
+                format!(
+                    "{}: mode '{}' falls to '{last}' last, and '{last}' is available only while \
+                     one of [{}] is lost -- a fault that leaves them all holding would have no \
+                     minimal risk condition. The last level of a fallback sequence must always \
+                     be available",
+                    site(
+                        index,
+                        floor.scope_id,
+                        &format!("modes.{last}.requires_lost")
+                    ),
+                    m.name,
+                    floor.decl.requires_lost.join(", ")
+                ),
+                format!("{at}.fallback"),
+            ));
+        }
         if let Some(w) = &m.decl.min_dwell {
             let wat = format!("{at}.min_dwell");
             let where_ = site(index, m.scope_id, &wat);
             let ms = w.ms().unwrap_or_default();
+            // rlm v0.3.18 (#3): a range's `max`; the parameter may take any
+            // value in `[min, max]`.
+            let max_ms = m.decl.dwell_max.map(|d| d.as_millis_f64());
+            let stated = match max_ms {
+                Some(x) => format!("{ms:.2}ms to {x:.2}ms"),
+                None => format!("{ms:.2}ms"),
+            };
+            let outside = |v: f64| match max_ms {
+                Some(x) => v < ms - 1e-6 * ms.max(1.0) || v > x + 1e-6 * x.max(1.0),
+                None => (v - ms).abs() > 1e-6 * ms.max(1.0),
+            };
             match w.param.as_ref().and_then(ParamBinding::as_ref) {
                 None => diags.push(diag(
                     "dwell-unbound",
@@ -1151,14 +1187,13 @@ pub(crate) fn check_windows_and_exits(
                                 "resolves to `{}`, which is not a number of seconds",
                                 v.text
                             )),
-                            Some(s) if ((s * 1000.0) - ms).abs() > 1e-6 * ms.max(1.0) => {
-                                Some(format!(
-                                    "resolves to {} s = {:.2}ms, not the {ms:.2}ms the dwell \
-                                     declares",
-                                    v.text,
-                                    s * 1000.0
-                                ))
-                            }
+                            Some(s) if outside(s * 1000.0) => Some(format!(
+                                "resolves to {} s = {:.2}ms, not {}the {stated} the dwell \
+                                 declares",
+                                v.text,
+                                s * 1000.0,
+                                if max_ms.is_some() { "inside " } else { "" }
+                            )),
                             Some(_) => None,
                         },
                     };
@@ -1167,7 +1202,7 @@ pub(crate) fn check_windows_and_exits(
                             "dwell-param",
                             Severity::Error,
                             format!(
-                                "{where_}: mode '{}' waits {ms:.2}ms, bound to `{p}`, which \
+                                "{where_}: mode '{}' waits {stated}, bound to `{p}`, which \
                                  {problem}. The contract and the image must read one number",
                                 m.name
                             ),
@@ -1176,6 +1211,24 @@ pub(crate) fn check_windows_and_exits(
                     }
                 }
             }
+        }
+        // rlm v0.3.18 (#3): an `advance` is taken on a function the level's
+        // own nodes read, as an exit is.
+        if let Some(adv) = &m.decl.advance
+            && let Some(why) = unwired(index, graph, m, &adv.holds)
+        {
+            diags.push(diag(
+                "mode-advance-unwired",
+                Severity::Error,
+                format!(
+                    "{}: mode '{}' advances when '{}' holds, but {why} -- without a trigger \
+                     there is no take to trace and no evidence the advance was seen",
+                    site(index, m.scope_id, &format!("{at}.advance")),
+                    m.name,
+                    adv.holds
+                ),
+                format!("{at}.advance.holds"),
+            ));
         }
         let Some(exit) = &m.decl.exit else {
             continue;
@@ -1201,21 +1254,31 @@ pub(crate) fn check_windows_and_exits(
                     .filter(|x| x.scope_id == m.scope_id && x.decl.fallback.contains(&exit.to))
                     .map(|x| x.name.as_str())
                     .collect();
-                if !ladders.is_empty() {
+                // rlm v0.3.18 (#5): a level ABOVE this one in a sequence that
+                // lists both is a re-entry.
+                let reentry = index.modes.iter().any(|x| {
+                    x.scope_id == m.scope_id && {
+                        let pos = |n: &str| x.decl.fallback.iter().position(|l| l == n);
+                        matches!((pos(&exit.to), pos(&m.name)), (Some(t), Some(me)) if t < me)
+                    }
+                });
+                if !ladders.is_empty() && !reentry {
                     diags.push(diag(
                         "mode-exit-target",
                         Severity::Error,
                         format!(
                             "{where_}: mode '{}' exits to '{}', which is a degradation level \
-                             of the `fallback:` sequence of {} -- an exit ends the sequence, it \
-                             is not a step down it",
+                             of the `fallback:` sequence of {} but not one above '{}' in a \
+                             sequence that lists both -- an exit ends the sequence or re-enters \
+                             a level above, it is not a step down it",
                             m.name,
                             exit.to,
                             ladders
                                 .iter()
                                 .map(|l| format!("'{l}'"))
                                 .collect::<Vec<_>>()
-                                .join(", ")
+                                .join(", "),
+                            m.name
                         ),
                         format!("{eat}.to"),
                     ));
@@ -1303,6 +1366,68 @@ pub(crate) fn check_windows_and_exits(
             ));
         }
     }
+}
+
+/// Why no node implementing level `m` takes function `holds` on a path
+/// trigger (rlm v0.3.18 `mode-advance-unwired`; the test `mode-exit-unwired`
+/// applies to an exit). `None`: some node does.
+fn unwired(
+    index: &ManifestIndex,
+    graph: &GlobalDataflowGraph,
+    m: &super::manifest_loader::ResolvedMode,
+    holds: &str,
+) -> Option<String> {
+    let Some(f) = index
+        .functions
+        .iter()
+        .find(|f| f.scope_id == m.scope_id && f.name == holds)
+    else {
+        return Some("it is not a function in its scope".to_string());
+    };
+    let Some(rp) = m.decl.reaction.as_ref().and_then(|r| {
+        index
+            .scope_paths
+            .iter()
+            .find(|p| p.scope_id == m.scope_id && &p.path_name == r)
+    }) else {
+        return Some(
+            "the level has no `reaction:` event chain, so no node implements it".to_string(),
+        );
+    };
+    let implementers: BTreeSet<String> = rp
+        .output_topics
+        .iter()
+        .filter_map(|t| index.topics.get(t))
+        .flat_map(|t| t.publishers.iter())
+        .filter_map(|p| p.rsplit_once('/').map(|(n, _)| n.to_string()))
+        .collect();
+    let wired = f.group.members.iter().any(|topic| {
+        index.topics.get(topic).is_some_and(|t| {
+            t.subscribers.iter().any(|s| {
+                let Some((node, ep)) = s.rsplit_once('/') else {
+                    return false;
+                };
+                implementers.contains(node)
+                    && graph.nodes.get(node).is_some_and(|n| {
+                        n.paths.values().any(|p| {
+                            matches!(p.effective_trigger(),
+                                EffectiveTrigger::Input(ref eps) if eps.iter().any(|e| e == ep))
+                        })
+                    })
+            })
+        })
+    });
+    (!wired).then(|| {
+        format!(
+            "no node that implements the level ({}) takes {} on a path trigger",
+            if implementers.is_empty() {
+                "none publishes its output".to_string()
+            } else {
+                implementers.iter().cloned().collect::<Vec<_>>().join(", ")
+            },
+            f.group.members.join(", ")
+        )
+    })
 }
 
 // ---------------------------------------------------------------------------

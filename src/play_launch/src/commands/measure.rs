@@ -109,8 +109,9 @@ fn hazard_specs(model: &SystemModel) -> Vec<HazardSpec> {
             // Phase 75: the reaction may name a MODE, and the sinks are then
             // its fallback sequence's (phase 103 D4: every level, not only
             // the last, as the checker charges them).
-            let sinks: Vec<String> =
-                crate::runtime_enforcement::view::reaction_sinks(c, h.reaction.as_ref());
+            // rlm v0.3.18: only the levels the hazard runs (a level that
+            // requires a loss this fault does not cause is not one).
+            let sinks: Vec<String> = crate::runtime_enforcement::view::hazard_sinks(c, h);
             // The sink's settle: any node path whose safe_state emits onto a
             // sink topic.
             let settle_ms = c
@@ -162,6 +163,7 @@ fn hazard_specs(model: &SystemModel) -> Vec<HazardSpec> {
                 settle_ms,
                 within,
                 via_diagnostics,
+                levels: crate::runtime_enforcement::view::level_deadlines(model, h),
             }
         })
         .collect()
@@ -223,6 +225,35 @@ fn render_hazards(specs: &[HazardSpec], observed: &[HazardObservation]) -> Strin
             ));
             for (sub, w) in &spec.within {
                 out.push_str(&format!("#     {sub} promised to react within {w:.2}ms\n"));
+            }
+            // rlm v0.3.18 (#6): each level's own deadline, from the fault to
+            // the first publish on the level's output, plus its settle.
+            for (l, at) in spec.levels.iter().zip(&o.levels_ns) {
+                match at {
+                    Some(t) => {
+                        let seen = t.saturating_sub(o.fault_ns) as f64 / 1e6;
+                        let settle = l.settle_ms.unwrap_or(0.0);
+                        let total = seen + settle;
+                        out.push_str(&format!(
+                            "#     level '{}': entered {seen:.2}ms + settle {settle:.2}ms = \
+                             {total:.2}ms -- {} its within {:.2}ms\n",
+                            l.level,
+                            if total <= l.within_ms {
+                                "fits"
+                            } else {
+                                "EXCEEDS"
+                            },
+                            l.within_ms
+                        ));
+                    }
+                    None => out.push_str(&format!(
+                        "#     level '{}': nothing published on {} after the fault (within \
+                         {:.2}ms not observed)\n",
+                        l.level,
+                        l.outputs.join(", "),
+                        l.within_ms
+                    )),
+                }
             }
         }
     }

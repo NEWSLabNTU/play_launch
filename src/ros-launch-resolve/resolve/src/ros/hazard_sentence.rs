@@ -38,6 +38,7 @@ pub fn predicate_text(p: &ValuePredicate) -> String {
         PredicateValue::Float(f) => f.to_string(),
         PredicateValue::Constant(c) => c.clone(),
         PredicateValue::Str(s) => format!("\"{s}\""),
+        PredicateValue::Read(r) => r.clone(),
     };
     format!("{} {} {v}", p.field, op_symbol(p.op))
 }

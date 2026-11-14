@@ -1,0 +1,201 @@
+# rlm v0.3.18 (M1g) -- contract_ladder with each new key misused once:
+#
+#   level-within          hold's own deadline is 500 ms; it is entered at
+#                         500 + 110 = 610 ms on hpc_loss
+#   requires-lost-at-mrc  the floor is available only after a loss
+#   mode-exit-target      takeover exits DOWN, to comfortable
+#   mode-advance-unwired  takeover advances on a function no node of the
+#                         level takes
+#   dwell-param           handler.takeover_timeout is 20 s, outside 8-15 s
+version: 1
+use:
+  vehicle.braking: "^1"
+
+integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
+
+functions:
+  hpc_alive: [/availability]
+  hpc_in_odd:
+    of: [/availability]
+    when: { field: autonomous, equals: false }
+  driver_took_over:
+    of: [/control_mode]
+    when: { field: mode, not_equals: MANUAL }
+  odd_margin: [/estop_cmd]
+
+hazards:
+  odd_exit:
+    integrity: ASIL_B
+    monitors: [/availability]
+    on: reported
+    when: { field: autonomous, equals: false }
+    entry_speed: 8.33 m/s
+    ftti: 30s
+    enters: engaged
+  hpc_loss:
+    integrity: ASIL_D
+    monitors: [/availability]
+    on: omission
+    entry_speed: 3.0 m/s
+    ftti: 6s
+    enters: engaged
+
+modes:
+  engaged:
+    requires: [hpc_alive, hpc_in_odd]
+    fallback: [takeover, hold, comfortable, estop]
+  takeover:
+    requires: [hpc_alive]
+    reaction: sys.tor
+    min_dwell: { duration: { min: 8s, max: 15s }, param: handler.takeover_timeout }
+    advance: { holds: odd_margin }
+    exit: { holds: driver_took_over, to: comfortable }
+  hold:
+    requires_lost: [hpc_alive]
+    reaction: sys.tor
+    min_dwell: { duration: 2s, param: handler.hold_timeout }
+    within: 500ms
+    exit: { holds: hpc_alive, to: takeover }
+  comfortable:
+    requires: [hpc_alive]
+    reaction: sys.comfortable
+  estop:
+    requires: []
+    requires_lost: [hpc_in_odd]
+    reaction: sys.estop
+  manual:
+    requires: []
+
+paths:
+  sys.tor:
+    trigger: { input: [/availability] }
+    output: [/tor_state]
+  sys.comfortable:
+    trigger: { input: [/availability] }
+    output: [/planner_cmd]
+  sys.estop:
+    trigger: { input: [/availability] }
+    output: [/estop_cmd]
+
+nodes:
+  gate:
+    pub:
+      availability: {}
+    paths:
+      report:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [availability]
+        max_latency: 20ms
+
+  handler:
+    params:
+      takeover_timeout: { type: double }
+      hold_timeout: { type: double }
+    sub:
+      availability:
+        qos: { lease_duration: 500ms }
+        on_violation: { on: [omission, reported], reaction: call_mrm }
+      control_mode: {}
+    pub:
+      tor_state: {}
+    cli:
+      comfort_operate: { timeout: 10ms, on_timeout: { reaction: estop } }
+      estop_operate: {}
+    paths:
+      # Phase 84: the handler holds the request on its tick and reads the
+      # deadline there, so the rung below's first hop (call_mrm, 110 ms =
+      # the 100 ms tick + a 10 ms call) is where the late notice is charged
+      # (`dwell-expiry`).
+      on_timer:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [tor_state]
+        max_latency: 100ms
+      call_mrm:
+        trigger: { input: [availability] }
+        output: [tor_state, comfort_operate, estop_operate]
+        max_latency: 110ms
+      driver_exit:
+        trigger: { input: [control_mode] }
+        output: [tor_state]
+        max_latency: 100ms
+
+  comfort_op:
+    params:
+      min_acceleration: { type: double }
+      min_jerk: { type: double }
+    srv:
+      operate: {}
+    pub:
+      velocity_limit: {}
+    paths:
+      # A service callback that publishes (brief D F3): the walk continues
+      # through it, and its safe state is carried to the planner's command.
+      operate:
+        trigger: { input: [operate] }
+        output: [velocity_limit]
+        safe_state:
+          emits: velocity_limit
+          settle: { decel: min_acceleration, jerk: min_jerk }
+
+  planner:
+    sub:
+      velocity_limit: {}
+    pub:
+      cmd: {}
+    paths:
+      follow:
+        trigger: { input: [velocity_limit] }
+        output: [cmd]
+        max_latency: 300ms
+
+  estop_op:
+    params:
+      target_acceleration: { type: double }
+      target_jerk: { type: double }
+    srv:
+      operate: {}
+    pub:
+      cmd: {}
+    paths:
+      on_timer:
+        trigger: { timer: { rate_hz: 30 } }
+        output: [cmd]
+        safe_state:
+          emits: cmd
+          settle: { decel: target_acceleration, jerk: target_jerk }
+
+topics:
+  /availability:
+    type: demo_msgs/msg/Availability
+    pub: [gate/availability]
+    sub: [handler/availability]
+  /control_mode:
+    type: demo_msgs/msg/ControlMode
+    external: pub
+    sub: [handler/control_mode]
+  /tor_state:
+    type: std_msgs/msg/Bool
+    external: sub
+    pub: [handler/tor_state]
+  /velocity_limit:
+    type: std_msgs/msg/Float64
+    pub: [comfort_op/velocity_limit]
+    sub: [planner/velocity_limit]
+  /planner_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [planner/cmd]
+  /estop_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [estop_op/cmd]
+
+services:
+  /comfort/operate:
+    type: std_srvs/srv/Trigger
+    server: [comfort_op/operate]
+    client: [handler/comfort_operate]
+  /estop/operate:
+    type: std_srvs/srv/Trigger
+    server: [estop_op/operate]
+    client: [handler/estop_operate]

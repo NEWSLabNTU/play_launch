@@ -60,6 +60,7 @@ fn predicate_constant(v: &ros_launch_manifest_model::PredicateValueContract) -> 
         V::Float(f) => f.to_string(),
         V::Constant { constant, .. } => constant.clone(),
         V::Str(s) => format!("\"{s}\""),
+        V::Read { read } => read.clone(),
     }
 }
 pub use view::ContractView;
@@ -140,6 +141,9 @@ struct HazardRuntime {
     last_stamp: HashMap<(String, u64), u64>,
     /// Class findings already reported, `(guard, publisher handle, class)`.
     class_reported: std::collections::HashSet<(String, u64, &'static str)>,
+    /// rlm v0.3.18 (#6): levels whose own deadline was judged for the fault
+    /// in progress.
+    levels_judged: std::collections::HashSet<String>,
 }
 
 /// Per-topic aggregated state used by the runtime rules.
@@ -1276,6 +1280,7 @@ impl RuleEngine {
                         rt.fault = None;
                         rt.detected_ns = None;
                         rt.reacted = false;
+                        rt.levels_judged.clear();
                     }
                 }
                 EventKind::Publish if is_sink => {
@@ -1285,6 +1290,12 @@ impl RuleEngine {
                     if rt.sink_pubs.len() > 256 {
                         rt.sink_pubs.pop_front();
                     }
+                    // rlm v0.3.18 (#6): each level's own deadline.
+                    pending.extend(levels_within_of(
+                        rt,
+                        watch,
+                        self.view.level_deadlines.get(&watch.key),
+                    ));
                     if rt.fault.is_some()
                         && !rt.reacted
                         && let Some(p) = reaction_of(rt, watch)
@@ -1400,7 +1411,48 @@ impl RuleEngine {
                 by_value || by_silence
             })
         };
+        // rlm v0.3.18 (#4): a level that `requires_lost` is selectable only
+        // while one of those functions is lost.
+        let fn_lost = |r: &crate::runtime_enforcement::view::RequiredFn,
+                       silent: &std::collections::HashSet<String>| {
+            let by_value = r.value_fn.as_ref().is_some_and(|k| value_lost.contains(k));
+            let by_silence = if r.all_of {
+                let held = r.members.iter().filter(|t| !silent.contains(*t)).count();
+                held < r.m.unwrap_or(1) as usize
+            } else {
+                r.members.iter().any(|t| silent.contains(t))
+            };
+            by_value || by_silence
+        };
+        let selectable = |m: &crate::runtime_enforcement::view::ModeWatch,
+                          silent: &std::collections::HashSet<String>| {
+            !lost(m, silent)
+                && (m.requires_lost.is_empty()
+                    || m.requires_lost.iter().any(|r| fn_lost(r, silent)))
+        };
         let mut pending: Vec<(Severity, String, String, bool)> = Vec::new();
+        // rlm v0.3.18 (#5): an active level whose exit function holds
+        // re-enters the level above it that the exit names.
+        let mut reentries: Vec<(String, String)> = Vec::new();
+        for w in &self.view.modes {
+            if let Some(x) = &w.exit
+                && self.levels.active.contains_key(&w.key)
+                && !fn_lost(&x.holds, &self.silent_topics)
+            {
+                reentries.push((w.key.clone(), x.to.clone()));
+            }
+        }
+        for (from, to) in reentries {
+            self.levels.leave(&from);
+            self.levels.enter(&to, ts);
+            self.emit_repeatable(
+                "mode-availability".to_string(),
+                Severity::Warning,
+                from.clone(),
+                format!("mode '{from}': its exit holds -- re-entering '{to}'"),
+                ts,
+            );
+        }
         for w in &self.view.modes {
             let is_lost = lost(w, &self.silent_topics);
             if is_lost == self.modes_lost.contains(&w.key) {
@@ -1412,7 +1464,7 @@ impl RuleEngine {
                         .modes
                         .iter()
                         .find(|m| &m.key == *name)
-                        .is_some_and(|m| !lost(m, &self.silent_topics))
+                        .is_some_and(|m| selectable(m, &self.silent_topics))
                 });
                 if let Some(r) = rung {
                     self.levels.enter(r, ts);
@@ -1748,6 +1800,11 @@ impl RuleEngine {
                     if let Some(p) = reaction_of(rt, watch) {
                         pending.push(p);
                     }
+                    pending.extend(levels_within_of(
+                        rt,
+                        watch,
+                        self.view.level_deadlines.get(&watch.key),
+                    ));
                     break;
                 }
             }
@@ -1960,6 +2017,63 @@ type Pending = (String, Severity, String, String, Option<&'static str>);
 /// judged by its host TAKES instead, and the diagnostic says so: the number
 /// then includes the hop from the off-host publisher, which is the island's
 /// link, and hiding that would credit the link's latency to the island.
+/// rlm v0.3.18 (#6): every level of the hazard's own deadline list not yet
+/// judged for the fault in progress, judged on the first provenance-free
+/// publish on its output after the fault (looking back through the sink
+/// buffer, as [`reaction_of`] does), plus the settle commanded there.
+fn levels_within_of(
+    rt: &mut HazardRuntime,
+    watch: &crate::runtime_enforcement::view::HazardWatch,
+    levels: Option<&Vec<crate::runtime_enforcement::view::LevelDeadline>>,
+) -> Vec<Pending> {
+    let mut out = Vec::new();
+    let (Some((guard, fault_ns)), Some(levels)) = (rt.fault.clone(), levels) else {
+        return out;
+    };
+    let gap = median_gap(rt.gaps.get(&guard));
+    for l in levels {
+        if rt.levels_judged.contains(&l.level) {
+            continue;
+        }
+        let hit = rt
+            .sink_pubs
+            .iter()
+            .filter(|(t, _, sink)| *t > fault_ns && l.outputs.contains(sink))
+            .find(|(t, stamp, _)| match stamp {
+                Some(k) => !rt.stamps.get(&guard).is_some_and(|s| s.contains(k)),
+                None => *t > fault_ns + gap,
+            })
+            .cloned();
+        let Some((t, _, sink)) = hit else {
+            continue;
+        };
+        rt.levels_judged.insert(l.level.clone());
+        let seen = (t - fault_ns) as f64 / 1e6;
+        let settle = l.settle_ms.unwrap_or(0.0);
+        let total = seen + settle;
+        let fits = total <= l.within_ms;
+        out.push((
+            "level-within".to_string(),
+            if fits {
+                Severity::Warning
+            } else {
+                Severity::Error
+            },
+            watch.key.clone(),
+            format!(
+                "hazard '{}': level '{}' entered on '{sink}' {seen:.2}ms after '{guard}' went \
+                 silent; + settle {settle:.2}ms = {total:.2}ms -- {} its within {:.2}ms",
+                watch.key,
+                l.level,
+                if fits { "fits" } else { "EXCEEDS" },
+                l.within_ms
+            ),
+            None,
+        ));
+    }
+    out
+}
+
 fn reaction_of(
     rt: &mut HazardRuntime,
     watch: &crate::runtime_enforcement::view::HazardWatch,
@@ -3469,5 +3583,202 @@ mod tests {
         let log = std::fs::read_to_string(tmp2.join("runtime_violations.jsonl")).unwrap();
         assert!(log.contains("resequencing"), "{log}");
         let _ = std::fs::remove_dir_all(&tmp2);
+    }
+
+    /// rlm v0.3.18 (#4, #5): a level that `requires_lost` the scan is
+    /// selected only while the scan is lost, and its exit, when the scan is
+    /// back, re-enters the level above it.
+    #[test]
+    fn a_level_after_a_loss_is_selected_by_it_and_its_exit_reenters_above() {
+        use crate::{
+            interception::{EventKind, InterceptionEvent},
+            runtime_enforcement::view::{ExitWatch, HazardWatch, ModeWatch, RequiredFn, TopicView},
+        };
+        let mut view = ContractView::default();
+        for t in ["/scan", "/odd"] {
+            view.topics.insert(
+                t.to_string(),
+                TopicView {
+                    msg_type: "x".into(),
+                    ..Default::default()
+                },
+            );
+            view.hazards.push(HazardWatch {
+                key: format!("lost{t}"),
+                guards: vec![t.into()],
+                silence_ms: Some(100.0),
+                ..Default::default()
+            });
+        }
+        let scan = || RequiredFn::topics(vec!["/scan".into()]);
+        view.modes.push(ModeWatch {
+            key: "driving".into(),
+            requires: vec![scan(), RequiredFn::topics(vec!["/odd".into()])],
+            fallback: vec!["constrained".into(), "hold".into(), "stopped".into()],
+            ..Default::default()
+        });
+        view.modes.push(ModeWatch {
+            key: "constrained".into(),
+            requires: vec![scan()],
+            ..Default::default()
+        });
+        view.modes.push(ModeWatch {
+            key: "hold".into(),
+            requires_lost: vec![scan()],
+            exit: Some(ExitWatch {
+                holds: scan(),
+                to: "constrained".into(),
+            }),
+            ..Default::default()
+        });
+        view.modes.push(ModeWatch {
+            key: "stopped".into(),
+            ..Default::default()
+        });
+        let run = |silent: &[&str], tag: &str| {
+            let tmp =
+                std::env::temp_dir().join(format!("play_launch_lost_{tag}_{}", std::process::id()));
+            std::fs::create_dir_all(&tmp).unwrap();
+            let mut re = RuleEngine::new(Arc::new(view.clone()), EnforceMode::Warn, &tmp);
+            let ev = |t: u64, topic: &str, stamp: u32| InterceptionEvent {
+                kind: EventKind::Publish,
+                _pad: [0; 3],
+                topic_hash: fnv1a(topic.as_bytes()),
+                stamp_sec: 1,
+                stamp_nanosec: stamp,
+                handle: 1,
+                monotonic_ns: t,
+                cpu_ns: 0,
+                tid: 1,
+                payload_bytes: 0,
+            };
+            for i in 0..10u64 {
+                for t in ["/scan", "/odd"] {
+                    re.observe(&ev(1_000_000_000 + i * 20_000_000, t, 100 + i as u32));
+                }
+            }
+            let last = 1_000_000_000 + 9 * 20_000_000;
+            // Only the topics not named silent go on.
+            for k in 1..10u64 {
+                for t in ["/scan", "/odd"].iter().filter(|t| !silent.contains(t)) {
+                    re.observe(&ev(last + k * 20_000_000, t, 200 + k as u32));
+                }
+            }
+            re.tick(last + 200_000_000);
+            (re, tmp, last)
+        };
+        // The ODD lost, the scan alive: `hold` is never available.
+        let (mut re, tmp, _) = run(&["/odd"], "odd");
+        re.flush();
+        let log = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
+        assert!(
+            log.contains("mode 'driving': LOST — falling to 'constrained'"),
+            "{log}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+        // Both lost: `constrained` needs the scan, `hold` needs it LOST.
+        let (mut re, tmp, last) = run(&["/odd", "/scan"], "both");
+        assert!(re.levels.active.contains_key("hold"));
+        // The scan comes back, the ODD does not: hold's exit re-enters
+        // `constrained`, the level above it.
+        re.observe(&InterceptionEvent {
+            kind: EventKind::Publish,
+            _pad: [0; 3],
+            topic_hash: fnv1a(b"/scan"),
+            stamp_sec: 2,
+            stamp_nanosec: 0,
+            handle: 1,
+            monotonic_ns: last + 300_000_000,
+            cpu_ns: 0,
+            tid: 1,
+            payload_bytes: 0,
+        });
+        assert!(!re.levels.active.contains_key("hold"));
+        assert!(re.levels.active.contains_key("constrained"));
+        re.flush();
+        let log = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
+        assert!(
+            log.contains("mode 'driving': LOST — falling to 'hold'"),
+            "{log}"
+        );
+        assert!(
+            log.contains("mode 'hold': its exit holds -- re-entering 'constrained'"),
+            "{log}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// rlm v0.3.18 (#6): a level's own deadline, judged on the first
+    /// provenance-free publish on its output after the fault, plus its
+    /// settle: 80 ms + 10 ms against 50 ms is `level-within`.
+    #[test]
+    fn a_level_is_judged_against_its_own_within() {
+        use crate::{
+            interception::{EventKind, InterceptionEvent},
+            runtime_enforcement::view::{HazardWatch, LevelDeadline, TopicView},
+        };
+        let mut view = ContractView::default();
+        for t in ["/scan", "/hold_cmd"] {
+            view.topics.insert(
+                t.to_string(),
+                TopicView {
+                    msg_type: "x".into(),
+                    ..Default::default()
+                },
+            );
+        }
+        view.hazards.push(HazardWatch {
+            key: "hpc_loss".into(),
+            guards: vec!["/scan".into()],
+            sinks: vec!["/hold_cmd".into()],
+            ftti_ms: Some(5000.0),
+            silence_ms: Some(100.0),
+            ..Default::default()
+        });
+        view.level_deadlines.insert(
+            "hpc_loss".into(),
+            vec![LevelDeadline {
+                level: "hold".into(),
+                outputs: vec!["/hold_cmd".into()],
+                within_ms: 50.0,
+                settle_ms: Some(10.0),
+            }],
+        );
+        let tmp = std::env::temp_dir().join(format!("play_launch_within_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut re = RuleEngine::new(Arc::new(view), EnforceMode::Warn, &tmp);
+        let ev = |t: u64, topic: &[u8], stamp: u32| InterceptionEvent {
+            kind: EventKind::Publish,
+            _pad: [0; 3],
+            topic_hash: fnv1a(topic),
+            stamp_sec: 1,
+            stamp_nanosec: stamp,
+            handle: 1,
+            monotonic_ns: t,
+            cpu_ns: 0,
+            tid: 1,
+            payload_bytes: 0,
+        };
+        for i in 0..10u64 {
+            re.observe(&ev(
+                1_000_000_000 + i * 20_000_000,
+                b"/scan",
+                100 + i as u32,
+            ));
+        }
+        let last = 1_000_000_000 + 9 * 20_000_000;
+        re.observe(&ev(last + 80_000_000, b"/hold_cmd", 999_999));
+        re.tick(last + 120_000_000);
+        re.flush();
+        let log = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
+        assert!(log.contains("level-within"), "{log}");
+        assert!(
+            log.contains(
+                "level 'hold' entered on '/hold_cmd' 80.00ms after '/scan' went silent; \
+                 + settle 10.00ms = 90.00ms -- EXCEEDS its within 50.00ms"
+            ),
+            "{log}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

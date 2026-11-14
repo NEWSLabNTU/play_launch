@@ -8,6 +8,41 @@ allowance heavily.
 
 ## Unreleased
 
+- **Added (contracts; rlm v0.3.18, milestone M1g, #24):** the
+  fallback-sequence keys, in `check`, the run-time observer and `measure`.
+  - A dwell range, `min_dwell: { duration: { min, max }, param }`: the
+    levels below are charged `max`, `--explain` states both, and
+    `dwell-param` accepts a parameter inside the range.
+  - `advance: { holds: <function> }` on a dwelling level;
+    `error[mode-advance-unwired]` when no node of the level takes the
+    function's topic on a path trigger.
+  - `requires_lost: [<function>]`: a hazard whose fault removes none of
+    them skips the level (`--explain` says why), so a hazard that leaves
+    the HPC running is no longer charged a dwell only HPC loss enters. The
+    observer selects such a level only while one of them is lost.
+    `error[requires-lost-at-mrc]` on the minimal risk condition.
+  - `exit.to` a level above the exiting one: `mode-exit-target` accepts the
+    re-entry, and the observer leaves the level and re-enters the one above
+    when the exit's function holds.
+  - `within: <duration>`, a level's own deadline: every level a hazard runs
+    has a row; a level without a dwell is judged against the FTTI and its
+    `within`, a dwelling level against its `within` only
+    (`error[level-within]`; the observer and `measure` time the first
+    publish on the level's output plus its settle). A dwelling level's row
+    now has a total.
+  - A predicate value read from the launch tree or `let:` in `when:` and
+    `commands` (`le: $(let v_odd)`), in SI units, listed under "Values read
+    from the launch tree". One the launch tree cannot answer is carried
+    unjudged and named at observer startup.
+- **Changed (`check --explain`, #24):** a WITHIN column when any level
+  states one; SLACK is the least over the deadlines a row is judged by (a
+  dwelling row's FTTI is shown as `-`, it is not judged against it); and a
+  new "Binding rows" section prints, per hazard, the judged row with the
+  largest share of its deadline and every level's deadline. Before,
+  `--explain` gave only the minimal risk condition's total (still printed
+  as `reaction_total`), which is not the binding row when a level above it
+  is slower.
+
 - **Removed (contracts; rlm v0.3.17, phase 104 S1):** a `max_transport`
   written on a subscriber is refused (exit 3), naming the link form:
   `links.<l>: { max_transport }` and `sub.<ep>.link: <l>`. It was

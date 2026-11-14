@@ -2112,6 +2112,63 @@ fn check_takeover(dir: &str, extra: &[&str]) -> (i32, String) {
     )
 }
 
+/// rlm v0.3.18 (M1g; rlm#3-#7, #24): a dwell range charges its `max` below
+/// and states its `min`; a level that `requires_lost` the HPC is skipped by
+/// the value fault and run by the silence fault; its own `within` is judged
+/// and, at 87 %, is the silence fault's binding row; an exit re-enters the
+/// level above it.
+#[test]
+fn ladder_keys_select_charge_and_bind() {
+    let (code, out) = check_takeover("contract_ladder", &["--explain"]);
+    assert_eq!(code, 0, "{out}");
+    for needle in [
+        "hpc_loss  hold         dwell    500.00      0.00  110.00   dwell >=2000.00    610.00         -  700.00     90.00",
+        "hpc_loss  estop        mrc      500.00   2110.00  143.33   2033.33 derived   4786.67   6000.00       -   1213.33",
+        "odd_exit  comfortable  level    120.00  15110.00  410.00   9996.67 derived  25636.67  30000.00       -   4363.33",
+        "odd_exit/hold: available only after the loss of one of hpc_alive, which this fault does not remove",
+        "odd_exit/takeover: lasts at least 8000.00ms and at most 15000.00ms once on, and ends within 15110.00ms",
+        "-- Binding rows (--explain, ms; the judged row with the largest share of its deadline) --",
+        "hpc_loss  'hold' (dwell)  610.00 against within 700.00: 87%, slack 90.00",
+        "levels: 'hold' 610.00/within 700.00, 'estop' 4786.67/ftti 6000.00",
+        "odd_exit  'comfortable' (level)  25636.67 against ftti 30000.00: 85%, slack 4363.33",
+        // rlm#7: a predicate's value read from the launch tree.
+        "modes.comfortable.commands./planner_cmd[0].ge = -2.5  <- $(param estop_op target_acceleration)",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    for rule in [
+        "level-within",
+        "requires-lost-at-mrc",
+        "mode-exit-target",
+        "mode-advance-unwired",
+        "dwell-param",
+    ] {
+        assert!(!out.contains(&format!("[{rule}]")), "{rule}:\n{out}");
+    }
+}
+
+/// rlm v0.3.18 (M1g): each new key misused once, each its own error.
+#[test]
+fn ladder_keys_misused_are_refused() {
+    let (code, out) = check_takeover("contract_ladder_bad", &[]);
+    assert_eq!(code, 1, "{out}");
+    for needle in [
+        "error[level-within]",
+        "hazard 'hpc_loss': level 'hold' is entered 610.00ms after the fault",
+        "past its own deadline `within: 500.00ms` by 110.00ms",
+        "error[requires-lost-at-mrc]",
+        "'estop' is available only while one of [hpc_in_odd] is lost",
+        "error[mode-exit-target]",
+        "not one above 'takeover' in a sequence that lists both",
+        "error[mode-advance-unwired]",
+        "mode 'takeover' advances when 'odd_margin' holds",
+        "error[dwell-param]",
+        "not inside the 8000.00ms to 15000.00ms the dwell declares",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+}
+
 /// Phase 83: the four takeover keys on a ladder that fits. The value fault
 /// waits the 10 s window out and lands on the comfortable stop; the silence
 /// fault skips both rungs that need the HPC (F1) and is not charged the
@@ -2262,7 +2319,9 @@ fn takeover_link_is_charged_on_the_guard_edge() {
     assert_eq!(code, 0, "{out}");
     for needle in [
         "hpc_loss  estop        mrc      500.00      0.00  239.33   4165.33 derived   4904.67  10000.00   5095.33",
-        "odd_exit  takeover     dwell    100.00      0.00  206.00  dwell >=10000.00         -  30000.00         -",
+        // rlm v0.3.18: a dwelling level's row has a total, and is judged
+        // against its own `within` only (none here), not the FTTI.
+        "odd_exit  takeover     dwell    100.00      0.00  206.00  dwell >=10000.00    306.00         -         -",
         "odd_exit  comfortable  level    100.00  10206.00  192.33   9996.67 derived  20495.00  30000.00   9505.00",
         "odd_exit  estop        mrc      100.00  10206.00  182.33   4165.33 derived  14653.67  30000.00  15346.33",
         "hpc_loss/estop: route = link 57.00ms (max_transport into '/handler/availability', \

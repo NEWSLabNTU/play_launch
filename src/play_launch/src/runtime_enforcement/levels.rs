@@ -92,6 +92,9 @@ pub(super) fn eval(pred: &model::PredicateContract, kind: u8, bits: u64) -> Opti
                 bits,
             )
         }
+        // rlm v0.3.18: a value read from the launch tree that the resolver
+        // could not evaluate is unjudged, like an unresolved constant.
+        V::Read { .. } => None,
     }
 }
 

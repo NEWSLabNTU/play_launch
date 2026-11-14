@@ -396,6 +396,9 @@ pub struct LevelBudget {
     /// The hazard's scope, so the model files the row under the right
     /// hazard when two contracts name one alike.
     pub scope_id: usize,
+    /// The level's own deadline, `modes.<m>.within` (rlm v0.3.18), judged
+    /// against `total_ms` beside `ftti_ms` (`level-within`).
+    pub within_ms: Option<f64>,
 }
 
 /// A stated budget in a contract (phase 10 B7): the scope whose manifest
@@ -3367,6 +3370,32 @@ pub(crate) fn judge_calls(
     verdict
 }
 
+/// `level-within` (rlm v0.3.18, #6): a level's row past its own deadline.
+fn level_within(
+    diags: &mut Vec<Diagnostic>,
+    site: &str,
+    hazard: &str,
+    level: &str,
+    total: f64,
+    within: f64,
+    path: &str,
+) {
+    if total > within {
+        diags.push(Diagnostic {
+            rule_id: "level-within".to_string(),
+            severity: Severity::Error,
+            message: format!(
+                "{site}: hazard '{hazard}': level '{level}' is entered {total:.2}ms after the \
+                 fault (detection + the levels waited above + its route + its settle), past \
+                 its own deadline `within: {within:.2}ms` by {:.2}ms",
+                total - within
+            ),
+            path: path.to_string(),
+            span: None,
+        });
+    }
+}
+
 /// Resolve a hazard's `reaction:` to the ladder of `(mode, scope path)`
 /// rungs it selects, ending at the terminal one (phase 75).
 ///
@@ -3497,6 +3526,9 @@ struct WaitedWindow {
     /// The rung's own route to its output: the request goes on after it.
     route_ms: f64,
     window_ms: f64,
+    /// The least time (a dwell range's `min`, rlm v0.3.18); `window_ms` is
+    /// what is charged (its `max`).
+    least_ms: f64,
     /// The node the window's `param:` names: the one that enforces it.
     owner: Option<String>,
     /// The owner's slowest timer path that publishes the rung's output,
@@ -3767,9 +3799,14 @@ fn check_window_expiry(
         }
         w.noted = true;
         let d = w.window_ms;
+        let lasts = if w.least_ms + 1e-9 < d {
+            format!("lasts at least {:.2}ms and at most {d:.2}ms", w.least_ms)
+        } else {
+            format!("lasts at least {d:.2}ms")
+        };
         let note = match (&w.notice, by_tick) {
             (_, true) => format!(
-                "lasts at least {d:.2}ms once on, and ends within {:.2}ms: {owner} reads the \
+                "{lasts} once on, and ends within {:.2}ms: {owner} reads the \
                  deadline on its timer path '{}', charged {:.2}ms as the first hop of the \
                  route below ({first})",
                 d + first.ms,
@@ -3777,14 +3814,14 @@ fn check_window_expiry(
                 first.ms
             ),
             (Some(n), false) => format!(
-                "lasts at least {d:.2}ms once on, and ends within {:.2}ms: {owner} reads the \
+                "{lasts} once on, and ends within {:.2}ms: {owner} reads the \
                  deadline on {n}, charged inside {first} {:.2}ms, the first hop of the route \
                  below",
                 d + first.ms,
                 first.ms
             ),
             (None, false) => format!(
-                "lasts at least {d:.2}ms once on; when {owner} notices the deadline is not \
+                "{lasts} once on; when {owner} notices the deadline is not \
                  declared, and the route below ({first} {:.2}ms) is charged from the deadline",
                 first.ms
             ),
@@ -4252,25 +4289,36 @@ fn check_fault_reaction(
             rungs.iter().take(rungs.len().saturating_sub(1)).enumerate()
         {
             let mode = mode_of(rung_name);
-            if let Some(m) = mode {
-                let lost: Vec<&str> = m
-                    .decl
-                    .requires
-                    .iter()
-                    .map(String::as_str)
-                    .filter(|r| removed.contains(*r))
-                    .collect();
-                if !lost.is_empty() {
-                    budgets.push(LevelBudget {
-                        hazard: h.name.clone(),
-                        rung: rung_name.clone(),
-                        role: LevelRole::Skipped,
-                        ftti_ms,
-                        note: format!("requires {}, which this fault removes", lost.join(", ")),
-                        ..Default::default()
-                    });
-                    continue;
-                }
+            // rlm v0.3.18 (`ros_launch_manifest_derive::levels::skip`): a
+            // level whose `requires` the fault removes, or whose
+            // `requires_lost` it removes none of, is not run.
+            if let Some(m) = mode
+                && let Some(why) = ros_launch_manifest_derive::levels::skip(
+                    &m.decl.requires,
+                    &m.decl.requires_lost,
+                    &removed,
+                )
+            {
+                use ros_launch_manifest_derive::levels::Skip;
+                budgets.push(LevelBudget {
+                    hazard: h.name.clone(),
+                    rung: rung_name.clone(),
+                    role: LevelRole::Skipped,
+                    ftti_ms,
+                    note: match why {
+                        Skip::Removes(lost) => {
+                            format!("requires {}, which this fault removes", lost.join(", "))
+                        }
+                        Skip::NotLost(need) => format!(
+                            "available only after the loss of one of {}, which this fault \
+                             does not remove",
+                            need.join(", ")
+                        ),
+                    },
+                    scope_id: h.scope_id,
+                    ..Default::default()
+                });
+                continue;
             }
             let Some(rp) = scope_paths
                 .iter()
@@ -4365,8 +4413,24 @@ fn check_fault_reaction(
             // its own -- which is also why it is exempt from
             // `reaction-unbudgeted`. What it costs is charged below it.
             if let Some(win) = mode.and_then(|m| m.decl.min_dwell.as_ref()) {
-                let d = win.ms().unwrap_or_default();
+                // rlm v0.3.18: a range's `max` is what the levels below are
+                // charged; its `min` is the promise.
+                let d = mode
+                    .and_then(|m| m.decl.dwell_charged_ms())
+                    .unwrap_or_default();
+                let least = win.ms().unwrap_or_default();
                 let r = route_ms.unwrap_or(0.0);
+                // rlm v0.3.18 (#6): the dwelling level's own row, judged
+                // against its `within` only: detection + the levels waited
+                // above + its route + the settle of the constraint its route
+                // commands, when it commands one.
+                let within_ms = mode.and_then(|m| m.decl.within.ms());
+                let dwell_settle = match &walk {
+                    Some(w) if w.settle.is_some() => settle_of(w, rung_name, &mut diags),
+                    _ => super::value_rules::Settle::default(),
+                };
+                let dwell_total =
+                    fdti_ms.map(|f| f + windows_ms(&windows) + r + dwell_settle.ms.unwrap_or(0.0));
                 // Phase 84: who enforces the window, and on what clock it
                 // notices the deadline.
                 let owner = win.param.as_ref().and_then(ParamBinding::as_ref).map(|p| {
@@ -4398,18 +4462,42 @@ fn check_fault_reaction(
                     route_ms,
                     window_ms: Some(d),
                     ftti_ms,
-                    note: format!(
-                        "lasts at least {d:.2}ms once on; transitional: charged to every level \
-                         below it up to its deadline"
-                    ),
+                    settle_ms: dwell_settle.ms,
+                    settle_how: dwell_settle.how,
+                    settle_response_ms: dwell_settle.response_ms,
+                    total_ms: dwell_total,
+                    within_ms,
+                    note: if (d - least).abs() > 1e-9 {
+                        format!(
+                            "lasts at least {least:.2}ms and at most {d:.2}ms once on; \
+                             transitional: charged {d:.2}ms to every level below it"
+                        )
+                    } else {
+                        format!(
+                            "lasts at least {d:.2}ms once on; transitional: charged to every \
+                             level below it up to its deadline"
+                        )
+                    },
                     route_note,
                     terms: [fdti_keys.clone(), waited_terms.clone(), rung_terms.clone()].concat(),
                     ..Default::default()
                 });
+                if let (Some(w), Some(t)) = (within_ms, dwell_total) {
+                    level_within(
+                        &mut diags,
+                        &rung_site(rung_name),
+                        &h.name,
+                        rung_name,
+                        t,
+                        w,
+                        &format!("{at}.{rk}"),
+                    );
+                }
                 windows.push(WaitedWindow {
                     rung: rung_name.clone(),
                     route_ms: r,
                     window_ms: d,
+                    least_ms: least,
                     owner,
                     notice,
                     row,
@@ -4453,12 +4541,52 @@ fn check_fault_reaction(
                     span: None,
                 });
             }
-            let (Some(route_ms), Some(ftti), Some(fdti)) = (route_ms, ftti_ms, fdti_ms) else {
+            let within_ms = mode.and_then(|m| m.decl.within.ms());
+            let (Some(route_ms), Some(fdti)) = (route_ms, fdti_ms) else {
                 continue;
             };
+            if ftti_ms.is_none() && within_ms.is_none() {
+                continue;
+            }
             let settle_ms = settle.ms.unwrap_or(0.0);
             let waited = windows_ms(&windows);
             let total = fdti + waited + route_ms + settle_ms;
+            if let Some(w) = within_ms {
+                level_within(
+                    &mut diags,
+                    &rung_site(rung_name),
+                    &h.name,
+                    rung_name,
+                    total,
+                    w,
+                    &format!("{at}.{rk}"),
+                );
+            }
+            let Some(ftti) = ftti_ms else {
+                budgets.push(LevelBudget {
+                    route_from: walk
+                        .as_ref()
+                        .and_then(|w| w.hops.first())
+                        .map(|hop| hop.node.clone()),
+                    route_output: rp.output_topics.clone(),
+                    scope_id: h.scope_id,
+                    hazard: h.name.clone(),
+                    rung: rung_name.clone(),
+                    role: LevelRole::Level,
+                    fdti_ms: Some(fdti),
+                    windows_ms: waited,
+                    route_ms: Some(route_ms),
+                    settle_ms: settle.ms,
+                    settle_how: settle.how,
+                    settle_response_ms: settle.response_ms,
+                    total_ms: Some(total),
+                    within_ms,
+                    route_note,
+                    terms: [fdti_keys.clone(), waited_terms.clone(), route_terms.clone()].concat(),
+                    ..Default::default()
+                });
+                continue;
+            };
             budgets.push(LevelBudget {
                 route_from: walk
                     .as_ref()
@@ -4482,6 +4610,7 @@ fn check_fault_reaction(
                 settle_derivation: settle.derivation.clone(),
                 total_ms: Some(total),
                 ftti_ms: Some(ftti),
+                within_ms,
                 route_note,
                 terms: [fdti_keys.clone(), waited_terms.clone(), route_terms.clone()].concat(),
                 ..Default::default()
@@ -4823,6 +4952,19 @@ fn check_fault_reaction(
         }
 
         let waited = windows_ms(&windows);
+        // rlm v0.3.18 (#6): the minimal risk condition's own deadline.
+        let floor_within = mode_of(&floor_name).and_then(|m| m.decl.within.ms());
+        if let (Some(w), Some(f)) = (floor_within, fdti_ms) {
+            level_within(
+                &mut diags,
+                &rung_site(&floor_name),
+                &h.name,
+                &floor_name,
+                f + waited + frti,
+                w,
+                &format!("{at}.{rk}"),
+            );
+        }
         let floor_terms: Vec<TermKey> = [
             fdti_keys.clone(),
             windows
@@ -4862,6 +5004,7 @@ fn check_fault_reaction(
             settle_derivation: settle.derivation.clone(),
             total_ms: fdti_ms.map(|f| f + waited + frti),
             ftti_ms,
+            within_ms: floor_within,
             route_note: floor_split,
             terms: floor_terms,
             ..Default::default()
