@@ -364,7 +364,7 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&c).unwrap(),
             "version: 1\nmodes:\n  d:\n    fallback: [s]\n  s:\n    reaction: x.stop\n\
-             hazards:\n  h:\n    enters: d   # the ladder\n"
+             hazards:\n  h:\n    leaves: d   # the ladder\n"
         );
         assert_eq!(run_with(false, true), 0);
         // The build tree was not entered.

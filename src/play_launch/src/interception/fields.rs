@@ -1,6 +1,6 @@
 //! Declared message fields read at run time (phase 102 M0).
 //!
-//! A contract's predicates (`hazards.<h>.when`, `functions.<f>.when`, and
+//! A contract's predicates (`hazards.<h>.when`, `capabilities.<c>.when`, and
 //! `modes.<m>.commands`) name fields of messages. The
 //! interceptor reads exactly those, by introspection, and sends each value
 //! as a `FieldValue` event (`play_launch_interception::fields`). This module
@@ -60,7 +60,7 @@ pub fn declared_fields(model: &SystemModel) -> Vec<DeclaredField> {
             by_key
                 .entry((topic.clone(), pred.field.clone()))
                 .or_default()
-                .insert(format!("functions.{name}.when"));
+                .insert(format!("capabilities.{name}.when"));
         }
     }
     // Phase 102 M2: what each level commands, for `safe-state-violated`.

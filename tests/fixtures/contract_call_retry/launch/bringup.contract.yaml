@@ -7,7 +7,7 @@ version: 1
 use:
   iso26262: "^1"
 
-functions:
+capabilities:
   hpc_alive: [/availability]
 
 hazards:
@@ -17,7 +17,7 @@ hazards:
     monitors: [/availability]
     on: omission
     ftti: 5s
-    enters: engaged
+    leaves: engaged
 
 modes:
   engaged:
@@ -82,7 +82,7 @@ nodes:
         qos: { liveliness: manual_by_topic, lease_duration: 500ms }
         on_violation: { on: [omission], reaction: call_mrm }
     cli:
-      operate: { call: async, timeout: 50ms, on_timeout: { retry: { attempts: 3, backoff: 10ms }, then: { reaction: emergency_stop } } }
+      operate: { call: async, timeout: 50ms, on_timeout: { retry: { attempts: 3, backoff: 10ms }, then: { enters: emergency_stop } } }
     paths:
       call_mrm:
         trigger: { input: [availability] }

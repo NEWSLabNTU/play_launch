@@ -10,7 +10,7 @@ version: 1
 use:
   iso26262: "^1"
 
-functions:
+capabilities:
   hpc_alive: [/availability]
 
 hazards:
@@ -20,7 +20,7 @@ hazards:
     monitors: [/availability]
     on: omission
     ftti: 5s
-    enters: engaged
+    leaves: engaged
 
 modes:
   engaged:
@@ -88,7 +88,7 @@ nodes:
     pub:
       slow_cmd: {}
     cli:
-      operate: { call: blocking, timeout: 100ms, max_transport: 1ms, on_timeout: { reaction: emergency_stop } }
+      operate: { call: blocking, timeout: 100ms, max_transport: 1ms, on_timeout: { enters: emergency_stop } }
     paths:
       call_mrm:
         trigger: { input: [availability] }

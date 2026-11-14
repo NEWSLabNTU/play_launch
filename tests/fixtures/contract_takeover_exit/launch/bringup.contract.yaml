@@ -7,7 +7,7 @@ use:
 
 integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 
-functions:
+capabilities:
   hpc_alive: [/availability]
   hpc_in_odd:
     of: [/availability]
@@ -24,14 +24,14 @@ hazards:
     when: { field: autonomous, equals: false }
     entry_speed: 8.33 m/s
     ftti: 30s
-    enters: engaged
+    leaves: engaged
   hpc_loss:
     integrity: ASIL_D
     monitors: [/availability]
     on: omission
     entry_speed: 3.0 m/s
     ftti: 3s
-    enters: engaged
+    leaves: engaged
 
 modes:
   engaged:

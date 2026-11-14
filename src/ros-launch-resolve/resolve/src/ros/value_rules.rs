@@ -767,12 +767,12 @@ pub(crate) fn check_predicates(index: &ManifestIndex, diags: &mut Vec<Diagnostic
         let Some(pred) = &f.when else {
             continue;
         };
-        let at = format!("functions.{}.when", f.name);
+        let at = format!("{}.{}.when", capabilities_key(index, f.scope_id), f.name);
         for member in &f.group.members {
             check_predicate_field(
                 index,
                 f.scope_id,
-                &format!("function '{}'", f.name),
+                &format!("capability '{}'", f.name),
                 &at,
                 member,
                 pred,
@@ -874,7 +874,7 @@ pub(crate) fn removed_by(h: &ResolvedHazard, index: &ManifestIndex) -> BTreeSet<
 /// fault take it away" errs toward yes, so a rung is never charged, nor a
 /// floor accepted, on a group the fault might have removed. This set is the
 /// other direction, what the fault is sure to remove, which is what
-/// `enters-not-removed` asks of the mode a hazard enters.
+/// `leaves-not-removed` asks of the mode a hazard leaves.
 pub(crate) fn removed_counting_m(h: &ResolvedHazard, index: &ManifestIndex) -> BTreeSet<String> {
     let mut out = removed_by(h, index);
     let guarded: BTreeSet<&str> = h
@@ -920,13 +920,14 @@ fn group_count(
     (n, k, f.m.unwrap_or(1) as usize)
 }
 
-/// `enters-not-removed` (warning; rlm#10, play_launch#22): a hazard enters
-/// the mode it takes away. The functions its fault removes, a redundant
-/// group's `m` counted ([`removed_counting_m`]), must include at least one
-/// the entered mode `requires`. Otherwise the hazard names a fallback
-/// sequence its own fault never starts, and a wrong `m` (a 2-of-2 group
-/// written `m: 1`) changes no row. `enters:` naming no mode is
-/// `enters-unknown-mode`, reported by [`check_spellings`].
+/// `leaves-not-removed` (warning; rlm#10, play_launch#22; `enters-not-removed`
+/// before rlm v0.3.19): a hazard leaves the mode it takes away. The
+/// capabilities its fault removes, a redundant group's `m` counted
+/// ([`removed_counting_m`]), must include at least one the mode `requires`.
+/// Otherwise the hazard names a fallback sequence its own fault never
+/// starts, and a wrong `m` (a 2-of-2 group written `m: 1`) changes no row.
+/// `leaves:` naming no mode is `leaves-unknown-mode`, reported by
+/// [`check_spellings`].
 pub(crate) fn check_enters_removed(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
     for h in &index.hazards {
         let Some(enters) = &h.decl.enters else {
@@ -989,16 +990,20 @@ pub(crate) fn check_enters_removed(index: &ManifestIndex, diags: &mut Vec<Diagno
         } else {
             format!(" ({})", standing.join("; "))
         };
-        let at = format!("hazards.{}.enters", h.name);
-        let where_ = site(index, h.scope_id, &at);
+        let at = format!("hazards.{}.leaves", h.name);
+        let where_ = site(
+            index,
+            h.scope_id,
+            &format!("hazards.{}.{}", h.name, leaves_key(index, h)),
+        );
         diags.push(diag(
-            "enters-not-removed",
+            "leaves-not-removed",
             Severity::Warning,
             format!(
-                "{where_}: hazard '{}' enters mode '{enters}', but its fault removes none of \
-                 the functions '{enters}' requires [{}]{why}. A hazard enters the mode it \
+                "{where_}: hazard '{}' leaves mode '{enters}', but its fault removes none of \
+                 the capabilities '{enters}' requires [{}]{why}. A hazard leaves the mode it \
                  takes away; otherwise it names a fallback sequence its own fault never starts. \
-                 Check `enters:`, and a redundant group's `m`",
+                 Check `leaves:`, and a redundant group's `m`",
                 h.name,
                 mode.decl.requires.join(", ")
             ),
@@ -1014,17 +1019,110 @@ pub(crate) fn check_enters_removed(index: &ManifestIndex, diags: &mut Vec<Diagno
 /// The fix-it every deprecated spelling ends with.
 const MIGRATE_HINT: &str = "`play_launch migrate <contract> --write` rewrites it";
 
-/// `reaction-names-mode` and `enters-unknown-mode`.
+/// `deprecated-spelling`, `reaction-names-mode`, `leaves-unknown-mode` and
+/// `call-enters-unknown-mode`.
 ///
 /// A hazard's `reaction:` that names a mode is the pre-0.1.59 spelling of
-/// `enters:`, refused since rlm v0.3.15. It is told apart the way the ladder
+/// `leaves:`, refused since rlm v0.3.15. It is told apart the way the ladder
 /// resolves it (a mode of the hazard's scope first), which only the consumer
-/// can do, so the refusal is here and not in the parser. `enters:` must name
+/// can do, so the refusal is here and not in the parser. `leaves:` must name
 /// a mode: it is never read as a path. (The G3 spellings, `external_topics:`,
 /// a path's `input:` and a topic's `max_transport`, and `exit.on` are parse
 /// errors since v0.3.15.)
+///
+/// rlm v0.3.19 (S3) renamed `functions:` to `capabilities:` and a hazard's
+/// `enters:` to `leaves:`; the parser notes each old key it reads, and this
+/// is the one warning for them. A client's `reaction:` naming a mode is the
+/// old spelling of `enters:`, told apart by the same lookup.
 pub(crate) fn check_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
+    let mut manifests: Vec<_> = index.manifests.values().collect();
+    manifests.sort_by_key(|m| m.scope_id);
+    for m in &manifests {
+        for sp in &m.manifest.deprecated_spellings {
+            diags.push(diag(
+                "deprecated-spelling",
+                Severity::Warning,
+                format!(
+                    "{}: `{}:` is the old spelling of `{}:` (renamed in rlm v0.3.19); it reads \
+                     for one release. Fix: write `{}:`; {MIGRATE_HINT}",
+                    site(index, m.scope_id, &sp.at),
+                    sp.old,
+                    sp.new,
+                    sp.new,
+                ),
+                sp.at.clone(),
+            ));
+        }
+        call_spellings(index, m.scope_id, &m.manifest, diags);
+    }
     g4_spellings(index, diags);
+}
+
+/// A client's mode is named by `enters:` (rlm v0.3.19), its event chain by
+/// `reaction:`: a mode under `reaction:` is the old spelling (warning), and
+/// `enters:` naming no mode of the scope is `call-enters-unknown-mode`.
+fn call_spellings(
+    index: &ManifestIndex,
+    scope_id: usize,
+    manifest: &ros_launch_manifest_types::Manifest,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let is_mode = |name: &str| {
+        index
+            .modes
+            .iter()
+            .any(|m| m.scope_id == scope_id && m.name == name)
+    };
+    for (node, decl) in &manifest.nodes {
+        for (ep, props) in &decl.cli {
+            let base = format!("nodes.{node}.cli.{ep}");
+            let mut targets = Vec::new();
+            if let Some(ot) = &props.on_timeout
+                && let Some(r) = &ot.reaction
+            {
+                let key = if ot.retry.is_some() {
+                    "on_timeout.then"
+                } else {
+                    "on_timeout"
+                };
+                targets.push((key, r.as_str(), ot.enters));
+            }
+            if let Some(r) = &props.on_rejected {
+                targets.push(("on_rejected", r.as_str(), props.on_rejected_enters));
+            }
+            for (key, name, enters) in targets {
+                if enters && !is_mode(name) {
+                    let at = format!("{base}.{key}.enters");
+                    diags.push(diag(
+                        "call-enters-unknown-mode",
+                        Severity::Error,
+                        format!(
+                            "{}: client '{node}.cli.{ep}': `{key}` enters '{name}', which is \
+                             not a mode in its scope. A call that runs an event chain writes \
+                             `reaction: {name}`",
+                            site(index, scope_id, &at),
+                        ),
+                        at,
+                    ));
+                } else if !enters && is_mode(name) {
+                    let at = format!("{base}.{key}.reaction");
+                    diags.push(diag(
+                        "deprecated-spelling",
+                        Severity::Warning,
+                        format!(
+                            "{}: client '{node}.cli.{ep}': `{key}: {{ reaction: {name} }}` \
+                             names a mode, the spelling rlm v0.3.19 replaced: a call falls to a \
+                             mode with `enters: {name}`, and `reaction:` names an event chain. \
+                             It reads for one release. Fix: rename the key to `enters`; \
+                             {MIGRATE_HINT}",
+                            site(index, scope_id, &at),
+                        ),
+                        at,
+                    ));
+                }
+            }
+        }
+    }
 }
 
 fn g4_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
@@ -1039,16 +1137,16 @@ fn g4_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
         if let Some(e) = &h.decl.enters
             && !is_mode(h.scope_id, e)
         {
-            let where_ = site(index, h.scope_id, &format!("{at}.enters"));
+            let where_ = site(index, h.scope_id, &format!("{at}.{}", leaves_key(index, h)));
             diags.push(diag(
-                "enters-unknown-mode",
+                "leaves-unknown-mode",
                 Severity::Error,
                 format!(
-                    "{where_}: hazard '{}' enters '{e}', which is not a mode in its scope. A \
+                    "{where_}: hazard '{}' leaves '{e}', which is not a mode in its scope. A \
                      hazard that reacts by one event chain writes `reaction: {e}`",
                     h.name
                 ),
-                format!("{at}.enters"),
+                format!("{at}.leaves"),
             ));
         }
         if let Some(r) = &h.decl.reaction
@@ -1060,15 +1158,45 @@ fn g4_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
                 Severity::Error,
                 format!(
                     "{where_}: hazard '{}': `reaction: {r}` names a mode, the spelling rlm \
-                     v0.3.15 removed (deprecated since v0.1.59). A hazard enters a mode with \
-                     `enters: {r}`; `reaction:` names an event chain. Fix: rename the key to \
-                     `enters`; {MIGRATE_HINT}",
+                     v0.3.15 removed (deprecated since v0.1.59). A hazard names the mode it \
+                     takes away with `leaves: {r}`; `reaction:` names an event chain. Fix: \
+                     rename the key to `leaves`; {MIGRATE_HINT}",
                     h.name
                 ),
                 format!("{at}.reaction"),
             ));
         }
     }
+}
+
+/// The key a scope wrote its capabilities under: `capabilities`, or
+/// `functions` before rlm v0.3.19 (read for one release).
+pub(crate) fn capabilities_key(index: &ManifestIndex, scope_id: usize) -> &'static str {
+    let wrote_old = index.manifests.get(&scope_id).is_some_and(|m| {
+        m.manifest
+            .deprecated_spellings
+            .iter()
+            .any(|sp| sp.old == "functions")
+    });
+    if wrote_old {
+        "functions"
+    } else {
+        "capabilities"
+    }
+}
+
+/// The key a hazard wrote its mode under: `leaves`, or `enters` before rlm
+/// v0.3.19 (read for one release), so a diagnostic's site points at the
+/// line. The diagnostic's path names `leaves` either way.
+pub(crate) fn leaves_key(index: &ManifestIndex, h: &ResolvedHazard) -> &'static str {
+    let old = format!("hazards.{}.enters", h.name);
+    let wrote_old = index.manifests.get(&h.scope_id).is_some_and(|m| {
+        m.manifest
+            .deprecated_spellings
+            .iter()
+            .any(|sp| sp.at == old || sp.at.ends_with(&format!(".{old}")))
+    });
+    if wrote_old { "enters" } else { "leaves" }
 }
 
 // ---------------------------------------------------------------------------
@@ -1295,7 +1423,7 @@ pub(crate) fn check_windows_and_exits(
                 "mode-exit-unwired",
                 Severity::Error,
                 format!(
-                    "{where_}: mode '{}' exits when '{}' holds, which is not a function in its \
+                    "{where_}: mode '{}' exits when '{}' holds, which is not a capability in its \
                      scope",
                     m.name, exit.holds
                 ),
@@ -1382,7 +1510,7 @@ fn unwired(
         .iter()
         .find(|f| f.scope_id == m.scope_id && f.name == holds)
     else {
-        return Some("it is not a function in its scope".to_string());
+        return Some("it is not a capability in its scope".to_string());
     };
     let Some(rp) = m.decl.reaction.as_ref().and_then(|r| {
         index

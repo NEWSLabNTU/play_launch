@@ -136,7 +136,7 @@ pub(crate) fn check_independence(
                     Severity::Warning,
                     format!(
                         "{where_}: {what} -- a node on another host, a misspelling, or a \
-                         function no node publishes. A node absent from the model shares \
+                         capability no node publishes. A node absent from the model shares \
                          nothing with anything, so its pairs are UNCHECKED, not independent. \
                          One resolved model is one host"
                     ),

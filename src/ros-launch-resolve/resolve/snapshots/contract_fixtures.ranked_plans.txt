@@ -3851,6 +3851,52 @@ RankedPlan {
         },
     ],
 }
+== contract_s3_spellings/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/sys/estop_op",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/watchdog",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: None,
+            tie_group: Some(
+                0,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=5)",
+        },
+        RankItem {
+            node: "/sys/handler",
+            path: "call_mrm",
+            fine_group: 1,
+            coarse_group: None,
+            tie_group: Some(
+                1,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=10)",
+        },
+        RankItem {
+            node: "/sys/gate",
+            path: "report",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(Medium) budget_ms=100)",
+        },
+    ],
+    warnings: [],
+}
 == contract_safe_ros/launch/bringup.launch.xml
 RankedPlan {
     items: [

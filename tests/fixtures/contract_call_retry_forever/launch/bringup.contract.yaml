@@ -10,7 +10,7 @@ version: 1
 use:
   iso26262: "^1"
 
-functions:
+capabilities:
   hpc_alive: [/availability]
 
 hazards:
@@ -20,7 +20,7 @@ hazards:
     monitors: [/availability]
     on: omission
     ftti: 5s
-    enters: engaged
+    leaves: engaged
 
 modes:
   engaged:

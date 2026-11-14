@@ -9,7 +9,7 @@ version: 1
 use:
   iso26262: "^1"
 
-functions:
+capabilities:
   visibility:
     all_of: [/s/radar, /s/camera]
     m: 1
@@ -29,7 +29,7 @@ hazards:
     monitors: [/s/radar]
     on: omission
     ftti: 1s
-    enters: active
+    leaves: active
 
 nodes:
   radar:

@@ -20,9 +20,9 @@ hazards:
     on: reported
     when: { field: data, equals: true }
     ftti: 1s
-    enters: driving
+    leaves: driving
 
-functions:
+capabilities:
   path_clear:
     of: [/too_close]
     when: { field: data, equals: true }

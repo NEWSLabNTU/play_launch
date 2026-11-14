@@ -11,7 +11,7 @@ fixture under `tests/fixtures/`.
 
 | You state | The checker derives |
 |---|---|
-| a redundant group and how many members it needs (`functions.<f>.m`) | when the group, and the mode that requires it, is lost |
+| a redundant group and how many members it needs (`capabilities.<c>.m`) | when the group, and the mode that requires it, is lost |
 | nothing about restarts (the launch file's `respawn` says it) | whether a restart restores the output inside the FTTI, from a run |
 | which nodes must share nothing (`independence:`) | whether the deployment keeps them apart |
 | which communication faults matter (`on:`) | which per-publisher checks run |
@@ -22,7 +22,7 @@ Two LiDARs, either one enough. The hazard is losing both
 (`contract_independence`):
 
 ```yaml
-functions:
+capabilities:
   scan_pair:
     all_of: [/scan_a, /scan_b]
     m: 1
@@ -58,7 +58,7 @@ independence:
     not_sharing: [process, container, cpus]
 ```
 
-`of` lists nodes or functions (a function stands for the nodes that publish
+`of` lists nodes or capabilities (a capability stands for the nodes that publish
 its members). Deployed in one container, the checker refuses it:
 
 ```text

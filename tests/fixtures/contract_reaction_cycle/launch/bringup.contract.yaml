@@ -16,7 +16,7 @@ version: 1
 use:
   iso26262: "^1"
 
-functions:
+capabilities:
   scan_alive: [/s/scan]
   accepted: [/s/accepted]
 
@@ -40,7 +40,7 @@ hazards:
     monitors: [/s/scan]
     on: omission
     ftti: 10s
-    enters: active
+    leaves: active
 
 nodes:
   lidar:

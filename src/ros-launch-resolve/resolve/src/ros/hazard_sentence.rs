@@ -189,7 +189,7 @@ pub fn sentence(index: &ManifestIndex, h: &ResolvedHazard) -> String {
             .find(|m| m.scope_id == h.scope_id && m.name == name)
     };
     let how = match d.entry() {
-        Some(e) if mode(e).is_some() => format!("; it enters mode '{e}'"),
+        Some(e) if mode(e).is_some() => format!("; it leaves mode '{e}'"),
         Some(e) => format!("; it reacts by '{e}'"),
         None => "; it names no reaction".to_string(),
     };

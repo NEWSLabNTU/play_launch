@@ -13,7 +13,7 @@ version: 1
 use:
   iso26262: "^1"
 
-functions:
+capabilities:
   scan_pair:
     all_of: [/scan_a, /scan_b]
     m: 1

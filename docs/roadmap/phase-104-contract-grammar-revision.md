@@ -7,7 +7,13 @@ from a sum into a minimum). A subscriber's own `max_transport` was
 deprecated in v0.3.16 and is refused since v0.3.17: links are the one
 spelling, and every fixture states its transports on links. What an
 overdue deprecation is measured against is still open (the test uses rlm
-tags). S2 decided with phase 103 D4/D5. S3 and S4 planned. Design
+tags). S2 decided with phase 103 D4/D5. **S3 decided (2026-11-15) and in
+progress**: the decisions are rlm `docs/design/grammar-revision/README.md`,
+"S3 decisions". Release R ships in parts, one rlm tag each: v0.3.19
+`capabilities:` (was `functions:`), a hazard's `leaves:` (was `enters:`,
+which `supervise.enters` uses in the opposite direction) and a client's
+`enters: <mode>` (was a mode under `reaction:`); then `event_chains:`, rates
+with a unit, and `supervision` in the platform file. S4 planned. Design
 of record: rlm `docs/design/grammar-revision/` (an overview and one file per
 topic, T1-T10, each with the verified issues, counts over 192 contracts,
 every method compared, and a recommendation). This phase orders that work.
@@ -47,11 +53,10 @@ Each topic file ends with its open questions; the ones that block a stage:
 
 - S1: what an overdue deprecation is measured against: an rlm tag, a
   play_launch release, or nano-ros's pin (§6 says all three).
-- S3: the key for a chain or path where `reaction` named one; the new name
-  for `functions` (`capabilities`, `signals`); whether root `paths:` becomes
-  `event_chains:` (rlm `standard-names.md` S5 decided to keep it; the model
-  says `scope_paths`, a retired word, in about 147 identifiers); whether
-  `supervision` goes to the platform file or a target-independent file.
+- S3: decided 2026-11-15 (rlm `grammar-revision/README.md`): `reaction:`
+  kept for a path or chain and a mode named only by `enters:`/`leaves:`;
+  `capabilities`; root `paths:` becomes `event_chains:` (S5 reopened);
+  `supervision` to the per-target platform file; `trigger.timer.rate`.
 - S4: per addition, the first contract that needs it.
 
 ## Acceptance

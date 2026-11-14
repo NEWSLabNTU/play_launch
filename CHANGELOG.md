@@ -6,6 +6,21 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Changed (contracts; rlm v0.3.19, phase 104 S3):** one key per meaning.
+  `functions:` is `capabilities:`; a hazard's `enters:` is `leaves:` (the
+  mode its fault takes away, where `supervise.enters` names the level a miss
+  enters), and its rules are `leaves-unknown-mode` and `leaves-not-removed`;
+  a client's `on_timeout`, `then` and `on_rejected` name a mode with
+  `enters:` and an event chain with `reaction:`. Each old spelling reads for
+  one release with `warning[deprecated-spelling]`, and `play_launch migrate`
+  rewrites it. A client's `enters:` naming no mode is
+  `error[call-enters-unknown-mode]`. Diagnostics, `--explain`'s hazard
+  sentence ("it leaves mode ...") and `fields.json` use the new words;
+  every fixture is migrated, with `contract_s3_spellings` keeping the old
+  ones.
+
 ## 0.34.0 - 2026-11-14
 
 - **Added (contracts; rlm v0.3.18, milestone M1g, #24):** the

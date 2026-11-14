@@ -21,7 +21,7 @@ use:
 # guard groups, and the `/autoware/modes/*` units are modes over them.
 # `mrm_handler` walks a fixed ladder at runtime; here the ladder is declared,
 # and every rung is checked in its own right.
-functions:
+capabilities:
   operation_mode_availability: [/system/operation_mode/availability]
 
 modes:
@@ -64,7 +64,7 @@ hazards:
     monitors: [/system/operation_mode/availability]
     on: omission
     ftti: 2s
-    enters: autonomous          # a MODE: the ladder is the reaction
+    leaves: autonomous          # a MODE: the ladder is the reaction
   mode_unavailable_tight:
     description: the same chain against a 1.5 s interval, which it cannot meet
     monitors: [/system/operation_mode/availability]

@@ -33,7 +33,7 @@ let:
 # is the same safe state the hazard already names. One rung, so the
 # arithmetic is phase 71's — what modes add here is the transition the
 # observer reports while the system runs.
-functions:
+capabilities:
   perception: [/safety/scan]
 
 modes:
@@ -59,7 +59,7 @@ hazards:
     monitors: [perception]
     on: omission
     ftti: 500ms
-    enters: driving
+    leaves: driving
 
 nodes:
   lidar_driver:

@@ -25,7 +25,7 @@ use:
 
 integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 
-functions:
+capabilities:
   hpc_alive: [/availability]
   hpc_in_odd:
     of: [/availability]
@@ -93,7 +93,7 @@ nodes:
     pub:
       tor_state: {}
     cli:
-      comfort_operate: { timeout: 10ms, on_timeout: { reaction: estop } }
+      comfort_operate: { timeout: 10ms, on_timeout: { enters: estop } }
       estop_operate: {}
     paths:
       on_timer:

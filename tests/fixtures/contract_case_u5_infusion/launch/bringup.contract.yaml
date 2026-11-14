@@ -13,9 +13,9 @@ hazards:
     on: reported
     when: { field: data, equals: true }
     ftti: 5s
-    enters: infusing
+    leaves: infusing
 
-functions:
+capabilities:
   occluded_clear:
     of: [/occluded]
     when: { field: data, equals: true }

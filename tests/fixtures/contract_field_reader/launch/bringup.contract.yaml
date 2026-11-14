@@ -3,7 +3,7 @@
 # what the run must show is that every message's `data` was read.
 version: 1
 
-functions:
+capabilities:
   chatter_live:
     of: [/chatter]
     when: { field: data, equals: stop }

@@ -27,9 +27,9 @@ hazards:
     on: reported
     when: { field: data, equals: false }
     ftti: 200ms
-    enters: advanced
+    leaves: advanced
 
-functions:
+capabilities:
   envelope:
     of: [/envelope_ok]
     when: { field: data, equals: false }

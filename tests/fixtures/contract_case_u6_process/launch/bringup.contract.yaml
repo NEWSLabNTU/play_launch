@@ -13,9 +13,9 @@ hazards:
     on: reported
     when: { field: data, equals: true }
     ftti: 3s
-    enters: operating
+    leaves: operating
 
-functions:
+capabilities:
   overpressure_clear:
     of: [/overpressure]
     when: { field: data, equals: true }

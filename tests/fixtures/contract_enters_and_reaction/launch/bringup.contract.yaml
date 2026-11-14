@@ -9,7 +9,7 @@ use:
 # so the ladder IS the reaction: `degraded` is checked in its own right by
 # `degradation-level-time`, and `stopped` — the floor, requiring nothing the
 # fault can remove — is what `fault-reaction-time` measures.
-functions:
+capabilities:
   perception: [/safety/scan]
 
 modes:
@@ -37,7 +37,7 @@ hazards:
     on: omission
     ftti: 500ms
     reaction: safety.stop
-    enters: driving             # a MODE: take its ladder
+    leaves: driving             # a MODE: take its ladder
 
 nodes:
   lidar_driver:

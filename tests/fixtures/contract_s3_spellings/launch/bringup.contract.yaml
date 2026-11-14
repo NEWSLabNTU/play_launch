@@ -1,0 +1,124 @@
+# rlm v0.3.19 (S3): the pre-v0.3.19 spellings, read for one release.
+# `contract_call_rejected` with `functions:` for `capabilities:`, a
+# hazard's `enters:` for `leaves:`, and a client's mode under `reaction:`
+# for `enters:`; and an `on_rejected:` whose `enters:` names no mode.
+#
+# Expected: a `deprecated-spelling` warning for each old spelling, and
+# `error[call-enters-unknown-mode]` for `on_rejected`.
+version: 1
+use:
+  iso26262: "^1"
+
+functions:
+  hpc_alive: [/availability]
+
+hazards:
+  hpc_loss:
+    integrity: ASIL_B
+    description: the planner's availability stops arriving
+    monitors: [/availability]
+    on: omission
+    ftti: 5s
+    enters: engaged
+
+modes:
+  engaged:
+    requires: [hpc_alive]
+    fallback: [comfortable, emergency_stop]
+  comfortable:
+    requires: []
+    reaction: sys.comfortable
+  emergency_stop:
+    requires: []
+    reaction: sys.emergency_stop
+
+paths:
+  sys.comfortable:
+    trigger: { input: [/availability] }
+    output: [/slow_cmd]
+  sys.emergency_stop:
+    trigger: { input: [/availability] }
+    output: [/estop_cmd]
+
+nodes:
+  gate:
+    pub:
+      availability: {}
+    paths:
+      report:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [availability]
+        max_latency: 20ms
+
+  # The floor's own detector: it reaches the emergency stop over a TOPIC, so
+  # the floor crosses no call and every verdict below is the comfortable
+  # rung's.
+  watchdog:
+    sub:
+      availability:
+        qos: { liveliness: manual_by_topic, lease_duration: 500ms }
+        on_violation: { on: [omission], reaction: brake }
+    pub:
+      estop_request: {}
+    paths:
+      brake:
+        trigger: { input: [availability] }
+        output: [estop_request]
+        max_latency: 5ms
+
+  estop_op:
+    sub:
+      request: {}
+    pub:
+      cmd: {}
+    paths:
+      brake:
+        trigger: { input: [request] }
+        output: [cmd]
+        max_latency: 5ms
+        safe_state: { emits: cmd, settle: 500ms }
+
+  handler:
+    concurrency: { exclusive: [] }
+    sub:
+      availability:
+        qos: { liveliness: manual_by_topic, lease_duration: 500ms }
+        on_violation: { on: [omission], reaction: call_mrm }
+    pub:
+      slow_cmd: {}
+    cli:
+      operate: { call: blocking, timeout: 100ms, max_transport: 1ms, on_timeout: { reaction: emergency_stop }, on_rejected: { enters: nowhere } }
+    paths:
+      call_mrm:
+        trigger: { input: [availability] }
+        output: [operate, slow_cmd]
+        max_latency: 10ms
+        safe_state: { emits: slow_cmd, settle: 1000ms }
+
+  comfort_op:
+    srv:
+      operate: { max_response: 20ms }
+
+topics:
+  /availability:
+    type: std_msgs/msg/Header
+    pub: [gate/availability]
+    sub: [handler/availability, watchdog/availability]
+  /estop_request:
+    type: std_msgs/msg/Empty
+    pub: [watchdog/estop_request]
+    sub: [estop_op/request]
+  /estop_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [estop_op/cmd]
+  /slow_cmd:
+    type: std_msgs/msg/Float64
+    external: sub
+    pub: [handler/slow_cmd]
+
+services:
+  /comfort/operate:
+    type: std_srvs/srv/Trigger
+    server: [comfort_op/operate]
+    client: [handler/operate]

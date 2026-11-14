@@ -172,9 +172,9 @@ pub enum Command {
     Check(CheckArgs),
 
     /// Rewrite contracts from deprecated spellings to current ones (a
-    /// hazard's `reaction: <mode>` to `enters:`, `exit.on` to `exit.holds`,
+    /// hazard's `reaction: <mode>` to `leaves:`, `exit.on` to `exit.holds`,
     /// a path's `input:` to `trigger: { input }`, `external_topics:` into
-    /// `topics:`, an inline `all_of` guard into `functions:`; `--list` has
+    /// `topics:`, an inline `all_of` guard into `capabilities:`; `--list` has
     /// them all), and a `system.toml` from its pre-0.27 scheduling keys to
     /// `[tasks.*]` / `group_tasks`. Prints the diff; `--write` applies it.
     /// Comments and layout are kept.

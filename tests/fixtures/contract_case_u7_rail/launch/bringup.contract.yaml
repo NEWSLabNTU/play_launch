@@ -13,9 +13,9 @@ hazards:
     on: reported
     when: { field: data, equals: true }
     ftti: 2s
-    enters: supervised
+    leaves: supervised
 
-functions:
+capabilities:
   overspeed_clear:
     of: [/overspeed]
     when: { field: data, equals: true }

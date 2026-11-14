@@ -22,7 +22,7 @@ use:
 
 integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 
-functions:
+capabilities:
   hpc_alive: [/availability]
   hpc_in_odd:
     of: [/availability]
@@ -39,28 +39,28 @@ hazards:
     when: { field: autonomous, equals: false }
     entry_speed: 8.33 m/s
     ftti: 20s
-    enters: engaged
+    leaves: engaged
   odd_exit_unbounded:
     integrity: ASIL_B
     monitors: [/availability]
     on: reported
     when: { field: autonomous, equals: false }
     ftti: 30s
-    enters: engaged
+    leaves: engaged
   hpc_loss:
     integrity: ASIL_D
     monitors: [/availability]
     on: omission
     entry_speed: 3.0 m/s
     ftti: 3s
-    enters: engaged
+    leaves: engaged
   hpc_observed:
     integrity: ASIL_D
     monitors: [/availability]
     on: omission
     entry_speed: 4.23 m/s
     ftti: 3s
-    enters: fallback_only
+    leaves: fallback_only
 
 modes:
   engaged:
@@ -123,7 +123,7 @@ nodes:
     pub:
       tor_state: {}
     cli:
-      comfort_operate: { timeout: 10ms, on_timeout: { reaction: estop } }
+      comfort_operate: { timeout: 10ms, on_timeout: { enters: estop } }
       estop_operate: {}
     paths:
       call_mrm:

@@ -31,7 +31,7 @@ use:
 #     It requires nothing the fault removes: since phase 83 (#0057) a rung
 #     that requires `perception` is one this hazard can never land on, and
 #     is neither checked nor charged.
-functions:
+capabilities:
   perception: [/safety/scan]
 
 modes:
@@ -69,7 +69,7 @@ hazards:
     monitors: [perception]
     on: omission
     ftti: 500ms
-    enters: driving
+    leaves: driving
 
 nodes:
   lidar_driver:

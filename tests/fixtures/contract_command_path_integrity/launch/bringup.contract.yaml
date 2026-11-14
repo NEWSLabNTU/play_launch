@@ -15,7 +15,7 @@ version: 1
 
 integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 
-functions:
+capabilities:
   hpc_alive: [/heartbeat]
 
 hazards:
@@ -24,7 +24,7 @@ hazards:
     monitors: [/heartbeat]
     on: omission
     ftti: 1s
-    enters: active
+    leaves: active
 
 modes:
   active:

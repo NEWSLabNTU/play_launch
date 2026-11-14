@@ -1533,7 +1533,7 @@ fn a_hazard_reads_as_one_sentence() {
     );
     let golden = "hazard 'collision' implements R1 (HARA rev 3, section 4.2) at ASIL_B: it \
                   watches /too_close for reported (when data == true); the system must reach a \
-                  safe state within 1000.00ms; it enters mode 'driving', reaching 'stopped' \
+                  safe state within 1000.00ms; it leaves mode 'driving', reaching 'stopped' \
                   (minimal risk condition) in 407.00ms. At 'stopped', /cmd_vel_filtered must \
                   carry linear.x == 0 and angular.z == 0.";
     assert!(out.contains("-- Hazards (--explain) --"), "{out}");
@@ -2026,7 +2026,7 @@ fn mode_rules_fire_on_a_broken_ladder() {
     );
 }
 
-/// #22 (rlm#10): a hazard must take away the mode it `enters:`, a redundant
+/// #22 (rlm#10): a hazard must take away the mode it `leaves:`, a redundant
 /// group's `m` counted. The two fixtures differ only in `m` on a 2-member
 /// group whose radar the hazard loses: with `m: 2` the group is removed (2 -
 /// 1 < 2) and the rule is quiet; with `m: 1` it stands (2 - 1 >= 1) and the
@@ -2036,13 +2036,13 @@ fn enters_not_removed_counts_the_groups_m() {
     let quiet = check_fixture("contract_enters_removed");
     assert!(quiet.contains("fault-reaction-time"), "{quiet}");
     assert!(
-        !quiet.contains("enters-not-removed"),
+        !quiet.contains("leaves-not-removed"),
         "a 2-of-2 group loses its radar, so `active` is taken away:\n{quiet}"
     );
     let out = check_fixture("contract_enters_not_removed");
     for needle in [
-        "warning[enters-not-removed]",
-        "hazard 'radar_loss' enters mode 'active'",
+        "warning[leaves-not-removed]",
+        "hazard 'radar_loss' leaves mode 'active'",
         "requires [visibility]",
         "'visibility' is held while 1 of its 2 members hold and the fault loses 1, leaving 1",
     ] {
@@ -2873,7 +2873,7 @@ fn a_written_criticality_on_a_reached_node_is_an_error() {
 
 /// Phase 90 G4, refused since rlm v0.3.15 (play_launch phase 104 S1):
 /// `exit: { on }` is a parse error naming `holds:`, and `reaction: <mode>`
-/// is `error[reaction-names-mode]` naming `enters:`; since rlm v0.3.17 a
+/// is `error[reaction-names-mode]` naming `leaves:`; since rlm v0.3.17 a
 /// subscriber's own `max_transport` is a parse error naming a link.
 /// `migrate --write` gives a contract that checks exactly as its current
 /// twin does.
@@ -2949,13 +2949,41 @@ fn without_lines(l: &str) -> String {
     out
 }
 
-/// Phase 90 G4: `enters:` names a mode of the hazard's scope, never a path.
+/// rlm v0.3.19 (S3): each pre-v0.3.19 spelling reads for one release with a
+/// `deprecated-spelling` warning naming the new key, and a client's
+/// `enters:` naming no mode is an error.
+#[test]
+fn s3_old_spellings_warn_and_call_enters_names_a_mode() {
+    let out = check_fixture("contract_s3_spellings");
+    for needle in [
+        "warning[deprecated-spelling]: bringup.contract.yaml:12: `functions:` is the old \
+         spelling of `capabilities:`",
+        "warning[deprecated-spelling]: bringup.contract.yaml:22: `enters:` is the old spelling \
+         of `leaves:`",
+        "`on_timeout: { reaction: emergency_stop }` names a mode, the spelling rlm v0.3.19 \
+         replaced",
+        "at nodes.handler.cli.operate.on_timeout.reaction",
+        "error[call-enters-unknown-mode]: bringup.contract.yaml:90: client \
+         'handler.cli.operate': `on_rejected` enters 'nowhere'",
+        "at hazards.hpc_loss.leaves",
+        "info[fault-reaction-time]",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
+    assert_eq!(
+        out.matches("warning[deprecated-spelling]").count(),
+        3,
+        "{out}"
+    );
+}
+
+/// Phase 90 G4: `leaves:` names a mode of the hazard's scope, never a path.
 #[test]
 fn enters_naming_no_mode_is_an_error() {
     let out = check_fixture("contract_enters_unknown");
     assert!(
         out.contains(
-            "error[enters-unknown-mode]: bringup.contract.yaml:40: hazard 'drive_blind' enters \
+            "error[leaves-unknown-mode]: bringup.contract.yaml:40: hazard 'drive_blind' leaves \
              'safety.stop', which is not a mode in its scope. A hazard that reacts by one event \
              chain writes `reaction: safety.stop`"
         ),
@@ -2965,7 +2993,7 @@ fn enters_naming_no_mode_is_an_error() {
     assert!(!out.contains("fault-reaction-time"), "{out}");
 }
 
-/// Phase 90 G4: a hazard enters a mode or reacts by a path, not both.
+/// Phase 90 G4: a hazard leaves a mode or reacts by a path, not both.
 #[test]
 fn enters_and_reaction_together_refuse_the_contract() {
     let launch = fixtures::repo_root()
@@ -3725,7 +3753,7 @@ fn g7_removed_keys_refuse_the_contract_with_a_fix_it() {
             "contract_guard_all_of_removed",
             &[
                 "at 'hazards.pose_lost.monitors[0].all_of': Removed in v0.1.59",
-                "Declare the function and monitor it by name: `monitors: [<f>]`; `play_launch \
+                "Declare the capability and monitor it by name: `monitors: [<f>]`; `play_launch \
                  migrate` does it",
             ],
         ),
@@ -3743,7 +3771,7 @@ fn g7_removed_keys_refuse_the_contract_with_a_fix_it() {
     }
 }
 
-/// Phase 90 G7: `migrate` hoists an inline `all_of` guard into `functions:`,
+/// Phase 90 G7: `migrate` hoists an inline `all_of` guard into `capabilities:`,
 /// and the contract it writes loads.
 #[test]
 fn g7_migrate_hoists_an_inline_all_of_guard_into_a_function() {
@@ -3761,7 +3789,7 @@ fn g7_migrate_hoists_an_inline_all_of_guard_into_a_function() {
     assert!(
         migrated.contains("      - pose_lost_all_of\n")
             && migrated
-                .contains("functions:\n  pose_lost_all_of: { all_of: [/loc/ndt, /loc/gnss] }\n"),
+                .contains("capabilities:\n  pose_lost_all_of: { all_of: [/loc/ndt, /loc/gnss] }\n"),
         "{migrated}"
     );
     let (code, out) = check_launch(&dir.join("bringup.launch.xml"), &[]);
@@ -3793,11 +3821,11 @@ fn migrate_rewrites_the_deprecated_spellings_in_place() {
     let (code, out) = run(&["--check"]);
     assert_eq!(code, 1, "{out}");
     for needle in [
-        "hazard-reaction-enters: `reaction` -> `enters` (hazards.hpc_loss.reaction)",
-        "hazard-reaction-enters: `reaction` -> `enters` (hazards.odd_exit.reaction)",
+        "hazard-reaction-enters: `reaction` -> `leaves` (hazards.hpc_loss.reaction)",
+        "hazard-reaction-enters: `reaction` -> `leaves` (hazards.odd_exit.reaction)",
         "exit-on-holds: `on` -> `holds` (modes.takeover.exit.on)",
         "-    reaction: engaged",
-        "+    enters: engaged",
+        "+    leaves: engaged",
         "max-transport-link: `57ms` -> `handler_availability` \
          (nodes.handler.sub.availability.max_transport)",
         "1 file(s) scanned, 1 to rewrite (12 edit(s))",
@@ -5194,7 +5222,7 @@ fn a_predicate_value_must_fit_its_field() {
     let (_, out) = check_launch_takeover(&dir.join("bringup.launch.xml"), &[]);
     assert!(
         out.contains(
-            "function 'driver_took_over' compares 'mode' (uint8) with `true`: a number field \
+            "capability 'driver_took_over' compares 'mode' (uint8) with `true`: a number field \
              compared with a bool"
         ),
         "{out}"

@@ -39,7 +39,7 @@ hazard, so a finding can be traced back without opening the contract, and
 -- Hazards (--explain) --
   hazard 'collision' implements R1 (HARA rev 3, section 4.2) at ASIL_B: it
   watches /too_close for reported (when data == true); the system must reach
-  a safe state within 1000.00ms; it enters mode 'driving', reaching 'stopped'
+  a safe state within 1000.00ms; it leaves mode 'driving', reaching 'stopped'
   (minimal risk condition) in 407.00ms. At 'stopped', /cmd_vel_filtered must
   carry linear.x == 0 and angular.z == 0.
 ```
@@ -207,13 +207,13 @@ can recover from. It needs no new key (`contract_simplex`):
 
 | Simplex part | Contract |
 |---|---|
-| the monitor's verdict | a value function the advanced mode requires (`functions.envelope: { of, when }`) |
+| the monitor's verdict | a value capability the advanced mode requires (`capabilities.envelope: { of, when }`) |
 | switching to the safety controller | the safe mode, the advanced mode's `fallback`; its reaction is the decision module's switch, triggered by the verdict |
 | what the safety controller guarantees | the safe mode's `commands` on the one topic the decision module publishes |
 | the safety side does not fail with the advanced one | `independence: [{ of: [advanced_ctrl, safety_ctrl], not_sharing: [process, container] }]` |
 
 ```yaml
-functions:
+capabilities:
   envelope:
     of: [/envelope_ok]
     when: { field: data, equals: false }

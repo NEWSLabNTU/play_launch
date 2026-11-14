@@ -15,7 +15,7 @@ hazards:
     on: reported
     when: { field: data, equals: true }
     ftti: 500ms
-    enters: collaborative
+    leaves: collaborative
   person_in_stop_zone:
     integrity: ASIL_C
     requirement: { id: SSM-2, source: "risk assessment, zone S" }
@@ -23,9 +23,9 @@ hazards:
     on: reported
     when: { field: data, equals: true }
     ftti: 300ms
-    enters: collaborative_near
+    leaves: collaborative_near
 
-functions:
+capabilities:
   in_warning_zone_clear:
     of: [/in_warning_zone]
     when: { field: data, equals: true }

@@ -17,9 +17,9 @@ hazards:
     on: reported
     when: { field: data, equals: true }
     ftti: 2s
-    enters: mission
+    leaves: mission
 
-functions:
+capabilities:
   battery_low_clear:
     of: [/battery_low]
     when: { field: data, equals: true }

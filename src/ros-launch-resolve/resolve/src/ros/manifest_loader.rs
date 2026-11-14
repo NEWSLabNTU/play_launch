@@ -3419,7 +3419,7 @@ fn resolve_ladder(
     };
     let rk = h.decl.entry_key();
     let Some(top) = mode_of(reaction_name) else {
-        // `enters:` naming no mode is `enters-unknown-mode` (reported once,
+        // `leaves:` naming no mode is `leaves-unknown-mode` (reported once,
         // by `check_spellings`); it is never read as a path.
         if h.decl.enters.is_some() {
             return None;
@@ -4199,7 +4199,7 @@ fn check_fault_reaction(
                     rule_id: "reaction-unreachable".to_string(),
                     severity: Severity::Error,
                     message: format!(
-                        "hazard '{}' declares an ftti but neither `enters:` a mode nor a \
+                        "hazard '{}' declares an ftti but neither `leaves:` a mode nor a \
                          `reaction:` path — there is nothing to fit inside it",
                         h.name
                     ),
@@ -4938,9 +4938,9 @@ fn check_fault_reaction(
                     h.name,
                     // Phase 102 E1: a mode is not a reaction; name what it is
                     // (by lookup, so the deprecated `reaction: <mode>` reads the
-                    // same as `enters:`).
+                    // same as `leaves:`).
                     if mode_of(reaction_name).is_some() {
-                        format!("enters mode '{reaction_name}', whose reaction")
+                        format!("leaves mode '{reaction_name}', whose reaction")
                     } else {
                         format!("reaction '{reaction_name}'")
                     },
