@@ -1536,10 +1536,16 @@ pub fn build_system_model(
                 ),
                 reaction: reaction_key(&structure.nodes, reaction, &scope_key),
                 mechanism: model_mechanism(mechanism),
+                // rlm v0.3.25: what shows the safe state reached.
+                reached: obs
+                    .reached
+                    .as_ref()
+                    .map(|r| predicate_on(index, obs.topic.as_slice(), r)),
                 // rlm v0.3.1: the response check, a second due over it.
                 early: early.map(|e| model::EarlyCheckContract {
                     within_ms: e.within.as_millis_f64(),
-                    drop_mps: e.drop_mps,
+                    decrease: e.decrease_si,
+                    drop_mps: e.speed_mps().unwrap_or(0.0),
                 }),
             });
         }

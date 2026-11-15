@@ -3021,12 +3021,15 @@ fn s3_old_spellings_warn_and_call_enters_names_a_mode() {
          'handler.cli.operate': `on_rejected` enters 'nowhere'",
         "at hazards.hpc_loss.leaves",
         "info[fault-reaction-time]",
+        // rlm v0.3.24: a client's transport is on a link.
+        "warning[deprecated-spelling]: bringup.contract.yaml:90: a client's own \
+         `max_transport:` is deprecated (rlm v0.3.24)",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
     assert_eq!(
         out.matches("warning[deprecated-spelling]").count(),
-        3,
+        4,
         "{out}"
     );
 }
@@ -3242,9 +3245,11 @@ fn phase_98_old_keys_are_refused_and_migrate_to_the_reference_verdict() {
             && old.contains("migrate"),
         "{old}"
     );
+    // Two passes: `severity_levels:` becomes `integrity_levels:`, which
+    // becomes `use:` of the profile (rlm v0.3.24).
     let (code, out) = migrate(&contract, &["--write"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("1 rewritten (2 edit(s))"), "{out}");
+    assert!(out.contains("1 rewritten (4 edit(s))"), "{out}");
     let (code_new, new) = check_launch(&launch, &["--explain"]);
     assert_eq!(code_new, 0, "{new}");
     assert!(!new.contains("deprecated-spelling"), "{new}");
@@ -3278,7 +3283,7 @@ fn phase_98_n6_old_spellings_are_refused_and_migrate() {
     );
     let (code, out) = migrate(&contract, &["--write"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("1 rewritten (4 edit(s))"), "{out}");
+    assert!(out.contains("1 rewritten (6 edit(s))"), "{out}");
     let migrated = std::fs::read_to_string(&contract).unwrap();
     for gone in ["guards:", "ingress:", "on_demand:", "spontaneous"] {
         assert!(
@@ -3882,7 +3887,7 @@ fn migrate_rewrites_the_deprecated_spellings_in_place() {
         "+    leaves: engaged",
         "max-transport-link: `57ms` -> `handler_availability` \
          (nodes.handler.sub.availability.max_transport)",
-        "1 file(s) scanned, 1 to rewrite (12 edit(s))",
+        "1 file(s) scanned, 1 to rewrite (14 edit(s))",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
@@ -3978,6 +3983,13 @@ fn supervised_budgets_print_their_overrun_case() {
 /// Check a copy of `contract_supervised` with `edit` applied to its contract,
 /// with the `ros-launch-resolve` CLI of this tree.
 fn check_supervised_edited(edit: impl Fn(String) -> String) -> Option<(i32, String)> {
+    check_supervised_edited_with(edit, &[])
+}
+
+fn check_supervised_edited_with(
+    edit: impl Fn(String) -> String,
+    args: &[&str],
+) -> Option<(i32, String)> {
     let bin = ros_launch_resolve_bin()?;
     let root = fixtures::repo_root().join("tests/fixtures");
     let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
@@ -3995,6 +4007,7 @@ fn check_supervised_edited(edit: impl Fn(String) -> String) -> Option<(i32, Stri
     let out = resolve_cmd(&bin)
         .arg("check")
         .arg(launch_dir.join("bringup.launch.xml"))
+        .args(args)
         .env("AMENT_PREFIX_PATH", root.join("contract_takeover/ament"))
         .output()
         .expect("ros-launch-resolve check runs");
@@ -4033,6 +4046,39 @@ fn an_executor_supervision_over_a_long_callback_follows_the_policy() {
     );
     // The timer supervision is not flagged.
     assert!(!out.contains("`nodes.handler.paths.call_mrm.max_latency` is supervised with"));
+    // rlm v0.3.24: `policy:` reads for one release, with a warning naming
+    // the flag that replaces it.
+    assert!(
+        out.contains("`policy:` is deprecated (rlm v0.3.24)")
+            && out.contains("check --deny measured-unsupervised"),
+        "{out}"
+    );
+}
+
+/// rlm v0.3.24: `check --deny <rule>` is the policy, outside the contract.
+/// The warning is an error under it, and one that cannot be acknowledged.
+#[test]
+fn check_deny_makes_a_rule_an_error() {
+    let Some((code, out)) =
+        check_supervised_edited_with(|c| c, &["--deny", "supervised-executor-long-callback"])
+    else {
+        eprintln!("Skipping: ros-launch-resolve not built");
+        return;
+    };
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("error[supervised-executor-long-callback]: bringup.contract.yaml:156:"),
+        "{out}"
+    );
+    let Some((code, out)) = check_supervised_edited(|c| c) else {
+        return;
+    };
+    assert!(
+        out.contains("warning[supervised-executor-long-callback]"),
+        "without --deny it is a warning:\n{out}"
+    );
+    assert!(!out.contains("deprecated (rlm v0.3.24)"), "{out}");
+    let _ = code;
 }
 
 /// Phase 93: an executor supervision whose every callback on the executor is
@@ -4149,7 +4195,7 @@ fn a_lowered_supervision_reaches_the_model() {
 
 /// `contract_supervised` with the comfortable settle supervised to
 /// standstill (rlm v0.1.62): a 943 ms measured response, `supervise: {
-/// enters: estop, mechanism: timer, observes: handler/kinematic_state }`,
+/// enters: estop, mechanism: timer, observes: { input: handler/kinematic_state } }`,
 /// and the observed input (10 Hz, through a measured 56 ms link). `extra`
 /// edits the result further.
 fn supervised_settle(c: String, extra: impl Fn(String) -> String) -> String {
@@ -4158,7 +4204,8 @@ fn supervised_settle(c: String, extra: impl Fn(String) -> String) -> String {
             "          settle: { decel: min_acceleration, jerk: min_jerk }",
             "          settle:\n            decel: min_acceleration\n            jerk: min_jerk\n            \
              response: { duration: 943ms, source: { measured: { max: 785.43ms, n: 3, margin: 0.2 } } }\n            \
-             supervise: { enters: estop, mechanism: timer, observes: handler/kinematic_state }",
+             supervise: { enters: estop, mechanism: timer, observes: { input: \
+             handler/kinematic_state } }",
             1,
         )
         .replacen(
@@ -4248,8 +4295,11 @@ fn a_resuming_supervision_charges_the_gap_once() {
         move |c: String| {
             supervised_settle(c, |c| {
                 c.replacen(
-                    "observes: handler/kinematic_state }",
-                    &format!("observes: handler/kinematic_state, resume: {{ after: {after} }} }}"),
+                    "observes: { input: handler/kinematic_state } }",
+                    &format!(
+                        "observes: {{ input: handler/kinematic_state }}, resume: {{ after: \
+                         {after} }} }}"
+                    ),
                     1,
                 )
             })
@@ -4327,9 +4377,9 @@ fn check_resolve_edited_explain(edit: impl Fn(String) -> String) -> Option<(i32,
 fn a_supervised_settle_without_its_observation_is_refused() {
     for (edit, needle) in [
         (
-            (|c: String| c.replacen(", observes: handler/kinematic_state", "", 1))
+            (|c: String| c.replacen(", observes: { input: handler/kinematic_state }", "", 1))
                 as fn(String) -> String,
-            "how late standstill is seen is unknown: name the input it is seen on",
+            "how late the safe state is seen is unknown: name the input it is seen on",
         ),
         (
             |c: String| c.replacen("        link: odometry\n", "", 1),
@@ -4338,8 +4388,8 @@ fn a_supervised_settle_without_its_observation_is_refused() {
         (
             |c: String| {
                 c.replacen(
-                    "            supervise: { enters: estop, mechanism: timer, observes: \
-                     handler/kinematic_state }",
+                    "            supervise: { enters: estop, mechanism: timer, observes: { \
+                     input: handler/kinematic_state } }",
                     "",
                     1,
                 )
@@ -4468,12 +4518,12 @@ fn a_lowered_settle_supervision_reaches_the_model() {
 }
 
 /// `supervised_settle` with a response check on the comfortable settle (rlm
-/// v0.3.1): `early: { within, drop }` added to its `supervise:`.
+/// v0.3.1): `early: { within, decrease }` added to its `supervise:`.
 fn supervised_early(c: String, early: &str) -> String {
     supervised_settle(c, |c| {
         c.replacen(
-            "observes: handler/kinematic_state }",
-            &format!("observes: handler/kinematic_state, early: {early} }}"),
+            "observes: { input: handler/kinematic_state } }",
+            &format!("observes: {{ input: handler/kinematic_state }}, early: {early} }}"),
             1,
         )
     })
@@ -4484,11 +4534,11 @@ fn supervised_early(c: String, early: &str) -> String {
 /// the reaction's route and settle), which comes in under the settle's own;
 /// `supervised-early` derives the nominal shed speed from vehicle.braking's
 /// `settle.speed_lost` (comfortable profile 1.0 m/s^2, 0.3 m/s^3, response
-/// 943 ms: 1 s into the ramp, 0.15 m/s) and finds `drop` under it; the
+/// 943 ms: 1 s into the ramp, 0.15 m/s) and finds `decrease` under it; the
 /// lowering reaches the model.
 #[test]
 fn a_settle_response_check_charges_its_own_row() {
-    let early = "{ within: 1943ms, drop: 0.1 m/s }";
+    let early = "{ within: 1943ms, decrease: 0.1 m/s }";
     let Some((code, out)) = check_supervised_edited(|c| supervised_early(c, early)) else {
         eprintln!("Skipping: ros-launch-resolve not built");
         return;
@@ -4496,12 +4546,13 @@ fn a_settle_response_check_charges_its_own_row() {
     assert_eq!(code, 0, "{out}");
     for needle in [
         "info[supervised-early]",
-        "the response check of `nodes.comfort_op.paths.operate.safe_state.settle` (shed 0.1 \
-         m/s by 1943.00ms after the command) fits: the nominal profile sheds 0.1500 m/s by then \
-         (vehicle.braking 1.1.0), 0.0500 m/s above `drop`",
+        "the response check of `nodes.comfort_op.paths.operate.safe_state.settle` (a \
+         decrease of 0.1 m/s by 1943.00ms after the command) fits: the nominal profile sheds \
+         0.1500 m/s by then (vehicle.braking 1.1.0), 0.0500 m/s above `decrease`",
         "hazard 'odd_exit', degradation level 'comfortable': if the vehicle has not responded by \
          `nodes.comfort_op.paths.operate.safe_state.settle.supervise.early`, before it \
-         10640.00ms + response check at 1943.00ms (shed 0.1 m/s by then, else a miss) + \
+         10640.00ms + response check at 1943.00ms (a decrease of 0.1 m/s by then, else a \
+         miss) + \
          observation 156.00ms (/handler/kinematic_state: period 100.00ms (/kinematic_state \
          rate 10 Hz) + max_transport 56.00ms) + detection 1.05ms (tick 1.00ms + switch 0.05ms \
          (timer)) + reaction event chain 'sys.estop' 143.33ms + settle 4165.33ms = 17048.72ms \
@@ -4547,28 +4598,29 @@ fn a_settle_response_check_charges_its_own_row() {
         serde_yaml_ng::from_str(&std::fs::read_to_string(&out_path).unwrap()).unwrap();
     let sv = &model["contracts"]["node_paths"]["/comfort_op/operate"]["safe_state"]["supervise"];
     assert_eq!(sv["early"]["within_ms"].as_f64(), Some(1943.0), "{sv:?}");
+    assert_eq!(sv["early"]["decrease"].as_f64(), Some(0.1), "{sv:?}");
     assert_eq!(sv["early"]["drop_mps"].as_f64(), Some(0.1), "{sv:?}");
     assert_eq!(sv["observe_ms"].as_f64(), Some(156.0), "{sv:?}");
 }
 
 /// rlm v0.3.1: `supervised-early` refuses a response check that would call a
-/// nominal stop a fault (a `drop` above what the profile sheds by `within`,
+/// nominal stop a fault (a `decrease` above what the profile sheds by `within`,
 /// or a `within` inside the response) or that detects nothing earlier (at or
 /// past the settle's end); on a written settle, which derives no shed speed,
-/// the `drop` is unchecked (a warning).
+/// the `decrease` is unchecked (a warning).
 #[test]
 fn a_settle_response_check_outside_the_profile_is_refused() {
     for (early, needle) in [
         (
-            "{ within: 1943ms, drop: 0.2 m/s }",
+            "{ within: 1943ms, decrease: 0.2 m/s }",
             "asks more than the nominal profile sheds by then, 0.1500 m/s (vehicle.braking 1.1.0)",
         ),
         (
-            "{ within: 900ms, drop: 0.01 m/s }",
-            "runs within the vehicle's response 943.00ms",
+            "{ within: 900ms, decrease: 0.01 m/s }",
+            "runs within the settle's response 943.00ms",
         ),
         (
-            "{ within: 11s, drop: 0.1 m/s }",
+            "{ within: 11s, decrease: 0.1 m/s }",
             "is not earlier than the settle's own end 10939.67ms",
         ),
     ] {
@@ -4581,7 +4633,7 @@ fn a_settle_response_check_outside_the_profile_is_refused() {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
     let Some((code, out)) = check_supervised_edited(|c| {
-        supervised_early(c, "{ within: 1943ms, drop: 0.1 m/s }").replacen(
+        supervised_early(c, "{ within: 1943ms, decrease: 0.1 m/s }").replacen(
             "            decel: min_acceleration\n            jerk: min_jerk\n",
             "            duration: 10s\n",
             1,
@@ -4590,7 +4642,31 @@ fn a_settle_response_check_outside_the_profile_is_refused() {
         return;
     };
     assert!(out.contains("warning[supervised-early]"), "{code}: {out}");
-    assert!(out.contains("`drop` is unchecked"), "{out}");
+    assert!(out.contains("`decrease` is unchecked"), "{out}");
+}
+
+/// rlm v0.3.25: the old spellings, `observes: <node>/<sub>` and `early.drop`,
+/// read with a warning each and keep the verdict.
+#[test]
+fn a_string_observes_and_drop_still_read() {
+    let Some((code, out)) = check_supervised_edited(|c| {
+        supervised_early(c, "{ within: 1943ms, drop: 0.1 m/s }").replacen(
+            "observes: { input: handler/kinematic_state }",
+            "observes: handler/kinematic_state",
+            1,
+        )
+    }) else {
+        eprintln!("Skipping: ros-launch-resolve not built");
+        return;
+    };
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("info[supervised-early]"), "{out}");
+    for needle in [
+        "`observes:` is the old spelling of `observes.input:`",
+        "`drop:` is the old spelling of `decrease:`",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
+    }
 }
 
 /// Phase 91 E9's gate, play_launch half: each reference extension's fixture

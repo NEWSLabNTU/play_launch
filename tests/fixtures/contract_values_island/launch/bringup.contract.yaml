@@ -37,8 +37,8 @@
 version: 1
 use:
   vehicle.braking: "^1"
+  iso26262: "^1"
 
-integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 
 let:
   odd_speed: 8.33 m/s    # the ODD bound, stated once

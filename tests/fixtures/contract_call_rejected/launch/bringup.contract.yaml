@@ -88,7 +88,7 @@ nodes:
     pub:
       slow_cmd: {}
     cli:
-      operate: { call: blocking, timeout: 100ms, max_transport: 1ms, on_timeout: { enters: emergency_stop } }
+      operate: { call: blocking, timeout: 100ms, link: handler_operate, on_timeout: { enters: emergency_stop } }
     paths:
       call_mrm:
         trigger: { input: [availability] }
@@ -123,3 +123,6 @@ services:
     type: std_srvs/srv/Trigger
     server: [comfort_op/operate]
     client: [handler/operate]
+
+links:
+  handler_operate: { max_transport: 1ms }

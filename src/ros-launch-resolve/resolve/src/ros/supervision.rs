@@ -92,6 +92,10 @@ pub(crate) struct Observation {
     pub how: String,
     /// The stated budget the transport is (a term of the overrun row).
     pub transport_term: TermKey,
+    /// rlm v0.3.25: the predicate that holds once the safe state is
+    /// reached, and the topic the input takes (for a constant's value).
+    pub reached: Option<ros_launch_manifest_types::ValuePredicate>,
+    pub topic: Option<String>,
 }
 
 /// `(node name, path name, the key's rest)` of `nodes.<n>.paths.<p>.<rest>`,
@@ -227,10 +231,10 @@ fn observation(
     m: &super::manifest_loader::ResolvedManifest,
     sv: &Supervision,
 ) -> Result<Observation, String> {
-    let Some(o) = sv.observes.as_deref() else {
+    let Some(o) = sv.observes.as_ref().map(|o| o.input.as_str()) else {
         return Err(
-            "how late standstill is seen is unknown: name the input it is seen on, \
-             `observes: <node>/<subscriber>` (its period and `max_transport` are the \
+            "how late the safe state is seen is unknown: name the input it is seen on, \
+             `observes: { input: <node>/<subscriber> }` (its period and transport are the \
              observation delay)"
                 .to_string(),
         );
@@ -291,6 +295,8 @@ fn observation(
             "{fqn}/{ep}: period {period:.2}ms ({rate_how}) + max_transport {transport:.2}ms"
         ),
         transport_term: (m.scope_id, term),
+        reached: sv.observes.as_ref().and_then(|o| o.reached.clone()),
+        topic: topic.map(|(name, _)| super::manifest_loader::qualify_name(&m.ns, name)),
     })
 }
 
@@ -655,9 +661,9 @@ pub(crate) fn overrun_rows(
                         before_ms: start + route,
                         deadline_ms: within + obs_ms,
                         deadline_how: format!(
-                            "response check at {within:.2}ms (shed {} by then, else a miss) + \
-                             {obs_how}",
-                            e.drop_text
+                            "response check at {within:.2}ms (a decrease of {} by then, else \
+                             a miss) + {obs_how}",
+                            e.decrease_text
                         ),
                         terms: terms.clone(),
                         early: true,
@@ -1014,9 +1020,8 @@ fn early_fit(
     let where_ = site(index, s.term.0, key);
     let head = format!(
         "{where_}: hazard '{}', degradation level '{}': the response check of `{key}` \
-         (shed {} by \
-         {within:.2}ms after the command)",
-        ctx.h.name, ctx.rung, e.drop_text
+         (a decrease of {} by {within:.2}ms after the command)",
+        ctx.h.name, ctx.rung, e.decrease_text
     );
     let mut push = |severity: Severity, msg: String| {
         diags.push(Diagnostic {
@@ -1033,7 +1038,7 @@ fn early_fit(
         push(
             Severity::Error,
             format!(
-                "{head} runs within the vehicle's response {r:.2}ms, before the plant is \
+                "{head} runs within the settle's response {r:.2}ms, before the plant is \
                  required to slow at all: a nominal stop would be called a fault. Check later \
                  than the response"
             ),
@@ -1051,6 +1056,23 @@ fn early_fit(
         );
         return;
     }
+    // The nominal profile's change is derived for a speed (an extension's
+    // `derive settle.speed_lost`); a decrease of another quantity has no
+    // derivation to judge it against.
+    const VELOCITY: [i32; 7] = [1, 0, -1, 0, 0, 0, 0];
+    let speed = (e.decrease_dim == VELOCITY).then_some(e.decrease_si);
+    let Some(decrease) = speed else {
+        push(
+            Severity::Warning,
+            format!(
+                "{head}: `decrease` is unchecked: it is not a speed, and the profile's \
+                 change is derived only for a speed (`settle.speed_lost`), so nothing shows a \
+                 nominal stop decreases it by {} by then",
+                e.decrease_text
+            ),
+        );
+        return;
+    };
     let scope_id = super::value_rules::contract_node(index, &at.node).map(|(sc, _, _)| sc);
     let nominal = match scope_id {
         Some(sc) => {
@@ -1059,30 +1081,30 @@ fn early_fit(
         None => Ok(None),
     };
     match nominal {
-        Ok(Some((v, by, trace))) if e.drop_mps > v + 1e-9 => push(
+        Ok(Some((v, by, trace))) if decrease > v + 1e-9 => push(
             Severity::Error,
             format!(
                 "{head} asks more than the nominal profile sheds by then, {v:.4} m/s ({by}): a \
-                 nominal stop would be called a fault. Lower `drop` or check later\n{trace}"
+                 nominal stop would be called a fault. Lower `decrease` or check later\n{trace}"
             ),
         ),
         Ok(Some((v, by, trace))) => push(
             Severity::Info,
             format!(
                 "{head} fits: the nominal profile sheds {v:.4} m/s by then ({by}), {:.4} m/s \
-                 above `drop`; a vehicle slower than that has stopped, which the check counts \
-                 as met\n{trace}",
-                v - e.drop_mps
+                 above `decrease`; a value below that has reached the safe state, which the \
+                 check counts as met\n{trace}",
+                v - decrease
             ),
         ),
         Ok(None) => push(
             Severity::Warning,
             format!(
-                "{head}: `drop` is unchecked: the settle's extension derives no \
+                "{head}: `decrease` is unchecked: the settle's extension derives no \
                  `settle.speed_lost` (a written settle, or an extension older than it, as \
                  vehicle.braking before 1.1.0), so nothing shows a nominal stop sheds {} by \
                  then",
-                e.drop_text
+                e.decrease_text
             ),
         ),
         Err(why) => push(

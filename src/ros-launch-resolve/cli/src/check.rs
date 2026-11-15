@@ -24,6 +24,7 @@ pub fn handle_check(args: &CheckArgs) -> Result<()> {
         format: args.format.clone(),
         allow_unsupported_actions: args.allow_unsupported_actions,
         strict: args.strict,
+        deny: args.deny.clone(),
         locked: args.locked,
         update_lock: args.update_lock,
         against: args.against.clone(),

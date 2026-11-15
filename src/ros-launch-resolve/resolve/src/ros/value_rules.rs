@@ -1043,8 +1043,8 @@ pub(crate) fn check_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>
                 "deprecated-spelling",
                 Severity::Warning,
                 format!(
-                    "{}: `{}:` is the old spelling of `{}:` (renamed in rlm v0.3.19); it reads \
-                     for one release. Fix: write `{}:`; {MIGRATE_HINT}",
+                    "{}: `{}:` is the old spelling of `{}:` (an rlm S3 rename); it reads for \
+                     one release. Fix: write `{}:`; {MIGRATE_HINT}",
                     site(index, m.scope_id, &sp.at),
                     sp.old,
                     sp.new,
@@ -1073,6 +1073,72 @@ pub(crate) fn check_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>
                 ),
                 "supervision".to_string(),
             ));
+        }
+        // rlm v0.3.24: a rule's severity is the checker's `--deny`.
+        if m.manifest.policy.is_some() {
+            diags.push(diag(
+                "deprecated-spelling",
+                Severity::Warning,
+                format!(
+                    "{}: `policy:` is deprecated (rlm v0.3.24): a rule's severity is the \
+                     checker's, not the contract's. It reads for one release. Fix: delete it \
+                     and run `check --deny measured-unsupervised --deny \
+                     supervised-executor-long-callback` where it said `error`",
+                    site(index, m.scope_id, "policy"),
+                ),
+                "policy".to_string(),
+            ));
+        }
+        // rlm v0.3.24: a scale is a profile, named by `use:`.
+        if !m.manifest.integrity_levels.is_empty() {
+            diags.push(diag(
+                "deprecated-spelling",
+                Severity::Warning,
+                format!(
+                    "{}: `integrity_levels:` is deprecated (rlm v0.3.24): a scale is a \
+                     profile, named by `use:` (`iso26262`, `iec61508`, or a local \
+                     `<name>.profile.yaml`). It reads for one release. Fix: {MIGRATE_HINT}",
+                    site(index, m.scope_id, "integrity_levels"),
+                ),
+                "integrity_levels".to_string(),
+            ));
+        }
+        // rlm v0.3.24: a call's transport is on the link its client names.
+        for (s, decl) in &m.manifest.services {
+            if decl.max_transport.is_some() {
+                let at = format!("services.{s}.max_transport");
+                diags.push(diag(
+                    "deprecated-spelling",
+                    Severity::Warning,
+                    format!(
+                        "{}: a service's `max_transport:` is deprecated (rlm v0.3.24): a \
+                         transport is one endpoint's hop, stated on the link a client names. \
+                         It reads for one release. Fix: write `links.<name>: {{ max_transport: \
+                         <d> }}` and `link: <name>` on each client, then delete this key",
+                        site(index, m.scope_id, &at),
+                    ),
+                    at,
+                ));
+            }
+        }
+        for (n, node) in &m.manifest.nodes {
+            for (e, props) in &node.cli {
+                if props.link.is_none() && props.max_transport.is_some() {
+                    let at = format!("nodes.{n}.cli.{e}.max_transport");
+                    diags.push(diag(
+                        "deprecated-spelling",
+                        Severity::Warning,
+                        format!(
+                            "{}: a client's own `max_transport:` is deprecated (rlm v0.3.24): \
+                             the request leg's transport is stated on a link (`link: \
+                             <name>`), as a subscriber's is. It reads for one release. Fix: \
+                             {MIGRATE_HINT}",
+                            site(index, m.scope_id, &at),
+                        ),
+                        at,
+                    ));
+                }
+            }
         }
     }
     g4_spellings(index, diags);

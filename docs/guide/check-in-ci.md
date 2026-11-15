@@ -334,9 +334,14 @@ The rules that read it:
   completes, late by the overrun. Fix: `mechanism: timer` (an independent
   timer and thread, which catches a long or stuck callback), or `source:
   analysed` on every callback of the executor. A warning, or an error under
-  `policy: { unsupervised_measured: error }`.
+  `check --deny supervised-executor-long-callback`.
 - `measured-unsupervised`: a measured budget nothing supervises, a warning,
-  or an error under `policy: { unsupervised_measured: error }`.
+  or an error under `check --deny measured-unsupervised`.
+
+`--deny <rule>` (repeatable) makes every finding of that rule an error, in
+CI and locally alike, and a denied finding cannot be acknowledged. It
+replaces a contract's `policy:` (deprecated in 0.36): a rule's severity is
+the project's choice, not a fact of the system the contract describes.
 
 ## Service calls on a reaction route
 
@@ -356,19 +361,20 @@ nodes:
       operate:
         call: blocking
         timeout: $(param timeout_call_mrm_behavior) s
-        on_timeout: { reaction: emergency_stop }       # a mode, or an event chain
-        on_rejected: { reaction: emergency_stop }      # what it does on success: false
-        max_transport: 1.5ms                           # the request leg
+        on_timeout: { enters: emergency_stop }         # a mode (`reaction:` for an event chain)
+        on_rejected: { enters: emergency_stop }        # what it does on success: false
+        link: mrm_request                              # the request leg's transport
   operator:
     srv:
       operate: { idempotent: true, stale_after: 50ms }
 services:
-  /mrm/operate: { type: std_srvs/srv/Trigger, server: [operator/operate], client: [handler/operate],
-                  max_transport: 1ms }                 # for clients that state none
+  /mrm/operate: { type: std_srvs/srv/Trigger, server: [operator/operate], client: [handler/operate] }
+links:
+  mrm_request: { max_transport: { duration: 1.5ms, source: requirement } }
 ```
 
 `on_timeout` may retry: `{ retry: { attempts: 3, backoff: 10ms }, then: {
-reaction: emergency_stop } }`, `attempts` counting every try. The route
+enters: emergency_stop } }`, `attempts` counting every try. The route
 through the call is charged the WORSE of two branches: success (the request
 leg, the server's route, and for a blocking call whose route continues at
 the client, the wait for the response) and failure (`timeout x attempts +
@@ -419,7 +425,7 @@ At run time, with interception on, the Health page reports
 (10 s when it states none), and `play_log/<ts>/interception/calls.json`
 counts each client's requests and answers and times the request leg.
 `play_launch measure <run-dir> --model <m.yaml>` offers the leg's observed
-maximum as the client's `max_transport`, and says whether the middleware
+maximum as the `max_transport` of the link the client names, and says whether the middleware
 filled each request's source timestamp. `stale_after` relies on that
 timestamp, and the checker trusts it: Fast DDS and Cyclone fill it; on
 another middleware, run `measure` once to confirm.
@@ -444,7 +450,7 @@ things belong in CI:
   its full sha256.
 - **Implicit extensions are refused.** A contract that writes the braking
   keys without `use: { vehicle.braking: "^1" }`, or hazard integrity levels with
-  no profile and no `integrity_levels:`, fails with
+  no profile (`use: { iso26262: "^1" }`), fails with
   `error[deprecated-implicit-extension]` (play_launch 0.19 warned; 0.20
   refuses). `play_launch migrate <dir> --write` adds the `use:` lines (and gives a
   plain-number `entry_speed` its unit, `m/s`); `play_launch migrate <dir>

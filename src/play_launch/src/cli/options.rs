@@ -412,6 +412,11 @@ pub struct CheckArgs {
     #[arg(long)]
     pub strict: bool,
 
+    /// Make every finding of this rule an error (repeatable), e.g. `--deny
+    /// measured-unsupervised`. A denied finding cannot be acknowledged.
+    #[arg(long, value_name = "RULE")]
+    pub deny: Vec<String>,
+
     /// Phase 91 E7: refuse any extension or profile resolution other than
     /// the `rlm.lock` beside each contract (a changed file, another version,
     /// an unlocked `use:` entry, or no lock at all).

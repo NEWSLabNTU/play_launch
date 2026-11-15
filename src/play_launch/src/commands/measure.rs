@@ -302,8 +302,9 @@ fn render_calls(snap: &crate::interception::CallSnapshot, model: &SystemModel) -
         return out;
     }
     out.push_str(
-        "\n# Measured request legs -- these belong in the CONTRACT (`cli.<e>.max_transport`,\n\
-         # charged on a reaction route's success branch through the call), not here. The\n\
+        "\n# Measured request legs -- these belong in the CONTRACT, on the link the client\n\
+         # names (`links.<l>.max_transport` and `cli.<e>.link: <l>`, charged on a reaction\n\
+         # route's success branch through the call), not here. The\n\
          # leg is the client's send to the server's take, on one host's monotonic clock, for\n\
          # every request a server of this run was seen to take. The value is the observed\n\
          # MAXIMUM; p50/p99 are for judgement. Like budget_us, this is what this machine did\n\
@@ -324,7 +325,10 @@ fn render_calls(snap: &crate::interception::CallSnapshot, model: &SystemModel) -
             leg.min_ms, leg.p50_ms, leg.p99_ms, leg.max_ms, leg.n
         ));
         match client_key(model, &c.node, &c.service) {
-            Some(key) => out.push_str(&format!("#   {key}.max_transport: {:.3}ms\n", leg.max_ms)),
+            Some(key) => out.push_str(&format!(
+                "#   {key}.link -> links.<l>.max_transport: {:.3}ms\n",
+                leg.max_ms
+            )),
             None => out.push_str(
                 "#     (the model lists no such client, so there is no contract key to name)\n",
             ),
@@ -969,7 +973,7 @@ mod tests {
     /// key with the maximum; a client nothing answered says so; a server
     /// says whether the middleware filled the source timestamp.
     #[test]
-    fn request_legs_are_offered_to_the_contract_as_max_transport() {
+    fn request_legs_are_offered_to_the_contract_as_a_link() {
         use crate::interception::{CallSnapshot, ClientRow, ServerRow, calls::Dist};
         let mut model = SystemModel::default();
         model.structure.services.insert(
@@ -1019,7 +1023,9 @@ mod tests {
         };
         let out = render_calls(&snap, &model);
         assert!(
-            out.contains("#   nodes.sys/handler.cli.operate.max_transport: 1.250ms"),
+            out.contains(
+                "#   nodes.sys/handler.cli.operate.link -> links.<l>.max_transport: 1.250ms"
+            ),
             "{out}"
         );
         assert!(

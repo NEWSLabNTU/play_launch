@@ -6,6 +6,42 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Added: `check --deny <rule>`** (repeatable): every finding of that rule
+  is an error, a mode's re-run of it included, and a denied finding cannot
+  be acknowledged. It replaces a contract's `policy:`, deprecated with rlm
+  v0.3.24 (a rule's severity is the project's, not a fact of the system):
+  `policy: { unsupervised_measured: error }` still reads for one release,
+  with `warning[deprecated-spelling]` naming the flags.
+- **Changed (contracts; rlm v0.3.24, phase 104 S3):** a client names the
+  link its request leg crosses (`cli.<e>.link: <l>`), as a subscriber does.
+  A client's own `max_transport:` and a service's are deprecated and read
+  for one release with a warning; `play_launch migrate` moves a client's
+  value onto a link of its own and reports a service's. `measure` proposes
+  a request leg's maximum as the link's `max_transport`.
+- **Changed (contracts; rlm v0.3.24):** `integrity_levels:` is deprecated: a
+  scale is a profile, named by `use:` (`iso26262`, `iec61508`, or a local
+  profile file). It reads for one release; `migrate` writes the `use:` entry
+  when the list is a reference profile's scale. The fixtures are migrated.
+- **Changed (contracts; rlm v0.3.25, phase 104 S3):** a supervised settle
+  says what is measured. `observes:` is a map, `{ input, reached }`, where
+  `reached` is a predicate in `when:`'s grammar (`{ field:
+  twist.twist.linear.x, le: 0.01 }`) that holds once the safe state is
+  reached; the model carries it, so a realizer judges the settle without
+  guessing the field. `early.decrease` replaces `early.drop`: the least the
+  observed field decreases by `within`, a quantity in any unit; the static
+  check compares a speed with the extension's derived shed speed and warns
+  that another quantity is unchecked. The old string `observes:` and `drop:`
+  read for one release with `warning[deprecated-spelling]`; `migrate`
+  rewrites both. Messages say "a decrease of 0.1 m/s" and "the settle's
+  response".
+- **Changed: `play_launch migrate` repeats its passes until nothing
+  changes**, so a rewrite that exposes another (`severity_levels:` to
+  `integrity_levels:` to `use:`) finishes in one run.
+- **Fixed:** the `deprecated-spelling` message for an S3 rename no longer
+  names v0.3.19 for every rename.
+
 ## 0.35.1 - 2026-11-15
 
 - **Fixed (contracts):** `independence`'s CPU half is judged only on a

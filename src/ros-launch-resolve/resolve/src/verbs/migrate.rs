@@ -79,36 +79,65 @@ pub fn run(inputs: MigrateInputs) -> Result<i32> {
     for f in &files {
         let src =
             std::fs::read_to_string(f).wrap_err_with(|| format!("reading {}", f.display()))?;
-        let migrated = if is_system_toml(f) {
-            ros_launch_manifest_model::system_config::migrate_system_toml_str(&src)
-        } else {
-            migrate::migrate_str(&src)
-        };
-        let m = match migrated {
-            Ok(m) => m,
-            Err(e) => {
+        // One rewrite can expose the next (`severity_levels:` becomes
+        // `integrity_levels:`, which becomes `use:`), so passes repeat until
+        // nothing changes. Each pass's edits are printed against the text
+        // that pass read.
+        let mut passes = Vec::new();
+        let mut text = src.clone();
+        let mut error = None;
+        for _ in 0..MAX_PASSES {
+            let migrated = if is_system_toml(f) {
+                ros_launch_manifest_model::system_config::migrate_system_toml_str(&text)
+            } else {
+                migrate::migrate_str(&text)
+            };
+            match migrated {
+                Ok(m) if m.changed() => {
+                    let next = m.output.clone();
+                    passes.push((text, m));
+                    text = next;
+                }
+                Ok(m) => {
+                    passes.push((text.clone(), m));
+                    break;
+                }
+                Err(e) => {
+                    error = Some(e);
+                    break;
+                }
+            }
+        }
+        match error {
+            Some(e) if passes.is_empty() => {
                 eprintln!("error: {}: {e}", f.display());
                 failed += 1;
                 continue;
             }
-        };
-        for s in &m.skipped {
-            eprintln!("warning: {}: not rewritten, edit by hand: {s}", f.display());
+            Some(e) => eprintln!(
+                "warning: {}: a later pass stopped, its rewrites are not applied: {e}",
+                f.display()
+            ),
+            None => {}
         }
-        if !m.changed() {
+        if let Some((_, last)) = passes.last() {
+            for s in &last.skipped {
+                eprintln!("warning: {}: not rewritten, edit by hand: {s}", f.display());
+            }
+        }
+        if text == src {
             continue;
         }
         changed += 1;
-        edits += m.edits.len();
-        print_edits(f, &src, &m);
+        for (read, m) in passes.iter().filter(|(_, m)| m.changed()) {
+            edits += m.edits.len();
+            print_edits(f, read, m);
+        }
         if !inputs.quiet && !inputs.write {
-            print!(
-                "{}",
-                unified_diff(&src, &m.output, &f.display().to_string())
-            );
+            print!("{}", unified_diff(&src, &text, &f.display().to_string()));
         }
         if inputs.write {
-            std::fs::write(f, &m.output).wrap_err_with(|| format!("writing {}", f.display()))?;
+            std::fs::write(f, &text).wrap_err_with(|| format!("writing {}", f.display()))?;
         }
     }
     let verb = if inputs.write {
@@ -130,6 +159,10 @@ pub fn run(inputs: MigrateInputs) -> Result<i32> {
     }
     Ok(if inputs.check && changed > 0 { 1 } else { 0 })
 }
+
+/// Passes of `migrate` per file: enough for every chain of rewrites the
+/// table has (the longest is two).
+const MAX_PASSES: usize = 4;
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     let mut entries: Vec<_> = std::fs::read_dir(dir)

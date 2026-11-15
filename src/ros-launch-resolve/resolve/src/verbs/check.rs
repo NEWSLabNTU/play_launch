@@ -73,6 +73,9 @@ pub struct CheckInputs {
     /// Phase 91 E5: an undecided worst-case claim (`worst-case-unknown`)
     /// is an error rather than a warning.
     pub strict: bool,
+    /// rlm v0.3.24: every finding of these rule ids is an error. Replaces
+    /// a contract's `policy:`.
+    pub deny: Vec<String>,
     /// Phase 91 E7: any resolution other than `rlm.lock` is an error.
     pub locked: bool,
     /// Phase 91 E7: resolve afresh and rewrite each contract's `rlm.lock`.
@@ -98,6 +101,29 @@ pub struct CheckInputs {
     /// Every composable runs in its own process (`--container-mode
     /// isolated`).
     pub process_per_composable: bool,
+}
+
+/// `check --deny <rule>` (rlm v0.3.24): every finding of a named rule is an
+/// error, a mode's re-run of it (`mode:<rule>`) included. Runs before
+/// `acknowledged:` is applied, so a denied finding cannot be acknowledged
+/// (`ack-error`), as clippy's `-D` cannot be `allow`ed away by the code.
+fn deny(index: &mut manifest_loader::ManifestIndex, rules: &[String]) {
+    if rules.is_empty() {
+        return;
+    }
+    let denied = |id: &str| {
+        let bare = id.rsplit_once(':').map_or(id, |(_, r)| r);
+        rules.iter().any(|r| r == id || r == bare)
+    };
+    let raise = |d: &mut Diagnostic| {
+        if denied(&d.rule_id) {
+            d.severity = Severity::Error;
+        }
+    };
+    index.merge_diagnostics.iter_mut().for_each(raise);
+    for m in index.manifests.values_mut() {
+        m.diagnostics.iter_mut().for_each(raise);
+    }
 }
 
 /// Exit status for a contract file the grammar refused (`manifest-parse`),
@@ -213,6 +239,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     if inputs.strict {
         crate::ros::extensions::strict(&mut index);
     }
+    deny(&mut index, &inputs.deny);
     if inputs.update_lock {
         let written = crate::ros::extensions::write_locks(&index).map_err(|e| eyre::eyre!(e))?;
         for path in &written {

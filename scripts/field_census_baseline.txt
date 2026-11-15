@@ -102,3 +102,14 @@ ftti_derived       # HazardContract (rlm v0.2.0, phase 91 E10): as
                    # `settle_derived`, for a derived `ftti_ms`.
 detection_derived  # HazardContract (rlm v0.2.0, phase 91 E10): as
                    # `settle_derived`, for a derived `detection_ms`.
+
+decrease           # EarlyCheckContract (model, rlm v0.3.25). The
+                   # DECLARATION is read -- `supervised-early` compares a
+                   # speed decrease with the extension's derived shed speed.
+                   # The lowered copy is for a realizer that arms the
+                   # response check from the model; none does yet (the
+                   # safety island's is configured by hand).
+
+drop_mps           # EarlyCheckContract (model, rlm v0.3.1), `decrease` when
+                   # it is a speed. Kept until the next model schema for a
+                   # reader before v0.3.25; there is none in either repo.

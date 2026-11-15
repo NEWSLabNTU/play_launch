@@ -12,8 +12,9 @@
 # downstream of the level's reaction; the logger reads the fallback's
 # command but reaches nothing that the level commands.
 version: 1
+use:
+  iso26262: "^1"
 
-integrity_levels: [QM, ASIL_A, ASIL_B, ASIL_C, ASIL_D]
 
 capabilities:
   hpc_alive: [/heartbeat]

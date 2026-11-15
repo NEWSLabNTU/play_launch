@@ -699,6 +699,23 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-11-15**: **The S3 relocations** (phase 104, rlm v0.3.24 and
+  v0.3.25; decisions in rlm `docs/design/grammar-revision/README.md`, after
+  "S3 decisions"). `policy:` is deprecated for `check --deny <rule>`
+  (`verbs/check.rs::deny`, run after `--strict` and before `acknowledged:`,
+  so a denied finding cannot be acknowledged); a client names a link
+  (`cli.<e>.link`, resolved into `max_transport` by rlm's `apply_links`, so
+  no reader here changed) and a client's or a service's own `max_transport`
+  is deprecated; `integrity_levels:` is deprecated for `use:` of a profile;
+  `observes:` is `{ input, reached }` and `early.drop` is `early.decrease`,
+  a quantity of any dimension (`EarlyCheck::speed_mps()` for the one the
+  extension's derive can judge). The deprecation warnings for these are
+  consumer-side, in `value_rules::check_spellings`, beside the generic loop
+  over `deprecated_spellings`. `migrate` now repeats passes until nothing
+  changes. Two things a later change must keep: `vehicle.braking.rlx` is
+  not edited for wording, since its hash is what every `rlm.lock` pins; and
+  `docs/extension-reference.md` in rlm is generated from the `.rlx` files.
+
 - **2026-11-15**: **The S3 renames** (phase 104, rlm v0.3.19 to v0.3.22;
   decisions in rlm `docs/design/grammar-revision/README.md`, "S3
   decisions"). One key per meaning: `capabilities:` (was `functions:`), a

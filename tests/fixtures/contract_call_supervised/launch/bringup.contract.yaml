@@ -87,7 +87,7 @@ nodes:
         on_violation: { on: [omission], reaction: call_mrm }
       odom: { min_rate: 10Hz, state: true, link: handler_odom }
     cli:
-      operate: { call: async, max_transport: 1.5ms }
+      operate: { call: async, link: handler_operate }
     paths:
       call_mrm:
         trigger: { input: [availability] }
@@ -111,7 +111,7 @@ nodes:
             supervise:
               enters: emergency_stop
               mechanism: timer
-              observes: handler/odom
+              observes: { input: handler/odom }
 
 topics:
   /availability:
@@ -144,3 +144,4 @@ services:
 
 links:
   handler_odom: { max_transport: 5ms }
+  handler_operate: { max_transport: 1.5ms }
