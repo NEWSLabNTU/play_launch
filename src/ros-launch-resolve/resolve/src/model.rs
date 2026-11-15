@@ -134,6 +134,22 @@ pub fn build_checked_model(
     for m in index.manifests.values() {
         input_paths.insert(canon(m.contract_path.clone()));
     }
+    // nano-ros issue 2598 -- a `<param from="...">` file is an input too. Its
+    // values are copied into the model, so a model that does not record the
+    // file reads as current after the file changes, and a consumer that
+    // re-resolves only stale models keeps the old values until its build
+    // directory is deleted. Only a path the parser recorded can be hashed; a
+    // record from the Python dumper carries none.
+    let param_files = dump
+        .node
+        .iter()
+        .flat_map(|n| &n.param_sources)
+        .chain(dump.container.iter().flat_map(|c| &c.param_sources));
+    for source in param_files {
+        if let crate::ros::launch_dump::ParamSource::File { path: Some(p), .. } = source {
+            input_paths.insert(canon(PathBuf::from(p)));
+        }
+    }
 
     // Scheduling: same channel resolution as `check` (--sched > overlay >
     // provider sidecar). Optional — a model without an execution layer is
@@ -370,4 +386,50 @@ pub fn build_checked_model(
     }
 
     Ok(model)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// nano-ros issue 2598 -- a `<param from="...">` file is recorded as an
+    /// input, so a model whose parameter file changed reads as stale. Without
+    /// it a consumer that re-resolves only stale models kept the old values.
+    #[test]
+    fn a_param_file_is_a_model_input() {
+        let bringup = tempfile::tempdir().unwrap();
+        let config = bringup.path().join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        let file = config.join("talker.param.yaml");
+        std::fs::write(&file, "/**:\n  ros__parameters:\n    period_ms: 200\n").unwrap();
+        let dump: LaunchDump = serde_json::from_value(serde_json::json!({
+            "node": [
+                {"executable": "talker", "package": "p", "name": "talker",
+                 "namespace": "/", "params_files": [], "cmd": [], "scope": 0,
+                 "param_sources": [{"kind": "file",
+                     "content": "/**:\n  ros__parameters:\n    period_ms: 200\n",
+                     "path": file.display().to_string()}]}
+            ],
+            "container": [], "load_node": [], "lifecycle_node": [],
+            "file_data": {}, "variables": {},
+            "scopes": [{"id": 0, "ns": "/", "parent": null}]
+        }))
+        .expect("hand-built dump");
+        let model = build_checked_model(ModelBuildInputs {
+            dump: &dump,
+            launch_path: None,
+            bringup_root: Some(bringup.path()),
+            arg_binding: BTreeMap::new(),
+            contracts: None,
+            no_provider_contracts: true,
+            sched: None,
+            system: None,
+            target: "posix",
+            explain: false,
+            process_per_composable: false,
+        })
+        .expect("model builds");
+        let paths: Vec<&str> = model.meta.inputs.iter().map(|i| i.path.as_str()).collect();
+        assert!(paths.contains(&"config/talker.param.yaml"), "{paths:?}");
+    }
 }
