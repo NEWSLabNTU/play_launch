@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.35.1 - 2026-11-15
 
 - **Fixed (contracts):** `independence`'s CPU half is judged only on a
   POSIX (or native) plan. A platform file for another target, such as a
