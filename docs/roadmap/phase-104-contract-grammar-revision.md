@@ -16,10 +16,15 @@ which `supervise.enters` uses in the opposite direction) and a client's
 (was a manifest level's `paths:`); v0.3.21 rates with a unit (`min_rate:
 100Hz`); v0.3.22 `supervision` in the per-target platform file. S1's
 open question is answered there too: a schedule counts published releases
-(rlm `rule_names::PUBLISHED`), not tags. Still to come in R: T4/T3's
-relocations (`early` to `vehicle.braking` with a
-domain-free run-time form, `observes` as a map, `policy` as `check
---deny`, service links, `integrity_levels` to `use:`). S4 planned. Design
+(rlm `rule_names::PUBLISHED`), not tags. T4/T3's relocations followed in v0.3.24
+(`policy:` deprecated for `check --deny <rule>`, a client's link
+`cli.<e>.link`, `integrity_levels:` deprecated for `use:`, `response`
+reworded) and v0.3.25 (`observes: { input, reached }`, `early.decrease`
+for `early.drop`; the static check stays in the consumer, so no
+`supervise.` extension context). **S3's release R is complete**; R+1
+refuses the old spellings. Open from it: `reached` cannot state an
+absolute value (the island's standstill is `|v| < 0.001 m/s`), which is
+T8's expressiveness. S4 planned. Design
 of record: rlm `docs/design/grammar-revision/` (an overview and one file per
 topic, T1-T10, each with the verified issues, counts over 192 contracts,
 every method compared, and a recommendation). This phase orders that work.
