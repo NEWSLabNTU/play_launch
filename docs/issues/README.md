@@ -17,6 +17,12 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0086** -- the Rust parser's mock substitutions have no `perform()`, so
+`context.perform_substitution(EnvironmentVariable(...))` raises
+`AttributeError`. Autoware 2.1.0's agnocast launch files do exactly that, so
+no 2.1.0 launch loads under the default parser. Workaround: `--parser
+python`. See `0086-*`.
+
 **#0085** -- `<unset_env>` in a scoped group, and a container's
 `launch-prefix`, never reach the process play_launch spawns, where `ros2
 launch` applies both. The ZED X camera on AutoSDV fails to open with
