@@ -17,6 +17,12 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0083** -- the contract's QoS enum fields (`reliability`, `durability`,
+`history`, `liveliness`) take any string and `qos-match` passes an unknown
+value, so a typo (`transient-local`) or a launch reference
+(`$(var operation_mode_durability)`) is never checked. Covers rlm (parse)
+and play_launch (`durability_compatible`). See `0083-*`.
+
 **#0082** -- `--container-mode observable` turns a
 `component_container_isolated` into a play_launch_container with ONE
 SingleThreadedExecutor for all its components (only `component_container_mt`
