@@ -17,6 +17,11 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0087** -- `<executable cwd=…>` is ignored by the Rust parser, so a process
+runs in play_launch's own directory (`ros2 bag record` writes its bag there,
+not where `cwd` says), and the parser warns that `shell=` is ignored although
+it has been honoured since #0071. GitHub #27. See `0087-*`.
+
 **#0085** -- `<unset_env>` in a scoped group, and a container's
 `launch-prefix`, never reach the process play_launch spawns, where `ros2
 launch` applies both. The ZED X camera on AutoSDV fails to open with
