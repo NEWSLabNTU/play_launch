@@ -1,10 +1,9 @@
 # Phase 91 E6: what a profile refuses. The contract uses iec61508 and
-# also writes `integrity_levels:` (`integrity-scale-conflict`: the profile
-# states the scale), and its hazard keeps an ISO 26262 level the SIL
-# scale does not have (`integrity-unknown`, naming the profile).
+# its hazard keeps an ISO 26262 level the SIL scale does not have
+# (`integrity-unknown`, naming the profile). A second scale beside the
+# profile, `integrity_levels:`, is refused by the parser since rlm v0.3.27.
 version: 1
 use: { iec61508: "^1" }
-integrity_levels: [none, SIL_1, SIL_2, SIL_3, SIL_4]
 
 hazards:
   drive_blind:

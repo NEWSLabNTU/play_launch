@@ -618,20 +618,20 @@ nodes:
   talker:
     pub:
       chatter:
-        min_rate_hz: 100
+        min_rate: 100Hz
   listener:
     pub:
       status:
-        min_rate_hz: 10
+        min_rate: 10Hz
 topics:
   chatter:
     type: std_msgs/msg/String
     pub: [talker/chatter]
-    rate_hz: 100
+    rate: 100Hz
   status:
     type: std_msgs/msg/String
     pub: [listener/status]
-    rate_hz: 10
+    rate: 10Hz
 ",
     )
     .expect("failed to write overlay contract");
@@ -730,20 +730,20 @@ nodes:
   talker:
     pub:
       chatter:
-        min_rate_hz: 100
+        min_rate: 100Hz
   listener:
     pub:
       status:
-        min_rate_hz: 10
+        min_rate: 10Hz
 topics:
   chatter:
     type: std_msgs/msg/String
     pub: [talker/chatter]
-    rate_hz: 100
+    rate: 100Hz
   status:
     type: std_msgs/msg/String
     pub: [listener/status]
-    rate_hz: 10
+    rate: 10Hz
 "
 }
 
@@ -909,13 +909,13 @@ nodes:
   talker:
     paths:
       tight:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [chatter]
         max_latency: 5ms
   listener:
     paths:
       loose:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [status]
         max_latency: 50ms
 topics:
@@ -989,7 +989,7 @@ nodes:
       chatter: {}
     paths:
       tick:
-        trigger: { timer: { rate_hz: 10 } }
+        trigger: { timer: { rate: 10Hz } }
         output: [chatter]
         max_latency: 5ms
   listener:
@@ -1002,7 +1002,7 @@ nodes:
         trigger: { input: [chatter] }
         output: [done]
         max_latency: 20ms
-paths:
+event_chains:
   test_chain:
     trigger: { input: [/chatter] }
     output: [/done]
@@ -1012,7 +1012,7 @@ topics:
     type: std_msgs/msg/String
     pub: [talker/chatter]
     sub: [listener/chatter]
-    rate_hz: 10
+    rate: 10Hz
   done:
     type: std_msgs/msg/String
     pub: [listener/done]
@@ -1971,7 +1971,7 @@ fn a_mode_overrides_target_is_resolved_to_the_models_keys() {
     let want = [
         (
             "event_chains.safety.stop.max_latency",
-            T::ScopePaths,
+            T::EventChains,
             "bringup.launch.xml/safety.stop",
             "max_latency",
         ),
@@ -2007,7 +2007,7 @@ fn a_mode_overrides_target_is_resolved_to_the_models_keys() {
             "`{target}` -> {table:?} `{key}` `{field}` missing; got {got:?}"
         );
         let exists = match table {
-            T::ScopePaths => c.scope_paths.contains_key(key),
+            T::EventChains => c.event_chains.contains_key(key),
             T::NodePaths => c.node_paths.contains_key(key),
             T::PubEndpoints => c.pub_endpoints.contains_key(key),
             T::SubEndpoints => c.sub_endpoints.contains_key(key),
@@ -2896,15 +2896,16 @@ fn a_written_criticality_on_a_reached_node_is_an_error() {
 /// Phase 90 G4, refused since rlm v0.3.15 (play_launch phase 104 S1):
 /// `exit: { on }` is a parse error naming `holds:`, and `reaction: <mode>`
 /// is `error[reaction-names-mode]` naming `leaves:`; since rlm v0.3.17 a
-/// subscriber's own `max_transport` is a parse error naming a link.
+/// subscriber's own `max_transport` is a parse error naming a link (the
+/// first refusal the file meets since v0.3.27, at the endpoint).
 /// `migrate --write` gives a contract that checks exactly as its current
 /// twin does.
 #[test]
 fn removed_spellings_are_refused_and_migrate_to_the_current_twin() {
     let (code, old) = check_takeover("contract_spelling_deprecated", &[]);
-    assert_eq!(code, 3, "exit.on is a parse error:\n{old}");
+    assert_eq!(code, 3, "an inline transport is a parse error:\n{old}");
     assert!(
-        old.contains("Removed in v0.3.15") && old.contains("`holds:`"),
+        old.contains("Refused on an endpoint since v0.3.27") && old.contains("`link: <l>`"),
         "{old}"
     );
 
@@ -2972,10 +2973,10 @@ fn without_lines(l: &str) -> String {
 }
 
 /// rlm v0.3.22 (S3): the supervision terms are the platform file's. A
-/// contract's root `supervision:` still reads, deprecated, where no platform
-/// file states them, and is not read beside one.
+/// contract's root `supervision:` is refused since rlm v0.3.27, naming the
+/// platform file.
 #[test]
-fn a_contracts_supervision_gives_way_to_the_platform_files() {
+fn a_contracts_supervision_is_refused() {
     let (_tmp, dir) = fixture_copy("contract_supervised");
     let contract = dir.join("bringup.contract.yaml");
     let text = std::fs::read_to_string(&contract).unwrap();
@@ -2984,52 +2985,60 @@ fn a_contracts_supervision_gives_way_to_the_platform_files() {
         format!("supervision: {{ tick: 2ms, switch: 0.05ms }}\n{text}"),
     )
     .unwrap();
-    let (_, both) = check_launch(&dir.join("bringup.launch.xml"), &[]);
+    let (code, out) = check_launch(&dir.join("bringup.launch.xml"), &[]);
+    assert_eq!(code, 3, "{out}");
     assert!(
-        both.contains("warning[deprecated-spelling]")
-            && both.contains("The platform file states them, so this copy is not read"),
-        "{both}"
+        out.contains("refused here since v0.3.27") && out.contains("<stem>.system.<target>.yaml"),
+        "{out}"
     );
-    assert!(
-        both.contains("tick 1.00ms + switch 0.05ms (timer)"),
-        "{both}"
-    );
-    std::fs::remove_file(dir.join("bringup.system.posix.yaml")).unwrap();
-    let (_, old) = check_launch(&dir.join("bringup.launch.xml"), &[]);
-    assert!(
-        old.contains("It reads for one release, as no platform file states them"),
-        "{old}"
-    );
-    assert!(old.contains("tick 2.00ms + switch 0.05ms (timer)"), "{old}");
 }
 
-/// rlm v0.3.19 (S3): each pre-v0.3.19 spelling reads for one release with a
-/// `deprecated-spelling` warning naming the new key, and a client's
-/// `enters:` naming no mode is an error.
+/// rlm v0.3.27 (S3 at R+1): every pre-v0.3.19 spelling is refused (a parse
+/// error naming its replacement, exit 3), `migrate --write` rewrites them
+/// all, and the result checks: a client's `enters:` naming no mode is an
+/// error. A client's mode under `reaction:`, which only the consumer can
+/// tell from an event chain, is `error[reaction-names-mode]`.
 #[test]
-fn s3_old_spellings_warn_and_call_enters_names_a_mode() {
-    let out = check_fixture("contract_s3_spellings");
+fn s3_old_spellings_are_refused_and_migrate() {
+    let (_tmp, dir) = fixture_copy("contract_s3_spellings");
+    let launch = dir.join("bringup.launch.xml");
+    let contract = dir.join("bringup.contract.yaml");
+    let (code, out) = check_launch(&launch, &[]);
+    assert_eq!(code, 3, "{out}");
+    assert!(
+        out.contains("Renamed `capabilities:` in v0.3.19 and refused since v0.3.27"),
+        "{out}"
+    );
+    let (code, m) = migrate(&contract, &["--write"]);
+    assert_eq!(code, 0, "{m}");
+    let migrated = std::fs::read_to_string(&contract).unwrap();
+    let (code, out) = check_launch(&launch, &[]);
+    assert_eq!(code, 1, "{out}");
     for needle in [
-        "warning[deprecated-spelling]: bringup.contract.yaml:12: `functions:` is the old \
-         spelling of `capabilities:`",
-        "warning[deprecated-spelling]: bringup.contract.yaml:22: `enters:` is the old spelling \
-         of `leaves:`",
-        "`on_timeout: { reaction: emergency_stop }` names a mode, the spelling rlm v0.3.19 \
-         replaced",
-        "at nodes.handler.cli.operate.on_timeout.reaction",
-        "error[call-enters-unknown-mode]: bringup.contract.yaml:90: client \
-         'handler.cli.operate': `on_rejected` enters 'nowhere'",
-        "at hazards.hpc_loss.leaves",
+        "error[call-enters-unknown-mode]: bringup.contract.yaml:",
+        "client 'handler.cli.operate': `on_rejected` enters 'nowhere'",
         "info[fault-reaction-time]",
-        // rlm v0.3.24: a client's transport is on a link.
-        "warning[deprecated-spelling]: bringup.contract.yaml:90: a client's own \
-         `max_transport:` is deprecated (rlm v0.3.24)",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
-    assert_eq!(
-        out.matches("warning[deprecated-spelling]").count(),
-        4,
+    assert!(!out.contains("deprecated-spelling"), "{out}");
+    // The one old spelling the parser cannot refuse.
+    std::fs::write(
+        &contract,
+        migrated.replacen(
+            "on_timeout: { enters: emergency_stop }",
+            "on_timeout: { reaction: emergency_stop }",
+            1,
+        ),
+    )
+    .unwrap();
+    let (code, out) = check_launch(&launch, &[]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("error[reaction-names-mode]")
+            && out.contains(
+                "`on_timeout: { reaction: emergency_stop }` names a mode, refused since rlm v0.3.27"
+            ),
         "{out}"
     );
 }
@@ -3283,7 +3292,7 @@ fn phase_98_n6_old_spellings_are_refused_and_migrate() {
     );
     let (code, out) = migrate(&contract, &["--write"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("1 rewritten (6 edit(s))"), "{out}");
+    assert!(out.contains("1 rewritten (4 edit(s))"), "{out}");
     let migrated = std::fs::read_to_string(&contract).unwrap();
     for gone in ["guards:", "ingress:", "on_demand:", "spontaneous"] {
         assert!(
@@ -3647,19 +3656,16 @@ fn e6_a_sil_contract_derives_criticality_through_its_profile() {
     }
 }
 
-/// Phase 91 E6: a profile states the scale, so `integrity_levels:` beside
-/// it is an error, and a level the profile lacks names the profile.
+/// Phase 91 E6: a level the profile lacks names the profile (a second scale,
+/// `integrity_levels:`, is refused since rlm v0.3.27).
 #[test]
-fn e6_a_profile_refuses_a_second_scale_and_a_foreign_level() {
+fn e6_a_profile_refuses_a_foreign_level() {
     let (code, out) = ext_fixture("contract_profile_refused", &[]);
     assert_eq!(code, 1, "{out}");
-    for needle in [
-        "error[integrity-scale-conflict]: `integrity_levels:` beside the profile iec61508 1.1.0",
-        "error[integrity-unknown]: hazard 'drive_blind' declares integrity level 'ASIL_D', which is \
-         not in the scale [none, SIL_1, SIL_2, SIL_3, SIL_4] (profile iec61508 1.1.0)",
-    ] {
-        assert!(out.contains(needle), "expected `{needle}`:\n{out}");
-    }
+    let needle = "error[integrity-unknown]: hazard 'drive_blind' declares integrity level \
+                  'ASIL_D', which is not in the scale [none, SIL_1, SIL_2, SIL_3, SIL_4] (profile \
+                  iec61508 1.1.0)";
+    assert!(out.contains(needle), "expected `{needle}`:\n{out}");
 }
 
 fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
@@ -3887,7 +3893,7 @@ fn migrate_rewrites_the_deprecated_spellings_in_place() {
         "+    leaves: engaged",
         "max-transport-link: `57ms` -> `handler_availability` \
          (nodes.handler.sub.availability.max_transport)",
-        "1 file(s) scanned, 1 to rewrite (14 edit(s))",
+        "1 file(s) scanned, 1 to rewrite (12 edit(s))",
     ] {
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
@@ -4021,10 +4027,10 @@ fn check_supervised_edited_with(
     ))
 }
 
-/// Phase 93: `supervised-executor-long-callback` follows the policy: an error
-/// under `policy: { unsupervised_measured: error }`.
+/// rlm v0.3.27: a contract's `policy:` is refused, naming `check --deny`
+/// (deprecated in v0.3.24; a rule's severity is the checker's).
 #[test]
-fn an_executor_supervision_over_a_long_callback_follows_the_policy() {
+fn a_contracts_policy_is_refused() {
     let Some((code, out)) = check_supervised_edited(|c| {
         c.replacen(
             "# supervision: in bringup.system.posix.yaml since rlm v0.3.22",
@@ -4036,21 +4042,9 @@ fn an_executor_supervision_over_a_long_callback_follows_the_policy() {
         eprintln!("Skipping: ros-launch-resolve not built");
         return;
     };
-    assert_eq!(code, 1, "{out}");
+    assert_eq!(code, 3, "{out}");
     assert!(
-        out.contains(
-            "error[supervised-executor-long-callback]: bringup.contract.yaml:157: \
-             `nodes.planner.paths.follow.max_latency` is supervised with `mechanism: executor`"
-        ),
-        "{out}"
-    );
-    // The timer supervision is not flagged.
-    assert!(!out.contains("`nodes.handler.paths.call_mrm.max_latency` is supervised with"));
-    // rlm v0.3.24: `policy:` reads for one release, with a warning naming
-    // the flag that replaces it.
-    assert!(
-        out.contains("`policy:` is deprecated (rlm v0.3.24)")
-            && out.contains("check --deny measured-unsupervised"),
+        out.contains("refused since v0.3.27") && out.contains("check --deny <rule>"),
         "{out}"
     );
 }
@@ -4210,14 +4204,14 @@ fn supervised_settle(c: String, extra: impl Fn(String) -> String) -> String {
         )
         .replacen(
             "      control_mode: {}\n",
-            "      control_mode: {}\n      kinematic_state:\n        min_rate_hz: 10\n        \
+            "      control_mode: {}\n      kinematic_state:\n        min_rate: 10Hz\n        \
              link: odometry\n",
             1,
         )
         .replacen(
             "  /tor_state:\n",
             "  /kinematic_state:\n    type: demo_msgs/msg/Odometry\n    external: pub\n    \
-             sub: [handler/kinematic_state]\n    rate_hz: 10\n  /tor_state:\n",
+             sub: [handler/kinematic_state]\n    rate: 10Hz\n  /tor_state:\n",
             1,
         );
     let c = format!(
@@ -4599,7 +4593,6 @@ fn a_settle_response_check_charges_its_own_row() {
     let sv = &model["contracts"]["node_paths"]["/comfort_op/operate"]["safe_state"]["supervise"];
     assert_eq!(sv["early"]["within_ms"].as_f64(), Some(1943.0), "{sv:?}");
     assert_eq!(sv["early"]["decrease"].as_f64(), Some(0.1), "{sv:?}");
-    assert_eq!(sv["early"]["drop_mps"].as_f64(), Some(0.1), "{sv:?}");
     assert_eq!(sv["observe_ms"].as_f64(), Some(156.0), "{sv:?}");
 }
 
@@ -4645,26 +4638,31 @@ fn a_settle_response_check_outside_the_profile_is_refused() {
     assert!(out.contains("`decrease` is unchecked"), "{out}");
 }
 
-/// rlm v0.3.25: the old spellings, `observes: <node>/<sub>` and `early.drop`,
-/// read with a warning each and keep the verdict.
+/// rlm v0.3.27: the old spellings of v0.3.25's settle supervision,
+/// `observes: <node>/<sub>` and `early.drop`, are refused, each naming its
+/// replacement.
 #[test]
-fn a_string_observes_and_drop_still_read() {
-    let Some((code, out)) = check_supervised_edited(|c| {
-        supervised_early(c, "{ within: 1943ms, drop: 0.1 m/s }").replacen(
-            "observes: { input: handler/kinematic_state }",
-            "observes: handler/kinematic_state",
-            1,
-        )
-    }) else {
-        eprintln!("Skipping: ros-launch-resolve not built");
-        return;
-    };
-    assert_eq!(code, 0, "{out}");
-    assert!(out.contains("info[supervised-early]"), "{out}");
-    for needle in [
-        "`observes:` is the old spelling of `observes.input:`",
-        "`drop:` is the old spelling of `decrease:`",
+fn a_string_observes_and_drop_are_refused() {
+    for (edit, needle) in [
+        (
+            (
+                "observes: { input: handler/kinematic_state }",
+                "observes: handler/kinematic_state",
+            ),
+            "write `observes: { input: handler/kinematic_state }`",
+        ),
+        (
+            ("decrease: 0.1 m/s", "drop: 0.1 m/s"),
+            "Renamed `decrease:` in v0.3.25 and refused since v0.3.27",
+        ),
     ] {
+        let Some((code, out)) = check_supervised_edited(|c| {
+            supervised_early(c, "{ within: 1943ms, decrease: 0.1 m/s }").replacen(edit.0, edit.1, 1)
+        }) else {
+            eprintln!("Skipping: ros-launch-resolve not built");
+            return;
+        };
+        assert_eq!(code, 3, "{out}");
         assert!(out.contains(needle), "expected `{needle}`:\n{out}");
     }
 }

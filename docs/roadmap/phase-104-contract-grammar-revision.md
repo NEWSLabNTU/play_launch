@@ -21,10 +21,19 @@ open question is answered there too: a schedule counts published releases
 `cli.<e>.link`, `integrity_levels:` deprecated for `use:`, `response`
 reworded) and v0.3.25 (`observes: { input, reached }`, `early.decrease`
 for `early.drop`; the static check stays in the consumer, so no
-`supervise.` extension context). **S3's release R is complete**; R+1
-refuses the old spellings. Open from it: `reached` cannot state an
-absolute value (the island's standstill is `|v| < 0.001 m/s`), which is
-T8's expressiveness. S4 planned. Design
+`supervise.` extension context). **S3 is complete (2026-11-16, rlm
+v0.3.27, play_launch 0.36.0)**: R+1 and R+2 ship in one release, by
+decision. Every S3 old spelling is a parse error naming its replacement
+(a `removed` row of the field table; a client's mode under `reaction:`
+is the consumer's `error[reaction-names-mode]`), the S3 rule-id and key
+renames are `Retired` (an old id in `acknowledged:` is `ack-stale`),
+`DEPRECATED_IN`/`DEPRECATED_USES` are empty, and `check-terms` lists the
+old words. The v0.3.24/v0.3.25 relocations therefore had no published
+deprecation window; v0.3.19 to v0.3.22 had one (0.35). `migrate` keeps
+every rewrite. The model is schema 6: `scope_paths` is `event_chains`
+(read backward-compatibly) and `drop_mps` is gone. Open from it:
+`reached` cannot state an absolute value (the island's standstill is
+`|v| < 0.001 m/s`), which is T8's expressiveness. S4 planned. Design
 of record: rlm `docs/design/grammar-revision/` (an overview and one file per
 topic, T1-T10, each with the verified issues, counts over 192 contracts,
 every method compared, and a recommendation). This phase orders that work.

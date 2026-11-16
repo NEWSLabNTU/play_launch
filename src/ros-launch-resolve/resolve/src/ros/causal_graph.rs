@@ -872,7 +872,7 @@ nodes:
 topics:
   scan:
     type: sensor_msgs/msg/LaserScan
-    rate_hz: 10.0
+    rate: 10Hz
     pub: [sensor/scan]
     sub: [filter/scan]
   filtered:
@@ -891,7 +891,7 @@ topics:
     type: nav_msgs/msg/Odometry
     pub: [controller/odom]
     sub: [localizer/odom]
-paths:
+event_chains:
   end_to_end:
     trigger: { input: [scan] }
     output: [filtered]

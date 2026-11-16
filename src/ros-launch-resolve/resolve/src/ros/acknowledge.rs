@@ -375,7 +375,7 @@ mod tests {
             .filter(|r| r.stage == Stage::Retired)
             .map(|r| (r.old.into(), r.new.into(), "p".into(), "p".into()))
             .collect();
-        assert_eq!(cases.len(), 14, "the S1-S5 ids and the M3 ids");
+        assert_eq!(cases.len(), 16, "the S1-S5 ids, the M3 ids and S3's two");
         assert!(
             !RENAMED_RULES.iter().any(|r| r.stage == Stage::Refused),
             "a refused rename is overdue for retirement (rlm `rule_names::overdue`)"

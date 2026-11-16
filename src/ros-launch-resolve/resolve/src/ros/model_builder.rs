@@ -51,7 +51,7 @@ fn resolved_override(
     let node_key =
         |node: &str, name: &str| format!("{}/{name}", resolve_node_ref(nodes, &fqn(ns, node)));
     let (table, key) = match site {
-        OverrideSite::ScopePath { name } => (model::OverrideTable::ScopePaths, scope_key(name)),
+        OverrideSite::ScopePath { name } => (model::OverrideTable::EventChains, scope_key(name)),
         OverrideSite::Topic { name } => (model::OverrideTable::Topics, qualify_name(ns, name)),
         OverrideSite::NodePath { node, name } => {
             (model::OverrideTable::NodePaths, node_key(node, name))
@@ -460,10 +460,7 @@ fn srv_contract(p: &ros_launch_manifest_types::SrvEndpointProps) -> Option<model
 /// its fallbacks). `service_transport` is the request leg its service
 /// states, taken when the client states none. `None` when nothing is
 /// stated.
-fn cli_contract(
-    p: &ros_launch_manifest_types::EndpointProps,
-    service_transport: Option<f64>,
-) -> Option<model::CliContract> {
+fn cli_contract(p: &ros_launch_manifest_types::EndpointProps) -> Option<model::CliContract> {
     let c = model::CliContract {
         call: p.call.map(call_mode),
         timeout_ms: p.timeout.as_ref().and_then(|t| t.ms()),
@@ -477,7 +474,7 @@ fn cli_contract(
                 .map(|d| d.as_millis_f64()),
         }),
         on_rejected: p.on_rejected.clone(),
-        max_transport_ms: p.max_transport.ms().or(service_transport),
+        max_transport_ms: p.max_transport.ms(),
         sources: BTreeMap::new(),
     };
     (c != model::CliContract::default()).then_some(c)
@@ -661,7 +658,7 @@ fn derived_source(b: Option<&Bound>) -> Option<model::DerivedSource> {
 
 /// A supervision's reaction, by its key in the model (phase 93): a node
 /// path's in `contracts.node_paths`, a scope path's in
-/// `contracts.scope_paths`.
+/// `contracts.event_chains`.
 fn reaction_key(
     nodes: &IndexMap<String, model::NodeInstance>,
     reaction: super::supervision::ReactionTarget,
@@ -1450,13 +1447,7 @@ pub fn build_system_model(
                 // rlm v0.1.69 (nano-ros RFC-0108 D8.3): how the client waits;
                 // v0.2.5 (phase 95): for how long, and what it does then.
                 let ep_ref = format!("{node_fqn}/{ep}");
-                let raw_ref = format!("{}/{ep}", fqn(&m.ns, name));
-                let service_transport = index
-                    .services
-                    .values()
-                    .find(|s| s.clients.contains(&ep_ref) || s.clients.contains(&raw_ref))
-                    .and_then(|s| s.max_transport_ms);
-                if let Some(mut c) = cli_contract(props, service_transport) {
+                if let Some(mut c) = cli_contract(props) {
                     c.sources = value_sources(&m.manifest, &format!("nodes.{name}.cli.{ep}"));
                     contracts.cli_endpoints.insert(ep_ref, c);
                 }
@@ -1545,7 +1536,6 @@ pub fn build_system_model(
                 early: early.map(|e| model::EarlyCheckContract {
                     within_ms: e.within.as_millis_f64(),
                     decrease: e.decrease_si,
-                    drop_mps: e.speed_mps().unwrap_or(0.0),
                 }),
             });
         }
@@ -1607,7 +1597,7 @@ pub fn build_system_model(
                 c.sources = value_sources(&m.manifest, &format!("paths.{}", p.path_name));
             }
         }
-        contracts.scope_paths.insert(
+        contracts.event_chains.insert(
             scope_scoped_key(&scope_key(Some(p.scope_id)), &p.path_name),
             c,
         );
@@ -1969,7 +1959,7 @@ pub fn build_system_model(
     }
     // The severity scale those entries were derived on. The loader reads
     // each hazard's scale from its own manifest (a used profile's, else
-    // `integrity_levels:`); the model has one field, so the first declared
+    // ISO 26262's); the model has one field, so the first declared
     // scale in scope order is carried, and an empty one means every
     // manifest used the ISO 26262 default.
     let mut scoped: Vec<usize> = index.manifests.keys().copied().collect();
@@ -2133,7 +2123,7 @@ mod tests {
     use ros_launch_manifest_types::{Manifest, duration::Duration};
 
     /// Phase 95 (rlm v0.2.5): a client's wait and fallbacks reach the model,
-    /// with the service's request leg taken where the client states none;
+    /// with its request leg taken from the link it names (v0.3.24);
     /// a server's `idempotent` and `stale_after` too; and a client stating
     /// nothing still has no entry.
     #[test]
@@ -2143,12 +2133,13 @@ mod tests {
              \x20     a: { call: blocking, timeout: 10ms, on_timeout: { retry: { attempts: 3, \
              backoff: 5ms }, then: { reaction: stop } }, on_rejected: { reaction: stop } }\n\
              \x20     b: {}\n\
-             \x20     c: { max_transport: 2ms }\n\
-             \x20 s:\n    srv:\n      op: { idempotent: true, stale_after: 50ms }\n",
+             \x20     c: { link: leg }\n\
+             \x20 s:\n    srv:\n      op: { idempotent: true, stale_after: 50ms }\n\
+             links:\n  leg: { max_transport: 2ms }\n",
         )
         .unwrap();
         let cli = &m.nodes["n"].cli;
-        let a = cli_contract(&cli["a"], Some(1.5)).unwrap();
+        let a = cli_contract(&cli["a"]).unwrap();
         assert_eq!(a.call, Some(model::CallMode::Blocking));
         assert_eq!(a.timeout_ms, Some(10.0));
         assert_eq!(
@@ -2160,12 +2151,12 @@ mod tests {
             })
         );
         assert_eq!(a.on_rejected.as_deref(), Some("stop"));
-        assert_eq!(a.max_transport_ms, Some(1.5), "the service's leg");
-        assert_eq!(cli_contract(&cli["b"], None), None);
+        assert_eq!(a.max_transport_ms, None, "no link, no leg");
+        assert_eq!(cli_contract(&cli["b"]), None);
         assert_eq!(
-            cli_contract(&cli["c"], Some(1.5)).unwrap().max_transport_ms,
+            cli_contract(&cli["c"]).unwrap().max_transport_ms,
             Some(2.0),
-            "the client's own leg wins"
+            "the link's leg"
         );
         let s = srv_contract(&m.nodes["s"].srv["op"]).unwrap();
         assert_eq!((s.idempotent, s.stale_after_ms), (Some(true), Some(50.0)));
@@ -2283,7 +2274,6 @@ mod tests {
                     "/s/asker/go".to_string(),
                     ros_launch_manifest_types::CallMode::Async,
                 )]),
-                max_transport_ms: None,
             },
         );
         let model =
@@ -3643,27 +3633,25 @@ mod tests {
                 ..Default::default()
             },
         );
-        manifest.integrity_levels =
-            vec!["none".to_string(), "sil1".to_string(), "sil2".to_string()];
         index
             .manifests
             .insert(0, resolved_manifest(0, "/perception", manifest));
         let derived = |level: &str, rank: usize| DerivedCriticality {
             level: level.to_string(),
             rank,
-            scale_len: 3,
+            scale_len: 5,
             hazard: "h".to_string(),
             role: "reacts to",
-            criticality: ros_launch_manifest_sched::Criticality::from_integrity(rank, 3),
+            criticality: ros_launch_manifest_sched::Criticality::from_integrity(rank, 5),
         };
-        // ASIL-D-like top of a three-level scale: High, overriding `low`.
+        // The top of ISO 26262's scale: High, overriding `low`.
         index
             .derived_criticality
-            .insert("/perception/tracker".to_string(), derived("sil2", 2));
+            .insert("/perception/tracker".to_string(), derived("ASIL_D", 4));
         // The no-requirement level: no fact at all, overriding `high`.
         index.derived_criticality.insert(
             "/perception/pipeline_container".to_string(),
-            derived("none", 0),
+            derived("QM", 0),
         );
         let model =
             build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
@@ -3673,10 +3661,6 @@ mod tests {
         assert_eq!(c.get("/perception/tracker"), Some(&Criticality::High));
         assert_eq!(c.get("/perception/pipeline_container"), None);
         assert_eq!(c.len(), 2, "{c:?}");
-        assert_eq!(
-            model.contracts.integrity_levels,
-            vec!["none".to_string(), "sil1".to_string(), "sil2".to_string()]
-        );
     }
 
     /// Every scope-scoped key -- scope path, hazard, function, mode -- and
@@ -3735,8 +3719,11 @@ mod tests {
                 .scopes
                 .contains_key("root_pkg/bringup.launch.xml")
         );
-        let sp = model.contracts.scope_paths.get(key).unwrap_or_else(|| {
-            panic!("event chain keyed {key}: {:?}", model.contracts.scope_paths)
+        let sp = model.contracts.event_chains.get(key).unwrap_or_else(|| {
+            panic!(
+                "event chain keyed {key}: {:?}",
+                model.contracts.event_chains
+            )
         });
         // A scope path carries no trigger fact; the model documents `None`.
         assert_eq!(sp.trigger, None);
@@ -3751,7 +3738,7 @@ mod tests {
         assert!(
             model
                 .contracts
-                .scope_paths
+                .event_chains
                 .contains_key(hazard.reaction.as_ref().unwrap())
         );
     }
@@ -3805,7 +3792,7 @@ contracts:
         assert!(
             model
                 .contracts
-                .scope_paths
+                .event_chains
                 .contains_key("/bringup.launch.xml/e2e")
         );
     }

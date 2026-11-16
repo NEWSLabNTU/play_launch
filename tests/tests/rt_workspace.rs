@@ -455,19 +455,19 @@ nodes:
   sensor_node:
     pub:
       points_raw:
-        min_rate_hz: 100
+        min_rate: 100Hz
     paths:
       tick:
-        trigger: { timer: { rate_hz: 100 } }
+        trigger: { timer: { rate: 100Hz } }
         output: [points_raw]
 
   filter_component:
     sub:
       points_raw:
-        min_rate_hz: 100
+        min_rate: 100Hz
     pub:
       points_filtered:
-        min_rate_hz: 100
+        min_rate: 100Hz
     paths:
       filter:
         trigger: { input: [points_raw] }
@@ -478,18 +478,18 @@ nodes:
     criticality: high
     sub:
       points_filtered:
-        min_rate_hz: 100
+        min_rate: 100Hz
         max_age: 50ms
     pub:
       cmd:
-        min_rate_hz: 100
+        min_rate: 100Hz
     paths:
       control:
         trigger: { input: [points_filtered] }
         output: [cmd]
         max_latency: 10ms
 
-paths:
+event_chains:
   points_to_cmd:
     trigger: { input: [/perception/points_raw] }
     output: [/control/cmd]
@@ -500,18 +500,18 @@ topics:
     type: std_msgs/msg/String
     pub: [sensor_node/points_raw]
     sub: [filter_component/points_raw]
-    rate_hz: 100
+    rate: 100Hz
 
   /perception/points_filtered:
     type: std_msgs/msg/String
     pub: [filter_component/points_filtered]
     sub: [control_node/points_filtered]
-    rate_hz: 100
+    rate: 100Hz
 
   /control/cmd:
     type: std_msgs/msg/String
     pub: [control_node/cmd]
-    rate_hz: 100
+    rate: 100Hz
 ",
     )
     .expect("failed to write tightened-budget overlay contract");
@@ -882,8 +882,8 @@ fn resolve_emits_joined_system_model() {
 
     // meta: schema version + provenance hashes present
     assert_eq!(
-        model["meta"]["version"], 5,
-        "SystemModel schema 5 (phase 99 T4)"
+        model["meta"]["version"], 6,
+        "SystemModel schema 6 (phase 104 S3)"
     );
     assert!(
         model["meta"]["inputs"]

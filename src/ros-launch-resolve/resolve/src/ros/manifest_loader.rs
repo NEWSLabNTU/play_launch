@@ -228,9 +228,6 @@ pub struct ResolvedService {
     /// Actions only (rlm v0.1.69): the declaring scope's `call:`, per client
     /// endpoint FQN it lists. A client whose scope stated none has no entry.
     pub client_calls: BTreeMap<String, ros_launch_manifest_types::CallMode>,
-    /// Services only (rlm v0.2.5, phase 95): `services.<s>.max_transport`,
-    /// the request leg for every client that states none of its own.
-    pub max_transport_ms: Option<f64>,
 }
 
 /// Resolved node path entry.
@@ -420,19 +417,6 @@ fn node_term(index: &ManifestIndex, fqn: &str, rel: &str) -> Option<TermKey> {
         .map(|(scope, name, _)| (scope, format!("nodes.{name}.{rel}")))
 }
 
-/// `services.<s>.max_transport` of the manifest that states the request leg
-/// of `service_fqn` (phase 95).
-fn service_transport_term(index: &ManifestIndex, service_fqn: &str) -> Option<TermKey> {
-    let mut ms: Vec<&ResolvedManifest> = index.manifests.values().collect();
-    ms.sort_by_key(|m| m.scope_id);
-    ms.into_iter().find_map(|m| {
-        m.manifest.services.iter().find_map(|(s, d)| {
-            (d.max_transport.is_some() && qualify_name(&m.ns, s) == service_fqn)
-                .then(|| (m.scope_id, format!("services.{s}.max_transport")))
-        })
-    })
-}
-
 /// The stated budgets a reaction walk charges (phase 10 B7), in the order
 /// charged and with the value each is charged (phase 93): the guard edge's
 /// `max_transport` unless a window's deadline starts the route, each hop's
@@ -458,7 +442,6 @@ pub(crate) fn walk_terms(
     {
         let key = match c.transport_from {
             "cli" => node_term(index, &c.node, &format!("cli.{}.max_transport", c.ep)),
-            "service" => service_transport_term(index, &c.service),
             _ => None,
         };
         let legs = if c.continues { 2.0 } else { 1.0 };
@@ -1479,28 +1462,6 @@ fn note_declared_not_charged(index: &mut ManifestIndex) {
                 });
             }
         }
-        for (service, decl) in &m.manifest.services {
-            let Some(t) = decl.max_transport.duration() else {
-                continue;
-            };
-            let key = format!("services.{service}.max_transport");
-            let fqn = qualify_name(&m.ns, service);
-            if index.charged_transport.contains(&format!("service:{fqn}")) {
-                continue;
-            }
-            out.push(Diagnostic {
-                rule_id: "declared-not-charged".to_string(),
-                severity: Severity::Info,
-                message: format!(
-                    "{}: `{key}: {}ms` on service '{fqn}' {call_tail}{}",
-                    super::value_rules::site(index, m.scope_id, &key),
-                    fmt_ms(t.as_millis_f64()),
-                    others(m.scope_id, &key)
-                ),
-                path: key,
-                span: None,
-            });
-        }
     }
     for m in manifests {
         for (node, decl) in &m.manifest.nodes {
@@ -2157,7 +2118,7 @@ pub(crate) struct CallCross {
     /// The service's FQN.
     pub(crate) service: String,
     /// The request leg charged on the success branch, and where it is stated
-    /// (`cli`, `service`, or `none`).
+    /// (`cli`, the link the client names, or `none`).
     pub(crate) transport_ms: f64,
     pub(crate) transport_from: &'static str,
     /// `call: blocking`.
@@ -2625,13 +2586,9 @@ pub(crate) fn walk_reaction_at(
         graph: &super::manifest_graph::GlobalDataflowGraph,
     ) -> CallCross {
         let props = graph.nodes.get(node_fqn).and_then(|n| n.clients.get(ep));
-        let (transport_ms, transport_from) = match (
-            props.and_then(|p| p.max_transport.ms()),
-            service.max_transport_ms,
-        ) {
-            (Some(ms), _) => (ms, "cli"),
-            (None, Some(ms)) => (ms, "service"),
-            (None, None) => (0.0, "none"),
+        let (transport_ms, transport_from) = match props.and_then(|p| p.max_transport.ms()) {
+            Some(ms) => (ms, "cli"),
+            None => (0.0, "none"),
         };
         let blocking =
             props.and_then(|p| p.call) == Some(ros_launch_manifest_types::CallMode::Blocking);
@@ -3083,9 +3040,6 @@ pub(crate) fn judge_calls(
             match c.transport_from {
                 "cli" => {
                     charged.insert(format!("cli:{}", c.client_ref()));
-                }
-                "service" => {
-                    charged.insert(format!("service:{}", c.service));
                 }
                 _ => {}
             }
@@ -5765,7 +5719,7 @@ fn derive_criticality_from_hazards(
                     scale.source,
                     if scale.default {
                         " Use the profile of your standard (`use: { iec61508: \"^1\" }`) or \
-                         declare `integrity_levels:` if the scale is not ISO 26262's"
+                         a local `<name>.profile.yaml` if the scale is no reference profile's"
                     } else {
                         ""
                     }
@@ -7567,28 +7521,6 @@ fn resolve_services(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifes
             if !existing.scope_ids.contains(&scope.id) {
                 existing.scope_ids.push(scope.id);
             }
-            // Phase 95: one request leg per service, as one transport per
-            // topic; two scopes stating different ones disagree.
-            match (existing.max_transport_ms, service_decl.max_transport.ms()) {
-                (Some(a), Some(b)) if (a - b).abs() > 1e-9 => {
-                    index.merge_diagnostics.push(Diagnostic {
-                        rule_id: "consistency".to_string(),
-                        severity: Severity::Error,
-                        message: format!(
-                            "service '{}' max_transport mismatch: {a}ms vs {b}ms in scope {} \
-                             ({}/{})",
-                            existing.fqn,
-                            scope.id,
-                            scope.pkg().unwrap_or("?"),
-                            scope.file().unwrap_or("?"),
-                        ),
-                        path: format!("services.{service_name}.max_transport"),
-                        span: None,
-                    });
-                }
-                (None, Some(b)) => existing.max_transport_ms = Some(b),
-                _ => {}
-            }
         } else {
             index.services.insert(
                 fqn.clone(),
@@ -7599,7 +7531,6 @@ fn resolve_services(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifes
                     clients,
                     scope_ids: vec![scope.id],
                     client_calls: BTreeMap::new(),
-                    max_transport_ms: service_decl.max_transport.ms(),
                 },
             );
         }
@@ -7680,7 +7611,6 @@ fn resolve_actions(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifest
                     clients,
                     scope_ids: vec![scope.id],
                     client_calls,
-                    max_transport_ms: None,
                 },
             );
         }
@@ -10044,7 +9974,7 @@ mod tests {
     fn detector_interval_is_per_fault_class() {
         use ros_launch_manifest_types::FaultKind as F;
         let props = fdti_sub(
-            "        min_rate_hz: 100\n        max_age: 20ms\n        \
+            "        min_rate: 100Hz\n        max_age: 20ms\n        \
              qos: { liveliness: manual_by_topic, lease_duration: 30ms, deadline: 25ms }\n        \
              on_violation: { on: [omission], reaction: r }\n",
         );
@@ -10057,7 +9987,7 @@ mod tests {
         assert_eq!(at(F::Loss), None);
         assert_eq!(at(F::Reported), None);
 
-        let bare = fdti_sub("        min_rate_hz: 100\n        on_violation: { reaction: r }\n");
+        let bare = fdti_sub("        min_rate: 100Hz\n        on_violation: { reaction: r }\n");
         for k in [F::Omission, F::Late, F::Loss] {
             assert_eq!(
                 detector_interval_ms(&bare, None, None, Some(10.0), k),
@@ -10146,7 +10076,7 @@ mod tests {
     fn hazard_unguarded_names_what_counts_and_what_is_declared_in_vain() {
         use ros_launch_manifest_types::FaultKind as F;
         let props = fdti_sub(
-            "        min_rate_hz: 100\n        max_age: 20ms\n        \
+            "        min_rate: 100Hz\n        max_age: 20ms\n        \
              on_violation: { on: [omission], reaction: r }\n",
         );
         let sub_ref = "/n/s".to_string();
@@ -10220,7 +10150,7 @@ mod tests {
                     // omission recommendation may not name it unqualified.
                     "max_age" => (fdti_sub("        max_age: 20ms\n"), None, None),
                     "drop.max_consecutive" => (
-                        fdti_sub("        min_rate_hz: 50\n"),
+                        fdti_sub("        min_rate: 50Hz\n"),
                         Some(DropSpec {
                             max_count: None,
                             max_consecutive: Some(ros_launch_manifest_types::spelled(
@@ -10741,7 +10671,7 @@ mod tests {
 
         let legacy = r#"
 version: 1
-paths:
+event_chains:
   e2e:
     trigger: { input: [points_raw] }
     output: [cmd]
@@ -10749,7 +10679,7 @@ paths:
 "#;
         let v2 = r#"
 version: 1
-paths:
+event_chains:
   e2e:
     trigger: { input: [points_raw] }
     output: [cmd]

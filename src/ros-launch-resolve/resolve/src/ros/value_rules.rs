@@ -1030,10 +1030,11 @@ const MIGRATE_HINT: &str = "`play_launch migrate <contract> --write` rewrites it
 /// a path's `input:` and a topic's `max_transport`, and `exit.on` are parse
 /// errors since v0.3.15.)
 ///
-/// rlm v0.3.19 (S3) renamed `functions:` to `capabilities:` and a hazard's
-/// `enters:` to `leaves:`; the parser notes each old key it reads, and this
-/// is the one warning for them. A client's `reaction:` naming a mode is the
-/// old spelling of `enters:`, told apart by the same lookup.
+/// The parser notes each old key it still reads in
+/// `deprecated_spellings`, and this is the one warning for them (none since
+/// rlm v0.3.27, which refuses every S3 spelling). A client's `reaction:`
+/// naming a mode is the old spelling of `enters:` (rlm v0.3.19), told apart
+/// by the same lookup, and refused as `reaction-names-mode` since v0.3.27.
 pub(crate) fn check_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>) {
     let mut manifests: Vec<_> = index.manifests.values().collect();
     manifests.sort_by_key(|m| m.scope_id);
@@ -1043,8 +1044,8 @@ pub(crate) fn check_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>
                 "deprecated-spelling",
                 Severity::Warning,
                 format!(
-                    "{}: `{}:` is the old spelling of `{}:` (an rlm S3 rename); it reads for \
-                     one release. Fix: write `{}:`; {MIGRATE_HINT}",
+                    "{}: `{}:` is the old spelling of `{}:`; it reads for one release. Fix: \
+                     write `{}:`; {MIGRATE_HINT}",
                     site(index, m.scope_id, &sp.at),
                     sp.old,
                     sp.new,
@@ -1054,99 +1055,14 @@ pub(crate) fn check_spellings(index: &ManifestIndex, diags: &mut Vec<Diagnostic>
             ));
         }
         call_spellings(index, m.scope_id, &m.manifest, diags);
-        // rlm v0.3.22: the supervision terms are the platform file's.
-        if m.manifest.supervision.is_some() {
-            let used = if index.platform_supervision.is_some() {
-                "The platform file states them, so this copy is not read"
-            } else {
-                "It reads for one release, as no platform file states them"
-            };
-            diags.push(diag(
-                "deprecated-spelling",
-                Severity::Warning,
-                format!(
-                    "{}: a contract's `supervision: {{ tick, switch }}` is deprecated (rlm \
-                     v0.3.22): the terms are facts of the target's processor and scheduler, \
-                     stated in its platform file (`supervision:` in \
-                     `<stem>.system.<target>.yaml`). {used}. Fix: move the block there",
-                    site(index, m.scope_id, "supervision"),
-                ),
-                "supervision".to_string(),
-            ));
-        }
-        // rlm v0.3.24: a rule's severity is the checker's `--deny`.
-        if m.manifest.policy.is_some() {
-            diags.push(diag(
-                "deprecated-spelling",
-                Severity::Warning,
-                format!(
-                    "{}: `policy:` is deprecated (rlm v0.3.24): a rule's severity is the \
-                     checker's, not the contract's. It reads for one release. Fix: delete it \
-                     and run `check --deny measured-unsupervised --deny \
-                     supervised-executor-long-callback` where it said `error`",
-                    site(index, m.scope_id, "policy"),
-                ),
-                "policy".to_string(),
-            ));
-        }
-        // rlm v0.3.24: a scale is a profile, named by `use:`.
-        if !m.manifest.integrity_levels.is_empty() {
-            diags.push(diag(
-                "deprecated-spelling",
-                Severity::Warning,
-                format!(
-                    "{}: `integrity_levels:` is deprecated (rlm v0.3.24): a scale is a \
-                     profile, named by `use:` (`iso26262`, `iec61508`, or a local \
-                     `<name>.profile.yaml`). It reads for one release. Fix: {MIGRATE_HINT}",
-                    site(index, m.scope_id, "integrity_levels"),
-                ),
-                "integrity_levels".to_string(),
-            ));
-        }
-        // rlm v0.3.24: a call's transport is on the link its client names.
-        for (s, decl) in &m.manifest.services {
-            if decl.max_transport.is_some() {
-                let at = format!("services.{s}.max_transport");
-                diags.push(diag(
-                    "deprecated-spelling",
-                    Severity::Warning,
-                    format!(
-                        "{}: a service's `max_transport:` is deprecated (rlm v0.3.24): a \
-                         transport is one endpoint's hop, stated on the link a client names. \
-                         It reads for one release. Fix: write `links.<name>: {{ max_transport: \
-                         <d> }}` and `link: <name>` on each client, then delete this key",
-                        site(index, m.scope_id, &at),
-                    ),
-                    at,
-                ));
-            }
-        }
-        for (n, node) in &m.manifest.nodes {
-            for (e, props) in &node.cli {
-                if props.link.is_none() && props.max_transport.is_some() {
-                    let at = format!("nodes.{n}.cli.{e}.max_transport");
-                    diags.push(diag(
-                        "deprecated-spelling",
-                        Severity::Warning,
-                        format!(
-                            "{}: a client's own `max_transport:` is deprecated (rlm v0.3.24): \
-                             the request leg's transport is stated on a link (`link: \
-                             <name>`), as a subscriber's is. It reads for one release. Fix: \
-                             {MIGRATE_HINT}",
-                            site(index, m.scope_id, &at),
-                        ),
-                        at,
-                    ));
-                }
-            }
-        }
     }
     g4_spellings(index, diags);
 }
 
 /// A client's mode is named by `enters:` (rlm v0.3.19), its event chain by
-/// `reaction:`: a mode under `reaction:` is the old spelling (warning), and
-/// `enters:` naming no mode of the scope is `call-enters-unknown-mode`.
+/// `reaction:`: a mode under `reaction:` is `reaction-names-mode` (an error
+/// since rlm v0.3.27), and `enters:` naming no mode of the scope is
+/// `call-enters-unknown-mode`.
 fn call_spellings(
     index: &ManifestIndex,
     scope_id: usize,
@@ -1193,14 +1109,13 @@ fn call_spellings(
                 } else if !enters && is_mode(name) {
                     let at = format!("{base}.{key}.reaction");
                     diags.push(diag(
-                        "deprecated-spelling",
-                        Severity::Warning,
+                        "reaction-names-mode",
+                        Severity::Error,
                         format!(
                             "{}: client '{node}.cli.{ep}': `{key}: {{ reaction: {name} }}` \
-                             names a mode, the spelling rlm v0.3.19 replaced: a call falls to a \
-                             mode with `enters: {name}`, and `reaction:` names an event chain. \
-                             It reads for one release. Fix: rename the key to `enters`; \
-                             {MIGRATE_HINT}",
+                             names a mode, refused since rlm v0.3.27 (renamed in v0.3.19): a \
+                             call falls to a mode with `enters: {name}`, and `reaction:` names \
+                             an event chain. Fix: rename the key to `enters`; {MIGRATE_HINT}",
                             site(index, scope_id, &at),
                         ),
                         at,

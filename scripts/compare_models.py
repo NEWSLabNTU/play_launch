@@ -410,7 +410,7 @@ def contracts_diffs(rust: Dict, python: Dict) -> List[str]:
         return diffs
 
     for section in ('pub_endpoints', 'sub_endpoints', 'srv_endpoints',
-                     'node_paths', 'scope_paths', 'topics', 'externals'):
+                     'node_paths', 'event_chains', 'scope_paths', 'topics', 'externals'):
         r_keys = set((rust or {}).get(section, {}) or {})
         p_keys = set((python or {}).get(section, {}) or {})
         if r_keys != p_keys:

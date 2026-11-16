@@ -157,9 +157,9 @@ fn resolve_merges_launch_and_contracts_into_full_model() {
     assert!(main["input"].is_null() || main["input"].as_array().is_none_or(|a| a.is_empty()));
     assert_eq!(main["max_latency_ms"], 15.0);
     // scope path: E2E budget + tolerance + drop, rooted at the root scope
-    let (e2e_key, e2e) = c["scope_paths"]
+    let (e2e_key, e2e) = c["event_chains"]
         .as_object()
-        .expect("scope_paths")
+        .expect("event_chains")
         .iter()
         .find(|(k, _)| k.ends_with("/e2e"))
         .expect("e2e event chain present");

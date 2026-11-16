@@ -31,8 +31,8 @@ use super::{
 };
 use ros_launch_manifest_check::{Diagnostic, Severity};
 use ros_launch_manifest_types::{
-    Bound, BudgetLevel, PolicySeverity, SourceKind, SuperviseMechanism, SuperviseReaction,
-    Supervision, SupervisionPlatform,
+    Bound, BudgetLevel, SourceKind, SuperviseMechanism, SuperviseReaction, Supervision,
+    SupervisionPlatform,
 };
 use std::collections::HashSet;
 
@@ -413,23 +413,11 @@ pub(crate) fn lowered_route(
     })
 }
 
-/// The platform terms that apply to scope `scope_id`: the platform file's
-/// `supervision:` for the target being checked (rlm v0.3.22), else, for one
-/// release, the deprecated contract copy: the scope's own, else the root
-/// contract's.
-fn platform(index: &ManifestIndex, scope_id: usize) -> Option<&SupervisionPlatform> {
-    if let Some(p) = &index.platform_supervision {
-        return Some(p);
-    }
-    let own = index
-        .manifests
-        .get(&scope_id)
-        .and_then(|m| m.manifest.supervision.as_ref());
-    own.or_else(|| {
-        let mut ms: Vec<_> = index.manifests.values().collect();
-        ms.sort_by_key(|m| m.scope_id);
-        ms.into_iter().find_map(|m| m.manifest.supervision.as_ref())
-    })
+/// The platform terms of a supervised budget: the platform file's
+/// `supervision:` for the target being checked (rlm v0.3.22; a contract's
+/// copy is refused since v0.3.27). The same for every scope.
+fn platform(index: &ManifestIndex, _scope_id: usize) -> Option<&SupervisionPlatform> {
+    index.platform_supervision.as_ref()
 }
 
 /// The detection delay of a supervised budget, ms, and how it divides; or
@@ -1133,26 +1121,6 @@ pub(crate) fn level_of(index: &ManifestIndex, term: &TermKey) -> Option<BudgetLe
         .and_then(|s| BudgetLevel::of(Some(s), None))
 }
 
-/// The severity of `policy.unsupervised_measured` for scope `scope_id`: its
-/// own `policy:`, else the root contract's; warning by default.
-fn policy_severity(index: &ManifestIndex, scope_id: usize) -> Severity {
-    let policy = index
-        .manifests
-        .get(&scope_id)
-        .and_then(|m| m.manifest.policy.as_ref())
-        .or_else(|| {
-            let mut ms: Vec<_> = index.manifests.values().collect();
-            ms.sort_by_key(|m| m.scope_id);
-            ms.into_iter().find_map(|m| m.manifest.policy.as_ref())
-        })
-        .and_then(|p| p.unsupervised_measured)
-        .unwrap_or_default();
-    match policy {
-        PolicySeverity::Warn => Severity::Warning,
-        PolicySeverity::Error => Severity::Error,
-    }
-}
-
 /// `supervised-executor-long-callback`: an `executor` supervision is checked
 /// in the spin loop, between callbacks. Its detection is the tick + the
 /// longest callback on that executor, and that is a bound only when every
@@ -1207,7 +1175,7 @@ fn executor_long_callback(index: &ManifestIndex, s: &Supervised) -> Option<Diagn
     let key = &s.term.1;
     Some(Diagnostic {
         rule_id: "supervised-executor-long-callback".to_string(),
-        severity: policy_severity(index, s.term.0),
+        severity: Severity::Warning,
         message: format!(
             "{}: `{key}` is supervised with `mechanism: executor`, which is checked in the spin \
              loop between callbacks; {}. Use `mechanism: timer` (an independent timer and \
@@ -1257,7 +1225,7 @@ pub(crate) fn check(index: &mut ManifestIndex) {
                 .as_ref()
                 .is_some_and(|s| s.kind == SourceKind::Measured)
         );
-        let severity = policy_severity(index, b.scope_id);
+        let severity = Severity::Warning;
         diags.push(Diagnostic {
             rule_id: "measured-unsupervised".to_string(),
             severity,
@@ -1265,7 +1233,8 @@ pub(crate) fn check(index: &mut ManifestIndex) {
                 "{}: `{}: {:.2}ms` is measured and nothing supervises it: an observed maximum, \
                  not a bound, and a run that exceeds it goes unnoticed. Supervise it \
                  (`supervise: {{ reaction, mechanism }}`), analyse it (`source: analysed`), or \
-                 accept it (`policy: {{ unsupervised_measured: warn }}`, the default)",
+                 accept it (this warning; `check --deny measured-unsupervised` makes it an \
+                 error)",
                 site(index, b.scope_id, &b.key),
                 b.key,
                 b.ms

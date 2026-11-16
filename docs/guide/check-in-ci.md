@@ -243,14 +243,15 @@ The rules that read it:
   supervises the WHOLE settle, from the safe state's command to standstill
   (the derived profile, or the written duration, plus the response). The
   platform arms due = command + settle + how late it sees standstill, and
-  a vehicle not at standstill by then starts the reaction. `observes:
-  <node>/<subscriber>` names the input standstill is seen on; the
-  observation delay is derived from the contract, never written on the
-  supervision: that input's period (the slowest of its topic's `rate`
-  and its `min_rate`) + the transport of the subscriber's `link:`
-  (a `max_transport` written on the subscriber itself is still read, and
-  reported as `deprecated-spelling`; `play_launch migrate` moves it onto
-  a link). No `observes`, no period or no transport: `supervised-unlowered`
+  a vehicle not at standstill by then starts the reaction. `observes: {
+  input: <node>/<subscriber>, reached: { field, <op>: <value> } }` names
+  the input the safe state is seen on and, optionally, the predicate on
+  its message that holds once it is reached (`{ field:
+  twist.twist.linear.x, le: 0.01 }`), which the model carries for the
+  realizer. The observation delay is derived from the contract, never
+  written on the supervision: that input's period (the slowest of its
+  topic's `rate` and its `min_rate`) + the transport of the subscriber's
+  `link:`. No `observes`, no period or no transport: `supervised-unlowered`
   says which. The overrun row for the degradation level charges the time before the
   settle + the settle at the hazard's entry speed + the observation + the
   detection + the reaction's route and settle:
@@ -270,14 +271,15 @@ The rules that read it:
   own total: when the degradation level itself does not fit, the degradation level's own row is the
   error and the overrun row says so as `info`, not a second error. The
   model carries the lowering on the safe state (`safe_state.supervise:
-  { response_ms, observe_ms, observes, reaction, mechanism }`).
+  { response_ms, observe_ms, observes, reached, reaction, mechanism }`).
 - A settle's response check (rlm v0.3.1, play_launch 0.22.0):
-  `supervise: { ..., early: { within, drop } }` on a supervised settle.
-  The settle's own due cannot tell a command that never took effect until
-  the whole settle has passed; the response check asks the weaker
-  question earlier: at command + `within` + the observation the vehicle
-  must have shed at least `drop` (a speed, against the one the platform
-  saw when it armed) or be at standstill, else the same reaction starts
+  `supervise: { ..., early: { within, decrease } }` on a supervised
+  settle. The settle's own due cannot tell a command that never took
+  effect until the whole settle has passed; the response check asks the
+  weaker question earlier: at command + `within` + the observation the
+  observed field must have decreased by at least `decrease` (a quantity
+  with its unit, `0.25 m/s` for a speed, against the value the platform
+  saw when it armed) or `reached` must hold, else the same reaction starts
   then. It gets its own overrun row, named `<level> (<settle>.supervise.
   early)`: the time before the settle + `within` + the observation + the
   detection + the reaction's route and settle, so a vehicle that does not
@@ -288,7 +290,7 @@ The rules that read it:
   ```
   hazard 'hpc_loss', degradation level 'emergency_stop': if the vehicle has not responded by
   `nodes.<op>.paths.on_timer.safe_state.settle.supervise.early`, before it 744.33ms
-  + response check at 1319.00ms (shed 0.25 m/s by then, else a miss)
+  + response check at 1319.00ms (a decrease of 0.25 m/s by then, else a miss)
   + observation 136.00ms (...) + detection 2.00ms + reaction event chain 'island.floor_override'
   39.33ms + settle 4484.33ms = 6725.00ms
   ```
@@ -296,13 +298,15 @@ The rules that read it:
   `supervised-early` checks the check itself: an error when `within` lies
   inside the settle's `response` (the plant is not required to slow yet:
   a nominal stop would be a miss) or at or past the settle's end (it
-  detects nothing earlier), and when `drop` exceeds the speed the nominal
-  profile sheds by `within`, which the settle's extension derives
+  detects nothing earlier), and when a `decrease` written as a speed
+  exceeds the speed the nominal profile sheds by `within`, which the settle's extension derives
   (`derive settle.speed_lost`, `vehicle.braking` 1.1.0: nothing during the
   response, then the jerk ramp, then the held deceleration); `info` with
-  the margin when it fits. A written settle derives no shed speed: the
-  `drop` is unchecked (a warning). The model carries it on the lowering:
-  `safe_state.supervise.early: { within_ms, drop_mps }`.
+  the margin when it fits. A written settle derives no shed speed, and a
+  `decrease` of another quantity has no derivation to compare with: either
+  is unchecked (a warning). The model carries it on the lowering:
+  `safe_state.supervise.early: { within_ms, decrease }`, `decrease` in SI
+  units.
 - A reaction that hands its output back and resumes it (rlm v0.3.2,
   play_launch 0.23.0): `supervise: { ..., resume: { after } }` on any
   supervision. Once the reaction has run, the path that normally publishes
@@ -340,7 +344,7 @@ The rules that read it:
 
 `--deny <rule>` (repeatable) makes every finding of that rule an error, in
 CI and locally alike, and a denied finding cannot be acknowledged. It
-replaces a contract's `policy:` (deprecated in 0.36): a rule's severity is
+replaces a contract's `policy:` (refused since 0.36): a rule's severity is
 the project's choice, not a fact of the system the contract describes.
 
 ## Service calls on a reaction route

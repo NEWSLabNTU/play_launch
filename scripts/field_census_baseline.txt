@@ -110,6 +110,9 @@ decrease           # EarlyCheckContract (model, rlm v0.3.25). The
                    # response check from the model; none does yet (the
                    # safety island's is configured by hand).
 
-drop_mps           # EarlyCheckContract (model, rlm v0.3.1), `decrease` when
-                   # it is a speed. Kept until the next model schema for a
-                   # reader before v0.3.25; there is none in either repo.
+integrity_levels   # Contracts (model): the scale of the profile a contract
+                   # uses, carried for a realizer that reports a hazard's
+                   # level by name. Since rlm v0.3.27 refused a contract's
+                   # own `integrity_levels:`, only the model field remains,
+                   # and no realizer reads it yet (nano-ros derives
+                   # criticality from `node_criticality`).

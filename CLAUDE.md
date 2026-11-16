@@ -699,6 +699,25 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-11-16**: **The S3 old spellings are refused** (phase 104 S3 R+1
+  and R+2 in one release, by decision; rlm v0.3.27, model schema 6). Each
+  is a `removed` field-table row naming its replacement and `migrate`, so
+  `check` exits 3 on one; the consumer refuses the one the parser cannot
+  see, a mode under a client's `reaction:` (`error[reaction-names-mode]`
+  in `value_rules::call_spellings`). Gone with them: `Manifest::policy`,
+  `Manifest::supervision` (the platform file's `supervision:` is the only
+  source, `supervision::platform`), `Manifest::integrity_levels` (a scale
+  is a profile, `extensions::integrity_scale`), a service's
+  `max_transport` and the walk's `"service"` request-leg fallback (a
+  client's leg is its link's), and any `max_transport` written on an
+  endpoint. The model's `contracts.scope_paths` is `event_chains` and
+  `OverrideTable::ScopePaths` is `EventChains` (old names read through
+  serde aliases); `EarlyCheckContract::drop_mps` is gone. Two things a
+  later change must keep: the parse helpers that read an old spelling
+  (`spelled_key`, `note_spelling`) and the consumer's warning loop over
+  `deprecated_spellings` stay for the next rename, idle; and `migrate`
+  still rewrites every S3 spelling, for good.
+
 - **2026-11-16**: **QoS enum values are checked** (issue #0083, rlm
   v0.3.26). `reliability`/`durability`/`history`/`liveliness` take a value
   from the ROS 2 set (`system_default`, `best_available` included) or

@@ -265,7 +265,7 @@ pub fn level_deadlines(m: &model::SystemModel, h: &model::HazardContract) -> Vec
         .into_iter()
         .filter_map(|(level, path)| {
             let within_ms = m.contracts.modes.get(&level)?.within_ms?;
-            let outputs = m.contracts.scope_paths.get(&path)?.output.clone();
+            let outputs = m.contracts.event_chains.get(&path)?.output.clone();
             Some(LevelDeadline {
                 settle_ms: settle_on(&outputs),
                 level,
@@ -282,7 +282,7 @@ pub fn hazard_sinks(contracts: &model::Contracts, h: &model::HazardContract) -> 
     let mut out: Vec<String> = Vec::new();
     for (_, path) in run_levels(contracts, h) {
         for t in contracts
-            .scope_paths
+            .event_chains
             .get(&path)
             .map(|p| p.output.clone())
             .unwrap_or_default()
@@ -304,7 +304,7 @@ pub fn reaction_sinks(contracts: &model::Contracts, reaction: Option<&String>) -
         .unwrap_or_default()
     {
         for t in contracts
-            .scope_paths
+            .event_chains
             .get(&path)
             .map(|p| p.output.clone())
             .unwrap_or_default()
@@ -611,7 +611,7 @@ impl ContractView {
                 view.lifecycle_nodes.insert(fqn.clone());
             }
         }
-        for (key, p) in &m.contracts.scope_paths {
+        for (key, p) in &m.contracts.event_chains {
             view.scope_paths.push(ScopePathView {
                 name: key.clone(),
                 input_topics: p.input.clone(),
@@ -879,7 +879,7 @@ mod tests {
         );
         assert_eq!(reaction_paths(&c, "a_chain"), vec!["a_chain".to_string()]);
         for (k, out) in [("tor_chain", "/tor"), ("stop_chain", "/brake")] {
-            c.scope_paths.insert(
+            c.event_chains.insert(
                 k.into(),
                 model::PathContract {
                     output: vec![out.to_string()],

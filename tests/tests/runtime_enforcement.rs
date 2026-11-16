@@ -224,7 +224,7 @@ nodes:
   talker:
     pub:
       chatter:
-        min_rate_hz: 1000
+        min_rate: 1000Hz
   listener:
     sub:
       chatter: {}
@@ -581,7 +581,7 @@ nodes:
   talker:
     pub:
       chatter:
-        min_rate_hz: 1000
+        min_rate: 1000Hz
   listener:
     sub:
       chatter: {}
@@ -632,7 +632,7 @@ nodes:
   talker:
     pub:
       chatter:
-        min_rate_hz: 0.1
+        min_rate: 0.1Hz
   listener:
     sub:
       chatter: {}

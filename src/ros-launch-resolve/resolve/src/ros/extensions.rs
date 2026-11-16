@@ -178,14 +178,14 @@ pub struct IntegrityScale {
     pub levels: Vec<String>,
     pub criticality: Vec<Option<ros_launch_manifest_sched::Criticality>>,
     /// Where the scale came from, for messages: `profile iec61508 1.1.0`,
-    /// `integrity_levels`, or `the default (ISO 26262)`.
+    /// or `the default (ISO 26262)`.
     pub source: String,
-    /// True when the contract wrote neither a profile nor `integrity_levels`.
+    /// True when the contract uses no profile.
     pub default: bool,
 }
 
 /// The scale scope `scope_id`'s hazards draw from: the profile it uses,
-/// else its `integrity_levels:` (split into thirds), else ISO 26262's.
+/// else ISO 26262's (`integrity_levels:` is refused since rlm v0.3.27).
 pub fn integrity_scale(index: &ManifestIndex, scope_id: usize) -> IntegrityScale {
     use ros_launch_manifest_sched::Criticality;
     let crit = |c: Option<&str>| match c? {
@@ -201,25 +201,11 @@ pub fn integrity_scale(index: &ManifestIndex, scope_id: usize) -> IntegrityScale
             default: false,
         };
     }
-    let (levels, source, default) = match index
-        .manifests
-        .get(&scope_id)
-        .filter(|m| !m.manifest.integrity_levels.is_empty())
-    {
-        Some(m) => (
-            m.manifest.integrity_levels.clone(),
-            "integrity_levels".to_string(),
-            false,
-        ),
-        None => (
-            ros_launch_manifest_types::integrity::DEFAULT_INTEGRITY_LEVELS
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-            "the default (ISO 26262)".to_string(),
-            true,
-        ),
-    };
+    let levels: Vec<String> = ros_launch_manifest_types::integrity::DEFAULT_INTEGRITY_LEVELS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let (source, default) = ("the default (ISO 26262)".to_string(), true);
     let n = levels.len();
     IntegrityScale {
         criticality: (0..n).map(|r| Criticality::from_integrity(r, n)).collect(),
@@ -638,18 +624,6 @@ pub fn prepare(index: &mut ManifestIndex) {
                     ),
                 ));
             }
-            if !m.manifest.integrity_levels.is_empty() {
-                diags.push(diag(
-                    "integrity-scale-conflict",
-                    Severity::Error,
-                    "integrity_levels".to_string(),
-                    format!(
-                        "`integrity_levels:` beside the profile {}: the profile states the scale \
-                         and its criticality map -- delete `integrity_levels:`",
-                        first.label()
-                    ),
-                ));
-            }
             let grammar = ros_launch_manifest_types::GRAMMAR_VERSION;
             if let Some(req) = &first.profile.requires_rlm
                 && !req.matches(grammar)
@@ -690,8 +664,7 @@ pub fn prepare(index: &mut ManifestIndex) {
 
 /// Phase 91 E8: a scope that writes the legacy vehicle keys (`entry_speed`,
 /// `settle: { decel, jerk }`) with no used extension declaring them, or
-/// whose hazards state a severity with no profile and no
-/// `integrity_levels:`, is refused with `deprecated-implicit-extension` (an
+/// whose hazards state a severity with no profile, is refused with `deprecated-implicit-extension` (an
 /// error since play_launch 0.20; 0.19 warned), naming the `use:` line
 /// `migrate` adds. The bundled `vehicle.braking` is still loaded, a
 /// plain-number `entry_speed` read as m/s, and the severities still read on
@@ -749,9 +722,7 @@ fn implicit_loads(
         v.dedup();
         v
     };
-    let implicit_scale = !severities.is_empty()
-        && !index.profiles.contains_key(&scope)
-        && m.manifest.integrity_levels.is_empty();
+    let implicit_scale = !severities.is_empty() && !index.profiles.contains_key(&scope);
     if implicit_scale {
         diags.push(diag(
             RULE,
@@ -761,7 +732,7 @@ fn implicit_loads(
                 "{file}: hazard integrity levels ({}) need a scale, and the contract names none: the \
                  implicit ISO 26262 scale is the bundled profile `iso26262` and must be named \
                  -- add `use: {{ iso26262: \"^1\" }}` (`play_launch migrate --write` does), or \
-                 declare `integrity_levels:`",
+                 another profile's",
                 severities.join(", ")
             ),
         ));

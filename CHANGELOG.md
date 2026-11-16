@@ -8,39 +8,69 @@ allowance heavily.
 
 ## Unreleased
 
+**Breaking (contracts; rlm v0.3.27, phase 104 S3):** every spelling the S3
+renames replaced is now refused, each with a parse error that names its
+replacement and `play_launch migrate <contract> --write`, which rewrites
+all of them. Run `migrate` on a contract written for 0.35 or earlier
+before upgrading. The refusals:
+
+| Refused | Write instead |
+|---|---|
+| `functions:` | `capabilities:` |
+| a hazard's `enters:` | `leaves:` |
+| a manifest-level `paths:` (and `paths.` in a mode override) | `event_chains:` |
+| `min_rate_hz`, `max_rate_hz`, `rate_hz` (a bare number of Hz) | `min_rate`, `max_rate`, `rate`, with a unit (`100Hz`) |
+| a contract's `supervision: { tick, switch }` | the same block in the target's platform file |
+| `policy:` | `check --deny <rule>` |
+| `integrity_levels:` | `use:` of a profile (`iso26262`, `iec61508`, or a local profile file) |
+| `max_transport` on an endpoint or a service | a link: `links.<l>.max_transport` and `link: <l>` on the subscriber or client |
+| `observes: <node>/<sub>` | `observes: { input: <node>/<sub> }` |
+| `early.drop` | `early.decrease` |
+| a mode under a client's `reaction:` | `enters:` (`error[reaction-names-mode]`) |
+
+The old rule ids `enters-unknown-mode` and `enters-not-removed` in
+`acknowledged:` match nothing (`ack-stale`); `migrate` rewrites them to
+`leaves-unknown-mode` and `leaves-not-removed`. The v0.3.24 and v0.3.25
+spellings were never published with a deprecation window: this release
+removes the S3 old spellings outright, one release after 0.35 shipped the
+v0.3.19 to v0.3.22 renames.
+
 - **Added: `check --deny <rule>`** (repeatable): every finding of that rule
   is an error, a mode's re-run of it included, and a denied finding cannot
-  be acknowledged. It replaces a contract's `policy:`, deprecated with rlm
-  v0.3.24 (a rule's severity is the project's, not a fact of the system):
-  `policy: { unsupervised_measured: error }` still reads for one release,
-  with `warning[deprecated-spelling]` naming the flags.
-- **Changed (contracts; rlm v0.3.24, phase 104 S3):** a client names the
-  link its request leg crosses (`cli.<e>.link: <l>`), as a subscriber does.
-  A client's own `max_transport:` and a service's are deprecated and read
-  for one release with a warning; `play_launch migrate` moves a client's
-  value onto a link of its own and reports a service's. `measure` proposes
-  a request leg's maximum as the link's `max_transport`.
-- **Changed (contracts; rlm v0.3.24):** `integrity_levels:` is deprecated: a
-  scale is a profile, named by `use:` (`iso26262`, `iec61508`, or a local
-  profile file). It reads for one release; `migrate` writes the `use:` entry
-  when the list is a reference profile's scale. The fixtures are migrated.
-- **Changed (contracts; rlm v0.3.25, phase 104 S3):** a supervised settle
-  says what is measured. `observes:` is a map, `{ input, reached }`, where
-  `reached` is a predicate in `when:`'s grammar (`{ field:
-  twist.twist.linear.x, le: 0.01 }`) that holds once the safe state is
-  reached; the model carries it, so a realizer judges the settle without
-  guessing the field. `early.decrease` replaces `early.drop`: the least the
-  observed field decreases by `within`, a quantity in any unit; the static
-  check compares a speed with the extension's derived shed speed and warns
-  that another quantity is unchecked. The old string `observes:` and `drop:`
-  read for one release with `warning[deprecated-spelling]`; `migrate`
-  rewrites both. Messages say "a decrease of 0.1 m/s" and "the settle's
-  response".
+  be acknowledged. A rule's severity is the project's, not a fact of the
+  system, so it is the checker's flag rather than a contract key.
+- **Changed (contracts; rlm v0.3.24):** a client names the link its request
+  leg crosses (`cli.<e>.link: <l>`), as a subscriber does. `measure`
+  proposes a request leg's maximum as the link's `max_transport`.
+- **Changed (contracts; rlm v0.3.25):** a supervised settle says what is
+  measured. `observes:` is a map, `{ input, reached }`, where `reached` is a
+  predicate in `when:`'s grammar (`{ field: twist.twist.linear.x, le: 0.01
+  }`) that holds once the safe state is reached; the model carries it, so a
+  realizer judges the settle without guessing the field. `early.decrease`
+  is the least the observed field decreases by `within`, a quantity in any
+  unit; the static check compares a speed with the extension's derived shed
+  speed and warns that another quantity is unchecked. Messages say "a
+  decrease of 0.1 m/s" and "the settle's response".
+- **Changed (model schema 6, rlm v0.3.27):** `contracts.scope_paths` is
+  `contracts.event_chains`, and a mode override's table `scope_paths` is
+  `event_chains`; a response check no longer carries `drop_mps` (read
+  `decrease`). Older models still load: the old names are read, and a
+  `drop_mps` alone is read as the decrease. A reader before rlm v0.3.27
+  refuses a schema-6 model by its version.
+- **Fixed (contracts; rlm v0.3.26, #0083):** a contract's QoS enum values
+  are checked. A value outside the ROS 2 set (`transient-local`) refuses the
+  contract naming key, value and set; `system_default` is a warning; a
+  `$(var <arg>)` must name a contract arg and is evaluated per scope. An
+  unknown durability is no longer "compatible" with anything. An args
+  failure (a required arg not passed, a value outside `choices:`) is
+  `error[manifest-args]` naming file, line and scope, where the contract
+  used to be dropped with a log line.
+- **Fixed:** a node's `<param from>` file is recorded in the model's
+  `meta.inputs`, so a model whose parameter file changed no longer reads as
+  current to a consumer that re-resolves only stale models.
 - **Changed: `play_launch migrate` repeats its passes until nothing
   changes**, so a rewrite that exposes another (`severity_levels:` to
   `integrity_levels:` to `use:`) finishes in one run.
-- **Fixed:** the `deprecated-spelling` message for an S3 rename no longer
-  names v0.3.19 for every rename.
 
 ## 0.35.1 - 2026-11-15
 
