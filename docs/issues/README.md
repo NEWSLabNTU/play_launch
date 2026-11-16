@@ -17,6 +17,11 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0089** -- the Rust parser drops a node's missing `<param from=>` file
+with a WARN and resolves on; `--parser python` and `ros2 launch` fail on it.
+A resolve used as a pre-flight check passes a launch that cannot start. See
+`0089-*`.
+
 **#0088** -- the Rust parser reports a missing include as `IO error: No such
 file or directory (os error 2)` with neither the missing path nor the
 including file, and then hints at `--parser python`, which names the file.
