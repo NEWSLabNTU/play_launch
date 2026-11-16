@@ -17,6 +17,13 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0084** -- shutdown ignores an action's `sigterm_timeout` and `sigkill_timeout`
+and starts with SIGTERM: each node gets a fixed 2 s, then SIGTERM and SIGKILL 5 s
+later, where `ros2 launch` sends SIGINT and waits as the launch file declares. A
+stub declared with 20 s + 20 s exits at 10 s under play_launch, at 40 s under
+`ros2 launch`. Found by scenario-world-bridge, whose stack supervisor was killed
+part way through its stop. See `0084-*`.
+
 **#0082** -- `--container-mode observable` turns a
 `component_container_isolated` into a play_launch_container with ONE
 SingleThreadedExecutor for all its components (only `component_container_mt`
