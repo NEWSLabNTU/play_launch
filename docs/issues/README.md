@@ -17,6 +17,18 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0092** -- the Rust parser does not apply `SetEnvironmentVariable` to
+`os.environ`, so a later `OpaqueFunction` reads the old value; `ros2 launch`
+and `--parser python` read the new one. See `0092-*`.
+
+**#0091** -- `--parser python` still ignores `OnProcessExit(on_exit=Shutdown)`
+(#0081 reached the Rust parser only): the target respawns where `ros2 launch`
+shuts down. See `0091-*`.
+
+**#0090** -- a conditional `OnProcessExit` handler (a callable `on_exit`, e.g.
+shut down on exit code 2) is ignored under both parsers; a respawning node
+loops where `ros2 launch` ends the launch. See `0090-*`.
+
 **#0089** -- the Rust parser drops a node's missing `<param from=>` file
 with a WARN and resolves on; `--parser python` and `ros2 launch` fail on it.
 A resolve used as a pre-flight check passes a launch that cannot start. See
