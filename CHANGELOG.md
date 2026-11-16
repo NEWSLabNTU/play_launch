@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.36.0 - 2026-11-17
 
 **Breaking (contracts; rlm v0.3.27, phase 104 S3):** every spelling the S3
 renames replaced is now refused, each with a parse error that names its
