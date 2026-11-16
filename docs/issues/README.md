@@ -17,6 +17,12 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0085** -- `<unset_env>` in a scoped group, and a container's
+`launch-prefix`, never reach the process play_launch spawns, where `ros2
+launch` applies both. The ZED X camera on AutoSDV fails to open with
+`DISPLAY` or VirtualGL's `LD_PRELOAD` faker set, so a launch from a TurboVNC
+desktop cannot drop them for the camera alone. See `0085-*`.
+
 **#0084** -- shutdown ignores an action's `sigterm_timeout` and `sigkill_timeout`
 and starts with SIGTERM: each node gets a fixed 2 s, then SIGTERM and SIGKILL 5 s
 later, where `ros2 launch` sends SIGINT and waits as the launch file declares. A
