@@ -327,3 +327,59 @@ fn a_python_expression_is_performed_when_its_condition_is() {
         ["/literal", "/not_composed", "/sim_mode"]
     );
 }
+
+/// Issue #0086's reproduction: `context.perform_substitution` of an
+/// `EnvironmentVariable` with a default, as Autoware 2.1.0's
+/// `component_state_monitor.launch.py` does. Stock (Humble,
+/// `stock_oracle.py`): the default, `0`.
+///
+/// Before the fix: `AttributeError: 'launch.substitutions.EnvironmentVariable'
+/// object has no attribute 'perform'`.
+#[test]
+fn an_environment_variable_performs_from_an_opaque_function() {
+    let _guard = python_test_guard();
+    assert_eq!(fqns(&resolve("env_perform_repro")), ["/agnocast_0"]);
+}
+
+/// Issue #0086: every mock substitution performs, through
+/// `context.perform_substitution` and `launch.utilities.perform_substitutions`,
+/// and `DeclareLaunchArgument(default_value=EnvironmentVariable(...))` (Autoware
+/// 2.1.0's `agnocast_env.launch.py`) sets a configuration a later node and an
+/// included file read. Stock (Humble, `tests/stock_parity/stock_oracle.py`):
+/// these 24 nodes.
+///
+/// Before the fix the file failed to load with `AttributeError:
+/// 'launch.substitutions.EnvironmentVariable' object has no attribute
+/// 'perform'`, which every Autoware 2.1.0 launch hit.
+#[test]
+fn every_substitution_performs_from_python() {
+    let _guard = python_test_guard();
+    let mut expected = vec![
+        "/agnocast_0",
+        "/set_from_set_env",
+        "/missing_raised",
+        "/subdefault_0",
+        "/text_literal",
+        "/lc_0",
+        "/preload_empty",
+        "/lcdefault_dflt",
+        "/lcmissing_raised",
+        "/join_a_b_cd",
+        "/joinabs__abs_b",
+        "/dir_ok",
+        "/file_ok",
+        "/anon_stable",
+        "/not_true",
+        "/and_false",
+        "/or_true",
+        "/eq_true",
+        "/neq_true",
+        "/ifelse_yes",
+        "/pyexpr_5",
+        "/subs_afrom_set_env",
+        "/later_0",
+        "/child_0_from_set_env",
+    ];
+    expected.sort();
+    assert_eq!(fqns(&resolve("env_perform")), expected);
+}

@@ -37,6 +37,16 @@ impl TextSubstitution {
     fn __repr__(&self) -> String {
         format!("TextSubstitution(text='{}')", self.text)
     }
+
+    #[getter]
+    fn text(&self) -> String {
+        self.text.clone()
+    }
+
+    /// `launch`'s: the text itself.
+    fn perform(&self, _context: &Bound<'_, PyAny>) -> String {
+        self.text.clone()
+    }
 }
 
 /// Mock PathJoinSubstitution
@@ -80,24 +90,19 @@ impl PathJoinSubstitution {
         format!("PathJoinSubstitution({} parts)", self.substitutions.len())
     }
 
-    /// Perform the substitution - resolve all parts and join with '/'
-    ///
-    /// This method calls perform() on each substitution if available, or falls back to __str__
+    /// `launch`'s: each component (itself a `SomeSubstitutionsType`)
+    /// performed, then `str(pathlib.Path(*components))` — an absolute
+    /// component restarts the path, as it does there.
     fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let mut parts = Vec::new();
         for obj in &self.substitutions {
-            // Try to call perform() if available (for FindPackageShare, LaunchConfiguration, etc.)
-            let part = if let Ok(result) = obj.call_method1(py, "perform", (context,)) {
-                result.extract::<String>(py)?
-            } else if let Ok(s) = obj.extract::<String>(py) {
-                s
-            } else {
-                // Fallback to __str__
-                obj.call_method0(py, "__str__")?.extract::<String>(py)?
-            };
-            parts.push(part);
+            parts.push(sub_utils::perform_or_to_string(obj, py, context)?);
         }
-        Ok(parts.join("/"))
+        let path = py
+            .import("pathlib")?
+            .getattr("Path")?
+            .call1(pyo3::types::PyTuple::new(py, parts)?)?;
+        Ok(path.str()?.to_string())
     }
 }
 
@@ -160,64 +165,10 @@ impl FindPackageShare {
         "FindPackageShare(...)".to_string()
     }
 
-    /// Perform the substitution - resolve to actual package path
-    ///
-    /// In ROS 2, this method is called with a launch context to resolve the package path.
-    /// We implement the same package finding logic as the Rust substitution system.
-    fn perform(&self, py: Python, _context: &Bound<'_, PyAny>) -> PyResult<String> {
-        use pyo3::types::PyList;
-
-        // Extract package name (could be string, LaunchConfiguration, or list)
-        let pkg_name = if let Ok(s) = self.package_name.extract::<String>(py) {
-            s
-        } else if let Ok(list) = self.package_name.bind(py).cast::<PyList>() {
-            // Handle list case: concatenate all elements after performing them
-            let mut result = String::new();
-            for item in list.iter() {
-                // Try to extract as string
-                if let Ok(s) = item.extract::<String>() {
-                    result.push_str(&s);
-                }
-                // Try calling perform() if it exists (for LaunchConfiguration, etc.)
-                else if item.hasattr("perform")? {
-                    if let Ok(performed) = item.call_method1("perform", (_context,))
-                        && let Ok(s) = performed.extract::<String>()
-                    {
-                        result.push_str(&s);
-                        continue;
-                    }
-                    // Fallback to __str__ if perform fails
-                    if let Ok(str_result) = item.call_method0("__str__")
-                        && let Ok(s) = str_result.extract::<String>()
-                    {
-                        result.push_str(&s);
-                    }
-                }
-                // Try calling __str__
-                else if let Ok(str_result) = item.call_method0("__str__")
-                    && let Ok(s) = str_result.extract::<String>()
-                {
-                    result.push_str(&s);
-                }
-            }
-            result
-        } else {
-            // Try calling perform() on the object if it has it (for LaunchConfiguration)
-            let obj_ref = self.package_name.bind(py);
-            if obj_ref.hasattr("perform")? {
-                if let Ok(result) = obj_ref.call_method1("perform", (_context,)) {
-                    result.extract::<String>()?
-                } else {
-                    // Fallback to __str__
-                    obj_ref.call_method0("__str__")?.extract::<String>()?
-                }
-            } else {
-                // Fallback to __str__
-                obj_ref.call_method0("__str__")?.extract::<String>()?
-            }
-        };
-
-        // Resolve package path using ROS package finding logic
+    /// `launch_ros`'s: the package's share directory, the way `ament_index`
+    /// finds it; a package it does not find is an error.
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
+        let pkg_name = sub_utils::perform_or_to_string(&self.package_name, py, context)?;
         Self::find_package_share(&pkg_name).ok_or_else(|| {
             pyo3::exceptions::PyFileNotFoundError::new_err(format!(
                 "Package '{}' not found. Ensure the package is installed and sourced.",
@@ -260,6 +211,15 @@ impl ThisLaunchFileDir {
 
     fn __repr__(&self) -> String {
         "ThisLaunchFileDir()".to_string()
+    }
+
+    /// `launch`'s: the directory of the file being run (absolute). The file
+    /// crosses the C ABI in `ContextState.current_file`; where none is set,
+    /// the `$(dirname)` token the host rewrites once the file returns.
+    fn perform(&self, _context: &Bound<'_, PyAny>) -> String {
+        use play_launch_parser::substitution::types::Substitution;
+        sub_utils::resolve_with_engine(Substitution::Dirname)
+            .unwrap_or_else(|_| "$(dirname)".to_string())
     }
 }
 
@@ -361,24 +321,45 @@ impl FileContent {
 ///
 /// Generates an anonymous name with a random suffix
 #[pyclass(module = "launch.substitutions", from_py_object)]
-#[derive(Clone)]
 pub struct AnonName {
-    name: String,
+    name: Py<PyAny>,
+}
+
+impl Clone for AnonName {
+    fn clone(&self) -> Self {
+        Python::attach(|py| Self {
+            name: self.name.clone_ref(py),
+        })
+    }
 }
 
 #[pymethods]
 impl AnonName {
     #[new]
-    fn new(name: String) -> Self {
+    fn new(name: Py<PyAny>) -> Self {
         Self { name }
     }
 
-    fn __str__(&self) -> String {
-        format!("$(anon {})", self.name)
+    fn __str__(&self, py: Python) -> PyResult<String> {
+        Ok(format!(
+            "$(anon {})",
+            sub_utils::pyobject_to_string(py, &self.name)?
+        ))
     }
 
-    fn __repr__(&self) -> String {
-        format!("AnonName('{}')", self.name)
+    fn __repr__(&self, py: Python) -> String {
+        let name =
+            sub_utils::pyobject_to_string(py, &self.name).unwrap_or_else(|_| "<name>".to_string());
+        format!("AnonName('{name}')")
+    }
+
+    /// `launch`'s: `<name>_<host>_<pid>_<random>`, computed once per name
+    /// for the launch — the engine's `$(anon)`, so the Python and XML
+    /// spellings of one name are the same name.
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
+        use play_launch_parser::substitution::types::Substitution;
+        let name = sub_utils::perform_or_to_string(&self.name, py, context)?;
+        sub_utils::resolve_with_engine(Substitution::Anon(vec![Substitution::Text(name)]))
     }
 }
 
@@ -417,9 +398,7 @@ impl ExecutableInPackage {
         let pkg_str = sub_utils::pyobject_to_string(py, &self.package)?;
         let exec_str = sub_utils::pyobject_to_string(py, &self.executable)?;
 
-        // Return a placeholder path that represents the executable location
-        // In static analysis, we can't actually find the executable
-        Ok(format!("$(find-exec {} {})", pkg_str, exec_str))
+        Ok(format!("$(exec-in-pkg {} {})", exec_str, pkg_str))
     }
 
     fn __repr__(&self, py: Python) -> String {
@@ -430,12 +409,12 @@ impl ExecutableInPackage {
         format!("ExecutableInPackage('{}', '{}')", pkg_str, exec_str)
     }
 
+    /// `launch_ros`'s: `<prefix>/lib/<package>/<executable>`, an error when
+    /// it is not there (the engine's `$(exec-in-pkg)`).
     fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let pkg_str = sub_utils::perform_or_to_string(&self.package, py, context)?;
         let exec_str = sub_utils::perform_or_to_string(&self.executable, py, context)?;
-
-        // Return a placeholder path
-        Ok(format!("$(find-exec {} {})", pkg_str, exec_str))
+        sub_utils::resolve_call("exec-in-pkg", vec![exec_str, pkg_str])
     }
 }
 
@@ -472,9 +451,11 @@ impl FindPackage {
         format!("FindPackage('{}')", pkg_str)
     }
 
+    /// `launch_ros`'s `FindPackagePrefix`: the package's install prefix,
+    /// an error when `ament_index` does not find it.
     fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let pkg_str = sub_utils::perform_or_to_string(&self.package, py, context)?;
-        Ok(format!("$(find-pkg-prefix {})", pkg_str))
+        sub_utils::resolve_call("find-pkg-prefix", vec![pkg_str])
     }
 }
 
@@ -499,16 +480,16 @@ impl LaunchLogDir {
     }
 
     fn __str__(&self) -> String {
-        // Return placeholder - can't determine actual log dir in static analysis
-        "$(launch-log-dir)".to_string()
+        "$(launch_log_dir)".to_string()
     }
 
     fn __repr__(&self) -> String {
         "LaunchLogDir()".to_string()
     }
 
-    fn perform(&self, _py: Python, _context: &Bound<'_, PyAny>) -> PyResult<String> {
-        Ok("$(launch-log-dir)".to_string())
+    /// The engine's `$(launch_log_dir)`: `ROS_LOG_DIR`, else `~/.ros/log`.
+    fn perform(&self, _context: &Bound<'_, PyAny>) -> PyResult<String> {
+        sub_utils::resolve_call("launch_log_dir", vec![])
     }
 }
 
@@ -538,8 +519,8 @@ impl ThisLaunchFile {
         // `ThisLaunchFile` to the frontends under exactly that name
         // (`@expose_substitution('filename')`), and its `perform` returns the
         // full `current_launch_file_path`. The host rewrites it in
-        // `traverser/python_exec.rs` once execution of this file returns; this
-        // object cannot, having its own `LaunchContext` with no current file.
+        // `traverser/python_exec.rs` once execution of this file returns;
+        // `perform` resolves it directly when the current file is known.
         // It used to return `$(this-launch-file)`, which nothing knew how to
         // read, so the literal reached the record and the command line
         // (issue 0041).
@@ -550,7 +531,11 @@ impl ThisLaunchFile {
         "ThisLaunchFile()".to_string()
     }
 
-    fn perform(&self, _py: Python, _context: &Bound<'_, PyAny>) -> PyResult<String> {
-        Ok("$(filename)".to_string())
+    /// `launch`'s: the absolute path of the file being run; where none is
+    /// set, the `$(filename)` token the host rewrites.
+    fn perform(&self, _context: &Bound<'_, PyAny>) -> String {
+        use play_launch_parser::substitution::types::Substitution;
+        sub_utils::resolve_with_engine(Substitution::Filename)
+            .unwrap_or_else(|_| "$(filename)".to_string())
     }
 }

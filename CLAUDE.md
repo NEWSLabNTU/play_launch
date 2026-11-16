@@ -699,6 +699,16 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-11-17**: **Every mock substitution performs, through the engine**
+  (#0086). `context.perform_substitution` calls `perform(context)` strictly,
+  as `launch` does, so a mock substitution without one fails the whole file
+  (`EnvironmentVariable` lacked it, and no Autoware 2.1.0 launch loaded). A
+  mock's `perform` takes its value from the parser's own evaluator,
+  `pyexec/src/api/utils.rs::resolve_with_engine`/`resolve_call` over
+  `Substitution::resolve`, never a second implementation, so the Python and
+  XML spellings of one substitution cannot disagree; a failure is
+  `SubstitutionFailure`. A new mock substitution needs both.
+
 - **2026-11-16**: **The S3 old spellings are refused** (phase 104 S3 R+1
   and R+2 in one release, by decision; rlm v0.3.27, model schema 6). Each
   is a `removed` field-table row naming its replacement and `migrate`, so

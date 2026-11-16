@@ -1,7 +1,7 @@
 ---
 id: 86
 title: "The Rust parser's mock substitutions have no `perform()`, so `context.perform_substitution(EnvironmentVariable(...))` fails"
-status: open
+status: resolved
 type: bug
 severity: high
 ---
@@ -82,3 +82,49 @@ an `EnvironmentVariable`.
 ## Workaround
 
 `--parser python`. The golf cart has to use it for 2.1.0 until this is fixed.
+
+## Resolution (2026-11-17)
+
+Every mock substitution in the Python half (`pyexec`) now has a
+`perform(context)` with stock `launch`/`launch_ros` semantics, and
+`context.perform_substitution` performs strictly as stock does (a string or a
+list is accepted too, performed as `perform_substitutions` would). The value
+comes from the parser's own substitution engine
+(`Substitution::resolve`, the evaluator `$(...)` in XML and YAML uses), via
+`utils::resolve_with_engine`/`resolve_call`, so a Python and an XML spelling
+of one substitution cannot disagree:
+
+- `EnvironmentVariable`: the launch environment (process environment plus
+  every `SetEnvironmentVariable` executed so far), else the default; unset
+  with no default raises `SubstitutionFailure`. `name` and `default_value`
+  are now `SomeSubstitutionsType`, as in `launch`.
+- `TextSubstitution`: its text. `ThisLaunchFileDir`/`ThisLaunchFile`: the
+  file being run (it crosses the C ABI in `ContextState.current_file`),
+  falling back to the host-rewritten token only when none is set.
+- `AnonName`: the engine's `$(anon)`, one name per launch.
+- `Not`/`And`/`Or` (and the new `AnySubstitution`/`AllSubstitution`),
+  `EqualsSubstitution`/`NotEqualsSubstitution`, `IfElseSubstitution`: the
+  engine's boolean rules (`true`/`false`/`1`/`0`, anything else
+  `SubstitutionFailure`; equality of booleans and numbers by value).
+- `PathJoinSubstitution`: `str(pathlib.Path(*components))`, so an absolute
+  component restarts the path and a list component is concatenated.
+- `FindPackage` (now also `FindPackagePrefix`), `ExecutableInPackage`,
+  `FindExecutable`, `Parameter`, `LaunchLogDir`: resolved by the engine
+  instead of returning a `$(...)` token. Two of those tokens
+  (`$(find-executable)`, `$(launch-log-dir)`) named nothing the grammar knew
+  and reached the record literally.
+- `LocalSubstitution` exists (it was an `ImportError`); it evaluates
+  `context.locals.<expression>` as stock does.
+- `SubstitutionFailure` is exported from `launch.substitutions` (a
+  `RuntimeError`, as in `launch`); `LaunchConfiguration` raises it too.
+
+No C ABI change: nothing new crosses the boundary.
+
+Tests: `execution_semantics.rs`
+(`an_environment_variable_performs_from_an_opaque_function`, the
+reproduction above; `every_substitution_performs_from_python`, 24 nodes
+including the `DeclareLaunchArgument(default_value=EnvironmentVariable(...))`
+pattern read by a later node and an included file), and the stock-parity case
+`tests/stock_parity/cases/env_perform`. Expectations are stock Humble's
+(`stock_oracle.py`). With the source change stashed, the reproduction fails
+with this issue's `AttributeError`.

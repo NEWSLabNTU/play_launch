@@ -8,8 +8,8 @@ mod package;
 
 // Re-export all public types so `substitutions::LaunchConfiguration` etc. still work
 pub use conditional::{
-    AndSubstitution, EqualsSubstitution, IfElseSubstitution, NotEqualsSubstitution,
-    NotSubstitution, OrSubstitution,
+    AllSubstitution, AndSubstitution, AnySubstitution, EqualsSubstitution, IfElseSubstitution,
+    NotEqualsSubstitution, NotSubstitution, OrSubstitution,
 };
 pub use lookup::{
     BooleanSubstitution, EnvironmentVariable, FindExecutable, LaunchConfiguration, Parameter,
@@ -176,5 +176,50 @@ impl Command {
 
     fn __repr__(&self) -> String {
         "Command(...)".to_string()
+    }
+}
+
+/// Mock LocalSubstitution
+///
+/// Python equivalent:
+/// ```python
+/// from launch.substitutions import LocalSubstitution
+/// LocalSubstitution('event.returncode')
+/// ```
+///
+/// `launch`'s `perform` is `eval('context.locals.' + expression)`. Nothing
+/// this frontend models lives in `context.locals` (an event handler's
+/// `event` never fires here), so performing one fails as it does in stock
+/// `launch` outside its handler.
+#[pyclass(module = "launch.substitutions", from_py_object)]
+#[derive(Clone)]
+pub struct LocalSubstitution {
+    #[pyo3(get)]
+    expression: String,
+}
+
+#[pymethods]
+impl LocalSubstitution {
+    #[new]
+    #[pyo3(signature = (expression, description=None))]
+    fn new(expression: String, description: Option<Py<PyAny>>) -> Self {
+        let _ = description;
+        Self { expression }
+    }
+
+    fn __str__(&self) -> String {
+        format!("LocalVar('{}')", self.expression)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("LocalSubstitution('{}')", self.expression)
+    }
+
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let locals = pyo3::types::PyDict::new(py);
+        locals.set_item("context", context)?;
+        let code = std::ffi::CString::new(format!("context.locals.{}", self.expression))
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok(py.eval(&code, None, Some(&locals))?.unbind())
     }
 }

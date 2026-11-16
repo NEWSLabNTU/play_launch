@@ -225,9 +225,74 @@ impl LaunchContextView {
             .unbind())
     }
 
-    fn perform_substitution(slf: &Bound<'_, Self>, sub: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        Ok(sub.call_method1("perform", (slf,))?.unbind())
+    /// `context.perform_substitution(sub)`: `sub.perform(context)`, as in
+    /// `launch`. A string or a list of substitutions is accepted too, and
+    /// performed the way `launch.utilities.perform_substitutions` would.
+    /// Every mock substitution has a `perform` (#0086): this used to call
+    /// one that `EnvironmentVariable` did not have, which failed every
+    /// Autoware 2.1.0 launch.
+    fn perform_substitution(slf: &Bound<'_, Self>, sub: &Bound<'_, PyAny>) -> PyResult<String> {
+        perform_some(slf.as_any(), sub)
     }
+}
+
+pyo3::create_exception!(
+    launch.substitutions,
+    SubstitutionFailure,
+    pyo3::exceptions::PyRuntimeError,
+    "`launch.substitutions.SubstitutionFailure`: a substitution could not be performed."
+);
+
+/// Perform a `SomeSubstitutionsType` STRICTLY, the way `launch` does: a
+/// string is itself, a substitution its `perform(context)` (whose error is
+/// the error), a list or tuple its elements performed and concatenated.
+pub fn perform_some(context: &Bound<'_, PyAny>, obj: &Bound<'_, PyAny>) -> PyResult<String> {
+    if let Ok(s) = obj.extract::<String>() {
+        return Ok(s);
+    }
+    if obj.hasattr("perform")? {
+        let performed = obj.call_method1("perform", (context,))?;
+        return Ok(match performed.extract::<String>() {
+            Ok(s) => s,
+            Err(_) => performed.str()?.to_string(),
+        });
+    }
+    if obj.is_instance_of::<PyList>() || obj.is_instance_of::<PyTuple>() {
+        let mut out = String::new();
+        for item in obj.try_iter()? {
+            out.push_str(&perform_some(context, &item?)?);
+        }
+        return Ok(out);
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err(format!(
+        "expected a string or a substitution, got {}",
+        obj.get_type().name()?
+    )))
+}
+
+/// Resolve one substitution with the parser's own engine
+/// ([`play_launch_parser::substitution::types::Substitution::resolve`]) in
+/// the context the walk is in — the evaluator `$(...)` in XML and YAML goes
+/// through. A mock's `perform` builds the engine's substitution from its
+/// performed operands and calls this, so the Python and XML spellings of one
+/// substitution cannot disagree. A failure is `SubstitutionFailure`.
+pub fn resolve_with_engine(
+    sub: play_launch_parser::substitution::types::Substitution,
+) -> PyResult<String> {
+    play_launch_parser::bridge::with_launch_context(|ctx| sub.resolve(ctx))
+        .map_err(|e| SubstitutionFailure::new_err(e.to_string()))
+}
+
+/// The engine's `$(name arg...)` with each argument already performed.
+pub fn resolve_call(name: &str, args: Vec<String>) -> PyResult<String> {
+    use play_launch_parser::substitution::types::Substitution;
+    resolve_with_engine(Substitution::Call {
+        name: name.to_string(),
+        args: args
+            .into_iter()
+            .map(|a| vec![Substitution::Text(a)])
+            .collect(),
+    })
 }
 
 /// Resolve any `$(...)` tokens left in `s` — the string form some mock

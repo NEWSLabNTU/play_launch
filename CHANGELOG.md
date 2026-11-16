@@ -6,6 +6,23 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Fixed (parser, #0086):** a `.launch.py` that performs a substitution
+  itself, as Autoware 2.1.0's agnocast launch files do with
+  `context.perform_substitution(EnvironmentVariable("ENABLE_AGNOCAST",
+  default_value="0"))`, failed under the default parser with
+  `AttributeError: ... has no attribute 'perform'`, so no 2.1.0 launch
+  loaded. Every substitution the Python frontend provides now has a
+  `perform(context)` with the behaviour `ros2 launch` gives it:
+  `EnvironmentVariable` reads the launch environment and raises
+  `SubstitutionFailure` when unset without a default, `PathJoinSubstitution`
+  joins as `pathlib.Path` does, `ThisLaunchFileDir()` is the file's
+  directory, and `FindExecutable`, `FindPackagePrefix`,
+  `ExecutableInPackage` and `LaunchLogDir` give real paths instead of a
+  placeholder. `SubstitutionFailure`, `AnySubstitution`, `AllSubstitution`,
+  `LocalSubstitution` and `FindPackagePrefix` can now be imported.
+
 ## 0.36.0 - 2026-11-17
 
 **Breaking (contracts; rlm v0.3.27, phase 104 S3):** every spelling the S3

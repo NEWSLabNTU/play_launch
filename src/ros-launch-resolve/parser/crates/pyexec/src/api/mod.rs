@@ -229,6 +229,13 @@ class LaunchContext:
     launch_subs.add_class::<substitutions::FindExecutable>()?;
     launch_subs.add_class::<substitutions::LaunchLogDir>()?;
     launch_subs.add_class::<substitutions::ThisLaunchFile>()?;
+    launch_subs.add_class::<substitutions::AnySubstitution>()?;
+    launch_subs.add_class::<substitutions::AllSubstitution>()?;
+    launch_subs.add_class::<substitutions::LocalSubstitution>()?;
+    launch_subs.add(
+        "SubstitutionFailure",
+        py.get_type::<utils::SubstitutionFailure>(),
+    )?;
 
     // Create launch.conditions submodule
     let launch_conditions = PyModule::new(py, "launch.conditions")?;
@@ -369,6 +376,9 @@ class LaunchContext:
     launch_ros_subs.add_class::<substitutions::FindPackageShare>()?;
     launch_ros_subs.add_class::<substitutions::ExecutableInPackage>()?;
     launch_ros_subs.add_class::<substitutions::FindPackage>()?;
+    // `launch_ros`'s concrete name for the prefix lookup; `FindPackage` is
+    // its base class.
+    launch_ros_subs.add("FindPackagePrefix", launch_ros_subs.getattr("FindPackage")?)?;
     launch_ros_subs.add_class::<substitutions::Parameter>()?;
 
     // Create launch_ros.parameter_descriptions submodule

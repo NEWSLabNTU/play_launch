@@ -64,41 +64,95 @@ impl LaunchConfiguration {
         if let Some(default) = &self.default {
             return sub_utils::pyobject_to_string(py, default);
         }
-        Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+        Err(sub_utils::SubstitutionFailure::new_err(format!(
             "launch configuration '{}' does not exist",
             self.variable_name
         )))
     }
 }
 
+/// Mock EnvironmentVariable substitution
+///
+/// Python equivalent:
+/// ```python
+/// from launch.substitutions import EnvironmentVariable
+/// EnvironmentVariable('ENABLE_AGNOCAST', default_value='0')
+/// ```
+///
+/// `name` and `default_value` are `SomeSubstitutionsType`, as in `launch`.
 #[pyclass(module = "launch.substitutions", from_py_object)]
-#[derive(Clone)]
 pub struct EnvironmentVariable {
-    name: String,
-    default_value: Option<String>,
+    #[pyo3(get)]
+    name: Py<PyAny>,
+    #[pyo3(get)]
+    default_value: Option<Py<PyAny>>,
+}
+
+impl Clone for EnvironmentVariable {
+    fn clone(&self) -> Self {
+        Python::attach(|py| Self {
+            name: self.name.clone_ref(py),
+            default_value: self.default_value.as_ref().map(|d| d.clone_ref(py)),
+        })
+    }
 }
 
 #[pymethods]
 impl EnvironmentVariable {
     #[new]
     #[pyo3(signature = (name, *, default_value=None))]
-    fn new(name: String, default_value: Option<String>) -> Self {
+    fn new(name: Py<PyAny>, default_value: Option<Py<PyAny>>) -> Self {
         Self {
             name,
             default_value,
         }
     }
 
-    fn __str__(&self) -> String {
-        if let Some(default) = &self.default_value {
-            format!("$(optenv {} {})", self.name, default)
-        } else {
-            format!("$(env {})", self.name)
-        }
+    fn __str__(&self, py: Python) -> PyResult<String> {
+        let name = sub_utils::pyobject_to_string(py, &self.name)?;
+        Ok(match &self.default_value {
+            Some(default) => format!(
+                "$(optenv {} {})",
+                name,
+                sub_utils::pyobject_to_string(py, default)?
+            ),
+            None => format!("$(env {name})"),
+        })
     }
 
-    fn __repr__(&self) -> String {
-        format!("EnvironmentVariable('{}')", self.name)
+    fn __repr__(&self, py: Python) -> String {
+        let name =
+            sub_utils::pyobject_to_string(py, &self.name).unwrap_or_else(|_| "<name>".to_string());
+        format!("EnvironmentVariable('{name}')")
+    }
+
+    /// `launch`'s: the variable in the launch's environment (the process
+    /// environment plus every `SetEnvironmentVariable` executed so far), else
+    /// the default; unset with no default is `SubstitutionFailure`. Resolved
+    /// by the engine's `$(env)`, the one `<set_env>` and XML use.
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
+        use play_launch_parser::substitution::types::Substitution;
+        let name = sub_utils::perform_or_to_string(&self.name, py, context)?;
+        let default = match &self.default_value {
+            Some(d) => Some(vec![Substitution::Text(sub_utils::perform_or_to_string(
+                d, py, context,
+            )?)]),
+            None => None,
+        };
+        let has_default = default.is_some();
+        sub_utils::resolve_with_engine(Substitution::EnvironmentVariable {
+            name: vec![Substitution::Text(name.clone())],
+            default,
+        })
+        .map_err(|e| {
+            if has_default {
+                e
+            } else {
+                sub_utils::SubstitutionFailure::new_err(format!(
+                    "environment variable '{name}' does not exist"
+                ))
+            }
+        })
     }
 }
 
@@ -135,9 +189,11 @@ impl Parameter {
         format!("Parameter('{}')", name_str)
     }
 
+    /// `launch_ros`'s: a global parameter set by `SetParameter`, else
+    /// `SubstitutionFailure` (the engine's `$(param)`).
     fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let name_str = sub_utils::perform_or_to_string(&self.name, py, context)?;
-        Ok(format!("$(param {})", name_str))
+        sub_utils::resolve_call("param", vec![name_str])
     }
 }
 
@@ -216,7 +272,7 @@ impl FindExecutable {
     fn __str__(&self, py: Python) -> PyResult<String> {
         let name_str = sub_utils::pyobject_to_string(py, &self.name)?;
         // Return placeholder - can't actually search PATH in static analysis
-        Ok(format!("$(find-executable {})", name_str))
+        Ok(format!("$(find-exec {})", name_str))
     }
 
     fn __repr__(&self, py: Python) -> String {
@@ -225,8 +281,10 @@ impl FindExecutable {
         format!("FindExecutable('{}')", name_str)
     }
 
+    /// `shutil.which`: the first executable match on `PATH` (the engine's
+    /// `$(find-exec)`), else `SubstitutionFailure`.
     fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let name_str = sub_utils::perform_or_to_string(&self.name, py, context)?;
-        Ok(format!("$(find-executable {})", name_str))
+        sub_utils::resolve_call("find-exec", vec![name_str])
     }
 }

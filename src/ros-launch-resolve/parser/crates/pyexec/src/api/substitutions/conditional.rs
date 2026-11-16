@@ -56,6 +56,13 @@ impl NotSubstitution {
     fn __repr__(&self) -> String {
         "NotSubstitution(...)".to_string()
     }
+
+    /// `launch`'s: `'true'`/`'false'`, the operand read as a boolean
+    /// (`true`/`false`/`1`/`0`), anything else `SubstitutionFailure`.
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
+        let value = sub_utils::perform_or_to_string(&self.condition, py, context)?;
+        sub_utils::resolve_call("not", vec![value])
+    }
 }
 
 /// Mock AndSubstitution
@@ -95,6 +102,14 @@ impl AndSubstitution {
     fn __repr__(&self) -> String {
         "AndSubstitution(...)".to_string()
     }
+
+    /// `launch`'s: both operands read as booleans, `SubstitutionFailure`
+    /// for one that is not.
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
+        let left = sub_utils::perform_or_to_string(&self.left, py, context)?;
+        let right = sub_utils::perform_or_to_string(&self.right, py, context)?;
+        sub_utils::resolve_call("and", vec![left, right])
+    }
 }
 
 /// Mock OrSubstitution
@@ -133,6 +148,14 @@ impl OrSubstitution {
 
     fn __repr__(&self) -> String {
         "OrSubstitution(...)".to_string()
+    }
+
+    /// `launch`'s: both operands read as booleans, `SubstitutionFailure`
+    /// for one that is not.
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
+        let left = sub_utils::perform_or_to_string(&self.left, py, context)?;
+        let right = sub_utils::perform_or_to_string(&self.right, py, context)?;
+        sub_utils::resolve_call("or", vec![left, right])
     }
 }
 
@@ -174,16 +197,12 @@ impl EqualsSubstitution {
         "EqualsSubstitution(...)".to_string()
     }
 
-    /// Perform the substitution - evaluate both sides and compare
+    /// `launch`'s comparison: booleans and numbers by value, anything else
+    /// as text (the engine's `$(equals)`).
     fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let left_str = sub_utils::perform_or_to_string(&self.left, py, context)?;
         let right_str = sub_utils::perform_or_to_string(&self.right, py, context)?;
-        Ok(if left_str == right_str {
-            "true"
-        } else {
-            "false"
-        }
-        .to_string())
+        sub_utils::resolve_call("equals", vec![left_str, right_str])
     }
 }
 
@@ -230,16 +249,16 @@ impl IfElseSubstitution {
         "IfElseSubstitution(...)".to_string()
     }
 
-    /// Perform the substitution - evaluate condition and return appropriate value
+    /// `launch`'s: the condition read as a boolean (`SubstitutionFailure`
+    /// for one that is not), then only the chosen branch performed.
     fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let cond_str = sub_utils::perform_or_to_string(&self.condition, py, context)?;
-        let cond_val = matches!(cond_str.to_lowercase().as_str(), "true" | "1" | "yes");
-        let obj = if cond_val {
+        let chosen = sub_utils::resolve_call("if", vec![cond_str, "1".into(), "0".into()])?;
+        let obj = if chosen == "1" {
             &self.if_value
         } else {
             &self.else_value
         };
-
         sub_utils::perform_or_to_string(obj, py, context)
     }
 }
@@ -282,15 +301,74 @@ impl NotEqualsSubstitution {
         "NotEqualsSubstitution(...)".to_string()
     }
 
-    /// Perform the substitution - evaluate both sides and compare
+    /// `launch`'s comparison: booleans and numbers by value, anything else
+    /// as text (the engine's `$(not-equals)`).
     fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let left_str = sub_utils::perform_or_to_string(&self.left, py, context)?;
         let right_str = sub_utils::perform_or_to_string(&self.right, py, context)?;
-        Ok(if left_str != right_str {
-            "true"
-        } else {
-            "false"
-        }
-        .to_string())
+        sub_utils::resolve_call("not-equals", vec![left_str, right_str])
     }
 }
+
+/// Mock AnySubstitution / AllSubstitution
+///
+/// Python equivalent:
+/// ```python
+/// from launch.substitutions import AnySubstitution, AllSubstitution
+/// AnySubstitution(LaunchConfiguration('a'), 'false')
+/// ```
+macro_rules! variadic_boolean {
+    ($name:ident, $op:literal) => {
+        #[pyclass(module = "launch.substitutions", from_py_object)]
+        pub struct $name {
+            args: Vec<Py<PyAny>>,
+        }
+
+        impl Clone for $name {
+            fn clone(&self) -> Self {
+                Python::attach(|py| Self {
+                    args: self.args.iter().map(|a| a.clone_ref(py)).collect(),
+                })
+            }
+        }
+
+        #[pymethods]
+        impl $name {
+            #[new]
+            #[pyo3(signature = (*args, container=None))]
+            fn new(
+                args: &Bound<'_, pyo3::types::PyTuple>,
+                container: Option<&Bound<'_, PyAny>>,
+            ) -> PyResult<Self> {
+                let mut all: Vec<Py<PyAny>> = args.iter().map(|a| a.unbind()).collect();
+                if let Some(c) = container.filter(|c| !c.is_none()) {
+                    for item in c.try_iter()? {
+                        all.push(item?.unbind());
+                    }
+                }
+                Ok(Self { args: all })
+            }
+
+            fn __str__(&self, py: Python) -> PyResult<String> {
+                let context = sub_utils::create_launch_context(py)?;
+                self.perform(py, context.bind(py))
+            }
+
+            fn __repr__(&self) -> String {
+                concat!(stringify!($name), "(...)").to_string()
+            }
+
+            /// `launch`'s: every operand read as a boolean.
+            fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
+                let mut values = Vec::new();
+                for arg in &self.args {
+                    values.push(sub_utils::perform_or_to_string(arg, py, context)?);
+                }
+                sub_utils::resolve_call($op, values)
+            }
+        }
+    };
+}
+
+variadic_boolean!(AnySubstitution, "any");
+variadic_boolean!(AllSubstitution, "all");
