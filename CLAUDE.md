@@ -699,6 +699,13 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-11-16**: **QoS enum values are checked** (issue #0083, rlm
+  v0.3.26). `reliability`/`durability`/`history`/`liveliness` take a value
+  from the ROS 2 set (`system_default`, `best_available` included) or
+  exactly `$(var <arg>)` naming a contract arg, evaluated per scope; the
+  match is rlm's `qos::compatible` in both layers, and an unknown value is
+  never compatible. An args failure is `error[manifest-args]` (counted as a
+  refused contract), not a `warn!` that dropped the file.
 - **2026-11-15**: **The S3 relocations** (phase 104, rlm v0.3.24 and
   v0.3.25; decisions in rlm `docs/design/grammar-revision/README.md`, after
   "S3 decisions"). `policy:` is deprecated for `check --deny <rule>`

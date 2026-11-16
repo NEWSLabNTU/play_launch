@@ -447,7 +447,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     let refused = index
         .load_diagnostics
         .iter()
-        .filter(|d| d.rule_id == "manifest-parse")
+        .filter(|d| d.rule_id == "manifest-parse" || d.rule_id == "manifest-args")
         .count();
 
     if !inputs.expect.is_empty() {

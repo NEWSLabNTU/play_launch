@@ -17,12 +17,6 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0083** -- the contract's QoS enum fields (`reliability`, `durability`,
-`history`, `liveliness`) take any string and `qos-match` passes an unknown
-value, so a typo (`transient-local`) or a launch reference
-(`$(var operation_mode_durability)`) is never checked. Covers rlm (parse)
-and play_launch (`durability_compatible`). See `0083-*`.
-
 **#0082** -- `--container-mode observable` turns a
 `component_container_isolated` into a play_launch_container with ONE
 SingleThreadedExecutor for all its components (only `component_container_mt`
@@ -35,6 +29,14 @@ every frame twice under load; `stock` is clean. See `0082-*`.
 frontmatter disagree.
 
 ## Resolved
+
+**#0083** -- the contract's QoS enum fields took any string and the match
+passed a value it did not know, so a typo (`transient-local`) or a launch
+reference (`$(var operation_mode_durability)`) was never checked. rlm
+v0.3.26 refuses a value outside the ROS 2 set at parse, evaluates
+`$(var <arg>)` per scope (an arg's `choices:` checked at parse), and both
+matches refuse an unknown value; an args failure is now
+`error[manifest-args]`, not a `warn!`. See `archived/0083-*`.
 
 **#0081** -- `RegisterEventHandler(OnProcessExit(target_action=X,
 on_exit=[EmitEvent(event=Shutdown())]))` was ignored by both parsers, so the

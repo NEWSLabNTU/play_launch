@@ -843,19 +843,9 @@ pub fn load_manifests(
                 // one key, and the key is what the author has to look for.
                 let line = match &e {
                     ros_launch_manifest_types::parse::ParseError::Field { path: key, .. } => {
-                        std::fs::read_to_string(&path).ok().and_then(|src| {
-                            let spans = ros_launch_manifest_types::SpanIndex::build(&src);
-                            let mut k = key.clone();
-                            loop {
-                                if let Some(r) = spans.get(&k) {
-                                    break Some(
-                                        src.chars().take(r.start).filter(|c| *c == '\n').count()
-                                            + 1,
-                                    );
-                                }
-                                k = k.rsplit_once('.')?.0.to_string();
-                            }
-                        })
+                        std::fs::read_to_string(&path)
+                            .ok()
+                            .and_then(|src| contract_line(&src, key))
                     }
                     _ => None,
                 };
@@ -890,32 +880,47 @@ pub fn load_manifests(
         let source = parsed.source;
 
         // Resolve args: merge scope args over manifest defaults, then substitute $(var ...)
+        //
+        // A failure here drops the contract, as a parse error does, so it is
+        // reported the same way: an error naming the file and line (issue
+        // #0083 -- a QoS enum's `$(var <arg>)` that evaluates outside the
+        // ROS 2 set used to be a `warn!` and a silently unchecked file).
+        let args_refused = |index: &mut ManifestIndex,
+                            what: &str,
+                            e: &dyn std::fmt::Display,
+                            key: Option<&str>| {
+            let line = key.and_then(|k| contract_line(&source, k));
+            index.load_diagnostics.push(Diagnostic {
+                rule_id: "manifest-args".to_string(),
+                severity: Severity::Error,
+                message: format!(
+                    "could not {what} contract {}{} for scope {} ({}/{}): {e}. Every \
+                     contract in this file is now UNCHECKED -- the file is dropped, not \
+                     partially read",
+                    path.display(),
+                    line.map_or(String::new(), |l| format!(":{l}")),
+                    scope.id,
+                    scope.pkg().unwrap_or("?"),
+                    scope.file().unwrap_or("?"),
+                ),
+                path: path.display().to_string(),
+                span: None,
+            });
+        };
         let manifest = if parsed.manifest.args.is_empty() {
             parsed.manifest
         } else {
             let resolved_args = match resolve_args(&parsed.manifest.args, &scope.args) {
                 Ok(a) => a,
                 Err(e) => {
-                    warn!(
-                        "Failed to resolve args for scope {} ({}/{}): {}",
-                        scope.id,
-                        scope.pkg().unwrap_or("?"),
-                        scope.file().unwrap_or("?"),
-                        e
-                    );
+                    args_refused(&mut index, "resolve the args of", &e, None);
                     continue;
                 }
             };
             match substitute_manifest(&parsed.manifest, &resolved_args) {
                 Ok(m) => m,
                 Err(e) => {
-                    warn!(
-                        "Failed to substitute args for scope {} ({}/{}): {}",
-                        scope.id,
-                        scope.pkg().unwrap_or("?"),
-                        scope.file().unwrap_or("?"),
-                        e
-                    );
+                    args_refused(&mut index, "substitute the args of", &e, e.path());
                     continue;
                 }
             }
@@ -6684,6 +6689,19 @@ fn collect_externals(index: &mut ManifestIndex) {
     index.endpoint_externals = endpoint_externals;
 }
 
+/// The 1-based line of a dotted contract key in `src`, or of its nearest
+/// ancestor the span index knows (phase 83).
+fn contract_line(src: &str, key: &str) -> Option<usize> {
+    let spans = ros_launch_manifest_types::SpanIndex::build(src);
+    let mut k = key.to_string();
+    loop {
+        if let Some(r) = spans.get(&k) {
+            return Some(src.chars().take(r.start).filter(|c| *c == '\n').count() + 1);
+        }
+        k = k.rsplit_once('.')?.0.to_string();
+    }
+}
+
 /// Split an endpoint FQN like `/ns/node/endpoint` into `(node_fqn, endpoint_name)`.
 pub(crate) fn split_endpoint_ref_for_check(ep_ref: &str) -> Option<(String, String)> {
     let pos = ep_ref.rfind('/')?;
@@ -6708,7 +6726,10 @@ fn check_cross_scope_qos_match(
     index: &mut ManifestIndex,
     graph: &super::manifest_graph::GlobalDataflowGraph,
 ) {
-    use ros_launch_manifest_types::QosDecl;
+    use ros_launch_manifest_types::{
+        QosDecl,
+        qos::{Match, QosField, compatible},
+    };
 
     // Snapshot topics to avoid borrow conflict with merge_diagnostics.
     let topics: Vec<(String, ResolvedTopic)> = index
@@ -6749,61 +6770,50 @@ fn check_cross_scope_qos_match(
 
         for (pub_ref, pub_qos) in &pubs {
             for (sub_ref, sub_qos) in &subs {
-                if let (Some(pub_rel), Some(sub_rel)) = (
-                    pub_qos.reliability.as_deref(),
-                    sub_qos.reliability.as_deref(),
-                ) && !reliability_compatible(pub_rel, sub_rel)
-                {
+                // The match is rlm's (`qos::compatible`), one copy for both
+                // layers. An unknown value is never compatible (issue #0083):
+                // it used to fall through to `_ => true` here. Liveliness and
+                // its lease (phase 70 W4) are checked here too, since the
+                // party that asserts and the party that times out are rarely
+                // in one launch file.
+                for f in [
+                    QosField::Reliability,
+                    QosField::Durability,
+                    QosField::Liveliness,
+                ] {
+                    let (Some(pv), Some(sv)) = (f.get(pub_qos), f.get(sub_qos)) else {
+                        continue;
+                    };
+                    let key = f.key();
+                    let (severity, message) = match compatible(f, pv, sv) {
+                        Ok(Match::Compatible) => continue,
+                        Ok(Match::Incompatible) => (
+                            Severity::Error,
+                            format!(
+                                "incompatible QoS on topic '{fqn}' field '{key}': \
+                                 pub '{pub_ref}' offers '{pv}', sub '{sub_ref}' \
+                                 requests '{sv}'"
+                            ),
+                        ),
+                        Ok(Match::RmwDefined(why)) => (
+                            Severity::Warning,
+                            format!(
+                                "QoS on topic '{fqn}', pub '{pub_ref}' and sub '{sub_ref}': {why}"
+                            ),
+                        ),
+                        Err(why) => (
+                            Severity::Error,
+                            format!(
+                                "QoS on topic '{fqn}' field '{key}', pub '{pub_ref}' and \
+                                 sub '{sub_ref}': {why}"
+                            ),
+                        ),
+                    };
                     index.merge_diagnostics.push(Diagnostic {
                         rule_id: "qos-match".to_string(),
-                        severity: Severity::Error,
-                        message: format!(
-                            "incompatible QoS on topic '{fqn}' field 'reliability': \
-                             pub '{pub_ref}' offers '{pub_rel}', sub '{sub_ref}' \
-                             requests '{sub_rel}'"
-                        ),
-                        path: format!("topics.{fqn}.qos.reliability"),
-                        span: None,
-                    });
-                }
-
-                if let (Some(pub_dur), Some(sub_dur)) =
-                    (pub_qos.durability.as_deref(), sub_qos.durability.as_deref())
-                    && !durability_compatible(pub_dur, sub_dur)
-                {
-                    index.merge_diagnostics.push(Diagnostic {
-                        rule_id: "qos-match".to_string(),
-                        severity: Severity::Error,
-                        message: format!(
-                            "incompatible QoS on topic '{fqn}' field 'durability': \
-                             pub '{pub_ref}' offers '{pub_dur}', sub '{sub_ref}' \
-                             requests '{sub_dur}'"
-                        ),
-                        path: format!("topics.{fqn}.qos.durability"),
-                        span: None,
-                    });
-                }
-
-                // Liveliness and its lease (phase 70 W4): the per-manifest
-                // rule gained these in W2, and this merged-graph copy is the
-                // one that sees a publisher and a subscriber declared in
-                // different scopes — which for a lease is the common case,
-                // since the party that asserts and the party that times out
-                // are rarely in one launch file.
-                if let (Some(pub_live), Some(sub_live)) =
-                    (pub_qos.liveliness.as_deref(), sub_qos.liveliness.as_deref())
-                    && pub_live == "automatic"
-                    && sub_live == "manual_by_topic"
-                {
-                    index.merge_diagnostics.push(Diagnostic {
-                        rule_id: "qos-match".to_string(),
-                        severity: Severity::Error,
-                        message: format!(
-                            "incompatible QoS on topic '{fqn}' field 'liveliness': \
-                             pub '{pub_ref}' offers '{pub_live}', sub '{sub_ref}' \
-                             requests '{sub_live}'"
-                        ),
-                        path: format!("topics.{fqn}.qos.liveliness"),
+                        severity,
+                        message,
+                        path: format!("topics.{fqn}.qos.{key}"),
                         span: None,
                     });
                 }
@@ -6827,31 +6837,6 @@ fn check_cross_scope_qos_match(
                 }
             }
         }
-    }
-}
-
-/// DDS reliability compatibility — offered must be at least as strong
-/// as requested. `reliable` ≥ `best_effort`. Unknown values pass; the
-/// per-manifest `qos-compat` rule reports invalid value tokens.
-fn reliability_compatible(pub_v: &str, sub_v: &str) -> bool {
-    match (pub_v, sub_v) {
-        ("reliable", "reliable") => true,
-        ("reliable", "best_effort") => true,
-        ("best_effort", "reliable") => false,
-        ("best_effort", "best_effort") => true,
-        _ => true,
-    }
-}
-
-/// DDS durability compatibility — offered must be at least as strong
-/// as requested. `transient_local` ≥ `volatile`. Unknown values pass.
-fn durability_compatible(pub_v: &str, sub_v: &str) -> bool {
-    match (pub_v, sub_v) {
-        ("transient_local", "transient_local") => true,
-        ("transient_local", "volatile") => true,
-        ("volatile", "transient_local") => false,
-        ("volatile", "volatile") => true,
-        _ => true,
     }
 }
 
@@ -9855,6 +9840,192 @@ mod tests {
             qos_errors.iter().any(|d| d.message.contains("liveliness")),
             "expected a cross-scope liveliness mismatch, got: {qos_errors:?}"
         );
+    }
+
+    // -- Issue #0083: QoS enum values --
+
+    /// Load contracts written inline: `(pkg, yaml)` per file scope of `dump`,
+    /// through the overlay channel as [`overlay_index`] does.
+    fn inline_index(dump: &LaunchDump, contracts: &[(&str, &str)]) -> ManifestIndex {
+        let tmp = tempfile::TempDir::new().unwrap();
+        for (pkg, yaml) in contracts {
+            let dir = tmp.path().join(pkg).join("launch");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("manifest.contract.yaml"), yaml).unwrap();
+        }
+        let sources = ContractSources {
+            overlay: Some(tmp.path().to_path_buf()),
+            provider: false,
+            lock: Default::default(),
+            process_per_composable: false,
+            supervision: None,
+        };
+        load_manifests(dump, &sources).unwrap()
+    }
+
+    const QOS_PUB: &str = "version: 1\nnodes:\n  bridge:\n    pub:\n      out:\n        qos: { durability: volatile }\ntopics:\n  /system/operation_mode/state:\n    type: T\n    pub: [bridge/out]\n";
+    const QOS_SUB: &str = "version: 1\nargs:\n  operation_mode_durability:\n    choices: [volatile, transient_local]\nnodes:\n  controller:\n    sub:\n      operation_mode:\n        qos: { durability: $(var operation_mode_durability) }\ntopics:\n  /system/operation_mode/state:\n    type: T\n    sub: [controller/operation_mode]\n";
+
+    fn qos_dump(sub_arg: Option<&str>) -> LaunchDump {
+        let mut sub = scope(1, "qos_var_sub", "manifest.launch.xml", "", Some(0));
+        if let Some(v) = sub_arg {
+            sub.args
+                .insert("operation_mode_durability".to_string(), v.to_string());
+        }
+        make_dump(vec![
+            scope(0, "qos_var_pub", "manifest.launch.xml", "", None),
+            sub,
+        ])
+    }
+
+    fn qos_match_diags(index: &ManifestIndex) -> Vec<&Diagnostic> {
+        index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "qos-match")
+            .collect()
+    }
+
+    /// A `$(var <arg>)` in a QoS enum is evaluated per scope, from the arg
+    /// the launch file passes, and the value is what is matched. It used to
+    /// reach the match as the literal `$(var ...)` and pass.
+    #[test]
+    fn test_qos_var_is_evaluated_per_scope_arg() {
+        let index = inline_index(
+            &qos_dump(Some("transient_local")),
+            &[("qos_var_pub", QOS_PUB), ("qos_var_sub", QOS_SUB)],
+        );
+        assert!(
+            index.load_diagnostics.is_empty(),
+            "{:?}",
+            index.load_diagnostics
+        );
+        let errs = qos_match_diags(&index);
+        assert_eq!(errs.len(), 1, "got: {errs:?}");
+        assert!(
+            errs[0].message.contains("offers 'volatile'")
+                && errs[0].message.contains("requests 'transient_local'"),
+            "{}",
+            errs[0].message
+        );
+
+        let index = inline_index(
+            &qos_dump(Some("volatile")),
+            &[("qos_var_pub", QOS_PUB), ("qos_var_sub", QOS_SUB)],
+        );
+        assert!(
+            index.load_diagnostics.is_empty(),
+            "{:?}",
+            index.load_diagnostics
+        );
+        assert!(qos_match_diags(&index).is_empty());
+    }
+
+    /// An arg value the QoS field cannot take, or an arg the launch file does
+    /// not pass, refuses the contract with an error naming file and line --
+    /// it used to be a `warn!` and a silently unchecked file.
+    #[test]
+    fn test_qos_var_outside_the_set_refuses_the_contract() {
+        let free = QOS_SUB.replace("    choices: [volatile, transient_local]\n", "");
+        let index = inline_index(
+            &qos_dump(Some("transient-local")),
+            &[("qos_var_pub", QOS_PUB), ("qos_var_sub", &free)],
+        );
+        let refused: Vec<_> = index
+            .load_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "manifest-args")
+            .collect();
+        assert_eq!(refused.len(), 1, "{:?}", index.load_diagnostics);
+        let m = &refused[0].message;
+        assert!(m.contains("manifest.contract.yaml:8"), "{m}");
+        assert!(m.contains("'transient-local'"), "{m}");
+        assert!(m.contains("not a ROS 2 durability value"), "{m}");
+        assert!(m.contains("accepted: volatile, transient_local"), "{m}");
+        assert_eq!(refused[0].severity, Severity::Error);
+
+        let index = inline_index(
+            &qos_dump(None),
+            &[("qos_var_pub", QOS_PUB), ("qos_var_sub", QOS_SUB)],
+        );
+        assert!(
+            index
+                .load_diagnostics
+                .iter()
+                .any(|d| d.rule_id == "manifest-args"
+                    && d.message.contains("operation_mode_durability")),
+            "{:?}",
+            index.load_diagnostics
+        );
+    }
+
+    /// A typo in a QoS enum refuses the contract at parse, naming the key,
+    /// the value, the set and the line.
+    #[test]
+    fn test_qos_enum_typo_refuses_the_contract() {
+        let typo = QOS_PUB.replace("durability: volatile", "durability: transient-local");
+        let index = inline_index(&qos_dump(Some("volatile")), &[("qos_var_pub", &typo)]);
+        let refused: Vec<_> = index
+            .load_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "manifest-parse")
+            .collect();
+        assert_eq!(refused.len(), 1, "{:?}", index.load_diagnostics);
+        let m = &refused[0].message;
+        assert!(m.contains("manifest.contract.yaml:6"), "{m}");
+        assert!(m.contains("nodes.bridge.pub.out.qos.durability"), "{m}");
+        assert!(m.contains("`durability: transient-local`"), "{m}");
+        assert!(m.contains("accepted: volatile, transient_local"), "{m}");
+    }
+
+    /// The cross-scope match refuses a value it does not know: it used to
+    /// answer `true` for any pair outside its table. The parser refuses such
+    /// a value, so it is written into the merged index directly.
+    #[test]
+    fn test_cross_scope_qos_match_unknown_durability_is_not_compatible() {
+        let mut index = inline_index(
+            &qos_dump(Some("volatile")),
+            &[("qos_var_pub", QOS_PUB), ("qos_var_sub", QOS_SUB)],
+        );
+        index.merge_diagnostics.clear();
+        let mut g = super::super::manifest_graph::build_global_graph(&index);
+        for n in g.nodes.values_mut() {
+            for p in n.publishers.values_mut().chain(n.subscribers.values_mut()) {
+                if let Some(q) = p.qos.as_mut() {
+                    q.durability = Some("transient-local".into());
+                }
+            }
+        }
+        check_cross_scope_qos_match(&mut index, &g);
+        let errs = qos_match_diags(&index);
+        assert_eq!(errs.len(), 1, "got: {errs:?}");
+        assert_eq!(errs[0].severity, Severity::Error);
+        assert!(
+            errs[0]
+                .message
+                .contains("'transient-local' is not a ROS 2 value"),
+            "{}",
+            errs[0].message
+        );
+
+        // `system_default` is the RMW's: reported, not passed silently.
+        index.merge_diagnostics.clear();
+        for n in g.nodes.values_mut() {
+            for p in n.publishers.values_mut() {
+                if let Some(q) = p.qos.as_mut() {
+                    q.durability = Some("system_default".into());
+                }
+            }
+            for p in n.subscribers.values_mut() {
+                if let Some(q) = p.qos.as_mut() {
+                    q.durability = Some("transient_local".into());
+                }
+            }
+        }
+        check_cross_scope_qos_match(&mut index, &g);
+        let d = qos_match_diags(&index);
+        assert_eq!(d.len(), 1, "got: {d:?}");
+        assert_eq!(d[0].severity, Severity::Warning);
     }
 
     // -- Phase 82: what a detector may see --
