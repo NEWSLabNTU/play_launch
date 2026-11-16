@@ -17,6 +17,11 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0088** -- the Rust parser reports a missing include as `IO error: No such
+file or directory (os error 2)` with neither the missing path nor the
+including file, and then hints at `--parser python`, which names the file.
+Found on golf cart's Autoware 2.1.0 dead includes. See `0088-*`.
+
 **#0084** -- shutdown ignores an action's `sigterm_timeout` and `sigkill_timeout`
 and starts with SIGTERM: each node gets a fixed 2 s, then SIGTERM and SIGKILL 5 s
 later, where `ros2 launch` sends SIGINT and waits as the launch file declares. A
