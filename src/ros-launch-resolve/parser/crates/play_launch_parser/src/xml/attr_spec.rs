@@ -77,12 +77,17 @@ const NODE_SUPPORTED: &[&str] = &[
     // and honoured as `on_exit=[Shutdown()]`; any other value is an error
     // there and here (#0064, `actions::node::parse_on_exit`).
     "on_exit",
+    // `launch-prefix` and `cwd`: read by `ExecuteProcess.parse` (reached via
+    // `super().parse`), resolved and carried to the spawn (#0085, #0087). A
+    // container's prefix survives `--container-mode` replacing its binary.
+    "launch-prefix",
+    "cwd",
 ];
 const NODE_KNOWN_UNSUPPORTED: &[&str] = &[
     "exec_name",
-    "launch-prefix",
-    "cwd",
     "emulate_tty",
+    // A ROS node run through `/bin/sh -c`: not carried (its command line is
+    // built at spawn, not here). `false` is the default and matches.
     "shell",
     // JAZZY-ONLY (union policy, see the module doc). Added to
     // `ExecuteProcess.parse` after Humble, and reached from `<node>` via
@@ -130,6 +135,8 @@ const LIFECYCLE_NODE_SUPPORTED: &[&str] = &[
     "respawn",
     "respawn_delay",
     "on_exit",
+    "launch-prefix",
+    "cwd",
     // JAZZY: `entity.get_attr('autostart', data_type=bool, optional=True,
     // can_be_str=True)`. Resolved true gives the model
     // `lifecycle_autostart: active`; absent or false gives none.
@@ -185,15 +192,18 @@ static SPECS: &[AttrSpec] = &[
             "cmd",
             // Honoured since #0064; see `<node>`'s entry.
             "on_exit",
+            // `/bin/sh -c "<cmd>"` since #0071; `launch-prefix` and `cwd`
+            // since #0085/#0087. Listed as unsupported until then, so the
+            // parser warned "the value is ignored" about a shell it ran.
+            "shell",
+            "launch-prefix",
+            "cwd",
         ],
         // `<executable node-name=…>` is genuinely rejected by ROS 2 with
         // "Unexpected attribute" (`ExecuteProcess.parse` never reads it,
         // measured), so it stays out of this table.
         known_unsupported: &[
-            "launch-prefix",
-            "cwd",
             "emulate_tty",
-            "shell",
             // Jazzy-only, same union rationale as `<node>`.
             "respawn_max_retries",
             "sigkill_timeout",
@@ -455,7 +465,19 @@ pub fn spec_for(element: &str) -> Option<&'static AttrSpec> {
 /// `allow_substs="false"` is NOT here, and must keep warning: there ROS 2
 /// would leave `$(...)` unsubstituted and this parser resolves it anyway,
 /// which is a real divergence.
-const BEHAVIOUR_MATCHES: &[(&str, &str, &str)] = &[("param", "allow_substs", "true")];
+///
+/// `emulate_tty="false"` and `<node shell="false">` ask for launch's default,
+/// which is what this parser does without being asked.
+const BEHAVIOUR_MATCHES: &[(&str, &str, &str)] = &[
+    ("param", "allow_substs", "true"),
+    ("node", "shell", "false"),
+    ("lifecycle_node", "shell", "false"),
+    ("node_container", "shell", "false"),
+    ("node", "emulate_tty", "false"),
+    ("lifecycle_node", "emulate_tty", "false"),
+    ("node_container", "emulate_tty", "false"),
+    ("executable", "emulate_tty", "false"),
+];
 
 /// What actually differs, for known-unsupported attributes where "the value
 /// is ignored" understates the consequence.
@@ -784,12 +806,32 @@ mod tests {
     /// the fix for #8 must not have silenced the whole category.
     #[test]
     fn a_genuinely_dropped_attribute_stays_unmatched() {
-        // `<node cwd=…>` is accepted by ROS 2 and really is discarded here.
-        assert!(!behaviour_matches("node", "cwd", Some("/tmp")));
+        // `<node shell="true">` is accepted by ROS 2 and not carried here.
+        assert!(!behaviour_matches("node", "shell", Some("true")));
         assert!(!behaviour_matches(
-            "node",
-            "launch-prefix",
-            Some("gdb -ex run")
+            "executable",
+            "emulate_tty",
+            Some("true")
         ));
+    }
+
+    /// #0085/#0087 and GitHub #27: `shell`, `cwd` and `launch-prefix` are
+    /// honoured, so they must not warn "the value is ignored" any more. The
+    /// warning about `<executable shell=…>` was false since #0071.
+    #[test]
+    fn honoured_process_attributes_are_supported_not_warned() {
+        for element in ["node", "lifecycle_node", "node_container", "executable"] {
+            let spec = spec_for(element).unwrap();
+            for attr in ["launch-prefix", "cwd"] {
+                assert!(spec.supported.contains(&attr), "<{element} {attr}>");
+                assert!(
+                    !spec.known_unsupported.contains(&attr),
+                    "<{element} {attr}>"
+                );
+            }
+        }
+        let exec = spec_for("executable").unwrap();
+        assert!(exec.supported.contains(&"shell"));
+        assert!(!exec.known_unsupported.contains(&"shell"));
     }
 }

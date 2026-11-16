@@ -371,6 +371,7 @@ dependencies = [
  "once_cell",
  "play_launch_parser_pyexec",
  "rand",
+ "regex",
  "roxmltree",
  "serde",
  "serde_json",

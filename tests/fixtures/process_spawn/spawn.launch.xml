@@ -1,0 +1,27 @@
+<!-- What each process starts IN and UNDER, compared with stock `ros2 launch`
+     (#0085, #0087; tests/tests/process_spawn.rs). Each process is probe.sh,
+     or is wrapped by it as a launch-prefix, and writes its cwd and a few
+     environment variables to $PL_PROBE_OUT/<label>. -->
+<launch>
+  <arg name="dir" default="$(env PL_PROBE_DIR)"/>
+  <group scoped="true">
+    <unset_env name="PL_PROBE_INHERITED"/>
+    <unset_env name="DISPLAY"/>
+    <executable cmd="$(var dir)/probe.sh g_in" name="g_in"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="pl_probe_talker" namespace="/pl_probe"
+          launch-prefix="$(var dir)/probe.sh node_wrap" cwd="$(var dir)/work"/>
+    <node_container pkg="rclcpp_components" exec="component_container" name="pl_probe_c"
+                    namespace="/pl_probe" launch-prefix="$(var dir)/probe.sh cont_wrap"/>
+  </group>
+  <executable cmd="$(var dir)/probe.sh g_after" name="g_after"/>
+  <set_env name="PL_PROBE_SET" value="1"/>
+  <unset_env name="PL_PROBE_SET"/>
+  <executable cmd="$(var dir)/probe.sh set_unset" name="set_unset"/>
+  <unset_env name="PL_PROBE_TOP"/>
+  <executable cmd="$(var dir)/probe.sh top" name="top"/>
+  <executable cmd="$(var dir)/probe.sh exe_pfx" name="exe_pfx" launch-prefix="env -u PL_PROBE_PFX"/>
+  <executable cmd="$(var dir)/probe.sh exe_inner" name="exe_wrapped"
+              launch-prefix="$(var dir)/probe.sh exe_wrap"/>
+  <executable cmd="$(var dir)/probe.sh cwd_exe" name="cwd_exe" cwd="$(env PL_PROBE_DIR)/work"/>
+  <executable cmd="PL_PROBE_SHELL=yes $(var dir)/probe.sh shell_exe" name="shell_exe" shell="true"/>
+</launch>

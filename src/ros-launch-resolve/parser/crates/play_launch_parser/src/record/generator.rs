@@ -402,6 +402,16 @@ impl CommandGenerator {
             merged_env.insert(key.clone(), resolved_value); // key.clone() needed since we're iterating with &
         }
 
+        // What the process starts in and under (#0085, #0087). The filter
+        // reads the executable's basename, which is `cmd[0]`'s in launch.
+        let spawn = crate::actions::process::resolve_spawn(
+            node.launch_prefix.as_deref(),
+            node.cwd.as_deref(),
+            &executable,
+            node.environment.iter().map(|(k, _)| k.as_str()),
+            context,
+        )?;
+
         let env = if merged_env.is_empty() {
             None
         } else {
@@ -526,6 +536,7 @@ impl CommandGenerator {
                 .transpose()?,
             ros_args,
             scope: None,
+            spawn,
         })
     }
 
@@ -597,10 +608,28 @@ impl CommandGenerator {
             cmd.first().cloned()
         };
 
+        // `cwd`, `launch-prefix` and the unsets (#0085, #0087).
+        let mut spawn = crate::actions::process::resolve_spawn(
+            exec.launch_prefix.as_deref(),
+            exec.cwd.as_deref(),
+            &cmd_str,
+            exec.environment.iter().map(|(k, _)| k.as_str()),
+            context,
+        )?;
+
         // `shell="true"`: launch joins the command line with spaces and runs
         // it through `/bin/sh -c`. The name stays the one of the command.
+        // launch prepends the prefix BEFORE joining (`Executable.prepare`),
+        // so under a shell it is part of the shell's command line rather
+        // than a program in front of `/bin/sh`.
         let (cmd, cmd_str) = if exec.shell {
-            let cmd = vec!["/bin/sh".to_string(), "-c".to_string(), cmd.join(" ")];
+            let mut words = spawn
+                .launch_prefix
+                .take()
+                .map(|p| crate::actions::process::prefix_words(&p))
+                .unwrap_or_default();
+            words.extend(cmd);
+            let cmd = vec!["/bin/sh".to_string(), "-c".to_string(), words.join(" ")];
             (cmd, "/bin/sh".to_string())
         } else {
             (cmd, cmd_str)
@@ -637,18 +666,11 @@ impl CommandGenerator {
             on_exit_shutdown: exec.on_exit_shutdown,
             lifecycle: None,
             lifecycle_autostart: None,
-            args: if exec.shell {
-                Some(cmd[1..].to_vec())
-            } else if exec.arguments.is_empty() {
-                None
-            } else {
-                Some(
-                    exec.arguments
-                        .iter()
-                        .map(|a| resolve_substitutions(a, context))
-                        .collect::<Result<Vec<_>, _>>()?,
-                )
-            },
+            // Everything after the program, as the Python dumper records it
+            // (`cmd[1:]`): words of `cmd` itself as well as `<arg>` children.
+            // Only `<arg>`s were kept, so `cmd="probe.sh label"` recorded no
+            // arguments where the dumper recorded `label`.
+            args: (cmd.len() > 1).then(|| cmd[1..].to_vec()),
             cmd,
             env,
             exec_name: name.clone(),
@@ -693,6 +715,7 @@ impl CommandGenerator {
                 .transpose()?,
             ros_args: None,
             scope: None,
+            spawn,
         })
     }
 }
@@ -725,6 +748,8 @@ mod tests {
             on_exit_shutdown: None,
             lifecycle: false,
             autostart: None,
+            launch_prefix: None,
+            cwd: None,
         };
 
         let context = LaunchContext::new();
@@ -769,6 +794,8 @@ mod tests {
             on_exit_shutdown: None,
             lifecycle: false,
             autostart: None,
+            launch_prefix: None,
+            cwd: None,
         };
 
         let context = LaunchContext::new();
@@ -801,6 +828,8 @@ mod tests {
             on_exit_shutdown: None,
             lifecycle: false,
             autostart: None,
+            launch_prefix: None,
+            cwd: None,
         };
 
         let context = LaunchContext::new();

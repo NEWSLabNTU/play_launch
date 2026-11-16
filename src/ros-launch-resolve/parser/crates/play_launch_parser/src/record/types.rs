@@ -435,6 +435,28 @@ pub enum ParamSource {
     },
 }
 
+/// What a process starts IN and UNDER, beyond its command line: the
+/// variables launch removed from its environment, the command it runs under,
+/// and its working directory (#0085, #0087). Flattened into the process
+/// records, so each key is omitted when empty and a record without them
+/// reads as before.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ProcessSpawn {
+    /// `<unset_env>` / `UnsetEnvironmentVariable` in effect where the process
+    /// was declared, minus any name its own environment sets again. Sorted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_unset: Vec<String>,
+    /// `launch-prefix` / `prefix=`, after substitution, or the `launch-prefix`
+    /// launch configuration when the action gave none (filtered by
+    /// `launch-prefix-filter`), exactly as launch's `Executable.prepare`
+    /// chooses. Split with shell rules and prepended to argv at spawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_prefix: Option<String>,
+    /// `cwd`, after substitution. `None` is the launcher's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+}
+
 /// Fields ordered alphabetically to match Python output
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeRecord {
@@ -495,6 +517,9 @@ pub struct NodeRecord {
     /// was written, for `check --explain` to follow a value to its source.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_origins: Vec<ParamOrigin>,
+    /// See [`ProcessSpawn`].
+    #[serde(flatten, default)]
+    pub spawn: ProcessSpawn,
 }
 
 /// Composable node container record
@@ -543,6 +568,9 @@ pub struct ComposableNodeContainerRecord {
     /// `$(var x @<node>)` reads the launch configurations at.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_seq: Option<usize>,
+    /// See [`ProcessSpawn`].
+    #[serde(flatten, default)]
+    pub spawn: ProcessSpawn,
 }
 
 /// Load node record (for composable nodes)
@@ -650,6 +678,7 @@ mod tests {
             respawn_delay: None,
             ros_args: None,
             scope: None,
+            spawn: Default::default(),
         };
 
         let json = serde_json::to_string(&node).unwrap();
@@ -686,6 +715,7 @@ mod tests {
             respawn_delay: None,
             ros_args: None,
             scope: None,
+            spawn: Default::default(),
         };
 
         let json = serde_json::to_string(&node).unwrap();

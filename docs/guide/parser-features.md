@@ -155,9 +155,13 @@ superset kept from earlier releases; Humble has no such substitution.
 - Containers take `<param>`, `<remap>`, `<env>` and the global parameters,
   remaps and environment like any node.
 
-Not modelled: `launch-prefix` and `cwd` (warned), `<unset_env>` reaching a
-process (the model has no "unset"), and a `type="str"` value shaped like a
-list (the model has no array type, so it becomes a list).
+- `<unset_env>` removes the variable from every later process in its scope,
+  including one inherited from the shell that started play_launch, and
+  `$(env X)` after it reads `X` as unset.
+- `launch-prefix` (or the `launch-prefix` launch configuration, filtered by
+  `launch-prefix-filter`) is split as a shell would split it and put in front
+  of the command, in front of play_launch's own container binary too.
+  `cwd` is the process's working directory.
 
 ### Scoping
 

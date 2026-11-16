@@ -1,7 +1,7 @@
 ---
 id: 87
 title: "`<executable cwd=…>` is ignored, so a process runs in play_launch's directory, and the parser warns that `shell=` is ignored although it is honoured"
-status: open
+status: resolved
 type: defect
 severity: medium
 ---
@@ -58,3 +58,34 @@ does in launch. The table stops warning about what is honoured. Related:
 
 `$(command 'date +%Y%m%d_%H%M%S')` keeps the trailing newline, so a name
 built from it ends in `\n`. `ros2 launch` does the same.
+
+## Resolution (2026-11-17)
+
+Fixed with #0085. `cwd` (after substitution) on `<executable>`, `<node>`,
+`<node_container>` and their YAML spellings, and `cwd=` on Python
+`ExecuteProcess`/`Node`/`ComposableNodeContainer`, is carried on the process
+record and the model (`NodeInstance::cwd`, ros-launch-manifest v0.3.28) and
+set as the child's working directory at spawn, for `launch`, `run` and
+`up <model.yaml>`. A `cwd` that is not a directory fails the start, as in
+launch; the node's `err` file and the "Unable to start" error name the path.
+
+The attribute table now lists `shell`, `cwd` and `launch-prefix` as
+supported on `<executable>`, and `cwd`/`launch-prefix` on the `<node>`
+family, so none of them warns. What still warns, and why
+(`xml/attr_spec.rs`):
+
+| Attribute | Status |
+|---|---|
+| `<node shell=…>` | not carried (a node's command line is built at spawn); `false` is silent |
+| `emulate_tty` | N/A: output goes to `play_log` files, never a tty; `false` is silent |
+| `exec_name` | dropped; launch uses it only to label the process in its log |
+| `respawn_max_retries` (Jazzy) | dropped |
+| `sigterm_timeout`, `sigkill_timeout` (Jazzy) | dropped; open as #0084 |
+| `node-name` (Humble) | N/A: crashes stock `Node` construction |
+
+Honoured and unchanged: `<env>` children, Python `additional_env`,
+`respawn`/`respawn_delay`, `on_exit`, `ros_args`. The YAML frontend now also
+reads a native `shell: true`, which it read as false.
+
+Test: `tests/tests/process_spawn.rs` (`cwd_exe`, `node_wrap`, `shell_exe`
+against `ros2 launch`).

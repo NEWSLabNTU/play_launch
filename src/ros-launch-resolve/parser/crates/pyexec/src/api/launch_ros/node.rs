@@ -32,6 +32,59 @@ pub(crate) struct NodeSpec {
     /// `**kwargs`: `launch_ros.actions.Node` forwards them to
     /// `ExecuteProcess`. See [`RespawnArgs`].
     pub respawn: RespawnArgs,
+    /// `prefix=` / `cwd=` (#0085, #0087). See [`ProcessArgs`].
+    pub process: ProcessArgs,
+}
+
+/// `prefix=` and `cwd=` as an `ExecuteProcess` (and so every `Node`,
+/// `LifecycleNode` and `ComposableNodeContainer`) was constructed with them,
+/// performed only when the action executes (#0085, #0087).
+#[derive(Clone, Default)]
+pub(crate) struct ProcessArgs {
+    prefix: Option<Py<PyAny>>,
+    cwd: Option<Py<PyAny>>,
+}
+
+impl ProcessArgs {
+    /// Read both from a constructor's `**kwargs`. A Python `None` is the
+    /// same as not passing the argument.
+    pub(crate) fn from_kwargs(kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+        let get = |key: &str| {
+            kwargs
+                .and_then(|k| k.get_item(key).ok().flatten())
+                .filter(|v| !v.is_none())
+                .map(Bound::unbind)
+        };
+        Self {
+            prefix: get("prefix"),
+            cwd: get("cwd"),
+        }
+    }
+
+    /// What the process starts in and under, in the context the walk is in
+    /// now. `program` is the command's first word, for
+    /// `launch-prefix-filter`; `own_env` the names the process's own
+    /// environment sets.
+    pub(crate) fn resolve<'a>(
+        &self,
+        py: Python,
+        program: &str,
+        own_env: impl IntoIterator<Item = &'a str>,
+    ) -> PyResult<play_launch_parser::record::ProcessSpawn> {
+        let perform = |o: &Option<Py<PyAny>>| -> PyResult<Option<String>> {
+            o.as_ref()
+                .map(|v| pyobject_to_string(py, v).map(|t| crate::api::utils::resolve_tokens(&t)))
+                .transpose()
+        };
+        let prefix = perform(&self.prefix)?;
+        let cwd = perform(&self.cwd)?;
+        with_launch_context(|ctx| {
+            play_launch_parser::actions::process::spawn_from_resolved(
+                prefix, cwd, program, own_env, ctx,
+            )
+        })
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
 }
 
 /// `respawn=` and `respawn_delay=` as an `ExecuteProcess` (and so every
@@ -119,6 +172,8 @@ pub(crate) struct ExpandedNode {
     pub ros_arguments: Vec<String>,
     pub env: Vec<(String, String)>,
     pub global_params: Vec<(String, String)>,
+    /// `prefix=`, `cwd=` and the unsets in effect (#0085, #0087).
+    pub spawn: play_launch_parser::record::ProcessSpawn,
 }
 
 /// `launch_ros.utilities.prefix_namespace`.
@@ -264,12 +319,23 @@ impl NodeSpec {
 
         // `env=` replaces the environment; otherwise the process inherits
         // the launch's, with `additional_env` on top.
-        let mut env = if self.env.is_some() {
+        let own = if self.env.is_some() {
             env_pairs(py, self.env.as_ref())?
+        } else {
+            Vec::new()
+        };
+        let additional = env_pairs(py, self.additional_env.as_ref())?;
+        let spawn = self.process.resolve(
+            py,
+            &executable,
+            own.iter().chain(&additional).map(|(k, _)| k.as_str()),
+        )?;
+        let mut env = if self.env.is_some() {
+            own
         } else {
             with_launch_context(|ctx| ctx.environment().into_iter().collect())
         };
-        env.extend(env_pairs(py, self.additional_env.as_ref())?);
+        env.extend(additional);
 
         Ok(ExpandedNode {
             package,
@@ -285,6 +351,7 @@ impl NodeSpec {
             global_params: with_launch_context(|ctx| ctx.global_parameters())
                 .into_iter()
                 .collect(),
+            spawn,
         })
     }
 
@@ -328,6 +395,7 @@ impl NodeSpec {
             lifecycle_autostart: lifecycle.flatten(),
             respawn,
             respawn_delay,
+            spawn: n.spawn.clone(),
         });
         crate::api::visit::stamp_delay(mark);
         Ok(n)
@@ -445,6 +513,7 @@ impl Node {
                 env,
                 additional_env,
                 respawn: RespawnArgs::from_kwargs(_kwargs),
+                process: ProcessArgs::from_kwargs(_kwargs),
             },
             condition,
             executed_fqn: None,

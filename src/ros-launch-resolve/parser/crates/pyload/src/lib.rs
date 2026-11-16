@@ -179,7 +179,11 @@ impl std::error::Error for LoadError {}
 /// 11: what crosses carries the configuration log (play_launch phase 94).
 /// A v10 object reports none, so a contract's `$(var x)` would read a
 /// `.launch.py`'s assignments as never made.
-const ABI_VERSION: u32 = 11;
+/// 12: the context state carries `environment_unset`, and the captures carry
+/// `env_unset`, `launch_prefix` and `cwd` (play_launch #0085, #0087). A v11
+/// object reports none, so an unset or a `prefix=`/`cwd=` in a `.launch.py`
+/// would silently not reach the process.
+const ABI_VERSION: u32 = 12;
 
 /// What `sysconfig` says about an interpreter.
 #[derive(Debug, Clone)]

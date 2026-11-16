@@ -396,7 +396,13 @@ pub extern "C" fn play_launch_py_abi_version() -> u32 {
     // a v10 object reports none, and a contract's `$(var x)` would read a
     // `.launch.py`'s assignments as never made -- and accept a name it
     // reassigned.
-    11
+    //
+    // 12: the context state carries `environment_unset`, and the captures
+    // carry `env_unset`, `launch_prefix` and `cwd` (play_launch #0085,
+    // #0087). Serde-defaulted, so a v11 object reports none: an
+    // `UnsetEnvironmentVariable` in a `.launch.py` would leave an inherited
+    // variable in place, and a `prefix=`/`cwd=` would be dropped, silently.
+    12
 }
 
 #[cfg(test)]
@@ -758,7 +764,7 @@ mod tests {
     /// launch tree that silently resolves to nothing.
     #[test]
     fn the_abi_version_moved_with_the_contract() {
-        assert_eq!(play_launch_py_abi_version(), 11);
+        assert_eq!(play_launch_py_abi_version(), 12);
     }
 
     /// `exec_file` on the old entry point is refused by name, not answered

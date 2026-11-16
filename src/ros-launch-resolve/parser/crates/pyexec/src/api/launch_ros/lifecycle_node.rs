@@ -70,6 +70,7 @@ impl LifecycleNode {
                 env,
                 additional_env,
                 respawn: super::node::RespawnArgs::from_kwargs(_kwargs),
+                process: super::node::ProcessArgs::from_kwargs(_kwargs),
             },
             condition,
         }

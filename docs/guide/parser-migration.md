@@ -166,8 +166,10 @@ reject the file. It never goes the other way — a valid attribute is never
 refused.
 
 A few attributes ROS 2 accepts are recognised but not implemented, and warn
-rather than erroring: `exec_name`, `ros_args`, `launch-prefix`, `cwd`,
-`emulate_tty`, `shell`, `on_exit`. Use `--parser python` if you need them
+rather than erroring: `exec_name`, `emulate_tty` (output always goes to the
+log files; `false` is silent), `shell` on a `<node>` (`false` is silent),
+`respawn_max_retries`, `sigterm_timeout` and `sigkill_timeout`.
+`launch-prefix`, `cwd`, `ros_args`, `on_exit` and `<executable shell=…>` are
 honoured.
 
 Two long-standing extensions are also accepted with a warning because

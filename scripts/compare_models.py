@@ -41,6 +41,8 @@ What's compared
      - `respawn`, `respawn_delay`: exact match.
      - `args`, `raw_cmd`: exact match after whitespace normalization.
      - `extra_args`: exact dict match.
+     - (every process, containers too) `env_unset` as a set, `launch_prefix`
+       and `cwd` exactly (#0085, #0087).
      - `params` + `params_files`: `params_files` (raw external YAML,
        verbatim) is expanded and merged into the effective param set
        (inline `params` wins on key collision, mirroring the model's own
@@ -349,6 +351,22 @@ def spawn_input_diffs(rust: Dict, python: Dict) -> List[str]:
     return diffs
 
 
+def process_diffs(rust: Dict, python: Dict) -> List[str]:
+    """What a process starts in and under (#0085, #0087): `env_unset` as a
+    sorted set, `launch_prefix` and `cwd` exactly. Applied to every entity
+    that has a process, containers included: a container's prefix is what
+    #0085 was about."""
+    diffs: List[str] = []
+    r_unset = sorted(rust.get('env_unset') or [])
+    p_unset = sorted(python.get('env_unset') or [])
+    if r_unset != p_unset:
+        diffs.append(f"env_unset differ: {r_unset} vs {p_unset}")
+    for key in ('launch_prefix', 'cwd'):
+        if rust.get(key) != python.get(key):
+            diffs.append(f"{key}: {rust.get(key)!r} vs {python.get(key)!r}")
+    return diffs
+
+
 def node_diffs(rust: Dict, python: Dict) -> List[str]:
     """Check if two NodeInstance dicts (same FQN key) are functionally
     equivalent. Returns list of difference descriptions (empty = equivalent).
@@ -361,6 +379,7 @@ def node_diffs(rust: Dict, python: Dict) -> List[str]:
     diffs = structural_diffs(rust, python)
     if node_kind(rust) == 'node':
         diffs.extend(spawn_input_diffs(rust, python))
+    diffs.extend(process_diffs(rust, python))
     return diffs
 
 

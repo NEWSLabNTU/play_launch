@@ -45,6 +45,11 @@ pub struct ContainerAction {
     pub param_files: Vec<Vec<Substitution>>,
     pub remappings: Vec<crate::actions::node::Remapping>,
     pub environment: Vec<(String, String)>,
+    /// `launch-prefix=…` (#0085): a container is a node. It stays with the
+    /// process when play_launch replaces the container's executable.
+    pub launch_prefix: Option<Vec<Substitution>>,
+    /// `cwd=…` (#0087).
+    pub cwd: Option<Vec<Substitution>>,
 }
 
 /// The container's `respawn`/`respawn_delay`, resolved the way the Python
@@ -230,7 +235,31 @@ impl ContainerAction {
             param_files,
             remappings,
             environment,
+            launch_prefix: entity
+                .optional_attr_str("launch-prefix")?
+                .map(|s| parse_substitutions(&s))
+                .transpose()?,
+            cwd: entity
+                .optional_attr_str("cwd")?
+                .map(|s| parse_substitutions(&s))
+                .transpose()?,
         })
+    }
+
+    /// The container's [`crate::record::ProcessSpawn`] (#0085, #0087).
+    fn spawn(
+        &self,
+        executable: &str,
+        context: &LaunchContext,
+    ) -> Result<crate::record::ProcessSpawn> {
+        crate::actions::process::resolve_spawn(
+            self.launch_prefix.as_deref(),
+            self.cwd.as_deref(),
+            executable,
+            self.environment.iter().map(|(k, _)| k.as_str()),
+            context,
+        )
+        .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))
     }
 
     /// What the container process gets as a `Node`: its parameters (inline
@@ -360,6 +389,7 @@ impl ContainerAction {
             on_exit_shutdown: self.on_exit_shutdown,
             ros_args: ros_arguments,
             scope: None,
+            spawn: self.spawn(&exec_path, context)?,
         })
     }
 
@@ -455,6 +485,7 @@ impl ContainerAction {
             respawn_delay,
             ros_args: ros_arguments,
             scope: None,
+            spawn: self.spawn(&exec_path, context)?,
         })
     }
 }

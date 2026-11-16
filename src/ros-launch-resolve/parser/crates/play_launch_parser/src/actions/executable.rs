@@ -24,6 +24,8 @@ pub struct ExecutableAction {
     /// `<executable respawn="true">` that died stayed dead.
     pub respawn: Option<Vec<Substitution>>,
     pub respawn_delay: Option<Vec<Substitution>>,
+    /// `launch-prefix=…` (#0085), unresolved.
+    pub launch_prefix: Option<Vec<Substitution>>,
 }
 
 impl ExecutableAction {
@@ -119,6 +121,10 @@ impl ExecutableAction {
                 .optional_attr_str("respawn_delay")?
                 .map(|s| parse_substitutions(&s))
                 .transpose()?,
+            launch_prefix: entity
+                .optional_attr_str("launch-prefix")?
+                .map(|s| parse_substitutions(&s))
+                .transpose()?,
         })
     }
 
@@ -154,7 +160,7 @@ impl ExecutableAction {
         )?;
         Ok(NodeCapture {
             package: String::new(), // Executables don't have packages
-            executable,
+            executable: executable.clone(),
             name,
             namespace: None, // Executables don't use namespaces
             parameters: Vec::new(),
@@ -175,6 +181,14 @@ impl ExecutableAction {
             lifecycle_autostart: None,
             respawn,
             respawn_delay,
+            spawn: crate::actions::process::resolve_spawn(
+                self.launch_prefix.as_deref(),
+                self.cwd.as_deref(),
+                &executable,
+                self.environment.iter().map(|(k, _)| k.as_str()),
+                context,
+            )
+            .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?,
         })
     }
 }

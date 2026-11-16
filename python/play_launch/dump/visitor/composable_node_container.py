@@ -4,7 +4,7 @@ from launch.utilities import is_a, normalize_to_list_of_substitutions, perform_s
 from launch_ros.actions.composable_node_container import ComposableNodeContainer
 from launch_ros.descriptions import Parameter
 
-from ..launch_dump import ComposableNodeContainerRecord, LaunchDump
+from ..launch_dump import ComposableNodeContainerRecord, LaunchDump, process_prefix_and_cwd
 from ..utils import param_to_kv, param_value_to_str
 
 
@@ -159,8 +159,12 @@ def visit_composable_node_container(
     # The `<set_env>`s in scope, the process's own `<env>` over them, as
     # launch builds a process's environment (#0077).
     env = dump.set_env_in_scope(context)
+    own_env = [k for k, _ in env_vars]
     env.update(env_vars)
     env_vars = list(env.items())
+    # What it starts in and under (#0085, #0087).
+    launch_prefix, _prefix_words, cwd = process_prefix_and_cwd(container, context)
+    env_unset = dump.unset_env_in_scope(context, own_env)
 
     # Extract respawn configuration
     # Only set respawn if explicitly True - treat False/unset as None for consistency with Rust parser
@@ -255,6 +259,9 @@ def visit_composable_node_container(
         respawn_delay=respawn_delay,
         global_params=global_params if global_params else None,
         scope=dump.current_scope_id,
+        env_unset=env_unset,
+        launch_prefix=launch_prefix,
+        cwd=cwd,
     )
     dump.container.append(record)
 

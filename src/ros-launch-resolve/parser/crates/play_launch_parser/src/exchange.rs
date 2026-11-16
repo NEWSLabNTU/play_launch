@@ -52,6 +52,12 @@ pub struct ContextState {
     pub global_parameters: Option<SharedListState>,
     /// Environment variables set by `<set_env>` / `SetEnvironmentVariable`.
     pub environment: BTreeMap<String, String>,
+    /// Environment variables unset by `<unset_env>` / `UnsetEnvironmentVariable`
+    /// and not set again (C ABI 12, play_launch #0085). Kept apart from
+    /// [`Self::environment`] because an unset is not an absent key: it removes
+    /// a variable the launcher inherited, which no entry above can say.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environment_unset: Vec<String>,
     /// The file being run, for `ThisLaunchFileDir()` / `$(dirname)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_file: Option<String>,

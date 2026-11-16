@@ -201,7 +201,8 @@ impl LaunchContextView {
     }
 
     /// `context.environment`: the process environment as the launch sees it
-    /// so far — `os.environ` plus whatever `SetEnvironmentVariable` set.
+    /// so far — `os.environ` plus whatever `SetEnvironmentVariable` set,
+    /// minus whatever `UnsetEnvironmentVariable` removed.
     #[getter]
     fn environment(&self, py: Python) -> PyResult<Py<PyAny>> {
         use play_launch_parser::bridge::with_launch_context;
@@ -209,8 +210,17 @@ impl LaunchContextView {
         for (k, v) in std::env::vars() {
             d.set_item(k, v)?;
         }
-        for (k, v) in with_launch_context(|ctx| ctx.environment()) {
-            d.set_item(k, v)?;
+        // `Some` set, `None` unset: an unset removes an inherited variable
+        // too, as `UnsetEnvironmentVariable` deletes from `os.environ`.
+        for (k, v) in with_launch_context(|ctx| ctx.environment_overlay()) {
+            match v {
+                Some(v) => d.set_item(k, v)?,
+                None => {
+                    if d.contains(&k)? {
+                        d.del_item(k)?;
+                    }
+                }
+            }
         }
         Ok(d.into_any().unbind())
     }

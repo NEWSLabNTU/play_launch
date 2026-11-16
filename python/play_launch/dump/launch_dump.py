@@ -1,4 +1,6 @@
 import os
+import re
+import shlex
 from dataclasses import dataclass, field
 
 
@@ -55,6 +57,36 @@ def extract_package_from_path(path: str) -> str | None:
     return None
 
 
+def process_prefix_and_cwd(process, context) -> tuple[str | None, list[str], str | None]:
+    """A prepared process's prefix as text and as words, and its cwd (#0085, #0087).
+
+    Mirrors `launch.descriptions.Executable.prepare`: the action's `prefix`,
+    else the `launch-prefix` configuration when `launch-prefix-filter`
+    `re.match`es the basename of the command's first word.
+    """
+    description = getattr(process, "_ExecuteLocal__process_description", None)
+    if description is None:
+        return None, [], None
+    from launch.utilities import perform_substitutions
+
+    # Performed here rather than read from `final_cwd`: a container is
+    # recorded without its description being prepared.
+    cwd = None
+    if description.cwd is not None:
+        cwd = "".join(context.perform_substitution(x) for x in description.cwd)
+    prefix = perform_substitutions(context, description.prefix) if description.prefix else ""
+    prefix_filter = getattr(description, "_Executable__prefix_filter", None)
+    if prefix_filter is not None and prefix.strip():
+        cmd0 = perform_substitutions(context, description.cmd[0]) if description.cmd else ""
+        pattern = perform_substitutions(context, prefix_filter)
+        if not re.match(pattern, os.path.basename(cmd0)):
+            prefix = ""
+    words = shlex.split(prefix)
+    if not words:
+        return None, [], cwd
+    return prefix, words, cwd
+
+
 @dataclass
 class NodeRecord:
     executable: str
@@ -81,6 +113,11 @@ class NodeRecord:
     # Phase 94: how many `config_log` entries had happened where this member
     # was declared -- the point a contract's `$(var x @<node>)` reads at.
     config_seq: int | None = None
+    # What the process starts in and under (#0085, #0087): the variables
+    # launch unset (inherited ones included), its prefix, its cwd.
+    env_unset: list[str] = field(default_factory=list)
+    launch_prefix: str | None = None
+    cwd: str | None = None
 
 
 @dataclass
@@ -126,6 +163,11 @@ class ComposableNodeContainerRecord:
     # Phase 94: how many `config_log` entries had happened where this member
     # was declared -- the point a contract's `$(var x @<node>)` reads at.
     config_seq: int | None = None
+    # What the process starts in and under (#0085, #0087): the variables
+    # launch unset (inherited ones included), its prefix, its cwd.
+    env_unset: list[str] = field(default_factory=list)
+    launch_prefix: str | None = None
+    cwd: str | None = None
 
 
 @dataclass
@@ -179,6 +221,18 @@ class LaunchDump:
         """
         env = getattr(context, "environment", os.environ)
         return {k: v for k, v in env.items() if self._base_env.get(k) != v}
+
+    def unset_env_in_scope(self, context, own_env) -> list[str]:
+        """The variables `<unset_env>` (`UnsetEnvironmentVariable`) removed (#0085).
+
+        launch deletes them from `context.environment`, which began as a copy
+        of the dumper's own environment, so an inherited variable absent from
+        it now was unset. A name the process's own environment sets again is
+        not removed from that process.
+        """
+        env = getattr(context, "environment", os.environ)
+        own = set(own_env)
+        return sorted(k for k in self._base_env if k not in env and k not in own)
 
     def log_config(
         self,

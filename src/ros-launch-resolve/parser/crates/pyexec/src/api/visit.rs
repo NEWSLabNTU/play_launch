@@ -48,7 +48,7 @@ struct Frame {
     executed: HashMap<usize, (f64, String)>,
     /// What standalone `PushLaunchConfigurations` / `PushEnvironment` saved.
     config_stack: Vec<ConfigurationSnapshot>,
-    env_stack: Vec<HashMap<String, String>>,
+    env_stack: Vec<play_launch_parser::substitution::context::EnvOverlay>,
     /// How many times this frame's captures were handed to the traverser
     /// (each include drains them). A capture range recorded under an older
     /// epoch no longer indexes the context's lists.

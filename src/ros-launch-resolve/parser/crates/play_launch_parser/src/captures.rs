@@ -65,6 +65,10 @@ pub struct NodeCapture {
     /// `respawn_delay=` in seconds, as given. `None` when not given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub respawn_delay: Option<f64>,
+    /// `prefix=`, `cwd=` and the unsets in effect, resolved when the action
+    /// executed (#0085, #0087).
+    #[serde(flatten, default)]
+    pub spawn: crate::record::ProcessSpawn,
 }
 
 /// Captured container data from Python or XML parsing
@@ -120,6 +124,9 @@ pub struct ContainerCapture {
     /// timer body has been walked — see `traverser::delay`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_delay_secs: Option<f64>,
+    /// As [`NodeCapture::spawn`].
+    #[serde(flatten, default)]
+    pub spawn: crate::record::ProcessSpawn,
 }
 
 /// Captured composable node data from Python or XML parsing

@@ -85,6 +85,11 @@ pub struct NodeAction {
     /// unresolved here. `None` when the attribute is absent (always for a
     /// plain `<node>`).
     pub autostart: Option<Vec<Substitution>>,
+    /// `launch-prefix=…` (#0085): the command the process runs under,
+    /// unresolved. `None` falls back to the `launch-prefix` configuration.
+    pub launch_prefix: Option<Vec<Substitution>>,
+    /// `cwd=…` (#0087), unresolved.
+    pub cwd: Option<Vec<Substitution>>,
 }
 
 /// `launch`'s coercion of a resolved string to `bool`
@@ -251,6 +256,14 @@ impl NodeAction {
             on_exit_shutdown: parse_on_exit(entity, "node")?,
             lifecycle,
             autostart,
+            launch_prefix: entity
+                .optional_attr_str("launch-prefix")?
+                .map(|s| parse_substitutions(&s))
+                .transpose()?,
+            cwd: entity
+                .optional_attr_str("cwd")?
+                .map(|s| parse_substitutions(&s))
+                .transpose()?,
         })
     }
 
@@ -355,7 +368,7 @@ impl NodeAction {
         )?;
         Ok(NodeCapture {
             package,
-            executable,
+            executable: executable.clone(),
             name,
             namespace,
             parameters,
@@ -376,6 +389,14 @@ impl NodeAction {
                 .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?,
             respawn,
             respawn_delay,
+            spawn: crate::actions::process::resolve_spawn(
+                self.launch_prefix.as_deref(),
+                self.cwd.as_deref(),
+                &executable,
+                self.environment.iter().map(|(k, _)| k.as_str()),
+                context,
+            )
+            .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?,
         })
     }
 

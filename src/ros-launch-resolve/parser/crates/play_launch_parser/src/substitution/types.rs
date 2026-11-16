@@ -100,33 +100,34 @@ impl Substitution {
             }
             Substitution::EnvironmentVariable { name, default } => {
                 let name_str = resolve_substitutions(name, context)?;
-                // Check context environment first, then process environment
-                if let Some(value) = context.get_environment_variable(&name_str) {
-                    return Ok(value);
-                }
-                std::env::var(&name_str).or_else(|_| {
-                    if let Some(default_subs) = default {
-                        resolve_substitutions(default_subs, context)
-                    } else {
-                        Err(SubstitutionError::UndefinedEnvVar(name_str))
-                    }
-                })
+                // launch's `context.environment`: what launch set, else
+                // nothing when it unset the variable (an `<unset_env>` hides
+                // an inherited value too, #0085), else the launcher's own.
+                context
+                    .resolve_environment_variable(&name_str)
+                    .ok_or(())
+                    .or_else(|_| {
+                        if let Some(default_subs) = default {
+                            resolve_substitutions(default_subs, context)
+                        } else {
+                            Err(SubstitutionError::UndefinedEnvVar(name_str))
+                        }
+                    })
             }
             Substitution::OptionalEnvironmentVariable { name, default } => {
                 // Never errors - returns default or empty string if not set
                 let name_str = resolve_substitutions(name, context)?;
-                // Check context environment first, then process environment
-                if let Some(value) = context.get_environment_variable(&name_str) {
-                    return Ok(value);
-                }
-                Ok(std::env::var(&name_str).unwrap_or_else(|_| {
-                    if let Some(default_subs) = default {
-                        resolve_substitutions(default_subs, context)
-                            .unwrap_or_else(|_| String::new())
-                    } else {
-                        String::new()
-                    }
-                }))
+                // As `$(env)` above: an unset variable reads as unset.
+                Ok(context
+                    .resolve_environment_variable(&name_str)
+                    .unwrap_or_else(|| {
+                        if let Some(default_subs) = default {
+                            resolve_substitutions(default_subs, context)
+                                .unwrap_or_else(|_| String::new())
+                        } else {
+                            String::new()
+                        }
+                    }))
             }
             Substitution::Command { cmd, error_mode } => {
                 let cmd_str = resolve_substitutions(cmd, context)?;

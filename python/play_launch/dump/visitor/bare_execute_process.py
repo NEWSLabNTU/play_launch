@@ -14,7 +14,7 @@ from launch.actions import ExecuteProcess
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
 
-from ..launch_dump import LaunchDump, NodeRecord
+from ..launch_dump import LaunchDump, NodeRecord, process_prefix_and_cwd
 from .execute_process import visit_execute_process
 from .node import _classify_on_exit
 
@@ -38,10 +38,17 @@ def visit_bare_execute_process(
     cmd = [str(part) for part in (description.final_cmd or [])]
     if not cmd:
         return ret
+    # `final_cmd` already starts with the prefix's words (#0085). Under a
+    # shell they stay part of the shell's command line; otherwise they are
+    # carried apart, as the Rust parser carries them.
+    launch_prefix, prefix_words, cwd = process_prefix_and_cwd(process, context)
     if process.shell:
         # launch joins the command line with spaces and runs it through the
         # shell (osrf_pycommon's async_execute_process, shell=True).
         cmd = ["/bin/sh", "-c", " ".join(cmd)]
+        launch_prefix = None
+    elif prefix_words and cmd[: len(prefix_words)] == prefix_words:
+        cmd = cmd[len(prefix_words) :]
 
     exec_name = _strip_counter(description.final_name)
     # The NAME the author gave, or None: an unnamed process is keyed by its
@@ -61,6 +68,7 @@ def visit_bare_execute_process(
     # The `<set_env>`s in scope, the process's own `<env>` over them, as
     # launch builds a process's environment (#0077).
     env = dump.set_env_in_scope(context)
+    own_env = [k for k, _ in env_vars]
     env.update(env_vars)
     env_vars = list(env.items())
 
@@ -103,6 +111,9 @@ def visit_bare_execute_process(
             respawn_delay=respawn_delay,
             on_exit_shutdown=on_exit_shutdown,
             scope=dump.current_scope_id,
+            env_unset=dump.unset_env_in_scope(context, own_env),
+            launch_prefix=launch_prefix,
+            cwd=cwd,
         )
     )
     return ret

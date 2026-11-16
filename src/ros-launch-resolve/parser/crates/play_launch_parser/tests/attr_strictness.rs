@@ -20,6 +20,9 @@ fn node_spec_lists_the_ros2_supported_attributes() {
         "output",
         "respawn",
         "respawn_delay",
+        // #0085 / #0087: carried to the spawn.
+        "launch-prefix",
+        "cwd",
         "if",
         "unless",
     ] {
@@ -34,7 +37,9 @@ fn node_spec_lists_the_ros2_supported_attributes() {
 #[test]
 fn node_spec_marks_unimplemented_ros2_attributes_as_known() {
     let spec = spec_for("node").expect("node has a spec");
-    for attr in ["exec_name", "launch-prefix", "cwd", "emulate_tty", "shell"] {
+    // `launch-prefix` and `cwd` left this list for `supported` (#0085,
+    // #0087); `shell` stays: a ROS node is not run through a shell here.
+    for attr in ["exec_name", "emulate_tty", "shell"] {
         assert!(
             spec.known_unsupported.contains(&attr),
             "`{attr}` is valid ROS 2 and must warn, not error; \
@@ -75,8 +80,8 @@ fn unknown_attributes_are_rejected_and_all_named_at_once() {
 
 #[test]
 fn known_unsupported_attributes_are_accepted() {
-    validate_named("node", &["pkg", "exec", "launch-prefix"])
-        .expect("launch-prefix is valid ROS 2 — warn, do not error");
+    validate_named("node", &["pkg", "exec", "emulate_tty"])
+        .expect("emulate_tty is valid ROS 2 — warn, do not error");
 }
 
 #[test]
@@ -199,11 +204,11 @@ fn parsing_rejects_an_unknown_attribute() {
 fn parsing_accepts_a_known_unsupported_attribute() {
     parse_source(
         r#"<launch>
-  <node pkg="demo_nodes_cpp" exec="talker" name="t" launch-prefix="nice -n 5"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="t" emulate_tty="true"/>
 </launch>
 "#,
     )
-    .expect("launch-prefix is valid ROS 2 — must parse with a warning");
+    .expect("emulate_tty is valid ROS 2 — must parse with a warning");
 }
 
 #[test]

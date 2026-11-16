@@ -127,6 +127,8 @@ pub struct ExecuteProcess {
     on_exit_shutdown: Option<bool>,
     /// `respawn=` / `respawn_delay=` (#0070).
     respawn: crate::api::launch_ros::RespawnArgs,
+    /// `prefix=` / `cwd=` (#0085, #0087).
+    process: crate::api::launch_ros::ProcessArgs,
     name: Option<Py<PyAny>>,
     additional_env: Option<Py<PyAny>>,
     #[pyo3(get)]
@@ -153,6 +155,7 @@ impl ExecuteProcess {
             shell,
             on_exit_shutdown: crate::api::launch_ros::on_exit_kwarg_shuts_down(_kwargs),
             respawn: crate::api::launch_ros::RespawnArgs::from_kwargs(_kwargs),
+            process: crate::api::launch_ros::ProcessArgs::from_kwargs(_kwargs),
             name,
             additional_env,
             condition,
@@ -178,22 +181,34 @@ impl ExecuteProcess {
         if parts.is_empty() {
             return Ok(());
         }
-        if me.shell {
-            parts = shell_command(&parts);
-        }
         let name = me
             .name
             .as_ref()
             .map(|n| pyobject_to_string(py, n))
             .transpose()?;
-        let mut env: Vec<(String, String)> =
-            with_launch_context(|ctx| ctx.environment().into_iter().collect());
+        let mut additional: Vec<(String, String)> = Vec::new();
         if let Some(extra) = &me.additional_env {
             for item in extra.bind(py).call_method0("items")?.try_iter()? {
                 let (k, v): (Py<PyAny>, Py<PyAny>) = item?.extract()?;
-                env.push((pyobject_to_string(py, &k)?, pyobject_to_string(py, &v)?));
+                additional.push((pyobject_to_string(py, &k)?, pyobject_to_string(py, &v)?));
             }
         }
+        let mut spawn =
+            me.process
+                .resolve(py, &parts[0], additional.iter().map(|(k, _)| k.as_str()))?;
+        if me.shell {
+            // launch prepends the prefix before joining the command line for
+            // the shell, so it is part of what the shell runs.
+            if let Some(p) = spawn.launch_prefix.take() {
+                let mut words = play_launch_parser::actions::process::prefix_words(&p);
+                words.extend(parts);
+                parts = words;
+            }
+            parts = shell_command(&parts);
+        }
+        let mut env: Vec<(String, String)> =
+            with_launch_context(|ctx| ctx.environment().into_iter().collect());
+        env.extend(additional);
         let (respawn, respawn_delay) = me.respawn.resolve(py, "ExecuteProcess")?;
         // The Python dumper keeps a bare process's delay only alongside
         // `respawn` (`bare_execute_process.py`); without it the delay means
@@ -208,6 +223,7 @@ impl ExecuteProcess {
             on_exit_shutdown: me.on_exit_shutdown,
             respawn,
             respawn_delay,
+            spawn,
             ..Default::default()
         });
         crate::api::visit::stamp_delay(mark);

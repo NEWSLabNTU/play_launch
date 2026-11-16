@@ -11,7 +11,7 @@ from launch_ros.actions.node import Node
 from launch_ros.descriptions import Parameter
 from launch_ros.utilities import add_node_name, get_node_name_count
 
-from ..launch_dump import LaunchDump, NodeRecord
+from ..launch_dump import LaunchDump, NodeRecord, process_prefix_and_cwd
 from ..utils import param_to_kv, param_value_to_str
 from .execute_process import visit_execute_process
 
@@ -313,8 +313,12 @@ def visit_node(
     # The `<set_env>`s in scope, the process's own `<env>` over them, as
     # launch builds a process's environment (#0077).
     env = dump.set_env_in_scope(context)
+    own_env = [k for k, _ in env_vars]
     env.update(env_vars)
     env_vars = list(env.items())
+    # What it starts in and under (#0085, #0087).
+    launch_prefix, _prefix_words, cwd = process_prefix_and_cwd(node, context)
+    env_unset = dump.unset_env_in_scope(context, own_env)
 
     # Extract respawn configuration
     # Note: Only set respawn if explicitly True - treat False/unset as None for consistency with Rust parser
@@ -410,6 +414,9 @@ def visit_node(
         lifecycle_autostart=lifecycle_autostart,
         global_params=global_params if global_params else None,
         scope=dump.current_scope_id,
+        env_unset=env_unset,
+        launch_prefix=launch_prefix,
+        cwd=cwd,
     )
     dump.node.append(record)
 

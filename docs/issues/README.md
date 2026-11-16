@@ -17,17 +17,6 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0087** -- `<executable cwd=…>` is ignored by the Rust parser, so a process
-runs in play_launch's own directory (`ros2 bag record` writes its bag there,
-not where `cwd` says), and the parser warns that `shell=` is ignored although
-it has been honoured since #0071. GitHub #27. See `0087-*`.
-
-**#0085** -- `<unset_env>` in a scoped group, and a container's
-`launch-prefix`, never reach the process play_launch spawns, where `ros2
-launch` applies both. The ZED X camera on AutoSDV fails to open with
-`DISPLAY` or VirtualGL's `LD_PRELOAD` faker set, so a launch from a TurboVNC
-desktop cannot drop them for the camera alone. See `0085-*`.
-
 **#0084** -- shutdown ignores an action's `sigterm_timeout` and `sigkill_timeout`
 and starts with SIGTERM: each node gets a fixed 2 s, then SIGTERM and SIGKILL 5 s
 later, where `ros2 launch` sends SIGINT and waits as the launch file declares. A
@@ -47,6 +36,18 @@ every frame twice under load; `stock` is clean. See `0082-*`.
 frontmatter disagree.
 
 ## Resolved
+
+**#0087** -- `<executable cwd=…>` was ignored by the Rust parser, so a process
+ran in play_launch's own directory, and the parser warned that `shell=` was
+ignored although it was honoured. `cwd` now reaches the process on every
+frontend and both start paths, and the table no longer warns about `shell`,
+`cwd` or `launch-prefix`. GitHub #27. See `archived/0087-*`.
+
+**#0085** -- `<unset_env>` and `launch-prefix` never reached the spawned
+process. An unset is now recorded as one (an inherited variable is removed
+too), carried with the prefix on the model, and applied at spawn; a
+container's prefix goes in front of play_launch's own container binary.
+See `archived/0085-*`.
 
 **#0086** -- the Rust parser's mock substitutions had no `perform()`, so
 `context.perform_substitution(EnvironmentVariable(...))` raised

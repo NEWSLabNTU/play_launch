@@ -50,6 +50,15 @@ impl Drop for ResolutionDepthGuard {
     }
 }
 
+/// What launch did to its environment on top of the one it inherited:
+/// `Some(value)` for a `<set_env>` / `SetEnvironmentVariable`, `None` for an
+/// `<unset_env>` / `UnsetEnvironmentVariable`. An unset is NOT a missing
+/// key: launch's `context.environment` starts as a copy of `os.environ` and
+/// `UnsetEnvironmentVariable` deletes from it, so a variable the launcher's
+/// own shell exported is gone for every process started after it (#0085).
+/// A missing key means "inherited, untouched".
+pub type EnvOverlay = HashMap<String, Option<String>>;
+
 /// Snapshot of the namespace depth for save/restore.
 /// Used by `save_scope()` / `restore_scope()` to ensure cleanup on early returns.
 pub struct ScopeSnapshot {
@@ -67,7 +76,7 @@ pub struct ScopeSnapshot {
 /// [`SharedLists`].
 pub struct ConfigurationSnapshot {
     configurations: HashMap<String, Vec<Substitution>>,
-    environment: HashMap<String, String>,
+    environment: EnvOverlay,
     namespace_stack: Vec<String>,
     remap_list: Option<usize>,
     param_list: Option<usize>,
@@ -108,7 +117,7 @@ pub struct ArgumentMetadata {
 #[derive(Debug, Clone)]
 struct ParentScope {
     configurations: HashMap<String, Vec<Substitution>>,
-    environment: HashMap<String, String>,
+    environment: EnvOverlay,
     declared_arguments: HashMap<String, ArgumentMetadata>,
     /// Chain to grandparent scope
     parent: Option<Arc<ParentScope>>,
@@ -130,7 +139,7 @@ pub struct LaunchContext {
     /// Local scope (owned, mutable, initially empty for children)
     /// Store configurations as parsed substitutions for lazy evaluation
     local_configurations: HashMap<String, Vec<Substitution>>,
-    local_environment: HashMap<String, String>,
+    local_environment: EnvOverlay,
     local_declared_arguments: HashMap<String, ArgumentMetadata>,
     /// Every `ros_remaps` / `global_params` list ever created, and which one
     /// is current (`None`: the configuration is unset). See [`SharedLists`].
@@ -454,21 +463,24 @@ impl LaunchContext {
 
     /// Set environment variable in local scope only
     pub fn set_environment_variable(&mut self, name: String, value: String) {
-        self.local_environment.insert(name, value);
+        self.local_environment.insert(name, Some(value));
     }
 
-    /// Unset environment variable in local scope only
+    /// launch's `UnsetEnvironmentVariable`: the variable is gone for every
+    /// process started after this, whether launch set it or inherited it
+    /// (#0085). Recorded as an unset rather than by removing the key, which
+    /// would only undo a `<set_env>` and leave an inherited value in place.
     pub fn unset_environment_variable(&mut self, name: &str) {
-        self.local_environment.remove(name);
+        self.local_environment.insert(name.to_string(), None);
     }
 
     /// launch's `PushEnvironment`: what [`Self::pop_environment`] restores.
-    pub fn push_environment(&self) -> HashMap<String, String> {
+    pub fn push_environment(&self) -> EnvOverlay {
         self.local_environment.clone()
     }
 
     /// launch's `PopEnvironment`.
-    pub fn pop_environment(&mut self, saved: HashMap<String, String>) {
+    pub fn pop_environment(&mut self, saved: EnvOverlay) {
         self.local_environment = saved;
     }
 
@@ -478,14 +490,12 @@ impl LaunchContext {
         self.local_environment.clear();
     }
 
-    /// Get environment variable, walking parent chain
-    pub fn get_environment_variable(&self, name: &str) -> Option<String> {
-        // 1. Check local scope first
+    /// What launch did to this variable, walking the parent chain:
+    /// `Some(Some(v))` set, `Some(None)` unset, `None` untouched (inherited).
+    pub fn environment_entry(&self, name: &str) -> Option<Option<String>> {
         if let Some(value) = self.local_environment.get(name) {
             return Some(value.clone());
         }
-
-        // 2. Walk parent chain
         let mut current = &self.parent;
         while let Some(parent) = current {
             if let Some(value) = parent.environment.get(name) {
@@ -493,24 +503,35 @@ impl LaunchContext {
             }
             current = &parent.parent;
         }
-
         None
     }
 
-    /// Get all environment variables from entire scope chain
-    pub fn environment(&self) -> HashMap<String, String> {
-        // Walk from root to local, so local values override parent values
-        let mut result = HashMap::new();
+    /// The value launch SET for this variable, if any. `None` both when it
+    /// was unset and when launch never touched it; see
+    /// [`Self::resolve_environment_variable`] for the process's view.
+    pub fn get_environment_variable(&self, name: &str) -> Option<String> {
+        self.environment_entry(name).flatten()
+    }
 
-        // 1. Collect all parent scopes
+    /// The variable as a process started here sees it -- launch's
+    /// `context.environment[name]`: what launch set, else nothing when launch
+    /// unset it, else the launcher's own environment.
+    pub fn resolve_environment_variable(&self, name: &str) -> Option<String> {
+        match self.environment_entry(name) {
+            Some(v) => v,
+            None => std::env::var(name).ok(),
+        }
+    }
+
+    /// Every set and unset in effect, from the entire scope chain.
+    pub fn environment_overlay(&self) -> EnvOverlay {
+        let mut result = EnvOverlay::new();
         let mut scopes = Vec::new();
         let mut current = &self.parent;
         while let Some(parent) = current {
             scopes.push(parent);
             current = &parent.parent;
         }
-
-        // 2. Apply parent scopes from root to immediate parent
         for parent in scopes.iter().rev() {
             result.extend(
                 parent
@@ -519,15 +540,33 @@ impl LaunchContext {
                     .map(|(k, v)| (k.clone(), v.clone())),
             );
         }
-
-        // 3. Apply local scope (overrides parent)
         result.extend(
             self.local_environment
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone())),
         );
-
         result
+    }
+
+    /// The variables launch SET (`<set_env>`), from the entire scope chain.
+    /// Unsets are not here; see [`Self::environment_unset`].
+    pub fn environment(&self) -> HashMap<String, String> {
+        self.environment_overlay()
+            .into_iter()
+            .filter_map(|(k, v)| v.map(|v| (k, v)))
+            .collect()
+    }
+
+    /// The variables launch UNSET (`<unset_env>`) and did not set again,
+    /// sorted: what a process started here must start without.
+    pub fn environment_unset(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .environment_overlay()
+            .into_iter()
+            .filter_map(|(k, v)| v.is_none().then_some(k))
+            .collect();
+        out.sort();
+        out
     }
 
     /// Append a global topic remapping (`<set_remap>`, `SetRemap`), the way
@@ -767,6 +806,7 @@ impl LaunchContext {
             remaps: list(self.remap_list, since.remap, &self.lists.remaps),
             global_parameters: list(self.param_list, since.param, &self.lists.params),
             environment: self.environment().into_iter().collect(),
+            environment_unset: self.environment_unset(),
             current_file: self
                 .current_file
                 .as_ref()
@@ -819,7 +859,12 @@ impl LaunchContext {
             &state.global_parameters,
             since.param,
         );
-        self.local_environment = state.environment.clone().into_iter().collect();
+        self.local_environment = state
+            .environment
+            .iter()
+            .map(|(k, v)| (k.clone(), Some(v.clone())))
+            .chain(state.environment_unset.iter().map(|k| (k.clone(), None)))
+            .collect();
         if let Some(f) = &state.current_file {
             self.current_file = Some(PathBuf::from(f));
         }

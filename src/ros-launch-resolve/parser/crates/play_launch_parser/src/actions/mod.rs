@@ -9,6 +9,7 @@ pub mod include;
 pub mod let_action;
 pub mod load_composable_node;
 pub mod node;
+pub mod process;
 pub mod set_env;
 pub mod set_parameter;
 pub mod set_remap;

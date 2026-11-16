@@ -33,8 +33,11 @@ from .inspector import LaunchInspector
 #   1 — pre-Phase-40.1: no `ScopeOrigin.path`; container records lacked
 #       `executable`/`package`/`cmd`. Implied by the constant's ABSENCE, since
 #       no such install defines it.
-#   2 — current: full container records, scope paths.
-DUMP_FORMAT_VERSION = 2
+#   2 — full container records, scope paths.
+#   3 — current: process records carry `env_unset`, `launch_prefix` and
+#       `cwd` (#0085, #0087). A version-2 install omits them, which is no
+#       error at all: an unset or a prefix silently does not reach the process.
+DUMP_FORMAT_VERSION = 3
 
 
 def main() -> int:
@@ -82,8 +85,18 @@ def main() -> int:
     )
     inspector.include_launch_description(launch_description)
 
-    inspector.run(shutdown_when_idle=True)
-    dump = inspector.dump()
+    # launch's `SetEnvironmentVariable`/`UnsetEnvironmentVariable` write
+    # `os.environ` itself, and this module runs inside play_launch's process
+    # (PyO3): left as they are, a launch file's top-level `<unset_env>` or
+    # `<set_env>` would reach EVERY process play_launch then starts, those
+    # declared before it too (#0085). What each process gets is in its record.
+    saved_environ = dict(os.environ)
+    try:
+        inspector.run(shutdown_when_idle=True)
+        dump = inspector.dump()
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_environ)
 
     with open(output_file, "w") as fp:
         json.dump(dump, fp, sort_keys=True, indent=4)

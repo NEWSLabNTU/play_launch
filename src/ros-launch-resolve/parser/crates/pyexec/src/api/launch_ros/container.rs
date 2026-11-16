@@ -74,6 +74,7 @@ impl ComposableNodeContainer {
                 env,
                 additional_env,
                 respawn: super::node::RespawnArgs::from_kwargs(_kwargs),
+                process: super::node::ProcessArgs::from_kwargs(_kwargs),
             },
             composable_node_descriptions,
             condition,
@@ -144,6 +145,7 @@ impl ComposableNodeContainer {
             on_exit_shutdown: this.borrow().on_exit_shutdown,
             respawn,
             respawn_delay,
+            spawn: n.spawn,
         });
         crate::api::visit::stamp_delay(mark);
         this.borrow_mut().executed_fqn = Some(fqn.clone());

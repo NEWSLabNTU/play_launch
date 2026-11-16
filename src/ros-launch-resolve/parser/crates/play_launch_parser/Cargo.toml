@@ -14,6 +14,8 @@ serde_yaml_ng = "0.10"
 roxmltree = "0.19"
 thiserror = "1.0"
 log = "0.4"
+# `launch-prefix-filter` is a Python `re.match` pattern (#0085).
+regex = { version = "1", default-features = false, features = ["std", "unicode-perl"] }
 rand = "0.8"
 
 # Used ONLY by `src/main.rs`, so they are gated behind the default `cli`

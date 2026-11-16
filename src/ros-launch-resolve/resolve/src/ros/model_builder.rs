@@ -1161,6 +1161,10 @@ pub fn build_system_model(
                 // to `respawn_delay` above; a node may carry both.
                 start_delay_secs: n.start_delay_secs,
                 env: lower_env(n.env.as_deref()),
+                // What it starts in and under (#0085, #0087).
+                env_unset: n.env_unset.clone(),
+                launch_prefix: n.launch_prefix.clone(),
+                cwd: n.cwd.clone(),
                 // GAP-2: non-ROS CLI args (prepended before --ros-args).
                 args: n.args.clone().unwrap_or_default(),
                 // GAP-3: resolved external param YAML content, verbatim.
@@ -1223,6 +1227,11 @@ pub fn build_system_model(
                 // cannot load before the container process exists.
                 start_delay_secs: c.start_delay_secs,
                 env: lower_env(c.env.as_deref()),
+                // A container's prefix stays with its process when
+                // play_launch replaces the executable (#0085).
+                env_unset: c.env_unset.clone(),
+                launch_prefix: c.launch_prefix.clone(),
+                cwd: c.cwd.clone(),
                 args: c.args.clone().unwrap_or_default(),
                 params_files: c.params_files.clone(),
                 // phase-54 / issue 0007 — see the regular-node site above.
@@ -1278,6 +1287,10 @@ pub fn build_system_model(
                 // play_launch's runtime does with it today.
                 start_delay_secs: l.start_delay_secs,
                 env: lower_env(l.env.as_deref()),
+                // No process of its own: it starts in its container's.
+                env_unset: Vec::new(),
+                launch_prefix: None,
+                cwd: None,
                 // No non-ROS args / params_files / raw_cmd for composables —
                 // phase-54 / issue 0007 — NOT carried for composable nodes.
                 //
@@ -2781,7 +2794,10 @@ mod tests {
                 "respawn": true,
                 "respawn_delay": 2.5,
                 "on_exit_shutdown": true,
-                "env": [["CUDA_VISIBLE_DEVICES", "0"]]
+                "env": [["CUDA_VISIBLE_DEVICES", "0"]],
+                "env_unset": ["DISPLAY"],
+                "launch_prefix": "nice -n 5",
+                "cwd": "/srv/bags"
             }],
             "container": [{
                 "executable": "component_container",
@@ -2793,7 +2809,9 @@ mod tests {
                 "remaps": [["/tf", "/perception/tf"]],
                 "ros_args": ["--log-level", "container:=info"],
                 "respawn": false,
-                "env": [["OMP_NUM_THREADS", "4"]]
+                "env": [["OMP_NUM_THREADS", "4"]],
+                "env_unset": ["DISPLAY", "LD_PRELOAD"],
+                "launch_prefix": "env -u DISPLAY"
             }],
             "load_node": [{
                 "package": "tracker_pkg",
@@ -2878,6 +2896,30 @@ mod tests {
             path.trigger,
             Some(EffectiveTrigger::Timer { rate_hz: 50.0 })
         );
+    }
+
+    /// #0085, #0087: what a process starts in and under reaches the model,
+    /// so `up <model.yaml>` applies it as `launch` does. A composable has no
+    /// process of its own and carries none of it.
+    #[test]
+    fn processes_carry_env_unset_launch_prefix_and_cwd() {
+        let dump = dump_with_launch_fields();
+        let index = ManifestIndex::default();
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let node = &model.structure.nodes["/perception/detector"];
+        assert_eq!(node.env_unset, vec!["DISPLAY".to_string()]);
+        assert_eq!(node.launch_prefix.as_deref(), Some("nice -n 5"));
+        assert_eq!(node.cwd.as_deref(), Some("/srv/bags"));
+        let c = &model.structure.nodes["/perception/pipeline_container"];
+        assert_eq!(
+            c.env_unset,
+            vec!["DISPLAY".to_string(), "LD_PRELOAD".to_string()]
+        );
+        assert_eq!(c.launch_prefix.as_deref(), Some("env -u DISPLAY"));
+        assert_eq!(c.cwd, None);
+        let t = &model.structure.nodes["/perception/tracker"];
+        assert!(t.env_unset.is_empty() && t.launch_prefix.is_none() && t.cwd.is_none());
     }
 
     #[test]

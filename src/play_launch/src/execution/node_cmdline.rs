@@ -37,6 +37,34 @@ pub struct NodeCommandLine {
     pub stdout_logs: Option<bool>,
     pub enclave: Option<String>,
     pub env: HashMap<String, String>,
+    /// Variables the process starts WITHOUT (`<unset_env>`, #0085): removed
+    /// from what play_launch passes down, before [`Self::env`] is applied, so
+    /// a name the process's own environment sets again keeps that value.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_unset: Vec<String>,
+    /// `launch-prefix` split as launch's `shlex.split` splits it (#0085):
+    /// argv starts with these words, in front of the executable — including
+    /// play_launch's own container binary when `--container-mode` replaced
+    /// the launch file's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prefix: Vec<String>,
+    /// The working directory the process starts in (`cwd`, #0087). `None`
+    /// is play_launch's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+}
+
+/// The parts of a [`NodeCommandLine`] a record's `ProcessSpawn` fields give.
+fn spawn_parts(record: &NodeRecord) -> (Vec<String>, Vec<String>, Option<PathBuf>) {
+    (
+        record.env_unset.clone(),
+        record
+            .launch_prefix
+            .as_deref()
+            .map(play_launch_parser::actions::process::prefix_words)
+            .unwrap_or_default(),
+        record.cwd.as_ref().map(PathBuf::from),
+    )
 }
 
 /// Substitute $(var name) patterns with values from the variables map
@@ -409,6 +437,10 @@ pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeR
         args: (!inst.args.is_empty()).then(|| inst.args.clone()),
         cmd: inst.raw_cmd.clone(),
         env,
+        // What it starts in and under (#0085, #0087).
+        env_unset: inst.env_unset.clone(),
+        launch_prefix: inst.launch_prefix.clone(),
+        cwd: inst.cwd.clone(),
         respawn: inst.respawn,
         respawn_delay: inst.respawn_delay,
         // `<timer>` start delay. Not a command-line input at all — the
@@ -484,6 +516,10 @@ impl NodeCommandLine {
             exec_name: _,
             cmd: _,
             env,
+            // Read through `spawn_parts` below.
+            env_unset: _,
+            launch_prefix: _,
+            cwd: _,
             respawn: _,
             respawn_delay: _,
             // A start delay changes WHEN the command runs, never what it is.
@@ -629,6 +665,8 @@ impl NodeCommandLine {
             None
         };
 
+        let (env_unset, prefix, cwd) = spawn_parts(record);
+
         let env: HashMap<_, _> = env
             .as_ref()
             .map(|vec| {
@@ -657,6 +695,9 @@ impl NodeCommandLine {
             stdout_logs: None,
             enclave: None,
             env,
+            env_unset,
+            prefix,
+            cwd,
         })
     }
 
@@ -674,6 +715,7 @@ impl NodeCommandLine {
 
         // Extra args from cmd (beyond the first element, which is the command itself)
         let user_args: Vec<String> = cmd[1..].to_vec();
+        let (env_unset, prefix, cwd) = spawn_parts(record);
 
         let env: HashMap<_, _> = record
             .env
@@ -699,6 +741,9 @@ impl NodeCommandLine {
             stdout_logs: None,
             enclave: None,
             env,
+            env_unset,
+            prefix,
+            cwd,
         })
     }
 
@@ -718,6 +763,9 @@ impl NodeCommandLine {
             stdout_logs,
             enclave,
             env: _,
+            env_unset: _,
+            prefix,
+            cwd: _,
         } = self;
 
         let has_ros_args = !(remaps.is_empty()
@@ -858,7 +906,10 @@ impl NodeCommandLine {
             .flatten()
             .collect();
 
+        // The prefix goes in front of everything, as launch's
+        // `Executable.prepare` puts `shlex.split(prefix)` before `cmd`.
         let words: Vec<_> = chain!(
+            prefix.iter().map(|arg| arg.as_str()),
             command.iter().map(|arg| arg.as_str()),
             user_args.iter().map(|arg| arg.as_str()),
             ros_args.iter().map(|arg| arg.borrow()),
@@ -887,8 +938,16 @@ impl NodeCommandLine {
         let mut command = Command::new(program);
         command.args(args);
 
-        // Apply environment variables from launch file
+        // launch's environment: what it unset is gone, inherited or not
+        // (#0085), then what the launch file sets is laid on top.
+        for name in &self.env_unset {
+            command.env_remove(name);
+        }
         command.envs(&self.env);
+
+        if let Some(cwd) = &self.cwd {
+            command.current_dir(cwd);
+        }
 
         // Explicitly preserve AMENT_PREFIX_PATH to ensure containers have access to all workspaces
         // This is critical for ament index lookups when loading composable nodes
@@ -1277,6 +1336,9 @@ mod tests {
             stdout_logs: None,
             enclave: None,
             env: HashMap::new(),
+            env_unset: Vec::new(),
+            prefix: Vec::new(),
+            cwd: None,
         };
         let result = cmdline.to_cmdline(false);
         assert!(result.contains(&"--ros-args".to_string()));
@@ -1309,6 +1371,9 @@ mod tests {
             stdout_logs: None,
             enclave: None,
             env: HashMap::new(),
+            env_unset: Vec::new(),
+            prefix: Vec::new(),
+            cwd: None,
         };
         let out = cmdline.to_cmdline(false);
         let pos = |needle: &str| out.iter().position(|a| a == needle);
@@ -1347,6 +1412,9 @@ mod tests {
             stdout_logs: None,
             enclave: None,
             env: HashMap::new(),
+            env_unset: Vec::new(),
+            prefix: Vec::new(),
+            cwd: None,
         };
         let out = cmdline.to_cmdline(false);
         let a = out.iter().position(|x| x == "/p/a.yaml").expect("file");
@@ -1377,6 +1445,9 @@ mod tests {
             stdout_logs: None,
             enclave: None,
             env: HashMap::new(),
+            env_unset: Vec::new(),
+            prefix: Vec::new(),
+            cwd: None,
         };
         let _ = cmdline.to_command(false, None, None);
     }
@@ -1528,6 +1599,9 @@ mod tests {
             stdout_logs: None,
             enclave: None,
             env: HashMap::new(),
+            env_unset: Vec::new(),
+            prefix: Vec::new(),
+            cwd: None,
         };
         let result = cmdline.to_cmdline(false);
         assert!(
@@ -1561,6 +1635,9 @@ mod tests {
             stdout_logs: None,
             enclave: None,
             env: HashMap::new(),
+            env_unset: Vec::new(),
+            prefix: Vec::new(),
+            cwd: None,
         };
         let result = cmdline.to_cmdline(false);
         assert!(
@@ -1668,6 +1745,9 @@ mod tests {
             stdout_logs: None,
             enclave: None,
             env: HashMap::new(),
+            env_unset: Vec::new(),
+            prefix: Vec::new(),
+            cwd: None,
         };
         let result = cmdline.to_cmdline(false);
         // Find positions of --params-file args
@@ -1836,6 +1916,9 @@ mod tests {
             node_name: Some("detector".to_string()),
             start_delay_secs: None,
             is_container: false,
+            env_unset: Vec::new(),
+            launch_prefix: None,
+            cwd: None,
         };
 
         let record = node_record_from_instance("/perception/detector", &inst);
@@ -1907,6 +1990,9 @@ mod tests {
             node_name: Some("talker".to_string()),
             start_delay_secs: None,
             is_container: false,
+            env_unset: Vec::new(),
+            launch_prefix: None,
+            cwd: None,
         };
         let record = node_record_from_instance("/talker", &inst);
         assert_eq!(record.namespace, None);
@@ -1950,6 +2036,9 @@ mod tests {
             node_name: None,
             start_delay_secs: None,
             is_container: false,
+            env_unset: Vec::new(),
+            launch_prefix: None,
+            cwd: None,
         };
         let record = node_record_from_instance("/some_ns/lifecycle_thing", &inst);
         // The whole point: no declared name → record.name is None → no
@@ -2001,6 +2090,9 @@ mod tests {
             node_name: None,
             start_delay_secs: None,
             is_container: false,
+            env_unset: Vec::new(),
+            launch_prefix: None,
+            cwd: None,
         };
         let record = node_record_from_instance("/unknown", &inst);
         assert!(record.package.is_none());
@@ -2011,6 +2103,47 @@ mod tests {
                 "-nosound".to_string(),
             ]
         );
+    }
+
+    /// #0085/#0087: a model process's `launch_prefix` goes in front of argv
+    /// (split as `shlex.split` splits it), its `env_unset` and `cwd` reach the
+    /// command; the cmdline file shows the prefix.
+    #[test]
+    fn a_model_process_starts_under_its_prefix_in_its_cwd_without_its_unsets() {
+        let inst = model::NodeInstance {
+            raw_cmd: vec!["/usr/bin/env".to_string()],
+            env: vec![model::EnvVar {
+                name: "KEEP".to_string(),
+                value: "1".to_string(),
+            }],
+            env_unset: vec!["DISPLAY".to_string()],
+            launch_prefix: Some("nice -n 5 'a b'".to_string()),
+            cwd: Some("/tmp".to_string()),
+            ..Default::default()
+        };
+        let record = node_record_from_instance("/env", &inst);
+        let cmdline =
+            NodeCommandLine::from_node_record(&record, Path::new("/nonexistent"), &HashMap::new())
+                .unwrap();
+        assert_eq!(
+            cmdline.to_cmdline(false),
+            ["nice", "-n", "5", "a b", "/usr/bin/env"]
+        );
+        assert_eq!(cmdline.env_unset, ["DISPLAY"]);
+        assert_eq!(cmdline.cwd.as_deref(), Some(Path::new("/tmp")));
+        let shell = String::from_utf8(cmdline.to_shell(false)).unwrap();
+        assert!(shell.starts_with("nice -n 5 "), "{shell}");
+        let cmd = cmdline.to_command(false, None, None);
+        assert_eq!(cmd.get_current_dir(), Some(Path::new("/tmp")));
+        let envs: Vec<_> = cmd.get_envs().collect();
+        assert!(
+            envs.contains(&(std::ffi::OsStr::new("DISPLAY"), None)),
+            "DISPLAY is removed: {envs:?}"
+        );
+        assert!(envs.contains(&(
+            std::ffi::OsStr::new("KEEP"),
+            Some(std::ffi::OsStr::new("1"))
+        )));
     }
 
     /// A string array arrives from the recorder as a Python repr, so its elements are
@@ -2140,6 +2273,9 @@ mod tests {
             stdout_logs: None,
             enclave: None,
             env: HashMap::new(),
+            env_unset: Vec::new(),
+            prefix: Vec::new(),
+            cwd: None,
         }
     }
 

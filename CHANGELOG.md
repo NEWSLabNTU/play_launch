@@ -23,6 +23,28 @@ allowance heavily.
   placeholder. `SubstitutionFailure`, `AnySubstitution`, `AllSubstitution`,
   `LocalSubstitution` and `FindPackagePrefix` can now be imported.
 
+- **Fixed (#0085, #0087, GitHub #27):** what a process starts in and under
+  now matches `ros2 launch`.
+  - `<unset_env>` (and Python `UnsetEnvironmentVariable`) removes the
+    variable from the process even when it was inherited from the shell
+    that started play_launch, such as `DISPLAY` or VirtualGL's `LD_PRELOAD`.
+    Inside a scoped group it applies only there. `$(env X)` after the unset
+    no longer sees the shell's value.
+  - `launch-prefix` on `<node>`, `<node_container>` and `<executable>`
+    (Python `prefix=`), or the `launch-prefix` launch configuration, is
+    applied. On a container it stays in front of play_launch's own container
+    binary, and the node's `cmdline` file shows it.
+  - `cwd` (Python `cwd=`) is the process's working directory, so `ros2 bag
+    record` writes where the launch file says. A `cwd` that does not exist
+    fails the start, as in `ros2 launch`, and the error names the path.
+  - The parser no longer warns that `shell`, `cwd` or `launch-prefix` are
+    ignored. YAML's `shell: true` is read.
+  - `--parser python` no longer leaves a launch file's top-level
+    `<set_env>`/`<unset_env>` applied to every process play_launch starts.
+  - Saved models carry these fields, so `play_launch up <model.yaml>` applies
+    them. A model resolved by an earlier release carries none of them;
+    resolve it again.
+
 ## 0.36.0 - 2026-11-17
 
 **Breaking (contracts; rlm v0.3.27, phase 104 S3):** every spelling the S3

@@ -151,6 +151,10 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
         global_params: None,
         remaps: vec![],
         env: None,
+        // No launch file: nothing unset, no prefix, play_launch's own cwd.
+        env_unset: Vec::new(),
+        launch_prefix: None,
+        cwd: None,
         ros_args: None,
         args: Some(args.args.clone()),
         cmd,

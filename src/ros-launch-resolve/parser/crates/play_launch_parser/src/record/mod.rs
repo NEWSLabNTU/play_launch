@@ -9,6 +9,6 @@ pub use generator::{
 };
 pub use types::{
     ComposableNodeContainerRecord, ConfigEvent, ConfigEventKind, DroppedAction, LoadNodeRecord,
-    NodeRecord, ParamOrigin, RecordJson, ScopeEntry, ScopeOrigin, ScopeTable, absolute_path,
-    canonicalize_path, extract_package_from_path,
+    NodeRecord, ParamOrigin, ProcessSpawn, RecordJson, ScopeEntry, ScopeOrigin, ScopeTable,
+    absolute_path, canonicalize_path, extract_package_from_path,
 };

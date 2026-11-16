@@ -66,6 +66,19 @@ The parser evaluates conditions during parsing and processes only the selected p
   (`LaunchContext`'s arena), so it pops a list it created and keeps appends
   to one that existed — `PushLaunchConfigurations` copies the dict shallowly,
   and `ros2 launch` runs nodes with those leaked entries.
+- **An unset is not a missing key** (#0085). The context's environment
+  overlay is `name -> Option<value>` (`EnvOverlay`): `Some` a `<set_env>`,
+  `None` an `<unset_env>`, absent "inherited". launch's
+  `context.environment` starts as a copy of `os.environ` and
+  `UnsetEnvironmentVariable` deletes from it, so an unset removes the shell's `DISPLAY` too
+  and `$(env X)` stops seeing it (`resolve_environment_variable`). Keep the
+  `None` through push/pop, includes and `ContextState::environment_unset`
+  (C ABI 12). What a process starts in and under — `env_unset`,
+  `launch_prefix`, `cwd` — is resolved in ONE place,
+  `actions/process.rs` (prefix: the action's own, else the `launch-prefix`
+  configuration through `launch-prefix-filter`, as `Executable.prepare`),
+  for every frontend; the Python dumper runs in play_launch's process, so it
+  must put `os.environ` back after the walk.
 - **Conditional substitutions** (IfElse, Equals, etc.): call `perform()` to evaluate → "true"/"false"
 - **LaunchConfiguration substitutions**: call `__str__()` to preserve as `$(var name)` for replay-time
 - **Parameter values are TEXT typed by YAML 1.1** (`param_value.rs`). A float
@@ -735,6 +748,23 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   match is rlm's `qos::compatible` in both layers, and an unknown value is
   never compatible. An args failure is `error[manifest-args]` (counted as a
   refused contract), not a `warn!` that dropped the file.
+- **2026-11-17**: **What a process starts in and under matches `ros2
+  launch`** (#0085, #0087, GitHub #27; rlm v0.3.28 `NodeInstance::{env_unset,
+  launch_prefix, cwd}`, pyexec C ABI 12, Python dump format 3). Two rules a
+  later change must keep: **an unset is not a missing key** — the overlay
+  records `None`, and the spawn removes `env_unset` from what play_launch
+  passes down BEFORE laying the launch file's `env` on top
+  (`NodeCommandLine::to_command`); and **the prefix survives container
+  replacement** — `launch_prefix` words go in front of argv in
+  `to_cmdline`, after `--container-mode` swapped in `play_launch_container`,
+  so the `cmdline` file shows them. Under `shell=true` the prefix is folded
+  into the shell's command line at parse time (launch prepends before
+  joining), so the record carries none. `tests/tests/process_spawn.rs` runs
+  stock `ros2 launch` beside play_launch on the same fixtures and compares
+  each process's environment and cwd; all six fail on the pre-fix binary.
+  The dumper used to leave a launch file's `<set_env>`/`<unset_env>` in
+  play_launch's own `os.environ`, reaching every process; it restores it.
+
 - **2026-11-15**: **The S3 relocations** (phase 104, rlm v0.3.24 and
   v0.3.25; decisions in rlm `docs/design/grammar-revision/README.md`, after
   "S3 decisions"). `policy:` is deprecated for `check --deny <rule>`

@@ -45,6 +45,7 @@ impl NodeCapture {
                 param_origins: Vec::new(),
                 ros_args: None,
                 scope: None,
+                spawn: self.spawn.clone(),
             });
         }
         // Generate ROS command line (now includes global params)
@@ -106,6 +107,7 @@ impl NodeCapture {
             param_origins: Vec::new(),
             ros_args: (!self.ros_arguments.is_empty()).then(|| self.ros_arguments.clone()),
             scope: None,
+            spawn: self.spawn.clone(),
         })
     }
 
@@ -249,6 +251,7 @@ impl ContainerCapture {
             config_seq: self.config_seq,
             ros_args: (!self.ros_arguments.is_empty()).then(|| self.ros_arguments.clone()),
             scope: None,
+            spawn: self.spawn.clone(),
         })
     }
 }

@@ -507,6 +507,10 @@ impl LaunchTraverser {
             )?,
             lifecycle,
             autostart,
+            launch_prefix: yaml_str(map, "launch-prefix")
+                .map(parse_substitutions)
+                .transpose()?,
+            cwd: yaml_str(map, "cwd").map(parse_substitutions).transpose()?,
         };
 
         let record = CommandGenerator::generate_node_record(&node, &self.context)
@@ -635,7 +639,9 @@ impl LaunchTraverser {
         let cmd = parse_substitutions(cmd_str)?;
         let cwd = yaml_str(map, "cwd").map(parse_substitutions).transpose()?;
         let name = yaml_str(map, "name").map(parse_substitutions).transpose()?;
-        let shell = yaml_str(map, "shell").is_some_and(|s| s == "true");
+        // `shell: true` is a native YAML bool, which `yaml_str` does not read.
+        let shell =
+            yaml_value_string(map, "shell").is_some_and(|s| s.trim().eq_ignore_ascii_case("true"));
         let output = yaml_str(map, "output").map(|s| s.to_string());
 
         // Parse env children
@@ -685,6 +691,9 @@ impl LaunchTraverser {
                 .map(parse_substitutions)
                 .transpose()?,
             respawn_delay: yaml_str(map, "respawn_delay")
+                .map(parse_substitutions)
+                .transpose()?,
+            launch_prefix: yaml_str(map, "launch-prefix")
                 .map(parse_substitutions)
                 .transpose()?,
         };
@@ -785,6 +794,10 @@ impl LaunchTraverser {
             param_files,
             remappings,
             environment: yaml_environment(map)?,
+            launch_prefix: yaml_str(map, "launch-prefix")
+                .map(parse_substitutions)
+                .transpose()?,
+            cwd: yaml_str(map, "cwd").map(parse_substitutions).transpose()?,
         };
 
         self.containers

@@ -337,9 +337,9 @@ impl AppendEnvironmentVariable {
             Some(s) => pyobject_to_string(py, s)?,
             None => ":".to_string(),
         };
-        let current = with_launch_context(|ctx| ctx.get_environment_variable(&name))
-            .or_else(|| std::env::var(&name).ok())
-            .unwrap_or_default();
+        // An unset variable has no current value to append to.
+        let current =
+            with_launch_context(|ctx| ctx.resolve_environment_variable(&name)).unwrap_or_default();
         let combined = if current.is_empty() {
             value
         } else if prepend {

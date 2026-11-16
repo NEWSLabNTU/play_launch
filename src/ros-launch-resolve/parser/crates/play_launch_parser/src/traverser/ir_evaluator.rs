@@ -319,6 +319,9 @@ fn ir_to_node_action(kind: &ActionKind) -> NodeAction {
             on_exit_shutdown: None,
             lifecycle: false,
             autostart: None,
+            // Nor a prefix or a working directory.
+            launch_prefix: None,
+            cwd: None,
             package: package.parts.clone(),
             executable: executable.parts.clone(),
             name: name.as_ref().map(|n| n.parts.clone()),
@@ -356,6 +359,7 @@ fn ir_to_executable_action(kind: &ActionKind) -> ExecutableAction {
             on_exit_shutdown: None,
             respawn: None,
             respawn_delay: None,
+            launch_prefix: None,
             cmd: cmd.parts.clone(),
             cwd: None,
             name: name.as_ref().map(|n| n.parts.clone()),
@@ -384,6 +388,8 @@ fn ir_to_container_action(
         } => ContainerAction {
             // The IR does not model on_exit (dormant feature; see CLAUDE.md).
             on_exit_shutdown: None,
+            launch_prefix: None,
+            cwd: None,
             package: package.parts.clone(),
             executable: executable.parts.clone(),
             name: name.parts.clone(),

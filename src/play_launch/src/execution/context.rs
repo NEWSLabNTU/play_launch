@@ -169,7 +169,21 @@ impl NodeContext {
         }
 
         let stdout_file = File::create(stdout_path)?;
-        let stderr_file = File::create(&stderr_path)?;
+        let mut stderr_file = File::create(&stderr_path)?;
+
+        // `cwd` that is not a directory (#0087): the spawn fails with a bare
+        // ENOENT, as launch's does with an exception. Say which path, in the
+        // `play_launch: ` form `spawn_failure_detail` carries into the
+        // "Unable to start" error.
+        if let Some(cwd) = &cmdline.cwd
+            && !cwd.is_dir()
+        {
+            writeln!(
+                stderr_file,
+                "play_launch: cwd '{}' is not a directory, so the process cannot start in it                  (ros2 launch does not start it either)",
+                cwd.display()
+            )?;
+        }
 
         let mut command: tokio::process::Command =
             cmdline.to_command(false, pgid, cgroup.clone()).into();
@@ -763,6 +777,31 @@ mod incarnation_tests {
 
     /// The whole path a respawn takes: `to_exec_context` twice on one
     /// context. The second must not truncate what the first process wrote.
+    /// #0087: a `cwd` that is not a directory fails the spawn, as launch's
+    /// does, and the `err` file says which path, for `spawn_failure_detail`.
+    #[test]
+    fn a_missing_cwd_is_named_in_the_err_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().join("node/x");
+        let record: NodeRecord = serde_json::from_value(serde_json::json!({
+            "executable": "true",
+            "cmd": ["true"],
+            "params_files": [],
+            "cwd": "/nonexistent/play_launch_cwd",
+        }))
+        .unwrap();
+        let ctx = NodeContext {
+            cmdline: NodeCommandLine::from_node_record(&record, &dir, &Default::default()).unwrap(),
+            record,
+            output_dir: dir.clone(),
+            model_fqn: None,
+            cgroup: None,
+        };
+        ctx.to_exec_context(None).unwrap();
+        let detail = super::super::node_cmdline::spawn_failure_detail(&dir).unwrap();
+        assert!(detail.contains("/nonexistent/play_launch_cwd"), "{detail}");
+    }
+
     #[test]
     fn to_exec_context_twice_keeps_the_first_processs_log() {
         let tmp = tempfile::TempDir::new().unwrap();

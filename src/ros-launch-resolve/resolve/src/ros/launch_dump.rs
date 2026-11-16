@@ -204,6 +204,17 @@ pub struct NodeContainerRecord {
     pub args: Option<Vec<String>>,
     pub cmd: Vec<String>,
     pub env: Option<Vec<(String, String)>>,
+    /// `<unset_env>` / `UnsetEnvironmentVariable` in effect where this
+    /// process was declared, minus what its own environment sets again
+    /// (#0085). Mirrors the parser's `record::ProcessSpawn`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_unset: Vec<String>,
+    /// `launch-prefix` / `prefix=`, after substitution (#0085).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_prefix: Option<String>,
+    /// `cwd`, after substitution (#0087).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     #[serde(default)]
     pub respawn: Option<bool>,
     #[serde(default)]
@@ -273,6 +284,17 @@ pub struct NodeRecord {
     #[allow(dead_code)]
     pub cmd: Vec<String>,
     pub env: Option<Vec<(String, String)>>,
+    /// `<unset_env>` / `UnsetEnvironmentVariable` in effect where this
+    /// process was declared, minus what its own environment sets again
+    /// (#0085). Mirrors the parser's `record::ProcessSpawn`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_unset: Vec<String>,
+    /// `launch-prefix` / `prefix=`, after substitution (#0085).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_prefix: Option<String>,
+    /// `cwd`, after substitution (#0087).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     #[serde(default)]
     pub respawn: Option<bool>,
     #[serde(default)]
@@ -376,7 +398,7 @@ pub fn load_launch_dump(dump_file: &Path) -> eyre::Result<LaunchDump> {
 /// Kept in step with `DUMP_FORMAT_VERSION` in
 /// `python/play_launch/dump/__init__.py`, which documents what each version
 /// means.
-pub const MIN_DUMP_FORMAT_VERSION: u32 = 2;
+pub const MIN_DUMP_FORMAT_VERSION: u32 = 3;
 
 /// Issue #0020 — refuse a stale `play_launch` Python install at IMPORT time,
 /// before it parses anything.
