@@ -39,3 +39,19 @@ Each test asserts what it means, not a race:
 - the settle test gets a nextest override matching its CPU cost, or does
   less proving per case;
 - the chains test waits for the edges it needs instead of a fixed run time.
+
+## Progress (2026-11-17)
+
+- **control_channel: fixed.** The failing run's log shows the race: the load
+  was sent over the socket and the container's `ComponentEvent LOADED`
+  arrived 85 ms before the socket's own report. Both channels are live by
+  design and the first wins, so the test now asserts what is deterministic:
+  the load was sent over the control channel, and a load result arrived
+  by either channel.
+- **manifest_check: fixed.** The binary gets a 60 s x 3 nextest bound
+  (`tests/.config/nextest.toml`); its settle tests are CPU-bound Z3 proving.
+- **interception: still open.** This is not slowness: the test polls up to
+  90 s, and `chains.json` had no edges at all, so nothing was intercepted or
+  nothing ran. The test used to send play_launch's output to `/dev/null`;
+  it now keeps it and prints its tail on failure, so the next occurrence
+  names the cause.

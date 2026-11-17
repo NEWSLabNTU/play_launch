@@ -1328,8 +1328,14 @@ fn test_triggered_edges_form_a_chain_and_an_old_stamp_is_reported() {
         launch.to_str().unwrap(),
     ]);
     cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", interception_so_path());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
+    // Kept, not discarded: when no chain forms (#0094: once under the full
+    // suite, `chains.json` empty after 90 s), the launcher's log is what
+    // says whether the nodes started and the interceptor loaded.
+    let log_path = work_dir.path().join("play_launch.out");
+    cmd.stdout(Stdio::from(std::fs::File::create(&log_path).unwrap()));
+    cmd.stderr(Stdio::from(
+        std::fs::File::create(work_dir.path().join("play_launch.err")).unwrap(),
+    ));
     let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
     let deadline = std::time::Instant::now() + POLL_DEADLINE;
@@ -1396,13 +1402,34 @@ fn test_triggered_edges_form_a_chain_and_an_old_stamp_is_reported() {
                 .collect()
         })
         .collect();
+    let launcher_log = || {
+        let out = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let err =
+            std::fs::read_to_string(work_dir.path().join("play_launch.err")).unwrap_or_default();
+        let tail = |t: &str| {
+            t.lines()
+                .rev()
+                .take(40)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        format!(
+            "--- play_launch stdout (tail) ---\n{}\n--- stderr (tail) ---\n{}",
+            tail(&out),
+            tail(&err)
+        )
+    };
     assert!(
         topics.contains(&vec![
             "/chain/raw".to_string(),
             "/chain/filtered".to_string(),
             "/chain/cmd".to_string()
         ]),
-        "{chains}"
+        "{chains}\n{}",
+        launcher_log()
     );
     let edges = chains["edges"].as_array().unwrap();
     let edge = |to: &str| edges.iter().find(|e| e["to"] == to);

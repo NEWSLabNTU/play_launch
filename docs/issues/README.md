@@ -17,9 +17,10 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0094** -- three integration tests (control channel, a settle check,
-interception chains) fail only when the whole suite runs, and pass alone.
-See `0094-*`.
+**#0094** -- three integration tests failed only when the whole suite ran.
+Two are fixed (a report-channel race, a CPU-bound timeout); the interception
+chains test, which once saw no events at all in 90 s, now keeps the
+launcher's log for the next occurrence. See `0094-*`.
 
 
 `just check-issue-index` fails if this section and the per-file `status:`

@@ -277,9 +277,16 @@ fn test_slow_constructor_reports_liveness_not_a_timeout() {
         "the slow composable never finished loading:\n{}",
         run.text()
     );
+    // The load went over the socket. Its RESULT may arrive by either live
+    // channel: both report and whichever is first wins (phase 64), and under
+    // the full suite's load the ComponentEvent sometimes does (#0094).
+    let text = run.text();
     assert!(
-        run.text().contains("control channel LOADED for"),
-        "the load result did not arrive over the control channel:\n{}",
-        run.text()
+        text.contains("over the control channel (seq"),
+        "the load was not sent over the control channel:\n{text}"
+    );
+    assert!(
+        text.contains("control channel LOADED for") || text.contains("ComponentEvent LOADED for"),
+        "no load result arrived:\n{text}"
     );
 }

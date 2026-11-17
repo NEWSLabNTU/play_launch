@@ -33,6 +33,13 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 filter = "binary(parallel_loading)"
 slow-timeout = { period = "60s", terminate-after = 2 }
 
+# `check` proves each settle's worst case with Z3 (`rlx::prove`); one such
+# test runs four checks, ~25 s of CPU alone, and timed out at 60 s under the
+# full suite's load (#0094).
+[[profile.default.overrides]]
+filter = "binary(manifest_check)"
+slow-timeout = { period = "60s", terminate-after = 3 }
+
 [[profile.default.overrides]]
 filter = "binary(rt_workspace)"
 slow-timeout = { period = "60s", terminate-after = 2 }
