@@ -324,6 +324,53 @@ pub unsafe extern "C" fn play_launch_py_free(p: *mut c_char) {
     }
 }
 
+/// The host's log sink: `(level, target, message)`, each string NUL-terminated
+/// and borrowed for the call. `level` is `log::Level as u32` (1 error .. 5
+/// trace).
+pub type HostLogFn = extern "C" fn(level: u32, target: *const c_char, msg: *const c_char);
+
+struct HostLogger {
+    sink: HostLogFn,
+}
+
+impl log::Log for HostLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::max_level()
+    }
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let clean = |s: String| CString::new(s.replace('\0', "")).unwrap_or_default();
+        let target = clean(record.target().to_string());
+        let msg = clean(record.args().to_string());
+        (self.sink)(record.level() as u32, target.as_ptr(), msg.as_ptr());
+    }
+    fn flush(&self) {}
+}
+
+/// Forward this object's `log` records to the host (#0093).
+///
+/// This object links its own copy of the `log` crate, whose logger the host
+/// never installed, so every `log::warn!` here went nowhere: a warning a
+/// `.launch.py` caused was silent where the same one from XML printed.
+/// `max_level` is the host's `log::max_level()` as a `LevelFilter` number
+/// (0 off .. 5 trace). Call once, right after loading; a second call only
+/// updates the level.
+#[unsafe(no_mangle)]
+pub extern "C" fn play_launch_py_set_logger(sink: HostLogFn, max_level: u32) {
+    let filter = match max_level {
+        0 => log::LevelFilter::Off,
+        1 => log::LevelFilter::Error,
+        2 => log::LevelFilter::Warn,
+        3 => log::LevelFilter::Info,
+        4 => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Trace,
+    };
+    let _ = log::set_logger(Box::leak(Box::new(HostLogger { sink })));
+    log::set_max_level(filter);
+}
+
 /// The contract version this object speaks.
 ///
 /// A loader checks this before trusting the two functions above. It
@@ -402,7 +449,10 @@ pub extern "C" fn play_launch_py_abi_version() -> u32 {
     // #0087). Serde-defaulted, so a v11 object reports none: an
     // `UnsetEnvironmentVariable` in a `.launch.py` would leave an inherited
     // variable in place, and a `prefix=`/`cwd=` would be dropped, silently.
-    12
+    //
+    // 13: `play_launch_py_set_logger`, which the loader calls (#0093). A v12
+    // object lacks the symbol.
+    13
 }
 
 #[cfg(test)]
@@ -764,7 +814,7 @@ mod tests {
     /// launch tree that silently resolves to nothing.
     #[test]
     fn the_abi_version_moved_with_the_contract() {
-        assert_eq!(play_launch_py_abi_version(), 12);
+        assert_eq!(play_launch_py_abi_version(), 13);
     }
 
     /// `exec_file` on the old entry point is refused by name, not answered

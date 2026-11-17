@@ -183,7 +183,34 @@ impl std::error::Error for LoadError {}
 /// `env_unset`, `launch_prefix` and `cwd` (play_launch #0085, #0087). A v11
 /// object reports none, so an unset or a `prefix=`/`cwd=` in a `.launch.py`
 /// would silently not reach the process.
-const ABI_VERSION: u32 = 12;
+const ABI_VERSION: u32 = 13;
+
+type SetLoggerFn =
+    unsafe extern "C" fn(extern "C" fn(u32, *const std::ffi::c_char, *const std::ffi::c_char), u32);
+
+/// The Python half's log records, into this process's logger (#0093).
+extern "C" fn host_log(level: u32, target: *const std::ffi::c_char, msg: *const std::ffi::c_char) {
+    use std::ffi::CStr;
+    if target.is_null() || msg.is_null() {
+        return;
+    }
+    let level = match level {
+        1 => log::Level::Error,
+        2 => log::Level::Warn,
+        3 => log::Level::Info,
+        4 => log::Level::Debug,
+        _ => log::Level::Trace,
+    };
+    let target = unsafe { CStr::from_ptr(target) }.to_string_lossy();
+    let msg = unsafe { CStr::from_ptr(msg) }.to_string_lossy();
+    log::logger().log(
+        &log::Record::builder()
+            .level(level)
+            .target(&target)
+            .args(format_args!("{msg}"))
+            .build(),
+    );
+}
 
 /// What `sysconfig` says about an interpreter.
 #[derive(Debug, Clone)]
@@ -407,6 +434,17 @@ impl Loaded {
                 ours: ABI_VERSION,
                 theirs,
             });
+        }
+
+        // The object's own `log` has no logger; hand it ours (#0093).
+        unsafe {
+            let f: libloading::Symbol<SetLoggerFn> = obj
+                .get(b"play_launch_py_set_logger\0")
+                .map_err(|source| LoadError::Pyexec {
+                    path: pyexec.to_path_buf(),
+                    source,
+                })?;
+            f(host_log, log::max_level() as u32);
         }
 
         log::debug!(

@@ -8,6 +8,11 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fixed (parser, #0093):** warnings the default parser raises for a
+  `.launch.py` are printed (they were dropped), so a `.launch.py` reports
+  what the same mistake in XML reports. The parser's Python half speaks C
+  ABI 13.
+
 - **Fixed (parser, #0092):** under the default parser, a `.launch.py` reads
   in `os.environ` what the launch's environment actions set, as under `ros2
   launch`: a `SetEnvironmentVariable` before an `OpaqueFunction`, an

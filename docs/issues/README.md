@@ -17,10 +17,6 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0093** -- the dlopen'd `pyexec` object installs no logger, so every
-`log::warn!` in the Python frontend is dropped (the #0089 plain-node warning
-does not print for a `.launch.py`). See `0093-*`.
-
 **#0091** -- `--parser python` still ignores `OnProcessExit(on_exit=Shutdown)`
 (#0081 reached the Rust parser only): the target respawns where `ros2 launch`
 shuts down. See `0091-*`.
@@ -48,6 +44,10 @@ every frame twice under load; `stock` is clean. See `0082-*`.
 frontmatter disagree.
 
 ## Resolved
+
+**#0093** -- the dlopen'd `pyexec` object had no logger, so every warning
+the Python frontend raised was dropped. The loader now hands it the host's
+(C ABI 13). See `archived/0093-*`.
 
 **#0092** -- the Rust parser did not write `SetEnvironmentVariable` to
 `os.environ`, so a later `OpaqueFunction` read the old value. The Python

@@ -374,3 +374,79 @@ fn an_include_comes_back_through_the_real_callback() {
         "what the file set comes back in its final state"
     );
 }
+
+/// ABI 13 (play_launch #0093): the Python half's `log` records reach the
+/// host's logger. It links its own `log` crate, so without
+/// `play_launch_py_set_logger` a warning a `.launch.py` caused was dropped:
+/// here, launch_ros's warning for a plain node's missing parameter file
+/// (#0089), which XML printed and Python did not.
+#[test]
+fn the_python_halfs_warnings_reach_the_host_logger() {
+    use std::sync::Mutex;
+    static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    struct Capture;
+    impl log::Log for Capture {
+        fn enabled(&self, _: &log::Metadata) -> bool {
+            true
+        }
+        fn log(&self, record: &log::Record) {
+            if record.level() <= log::Level::Warn {
+                SEEN.lock().unwrap().push(record.args().to_string());
+            }
+        }
+        fn flush(&self) {}
+    }
+    // Before loading: the loader hands the object the level in effect.
+    if log::set_logger(&Capture).is_err() {
+        eprintln!("a logger is already installed in this test binary; skipping");
+        return;
+    }
+    log::set_max_level(log::LevelFilter::Warn);
+
+    let Some(pyexec) = build_pyexec() else {
+        eprintln!("could not build the Python half; skipping the load test");
+        return;
+    };
+    let interpreter = match play_launch_parser_pyload::find_interpreter() {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("no usable interpreter here: {e}");
+            return;
+        }
+    };
+    let loaded = play_launch_parser_pyload::Loaded::open(interpreter, &pyexec)
+        .expect("the Python half should load against a discovered interpreter");
+
+    let dir = std::env::temp_dir().join("pyload_abi_13_logger");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("warns.launch.py");
+    std::fs::write(
+        &file,
+        "from launch import LaunchDescription\n\
+         from launch_ros.actions import Node\n\
+         def generate_launch_description():\n\
+         \x20   return LaunchDescription([Node(package='p', executable='e', name='n',\n\
+         \x20       parameters=['/nonexistent/pyload_abi_13.yaml'])])\n",
+    )
+    .unwrap();
+
+    struct NoIncludes;
+    impl play_launch_parser::exchange::IncludeHost for NoIncludes {
+        fn include(
+            &mut self,
+            request: play_launch_parser::exchange::IncludeRequest,
+        ) -> Result<play_launch_parser::exchange::ContextState, String> {
+            Ok(request.state)
+        }
+    }
+    use play_launch_parser::python_backend::PythonBackend;
+    loaded
+        .exec_file(file.to_str().unwrap(), Default::default(), &mut NoIncludes)
+        .expect("the file runs");
+    let seen = SEEN.lock().unwrap();
+    assert!(
+        seen.iter()
+            .any(|m| m == "Parameter file path is not a file: /nonexistent/pyload_abi_13.yaml"),
+        "{seen:?}"
+    );
+}
