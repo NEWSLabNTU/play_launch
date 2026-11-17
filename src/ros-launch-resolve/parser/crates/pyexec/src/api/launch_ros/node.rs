@@ -631,7 +631,13 @@ impl Node {
             .map(|n| n == "ParameterValue")
             .unwrap_or(false)
         {
-            return pyobject_to_string(value.py(), &value.clone().unbind());
+            // Performed here so its refusal reaches the launch (#0096);
+            // `pyobject_to_string` falls back on `__str__` when `perform`
+            // fails.
+            let context = crate::api::utils::create_launch_context(value.py())?;
+            return value
+                .call_method1("perform", (context,))?
+                .extract::<String>();
         }
 
         if value.is_instance_of::<PyBool>()
@@ -716,7 +722,8 @@ impl Node {
         let py = value.py();
         let obj_py: Py<PyAny> = value.clone().unbind();
         let text = pyobject_to_string(py, &obj_py)?;
-        Ok(play_launch_parser::param_value::yaml_value(&text).unwrap_or(text))
+        play_launch_parser::param_value::yaml_value_strict(&text)
+            .map_err(pyo3::exceptions::PyTypeError::new_err)
     }
 }
 

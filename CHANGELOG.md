@@ -6,6 +6,15 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Fixed (parser, #0096):** an untyped parameter value produced by a
+  substitution, such as `$(command 'xacro ...')`, that YAML cannot read is
+  an error, `Failed to convert '...' using yaml rules`, as in `ros2 launch`.
+  The default parser kept it as a string and started what `ros2 launch`
+  refuses. Literal text in the launch file, a plain Python string, and any
+  value with `type="str"` are still kept as strings.
+
 ## 0.39.0 - 2026-11-18
 
 - **Fixed (parser, #0095):** Autoware 2.1.0's `<autoware_node>` launch

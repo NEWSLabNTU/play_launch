@@ -25,6 +25,12 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0096** -- the default parser accepted an untyped parameter value from a
+substitution (`$(command 'xacro ...')`) that YAML cannot read, where
+`ros2 launch` refuses it (AutoSDV car A: `: ` in a URDF comment). It now
+refuses the same cases stock does; literal text and a plain Python string
+are still kept as strings. See `archived/0096-*`.
+
 **#0094** -- three integration tests failed only when the whole suite ran.
 Three are fixed (a report-channel race, a CPU-bound timeout, a stock
 shutdown bound); the interception chains test did not fail again in 24

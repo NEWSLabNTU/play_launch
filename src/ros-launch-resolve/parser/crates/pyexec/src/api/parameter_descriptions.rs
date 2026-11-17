@@ -121,8 +121,14 @@ impl ParameterValue {
         if native && type_name.is_none() {
             return super::launch_ros::node_value(value);
         }
-        param_value::evaluate(&text, type_name.as_deref())
-            .map_err(pyo3::exceptions::PyValueError::new_err)
+        // A substitution is coerced with `can_be_str=False`, so with no type
+        // a YAML error is an error (#0096); a plain string keeps itself.
+        let substituted = !value.is_instance_of::<pyo3::types::PyString>();
+        match type_name {
+            None if substituted => param_value::yaml_value_strict(&text),
+            t => param_value::evaluate(&text, t.as_deref()),
+        }
+        .map_err(pyo3::exceptions::PyValueError::new_err)
     }
 
     /// Get the parameter value as a string

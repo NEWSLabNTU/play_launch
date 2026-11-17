@@ -562,7 +562,15 @@ impl Parameter {
             }
             None => {
                 let text = resolve_substitutions(&self.value, context)?;
-                crate::param_value::evaluate(&text, self.value_type.as_deref()).map_err(fail)?
+                let substituted = self
+                    .value
+                    .iter()
+                    .any(|s| !matches!(s, Substitution::Text(_)));
+                if substituted && self.value_type.is_none() {
+                    crate::param_value::yaml_value_strict(&text).map_err(fail)?
+                } else {
+                    crate::param_value::evaluate(&text, self.value_type.as_deref()).map_err(fail)?
+                }
             }
         };
         Ok((name, value))

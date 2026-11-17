@@ -78,6 +78,24 @@ pub fn evaluate(text: &str, value_type: Option<&str>) -> Result<String, String> 
     }
 }
 
+/// `yaml.safe_load(text)` on text a SUBSTITUTION produced, rendered: here a
+/// YAML error is an error (#0096). `launch` reads a performed parameter value
+/// with `coerce_to_type(..., can_be_str=False)`, and `launch_ros`'s
+/// `evaluate_parameter_dict` raises on one too (a Python string is made a
+/// substitution first), so `$(command 'xacro ...')` yielding a URDF whose
+/// comment holds `: ` fails `ros2 launch`. Only literal frontend text keeps
+/// itself as a string ([`yaml_value`]).
+pub fn yaml_value_strict(text: &str) -> Result<String, String> {
+    if !text.trim().is_empty()
+        && let Err(e) = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(text)
+    {
+        return Err(format!(
+            "Failed to convert '{text}' using yaml rules: yaml.safe_load() failed\n{e}"
+        ));
+    }
+    yaml_value(text)
+}
+
 /// `yaml.safe_load(text)`, rendered.
 pub fn yaml_value(text: &str) -> Result<String, String> {
     // `evaluate_parameter_dict`: an empty value is the empty string.
