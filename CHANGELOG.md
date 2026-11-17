@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.38.0 - 2026-11-17
 
 - **Fixed (parser):** a missing parameter file under `allow_substs="true"`
   is reported as `Parameter file not found: <path> (node '<name>')`, without
