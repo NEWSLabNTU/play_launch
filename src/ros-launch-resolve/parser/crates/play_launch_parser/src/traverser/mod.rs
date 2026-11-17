@@ -1,3 +1,4 @@
+mod autoware_node;
 mod delay;
 mod entity;
 mod include;

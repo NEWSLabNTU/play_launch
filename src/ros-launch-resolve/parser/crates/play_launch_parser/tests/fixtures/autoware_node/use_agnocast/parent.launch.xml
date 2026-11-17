@@ -1,0 +1,17 @@
+<launch>
+  <!-- #0095. The use_agnocast configuration overrides ENABLE_AGNOCAST in
+       both directions. -->
+  <arg name="agnocast_heaphook_path" default="$(dirname)/../agnocast/libagnocast_heaphook.so.1"/>
+  <set_env name="AMENT_PREFIX_PATH" value="$(dirname)/../prefix:$(env AMENT_PREFIX_PATH '')"/>
+  <node_container pkg="rclcpp_components" exec="component_container" name="c" namespace=""/>
+  <group>
+    <set_env name="ENABLE_AGNOCAST" value="0"/>
+    <let name="use_agnocast" value="1"/>
+    <autoware_node pkg="demo_nodes_cpp" exec="talker" name="on_by_config" target="/c"/>
+  </group>
+  <group>
+    <set_env name="ENABLE_AGNOCAST" value="1"/>
+    <let name="use_agnocast" value="0"/>
+    <autoware_node pkg="demo_nodes_cpp" exec="talker" name="off_by_config" target="/c"/>
+  </group>
+</launch>

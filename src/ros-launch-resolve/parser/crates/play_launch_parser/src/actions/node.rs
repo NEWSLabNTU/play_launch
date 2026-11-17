@@ -207,6 +207,10 @@ impl NodeAction {
                 }
                 "remap" => remappings.push(Remapping::from_entity(&child)?),
                 "env" => environment.push(parse_env(&child)?),
+                // `<autoware_node>` reads its `<extra_arg>`s itself
+                // (`AutowareNodeAction::from_entity`) before handing the
+                // rest to this parse, as `AutowareNode.parse` does.
+                "extra_arg" if entity.type_name() == "autoware_node" => {}
                 "composable_node" | "composable-node" => {
                     // Composable nodes are children of node_container
                     // For now, we log and skip them (not yet fully supported)

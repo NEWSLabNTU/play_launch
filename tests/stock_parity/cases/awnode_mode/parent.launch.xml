@@ -1,0 +1,4 @@
+<launch>
+  <!-- #0095: a mode other than auto or rclcpp is refused. -->
+  <autoware_node pkg="demo_nodes_cpp" exec="listener" name="l" mode="agnocast"/>
+</launch>

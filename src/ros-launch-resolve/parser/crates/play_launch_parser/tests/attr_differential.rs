@@ -90,6 +90,12 @@ const FIXTURES: &[(&str, &str)] = &[
         "lifecycle_node",
         r#"<lifecycle_node pkg="lifecycle" exec="lifecycle_talker" name="lc" namespace=""{ATTR}/>"#,
     ),
+    // Autoware 2.1.0's `<autoware_node>` (#0095), a launch extension the
+    // probe makes importable (see `ros2_batch_outcomes`).
+    (
+        "autoware_node",
+        r#"<autoware_node pkg="demo_nodes_cpp" exec="talker" name="t"{ATTR}/>"#,
+    ),
     // Two PARSER EXTENSIONS ROS 2 does not know as elements at all
     // (`Unrecognized entity of the type: …`), so — like `executable-arg` —
     // the oracle never reaches attribute validation for them. Their
@@ -153,6 +159,8 @@ const CANDIDATES: &[&str] = &[
     // `launch_xml` splits any attribute on `<name>-sep`; `<param value-sep=…>`
     // is the one with a consumer.
     "value-sep",
+    // `<autoware_node mode=…>` (#0095); `target` is listed above.
+    "mode",
 ];
 
 /// Pairs where this parser may be MORE permissive than the oracle — it warns
@@ -192,6 +200,12 @@ const PERMISSIVE_DIVERGENCES: &[(&str, &str)] = &[
     // `<lifecycle_node>` exists only on Jazzy, which has no `node-name`; it
     // shares `<node>`'s warn-not-reject table (phase 86).
     ("lifecycle_node", "node-name"),
+    // `<autoware_node>` hands the rest to `Node.parse`, so it inherits
+    // `<node>`'s union-policy and `node-name` entries (#0095).
+    ("autoware_node", "respawn_max_retries"),
+    ("autoware_node", "sigkill_timeout"),
+    ("autoware_node", "sigterm_timeout"),
+    ("autoware_node", "node-name"),
 ];
 
 /// [`STRUCTURAL_BASELINE_EXCEPTIONS`] that hold on ONE distro only: the
@@ -389,7 +403,21 @@ fn ros2_batch_outcomes(run_id: &str, manifest: &BTreeMap<String, PathBuf>) -> Ro
         manifest_path.display(),
         results_path.display(),
     );
-    let out = match Command::new("bash").arg("-c").arg(&script).output() {
+    // `<autoware_node>` (#0095) is a launch EXTENSION: the oracle knows it
+    // only with `autoware_agnocast_wrapper` importable, and the fixture
+    // carries a copy of its launch extension (entry point included).
+    let extension = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/autoware_node/python");
+    let pythonpath = match std::env::var("PYTHONPATH") {
+        Ok(p) if !p.is_empty() => format!("{}:{p}", extension.display()),
+        _ => extension.display().to_string(),
+    };
+    let out = match Command::new("bash")
+        .arg("-c")
+        .arg(&script)
+        .env("PYTHONPATH", pythonpath)
+        .output()
+    {
         Ok(out) => out,
         Err(e) => return Ros2Batch::Failed(format!("failed to spawn probe subprocess: {e}")),
     };

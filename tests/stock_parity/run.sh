@@ -16,6 +16,11 @@
 #   EXPECTED_DIFFS   known differences, one per line (prefix match on the
 #                    compare.py output line; '#' lines are comments)
 #   EXPECT_ERROR     both sides must refuse the file
+#   ENV              environment for both sides, one NAME=VALUE per line;
+#                    VALUE is shell-expanded, with $CASE (the case directory)
+#                    and $REPO_ROOT set ('#' lines are comments)
+#   PYTHON_PARITY    also resolve with `--parser python` and require the
+#                    Rust and Python models to match (scripts/compare_models.py)
 #
 # Exits 1 if any case has an unexpected difference or an unexpected failure.
 
@@ -68,6 +73,35 @@ compare_one() {
     python3 "$HERE/compare.py" "$model" "$stock"
 }
 
+# Export a case's ENV file ($1 = case dir) into the current shell. Call it in
+# a subshell: it is the case's environment, not the next case's.
+load_env() {
+    local CASE="$1" line name value
+    [ -f "$CASE/ENV" ] || return 0
+    while IFS= read -r line; do
+        case "$line" in ''|'#'*) continue ;; esac
+        name="${line%%=*}"
+        value="$(CASE="$CASE" REPO_ROOT="$REPO_ROOT" eval "printf '%s' \"${line#*=}\"")"
+        export "$name=$value"
+    done <"$CASE/ENV"
+}
+
+# The Rust model ($OUT/$1.model.yaml) against the Python parser's for the same
+# file; $1 = label, $2 = file, rest = launch args.
+python_parity() {
+    local label="$1" file="$2"; shift 2
+    local py="$OUT/$label.python.model.yaml"
+    rm -f "$py"
+    # This worktree's Python parser, never a stale installed copy.
+    if ! PYTHONPATH="$REPO_ROOT/python:${PYTHONPATH:-}" \
+            play_launch resolve --parser python "$file" "$@" -o "$py" >"$OUT/$label.python.log" 2>&1; then
+        echo "play_launch --parser python FAILED: $(grep -m1 -i error "$OUT/$label.python.log" | cut -c1-300)"
+        return 1
+    fi
+    python3 "$REPO_ROOT/scripts/compare_models.py" "$OUT/$label.model.yaml" "$py" >"$OUT/$label.parity.log" 2>&1 \
+        || { echo "Rust vs --parser python models differ:"; tail -n 20 "$OUT/$label.parity.log"; return 1; }
+}
+
 if [ "${1:-}" = "--file" ]; then
     shift
     file="$1"; shift
@@ -85,7 +119,7 @@ for n in "${cases[@]}"; do
     [ -z "$file" ] && { echo "=== $n: no parent.launch.*"; failed+=("$n"); continue; }
     args=()
     [ -f "$dir/ARGS" ] && read -r -a args <"$dir/ARGS"
-    out=$(compare_one "$n" "$file" "${args[@]}")
+    out=$(load_env "$dir"; compare_one "$n" "$file" "${args[@]}")
     status=$?
     if [ -f "$dir/EXPECT_ERROR" ]; then
         if grep -q '^pl_ok=0 st_ok=0$' "$OUT/$n.status"; then
@@ -119,6 +153,9 @@ for n in "${cases[@]}"; do
         fi
         [ $known = 0 ] && echo "$line"
     done)
+    if [ -z "$unexpected" ] && [ -f "$dir/PYTHON_PARITY" ]; then
+        unexpected=$(load_env "$dir"; python_parity "$n" "$file" "${args[@]}")
+    fi
     if [ -n "$unexpected" ]; then
         echo "=== $n: FAIL"; echo "$unexpected" | sed 's/^/  /'; failed+=("$n")
     else

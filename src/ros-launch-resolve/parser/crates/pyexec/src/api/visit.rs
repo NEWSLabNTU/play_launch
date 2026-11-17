@@ -767,6 +767,18 @@ fn execute_entity(py: Python, entity: &Bound<'_, PyAny>) -> PyResult<()> {
     exec_process!(r::ComposableNodeContainer);
     exec!(r::LoadComposableNodes);
 
+    // An action a package defines itself, subclassing `launch.Action`
+    // (`autoware_agnocast_wrapper`'s `AutowareNode`, #0095): `launch` calls
+    // its `execute(context)` and runs what it returns, in order, and so does
+    // this walk. The stand-in base class has no `execute`, so one that lacks
+    // its own does nothing, as `Action.execute` does.
+    let base = py.import("launch")?.getattr("Action")?;
+    if entity.is_instance(&base)? && entity.hasattr("execute")? {
+        let context = crate::api::utils::create_launch_context(py)?;
+        let returned = entity.call_method1("execute", (context,))?;
+        return visit_any(py, &returned);
+    }
+
     let class = entity
         .get_type()
         .name()

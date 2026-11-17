@@ -1,0 +1,23 @@
+<launch>
+  <!-- #0095: <autoware_node>, Agnocast off. target decides the form. -->
+  <node_container pkg="rclcpp_components" exec="component_container" name="c" namespace=""/>
+  <push-ros-namespace namespace="aw"/>
+  <autoware_node pkg="demo_nodes_cpp" exec="talker" name="talker_comp" target="/c" output="screen">
+    <param name="negative" value="true"/>
+    <param from="$(dirname)/params.yaml"/>
+    <remap from="chatter" to="chat"/>
+    <env name="FOO" value="bar"/>
+    <extra_arg name="use_intra_process_comms" value="true"/>
+  </autoware_node>
+  <autoware_node pkg="demo_nodes_cpp" exec="listener" name="listener_comp" namespace="sub" target="c"/>
+  <autoware_node pkg="demo_nodes_cpp" exec="listener" name="listener_proc" output="screen" args="--extra">
+    <param name="negative" value="true"/>
+    <param from="$(dirname)/params.yaml"/>
+    <remap from="chatter" to="chat"/>
+    <env name="FOO" value="bar"/>
+    <env name="ENABLE_AGNOCAST" value="1"/>
+    <extra_arg name="use_intra_process_comms" value="true"/>
+  </autoware_node>
+  <autoware_node pkg="demo_nodes_cpp" exec="talker" mode="rclcpp"/>
+  <autoware_node pkg="demo_nodes_cpp" exec="talker" name="skipped" target="/c" if="false"/>
+</launch>

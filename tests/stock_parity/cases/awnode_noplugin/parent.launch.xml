@@ -1,0 +1,6 @@
+<launch>
+  <!-- #0095: add_two_ints_server registers no autoware_node_plugins
+       resource, so nothing says what to load into the container. -->
+  <node_container pkg="rclcpp_components" exec="component_container" name="c" namespace=""/>
+  <autoware_node pkg="demo_nodes_cpp" exec="add_two_ints_server" name="srv" target="/c"/>
+</launch>

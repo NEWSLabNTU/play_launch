@@ -35,6 +35,42 @@ pub(crate) struct DelayMark {
 /// so a 2 s timer inside a 3 s timer fires at 5 s. The inner mark is applied
 /// first (innermost body unwinds first), so accumulating onto whatever is
 /// already there produces exactly that.
+/// Every action the XML/YAML frontends of stock `launch` and `launch_ros`
+/// expose (`@expose_action`), Humble and Jazzy, read off their sources. A
+/// tag outside this list and outside what this parser dispatches is not a
+/// ROS 2 action at all unless a launch extension registers it, and is
+/// refused (#0095). One inside it that this parser does not implement is
+/// dropped and recorded, for `check` to refuse.
+pub(crate) const STOCK_FRONTEND_ACTIONS: &[&str] = &[
+    "append_env",
+    "arg",
+    "executable",
+    "group",
+    "include",
+    "let",
+    "lifecycle_node",
+    "load_composable_node",
+    "log",
+    "node",
+    "node_container",
+    "pop-ros-namespace",
+    "pop_ros_namespace",
+    "push-ros-namespace",
+    "push_ros_namespace",
+    "reset",
+    "reset_env",
+    "ros_timer",
+    "set_env",
+    "set_parameter",
+    "set_parameters_from_file",
+    "set_remap",
+    "set_ros_log_dir",
+    "set_use_sim_time",
+    "shutdown",
+    "timer",
+    "unset_env",
+];
+
 fn accumulate(slot: &mut Option<f64>, period: f64) {
     *slot = Some(slot.unwrap_or(0.0) + period);
 }
@@ -94,7 +130,25 @@ impl LaunchTraverser {
     ///
     /// Deduplicated per (action, file): a launch file with thirty `<log>`
     /// lines is one finding, not thirty.
-    pub(crate) fn note_dropped_action(&mut self, action: &str) {
+    ///
+    /// Only for an action stock `launch`/`launch_ros` expose
+    /// ([`STOCK_FRONTEND_ACTIONS`]). Any other tag is refused, as
+    /// `launch`'s frontend refuses it (`Unrecognized entity of the type`):
+    /// either it is a typo, or a launch EXTENSION registers it — and an
+    /// extension's action exists to start something (`<autoware_node>`,
+    /// #0095), so dropping it loses nodes while `resolve` and `launch`
+    /// exit 0.
+    pub(crate) fn note_dropped_action(&mut self, action: &str) -> crate::error::Result<()> {
+        if !STOCK_FRONTEND_ACTIONS.contains(&action) {
+            return Err(crate::error::ParseError::UnknownAction {
+                action: action.to_string(),
+                file: self
+                    .context
+                    .current_file()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<unknown file>".to_string()),
+            });
+        }
         log::warn!("Unsupported action type: {action}");
         let entry = crate::record::DroppedAction {
             action: action.to_string(),
@@ -102,6 +156,7 @@ impl LaunchTraverser {
             detail: None,
         };
         self.note_dropped(entry);
+        Ok(())
     }
 
     /// Merge one dropped-action entry (from this file or an included one).

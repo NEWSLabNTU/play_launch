@@ -1,6 +1,7 @@
 //! Action module
 
 pub mod arg;
+pub mod autoware_node;
 pub mod container;
 pub mod declare_argument;
 pub mod executable;

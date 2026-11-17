@@ -150,7 +150,38 @@ const LIFECYCLE_NODE_SUPPORTED: &[&str] = &[
     "autostart",
 ];
 
+/// `<autoware_node>` (Autoware 2.1.0, `autoware_agnocast_wrapper`, #0095):
+/// `AutowareNode.parse` reads `mode`, `target` and its `<extra_arg>`
+/// children, then hands the rest to `Node.parse`, so it is `<node>`'s table
+/// plus those.
+const AUTOWARE_NODE_SUPPORTED: &[&str] = &[
+    "if",
+    "unless",
+    "pkg",
+    "exec",
+    "name",
+    "namespace",
+    "args",
+    "ros_args",
+    "output",
+    "respawn",
+    "respawn_delay",
+    "on_exit",
+    "launch-prefix",
+    "cwd",
+    "sigkill_timeout",
+    "sigterm_timeout",
+    "mode",
+    "target",
+];
+
 static SPECS: &[AttrSpec] = &[
+    AttrSpec {
+        element: "autoware_node",
+        supported: AUTOWARE_NODE_SUPPORTED,
+        known_unsupported: NODE_KNOWN_UNSUPPORTED,
+        children: &["param", "remap", "env", "extra_arg"],
+    },
     AttrSpec {
         element: "node",
         supported: NODE_SUPPORTED,
@@ -728,6 +759,22 @@ mod tests {
         // `autostart` belongs to the lifecycle form only.
         assert!(validate_named("node", &["autostart"]).is_err());
         assert!(validate_named("lifecycle_node", &["autostart"]).is_ok());
+    }
+
+    /// `AutowareNode.parse` is `Node.parse` plus `mode`, `target` and the
+    /// `<extra_arg>` children (#0095).
+    #[test]
+    fn autoware_node_is_node_plus_mode_and_target() {
+        let mut node: Vec<&str> = NODE_SUPPORTED.to_vec();
+        node.extend(["mode", "target"]);
+        node.sort_unstable();
+        let mut aw: Vec<&str> = AUTOWARE_NODE_SUPPORTED.to_vec();
+        aw.sort_unstable();
+        assert_eq!(node, aw);
+        let spec = spec_for("autoware_node").expect("autoware_node has a spec");
+        assert_eq!(spec.known_unsupported, NODE_KNOWN_UNSUPPORTED);
+        assert!(spec.children.contains(&"extra_arg"));
+        assert!(validate_named("node", &["target"]).is_err());
     }
 
     /// A `BEHAVIOUR_MATCHES` row silences a warning, so a row that names an

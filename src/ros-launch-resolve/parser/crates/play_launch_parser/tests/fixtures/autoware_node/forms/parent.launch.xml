@@ -1,0 +1,22 @@
+<launch>
+  <!-- #0095. The fake prefix registers demo_nodes_cpp's talker (built with
+       Agnocast) and listener (without). Agnocast is not enabled here, so
+       target alone decides the form. -->
+  <set_env name="AMENT_PREFIX_PATH" value="$(dirname)/../prefix:$(env AMENT_PREFIX_PATH '')"/>
+  <node_container pkg="rclcpp_components" exec="component_container" name="c" namespace=""/>
+  <push-ros-namespace namespace="aw"/>
+  <autoware_node pkg="demo_nodes_cpp" exec="talker" name="talker_comp" target="/c" output="screen">
+    <param name="negative" value="true"/>
+    <remap from="chatter" to="chat"/>
+    <env name="FOO" value="bar"/>
+    <extra_arg name="use_intra_process_comms" value="true"/>
+  </autoware_node>
+  <autoware_node pkg="demo_nodes_cpp" exec="listener" name="listener_proc" output="screen">
+    <param name="negative" value="true"/>
+    <remap from="chatter" to="chat"/>
+    <env name="FOO" value="bar"/>
+    <env name="ENABLE_AGNOCAST" value="1"/>
+    <extra_arg name="use_intra_process_comms" value="true"/>
+  </autoware_node>
+  <autoware_node pkg="demo_nodes_cpp" exec="talker" name="skipped" target="/c" if="false"/>
+</launch>

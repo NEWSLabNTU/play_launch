@@ -1,0 +1,18 @@
+<launch>
+  <!-- #0095. Agnocast enabled by ENABLE_AGNOCAST=1: a node built with it
+       (talker) runs on it as a process unless mode="rclcpp"; one built
+       without it (listener) is unaffected. -->
+  <arg name="agnocast_heaphook_path" default="$(dirname)/libagnocast_heaphook.so.1"/>
+  <set_env name="AMENT_PREFIX_PATH" value="$(dirname)/../prefix:$(env AMENT_PREFIX_PATH '')"/>
+  <set_env name="ENABLE_AGNOCAST" value="1"/>
+  <node_container pkg="rclcpp_components" exec="component_container" name="c" namespace=""/>
+  <autoware_node pkg="demo_nodes_cpp" exec="talker" name="talker_auto" target="/c"/>
+  <autoware_node pkg="demo_nodes_cpp" exec="talker" name="talker_rclcpp" target="/c" mode="rclcpp"/>
+  <autoware_node pkg="demo_nodes_cpp" exec="listener" name="listener_comp" target="/c"/>
+  <autoware_node pkg="demo_nodes_cpp" exec="talker" name="talker_proc_rclcpp" mode="rclcpp">
+    <env name="LD_PRELOAD" value="/x/libother.so:/y/libagnocast_heaphook.so.1"/>
+  </autoware_node>
+  <autoware_node pkg="demo_nodes_cpp" exec="talker" name="talker_proc_auto">
+    <env name="LD_PRELOAD" value="/x/libother.so"/>
+  </autoware_node>
+</launch>

@@ -268,9 +268,38 @@ class LaunchContext:
     // Add stub Parser class
     let parser_class = py.eval(c"type('Parser', (), {})", None, None)?;
     launch_frontend.add("Parser", &parser_class)?;
-    // Add stub functions
-    launch_frontend.add("expose_action", py.None())?;
-    launch_frontend.add("expose_substitution", py.None())?;
+    // `@expose_action("name")` / `@expose_substitution("name")` register a
+    // class with the XML/YAML frontends, which this walk never uses; they
+    // must still be decorators that return the class, or a module defining
+    // a launch extension cannot be imported (`autoware_agnocast_wrapper`'s
+    // `AutowareNode`, #0095).
+    let expose_locals = pyo3::types::PyDict::new(py);
+    py.run(
+        c"
+def expose_action(name):
+    return lambda cls: cls
+def expose_substitution(name):
+    return lambda cls: cls
+",
+        None,
+        Some(&expose_locals),
+    )?;
+    for name in ["expose_action", "expose_substitution"] {
+        launch_frontend.add(name, expose_locals.get_item(name)?.unwrap())?;
+    }
+
+    // `launch.logging.get_logger`, which an action's `execute` logs through
+    // (#0095). Python's own logging, under launch's logger names.
+    let launch_logging = PyModule::new(py, "launch.logging")?;
+    py.run(
+        c"
+import logging as _logging
+def get_logger(name=None):
+    return _logging.getLogger(name or 'launch')
+",
+        Some(&launch_logging.dict()),
+        None,
+    )?;
 
     // Create launch.frontend.type_utils submodule with stub functions
     let launch_frontend_type_utils = PyModule::new(py, "launch.frontend.type_utils")?;
@@ -334,6 +363,7 @@ class LaunchContext:
     add_submodule_both_names(&launch_mod, &launch_sources)?;
     add_submodule_both_names(&launch_mod, &launch_frontend)?;
     add_submodule_both_names(&launch_mod, &launch_utilities)?;
+    add_submodule_both_names(&launch_mod, &launch_logging)?;
 
     // Create launch_ros module
     let launch_ros_mod = PyModule::new(py, "launch_ros")?;
@@ -429,6 +459,7 @@ class LaunchContext:
         "launch.frontend.type_utils",
         "launch.utilities",
         "launch.utilities.type_utils",
+        "launch.logging",
         "launch.some_substitutions_type",
         "launch.events",
         "launch.events.process",
@@ -464,6 +495,7 @@ class LaunchContext:
     modules.set_item("launch.frontend", &launch_frontend)?;
     modules.set_item("launch.frontend.type_utils", &launch_frontend_type_utils)?;
     modules.set_item("launch.utilities", &launch_utilities)?;
+    modules.set_item("launch.logging", &launch_logging)?;
     modules.set_item("launch.utilities.type_utils", &launch_utilities_type_utils)?;
     modules.set_item("launch_ros", &launch_ros_mod)?;
     modules.set_item("launch_ros.actions", &launch_ros_actions)?;

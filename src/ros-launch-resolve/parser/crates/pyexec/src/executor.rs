@@ -65,7 +65,7 @@ our_mocks = {
     'launch.event_handlers', 'launch.events', 'launch.events.process',
     'launch.launch_context', 'launch.launch_description_sources',
     'launch.frontend', 'launch.frontend.type_utils', 'launch.utilities',
-    'launch.utilities.type_utils', 'launch.some_substitutions_type',
+    'launch.utilities.type_utils', 'launch.logging', 'launch.some_substitutions_type',
     'launch_ros', 'launch_ros.actions', 'launch_ros.descriptions',
     'launch_ros.substitutions', 'launch_ros.parameter_descriptions', 'launch_ros.utilities',
     'launch_xml', 'launch_xml.launch_description_sources',

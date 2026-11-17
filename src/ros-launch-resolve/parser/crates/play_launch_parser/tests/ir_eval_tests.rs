@@ -504,12 +504,13 @@ fn test_evaluate_reports_an_action_the_ir_builder_dropped() {
     // Issue #0049. The IR builder drops an action it does not implement, and
     // the evaluator never sees it — so without carrying the entries across,
     // `evaluate_launch_file` produces a record that calls a truncated launch
-    // tree clean and `check` exits 0 on it. `<xml_nonsense>` is unknown to
-    // both paths; the evaluating path records it, and so must this one.
+    // tree clean and `check` exits 0 on it. `<log>` is a stock action
+    // neither path implements; the evaluating path records it, and so must
+    // this one.
     let file = write_xml(
         r#"<launch>
             <node pkg="demo_nodes_cpp" exec="talker" />
-            <xml_nonsense />
+            <log message="hi" />
         </launch>"#,
     );
 
@@ -523,5 +524,27 @@ fn test_evaluate_reports_an_action_the_ir_builder_dropped() {
         "{:?}",
         record.dropped_actions
     );
-    assert_eq!(record.dropped_actions[0].action, "xml_nonsense");
+    assert_eq!(record.dropped_actions[0].action, "log");
+
+    // A tag that is no ROS 2 action at all is refused by both paths, as
+    // `launch`'s frontend refuses it (#0095).
+    let file = write_xml(
+        r#"<launch>
+            <node pkg="demo_nodes_cpp" exec="talker" />
+            <xml_nonsense />
+        </launch>"#,
+    );
+    for err in [
+        parse_launch_file(file.path(), HashMap::new())
+            .unwrap_err()
+            .to_string(),
+        evaluate_launch_file(file.path(), HashMap::new())
+            .unwrap_err()
+            .to_string(),
+    ] {
+        assert!(
+            err.contains("Unrecognized entity of the type: xml_nonsense"),
+            "{err}"
+        );
+    }
 }

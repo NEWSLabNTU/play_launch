@@ -108,6 +108,24 @@ pub enum ParseError {
     #[error("Python error: {0}")]
     PythonError(String),
 
+    /// A launch action refused while executing, with the action's own
+    /// message — `<autoware_node>`'s unknown `mode` or unregistered
+    /// component (#0095), which upstream raises as `RuntimeError`.
+    #[error("{action}: {message}")]
+    ActionFailed { action: String, message: String },
+
+    /// A tag that is no stock `launch`/`launch_ros` action and that this
+    /// parser does not implement. `launch`'s frontend refuses it too
+    /// (`Unrecognized entity of the type: X`) unless a launch extension
+    /// registers it — and then dropping it would silently lose what it
+    /// starts (#0095).
+    #[error(
+        "Unrecognized entity of the type: {action} (in {file}). It is no ROS 2 launch action; \
+         if a launch extension provides it, the Rust parser does not implement it — \
+         re-run with --parser python, which runs the extension"
+    )]
+    UnknownAction { action: String, file: String },
+
     /// An `<include>` did not pass an argument the included file declares
     /// without a default. Mirrors `launch`'s `IncludeLaunchDescription.execute`,
     /// which checks the include's OWN launch arguments — a value that merely

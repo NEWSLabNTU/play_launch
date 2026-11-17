@@ -1,0 +1,6 @@
+# #0095: autoware_agnocast_wrapper's launch extension (a copy, entry point
+# included) importable, and an ament prefix registering demo_nodes_cpp's
+# talker (built with Agnocast) and listener (without) as autoware_node_plugins.
+PYTHONPATH=$REPO_ROOT/src/ros-launch-resolve/parser/crates/play_launch_parser/tests/fixtures/autoware_node/python:${PYTHONPATH:-}
+AMENT_PREFIX_PATH=$REPO_ROOT/src/ros-launch-resolve/parser/crates/play_launch_parser/tests/fixtures/autoware_node/prefix:${AMENT_PREFIX_PATH:-}
+ENABLE_AGNOCAST=0

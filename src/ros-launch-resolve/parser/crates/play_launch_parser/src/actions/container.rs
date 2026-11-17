@@ -494,6 +494,54 @@ impl ContainerAction {
     }
 }
 
+/// The parameters a `<param from=…>` file contributes to a composable node's
+/// LoadNode request; `node` names the node for the error.
+///
+/// `LoadComposableNodes` opens every parameter file to build the request, so
+/// a missing one fails the launch (#0089), whatever its extension. Shared by
+/// `<composable_node>` and the component form of `<autoware_node>` (#0095).
+pub(crate) fn composable_param_file(
+    from_resolved: &str,
+    context: &LaunchContext,
+    node: impl FnOnce() -> String,
+) -> Result<Vec<(String, String)>> {
+    log::debug!("Found param file='{}', checking if YAML", from_resolved);
+    if !Path::new(from_resolved).is_file() {
+        return Err(ParseError::ParamFileNotFound {
+            file: from_resolved.to_string(),
+            kind: "composable node",
+            node: node(),
+            why: "a LoadNode request carries the file's values",
+        });
+    }
+    if from_resolved.ends_with(".yaml") || from_resolved.ends_with(".yml") {
+        match extract_params_from_yaml(Path::new(from_resolved), context) {
+            Ok(yaml_params) => {
+                log::debug!(
+                    "Loaded {} parameters from {}",
+                    yaml_params.len(),
+                    from_resolved
+                );
+                Ok(yaml_params)
+            }
+            Err(e) => {
+                log::warn!("Failed to load YAML parameter file {from_resolved}: {e}");
+                // Fallback: store as __param_file
+                Ok(vec![(
+                    "__param_file".to_string(),
+                    from_resolved.to_string(),
+                )])
+            }
+        }
+    } else {
+        // Non-YAML file - store as reference
+        Ok(vec![(
+            "__param_file".to_string(),
+            from_resolved.to_string(),
+        )])
+    }
+}
+
 impl ComposableNodeAction {
     pub fn from_entity(entity: &XmlEntity, context: &LaunchContext) -> Result<Self> {
         // Get required attributes — parse only, don't resolve
@@ -549,44 +597,10 @@ impl ComposableNodeAction {
                         let from_resolved = resolve_substitutions(&from_parsed, context)
                             .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
 
-                        // Load YAML parameter file and extract parameters
-                        log::debug!("Found param file='{}', checking if YAML", from_resolved);
-                        // `LoadComposableNodes` opens every parameter file to
-                        // build the request, so a missing one fails the
-                        // launch (#0089), whatever its extension.
-                        if !Path::new(&from_resolved).is_file() {
-                            return Err(ParseError::ParamFileNotFound {
-                                file: from_resolved,
-                                kind: "composable node",
-                                node: resolve_substitutions(&name, context)
-                                    .unwrap_or_else(|_| name_str.clone()),
-                                why: "a LoadNode request carries the file's values",
-                            });
-                        }
-                        if from_resolved.ends_with(".yaml") || from_resolved.ends_with(".yml") {
-                            match extract_params_from_yaml(Path::new(&from_resolved), context) {
-                                Ok(yaml_params) => {
-                                    log::debug!(
-                                        "Loaded {} parameters from {}",
-                                        yaml_params.len(),
-                                        from_resolved
-                                    );
-                                    parameters.extend(yaml_params);
-                                }
-                                Err(e) => {
-                                    log::warn!(
-                                        "Failed to load YAML parameter file {}: {}",
-                                        from_resolved,
-                                        e
-                                    );
-                                    // Fallback: store as __param_file
-                                    parameters.push(("__param_file".to_string(), from_resolved));
-                                }
-                            }
-                        } else {
-                            // Non-YAML file - store as reference
-                            parameters.push(("__param_file".to_string(), from_resolved));
-                        }
+                        parameters.extend(composable_param_file(&from_resolved, context, || {
+                            resolve_substitutions(&name, context)
+                                .unwrap_or_else(|_| name_str.clone())
+                        })?);
                     } else {
                         // An inline parameter, or nested ones, evaluated the
                         // way `launch_ros` evaluates a node's.

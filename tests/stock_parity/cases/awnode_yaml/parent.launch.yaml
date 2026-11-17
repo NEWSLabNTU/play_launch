@@ -1,0 +1,49 @@
+# #0095: the YAML spelling of ../awnode.
+launch:
+  - node_container:
+      pkg: rclcpp_components
+      exec: component_container
+      name: c
+      namespace: ""
+  - push-ros-namespace:
+      namespace: aw
+  - autoware_node:
+      pkg: demo_nodes_cpp
+      exec: talker
+      name: talker_comp
+      target: /c
+      output: screen
+      param:
+        - name: negative
+          value: true
+      remap:
+        - from: chatter
+          to: chat
+      env:
+        - name: FOO
+          value: bar
+      extra_arg:
+        - name: use_intra_process_comms
+          value: "true"
+  - autoware_node:
+      pkg: demo_nodes_cpp
+      exec: listener
+      name: listener_proc
+      output: screen
+      param:
+        - name: negative
+          value: true
+      remap:
+        - from: chatter
+          to: chat
+      env:
+        - name: FOO
+          value: bar
+        - name: ENABLE_AGNOCAST
+          value: "1"
+  - autoware_node:
+      pkg: demo_nodes_cpp
+      exec: talker
+      name: skipped
+      target: /c
+      if: "false"

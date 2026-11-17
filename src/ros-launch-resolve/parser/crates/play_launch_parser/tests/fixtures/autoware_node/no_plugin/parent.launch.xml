@@ -1,0 +1,7 @@
+<launch>
+  <!-- #0095. add_two_ints_server registers no autoware_node_plugins
+       resource, so there is no component to load: an error. -->
+  <set_env name="AMENT_PREFIX_PATH" value="$(dirname)/../prefix:$(env AMENT_PREFIX_PATH '')"/>
+  <node_container pkg="rclcpp_components" exec="component_container" name="c" namespace=""/>
+  <autoware_node pkg="demo_nodes_cpp" exec="add_two_ints_server" name="srv" target="/c"/>
+</launch>

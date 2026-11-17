@@ -460,7 +460,7 @@ impl LaunchTraverser {
                 // subtrees while `check` exited 0. `note_dropped_action`
                 // keeps the log line and adds the entry beside it; it lands
                 // on `LaunchProgram::dropped_actions`, the IR's own output.
-                self.note_dropped_action(other);
+                self.note_dropped_action(other)?;
             }
         }
 

@@ -123,6 +123,12 @@ impl LaunchTraverser {
                             self.process_yaml_node(map, true)?;
                         }
                     }
+                    // Autoware 2.1.0's action (#0095).
+                    "autoware_node" => {
+                        if let Some(map) = action_map {
+                            self.process_yaml_autoware_node(map)?;
+                        }
+                    }
                     "let" => {
                         if let Some(map) = action_map {
                             self.process_yaml_let(map)?;
@@ -176,7 +182,7 @@ impl LaunchTraverser {
                     other => {
                         // Recorded, not just warned: see
                         // `LaunchTraverser::note_dropped_action`.
-                        self.note_dropped_action(other);
+                        self.note_dropped_action(other)?;
                     }
                 }
             }
@@ -389,6 +395,53 @@ impl LaunchTraverser {
     /// Process a YAML node action. `lifecycle` is true for `lifecycle_node`,
     /// which is also the only form that reads `autostart`.
     fn process_yaml_node(&mut self, map: &Mapping, lifecycle: bool) -> Result<()> {
+        let node = yaml_node_action(map, lifecycle)?;
+        let record = CommandGenerator::generate_node_record(&node, &self.context)
+            .map_err(ParseError::from)?;
+        self.records.push(record);
+        Ok(())
+    }
+
+    /// Process a YAML `autoware_node` (#0095): a `node` mapping plus `mode`,
+    /// `target` and an `extra_arg` sequence.
+    fn process_yaml_autoware_node(&mut self, map: &Mapping) -> Result<()> {
+        validate_yaml_child_seq(map, "extra_arg", "extra_arg")?;
+        let mut extra_args = Vec::new();
+        if let Some(items) = map
+            .get(Value::String("extra_arg".to_string()))
+            .and_then(|v| v.as_sequence())
+        {
+            for item in items {
+                let Some(m) = item.as_mapping() else { continue };
+                let get = |key: &str| -> Result<Vec<crate::substitution::Substitution>> {
+                    let v =
+                        yaml_value_string(m, key).ok_or_else(|| ParseError::MissingAttribute {
+                            element: "extra_arg".to_string(),
+                            attribute: key.to_string(),
+                        })?;
+                    parse_substitutions(&v)
+                };
+                extra_args.push((get("name")?, get("value")?));
+            }
+        }
+        let action = crate::actions::autoware_node::AutowareNodeAction {
+            node: yaml_node_action(map, false)?,
+            mode: yaml_value_string(map, "mode")
+                .map(|s| parse_substitutions(&s))
+                .transpose()?,
+            target: yaml_str(map, "target")
+                .map(parse_substitutions)
+                .transpose()?,
+            extra_args,
+        };
+        self.execute_autoware_node(&action)
+    }
+}
+
+/// A YAML `node` mapping as `<node>`'s action. `lifecycle` is true for
+/// `lifecycle_node`, which is also the only form that reads `autostart`.
+fn yaml_node_action(map: &Mapping, lifecycle: bool) -> Result<NodeAction> {
+    {
         validate_yaml_child_seq(map, "param", "param")?;
         validate_yaml_child_seq(map, "remap", "remap")?;
         validate_yaml_child_seq(map, "env", "env")?;
@@ -513,13 +566,11 @@ impl LaunchTraverser {
             cwd: yaml_str(map, "cwd").map(parse_substitutions).transpose()?,
             stop: yaml_stop(map)?,
         };
-
-        let record = CommandGenerator::generate_node_record(&node, &self.context)
-            .map_err(ParseError::from)?;
-        self.records.push(record);
-        Ok(())
+        Ok(node)
     }
+}
 
+impl LaunchTraverser {
     /// Process a YAML let action
     fn process_yaml_let(&mut self, map: &Mapping) -> Result<()> {
         let name = yaml_str(map, "name").ok_or_else(|| ParseError::MissingAttribute {

@@ -1,0 +1,10 @@
+<launch>
+  <!-- #0095: use_agnocast:=1 (ARGS) enables Agnocast over ENABLE_AGNOCAST=0;
+       a bare heaphook name is the dynamic linker's to find. -->
+  <arg name="use_agnocast"/>
+  <arg name="agnocast_heaphook_path"/>
+  <node_container pkg="rclcpp_components" exec="component_container" name="c" namespace=""/>
+  <autoware_node pkg="demo_nodes_cpp" exec="talker" name="talker_auto" target="/c"/>
+  <autoware_node pkg="demo_nodes_cpp" exec="talker" name="talker_rclcpp" target="/c" mode="rclcpp"/>
+  <autoware_node pkg="demo_nodes_cpp" exec="listener" name="listener_comp" target="/c"/>
+</launch>

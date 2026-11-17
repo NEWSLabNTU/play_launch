@@ -1,0 +1,5 @@
+<launch>
+  <!-- #0095. A mode other than auto or rclcpp is refused, Agnocast or not. -->
+  <set_env name="AMENT_PREFIX_PATH" value="$(dirname)/../prefix:$(env AMENT_PREFIX_PATH '')"/>
+  <autoware_node pkg="demo_nodes_cpp" exec="listener" name="l" mode="agnocast"/>
+</launch>

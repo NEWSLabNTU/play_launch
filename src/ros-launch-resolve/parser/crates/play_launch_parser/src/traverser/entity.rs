@@ -96,6 +96,13 @@ impl LaunchTraverser {
                 record.scope = Some(self.current_scope_id);
                 self.records.push(record);
             }
+            // Autoware 2.1.0's `<autoware_node>` (#0095): a component or a
+            // process, decided when it executes.
+            "autoware_node" => {
+                let action =
+                    crate::actions::autoware_node::AutowareNodeAction::from_entity(entity)?;
+                self.execute_autoware_node(&action)?;
+            }
             "executable" => {
                 // Executables don't use NodeCapture - they generate NodeRecord directly
                 let exec = ExecutableAction::from_entity(entity)?;
@@ -314,7 +321,7 @@ impl LaunchTraverser {
                 // its whole subtree with it, so the loss is recorded on the
                 // record and `check` refuses on it (see
                 // `LaunchTraverser::note_dropped_action`).
-                self.note_dropped_action(other);
+                self.note_dropped_action(other)?;
             }
         }
         Ok(())
