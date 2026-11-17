@@ -17,6 +17,10 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0094** -- three integration tests (control channel, a settle check,
+interception chains) fail only when the whole suite runs, and pass alone.
+See `0094-*`.
+
 **#0090** -- a conditional `OnProcessExit` handler (a callable `on_exit`, e.g.
 shut down on exit code 2) is ignored under both parsers; a respawning node
 loops where `ros2 launch` ends the launch. See `0090-*`.
