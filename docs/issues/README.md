@@ -17,16 +17,19 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0094** -- three integration tests failed only when the whole suite ran.
-Two are fixed (a report-channel race, a CPU-bound timeout); the interception
-chains test, which once saw no events at all in 90 s, now keeps the
-launcher's log for the next occurrence. See `0094-*`.
+None.
 
 
 `just check-issue-index` fails if this section and the per-file `status:`
 frontmatter disagree.
 
 ## Resolved
+
+**#0094** -- three integration tests failed only when the whole suite ran.
+Three are fixed (a report-channel race, a CPU-bound timeout, a stock
+shutdown bound); the interception chains test did not fail again in 24
+runs, 8 of them beside full CPU load, and now keeps the launcher's log for a recurrence. See
+`archived/0094-*`.
 
 **#0095** -- the Rust parser skipped Autoware 2.1.0's `<autoware_node>`
 with a WARN, losing its nodes (three in golf cart perception). It is now

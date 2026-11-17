@@ -1,7 +1,7 @@
 ---
 id: 94
 title: "Three integration tests fail only when the whole suite runs, and pass alone"
-status: open
+status: resolved
 type: friction
 severity: low
 ---
@@ -50,7 +50,7 @@ Each test asserts what it means, not a race:
   by either channel.
 - **manifest_check: fixed.** The binary gets a 60 s x 3 nextest bound
   (`tests/.config/nextest.toml`); its settle tests are CPU-bound Z3 proving.
-- **interception: still open.** This is not slowness: the test polls up to
+- **interception: not reproduced; instrumented.** This is not slowness: the test polls up to
   90 s, and `chains.json` had no edges at all, so nothing was intercepted or
   nothing ran. The test used to send play_launch's output to `/dev/null`;
   it now keeps it and prints its tail on failure, so the next occurrence
@@ -61,3 +61,14 @@ Each test asserts what it means, not a race:
   walked its full ladder (SIGINT, 5 s, SIGTERM, 10 s, SIGKILL), which the
   test's 20 s bound did not cover under load. The bound is 40 s; the test
   is about the respawns before the Ctrl-C.
+
+## Resolution (2026-11-18)
+
+The interception chains test could not be made to fail again: 16 runs, 8 at
+a time, and 8 more at a time beside 48 busy loops on a 48-core host (load
+average 44), all passed in 10-14 s against the test's 90 s bound. The one
+failure on 2026-11-17 happened while a second worktree was building and
+testing on the same host, and its output went to `/dev/null`, so the cause
+is not recoverable. The test now keeps play_launch's stdout and stderr and
+prints their tail on failure; a recurrence is a new issue, with that log.
+The other three tests are fixed (see Progress).
