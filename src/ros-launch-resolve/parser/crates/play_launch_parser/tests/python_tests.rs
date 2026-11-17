@@ -450,13 +450,11 @@ fn test_parse_python_parameters() {
     let params_files = node["params_files"].as_array().unwrap();
     assert!(!params_files.is_empty(), "Should have parameter files");
 
-    // Verify parameter file path
-    let param_file_path = params_files.first().and_then(|v| v.as_str());
-    assert!(param_file_path.is_some(), "Should have parameter file path");
-    assert!(
-        param_file_path.unwrap().ends_with(".yaml"),
-        "Parameter file should be a YAML file"
-    );
+    // The file's CONTENT, as the native path records it. This used to
+    // assert a path ending `.yaml`: the fixture named a file that does not
+    // exist, so the unread path stood in for the content (#0089).
+    let content = params_files.first().and_then(|v| v.as_str()).unwrap();
+    assert!(content.contains("dirname_probe_loaded: true"), "{content}");
 
     // Check fifth node with array parameters
     let node = &nodes[4];

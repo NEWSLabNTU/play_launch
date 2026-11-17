@@ -297,6 +297,13 @@ impl CommandGenerator {
                         ))
                     })?;
                 params.extend(extracted_params);
+            } else if !Path::new(&param_file_path).is_file() {
+                // launch_ros's `Node` warns and drops a parameter file that
+                // is not a file (`Parameter file path is not a file: …`) and
+                // starts the node without it (#0089); the warning is the
+                // ordered walk's below, which also refuses the
+                // `allow_substs="true"` case launch fails on.
+                continue;
             } else {
                 // Regular file: load and resolve substitutions in YAML content
                 let resolved_contents =
@@ -351,6 +358,13 @@ impl CommandGenerator {
                             node_param_sources
                                 .push(crate::record::types::ParamSource::Inline { name, value });
                         }
+                    } else if !Path::new(&path).is_file() && *allow_substs != Some(true) {
+                        // As launch_ros's `Node`: without `allow_substs` a
+                        // parameter file is passed by path, and one that is not
+                        // a file is warned about and left out (#0089). With
+                        // `allow_substs="true"` launch opens it, and the read
+                        // below fails as launch's `open()` does.
+                        log::warn!("Parameter file path is not a file: {path}");
                     } else {
                         let content = crate::params::load_and_resolve_param_file_checked(
                             Path::new(&path),

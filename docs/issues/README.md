@@ -17,6 +17,10 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0093** -- the dlopen'd `pyexec` object installs no logger, so every
+`log::warn!` in the Python frontend is dropped (the #0089 plain-node warning
+does not print for a `.launch.py`). See `0093-*`.
+
 **#0092** -- the Rust parser does not apply `SetEnvironmentVariable` to
 `os.environ`, so a later `OpaqueFunction` reads the old value; `ros2 launch`
 and `--parser python` read the new one. See `0092-*`.
@@ -28,16 +32,6 @@ shuts down. See `0091-*`.
 **#0090** -- a conditional `OnProcessExit` handler (a callable `on_exit`, e.g.
 shut down on exit code 2) is ignored under both parsers; a respawning node
 loops where `ros2 launch` ends the launch. See `0090-*`.
-
-**#0089** -- the Rust parser drops a node's missing `<param from=>` file
-with a WARN and resolves on; `--parser python` and `ros2 launch` fail on it.
-A resolve used as a pre-flight check passes a launch that cannot start. See
-`0089-*`.
-
-**#0088** -- the Rust parser reports a missing include as `IO error: No such
-file or directory (os error 2)` with neither the missing path nor the
-including file, and then hints at `--parser python`, which names the file.
-Found on golf cart's Autoware 2.1.0 dead includes. See `0088-*`.
 
 **#0084** -- shutdown ignores an action's `sigterm_timeout` and `sigkill_timeout`
 and starts with SIGTERM: each node gets a fixed 2 s, then SIGTERM and SIGKILL 5 s
@@ -58,6 +52,15 @@ every frame twice under load; `stock` is clean. See `0082-*`.
 frontmatter disagree.
 
 ## Resolved
+
+**#0089** -- a missing parameter file was judged backwards by the Rust
+parser: a plain node's was an error and a composable's a warning, where
+`ros2 launch` warns for the first and fails on the second. Both frontends now
+judge as launch does. See `archived/0089-*`.
+
+**#0088** -- a missing include was reported as a bare `IO error` with a hint
+to try `--parser python`. It now names the file and the including file, and
+leaves the hint out. See `archived/0088-*`.
 
 **#0087** -- `<executable cwd=…>` was ignored by the Rust parser, so a process
 ran in play_launch's own directory, and the parser warned that `shell=` was

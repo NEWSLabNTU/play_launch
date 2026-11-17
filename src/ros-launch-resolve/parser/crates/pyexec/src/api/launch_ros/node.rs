@@ -303,7 +303,11 @@ impl NodeSpec {
             if !params.is_none() {
                 for item in params.try_iter()? {
                     for (key, value) in parse_parameter_item(&item?)? {
-                        if key == "__param_file" {
+                        if key == "__param_file" && !std::path::Path::new(&value).is_file() {
+                            // launch_ros's `Node` warns and starts the node
+                            // without it (#0089).
+                            log::warn!("Parameter file path is not a file: {value}");
+                        } else if key == "__param_file" {
                             params_files.push(value);
                         } else {
                             parameters.push((key, value));

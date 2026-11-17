@@ -1,5 +1,7 @@
 """Python launch file testing parameter parsing."""
 
+import os
+
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
@@ -60,7 +62,10 @@ def generate_launch_description():
             name='listener_mixed_params',
             parameters=[
                 {'inline_param': 'inline_value'},
-                '/path/to/params.yaml',  # Parameter file
+                # Parameter file: a real one, since launch_ros warns about
+                # and drops a path that is not a file (#0089).
+                os.path.join(os.path.dirname(__file__), '..', 'includes',
+                             'test_dirname_params.yaml'),
                 {
                     'nested': {
                         'value': 'deep_value'

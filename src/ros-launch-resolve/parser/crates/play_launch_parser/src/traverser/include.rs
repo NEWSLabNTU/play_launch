@@ -118,6 +118,20 @@ impl LaunchTraverser {
             file_path.to_path_buf()
         };
 
+        // launch opens the file and fails naming it; name the includer too
+        // (#0088). Checked here, before the frontend split, so a `.launch.py`
+        // and a YAML target report the same way as XML.
+        if !resolved_path.is_file() {
+            return Err(ParseError::IncludeNotFound {
+                file: resolved_path.display().to_string(),
+                includer: self
+                    .context
+                    .current_file()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<root>".to_string()),
+            });
+        }
+
         // Canonicalize path for circular include detection
         let canonical_path = resolved_path
             .canonicalize()

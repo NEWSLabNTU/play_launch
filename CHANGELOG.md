@@ -8,6 +8,20 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fixed (parser, #0088):** a missing include is reported as
+  `Included launch file not found: <path> (included from <file>)`, for XML,
+  YAML and Python targets, instead of a bare `IO error: No such file or
+  directory`. The hint to re-run with `--parser python` is left out when the
+  launch tree names a file that does not exist, since that parser fails on
+  it too.
+
+- **Fixed (parser, #0089):** a missing parameter file is judged as `ros2
+  launch` judges it. A composable node's is an error naming the file and the
+  node (`LoadComposableNodes` opens it; the default parser used to warn and
+  resolve on). A plain node's is a warning and the node starts without it
+  (the default parser used to fail), unless `allow_substs="true"`, where
+  launch opens the file and fails.
+
 - **Fixed (parser, #0086):** a `.launch.py` that performs a substitution
   itself, as Autoware 2.1.0's agnocast launch files do with
   `context.perform_substitution(EnvironmentVariable("ENABLE_AGNOCAST",

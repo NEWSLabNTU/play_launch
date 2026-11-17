@@ -60,6 +60,32 @@ pub enum ParseError {
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 
+    /// A file the parser had to read could not be read, named (#0088). The
+    /// bare `IoError` above carries no path, so a dead include read as
+    /// `No such file or directory (os error 2)` and nothing else.
+    #[error("Cannot read {path}: {source}")]
+    FileRead {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// An `<include>` names a file that does not exist (#0088). Worded with
+    /// the path and the including file, which `launch`'s own
+    /// `FileNotFoundError` names only the first of.
+    #[error("Included launch file not found: {file} (included from {includer})")]
+    IncludeNotFound { file: String, includer: String },
+
+    /// A composable node's parameter file does not exist (#0089).
+    /// `LoadComposableNodes` opens each file to build the request, so
+    /// `ros2 launch` fails here with `FileNotFoundError`; a plain node's
+    /// missing file is only a warning there, and here.
+    #[error(
+        "Parameter file not found: {file} (composable node '{node}'). \
+         ros2 launch fails on it too: a LoadNode request carries the file's values"
+    )]
+    ParamFileNotFound { file: String, node: String },
+
     #[error(
         "Maximum include depth ({max}) exceeded at '{file}'. This may indicate a non-circular but excessively deep include chain."
     )]
@@ -143,6 +169,25 @@ pub enum GenerationError {
 
     #[error("IO error: {0}")]
     IoError(String),
+}
+
+impl ParseError {
+    /// The launch tree names a file that does not exist: a defect of the
+    /// launch file, never a parser limitation, so no hint should send the
+    /// reader to the other parser (#0088).
+    pub fn is_missing_file(&self) -> bool {
+        match self {
+            ParseError::FileNotFound(_)
+            | ParseError::IncludeNotFound { .. }
+            | ParseError::ParamFileNotFound { .. } => true,
+            ParseError::FileRead { source, .. } | ParseError::IoError(source) => {
+                source.kind() == std::io::ErrorKind::NotFound
+            }
+            // A `.launch.py`'s own `open()` of a missing file, or a mock's.
+            ParseError::PythonError(msg) => msg.contains("FileNotFoundError"),
+            _ => false,
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, ParseError>;

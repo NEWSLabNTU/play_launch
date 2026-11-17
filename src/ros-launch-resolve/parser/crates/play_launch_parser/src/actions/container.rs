@@ -547,6 +547,16 @@ impl ComposableNodeAction {
 
                         // Load YAML parameter file and extract parameters
                         log::debug!("Found param file='{}', checking if YAML", from_resolved);
+                        // `LoadComposableNodes` opens every parameter file to
+                        // build the request, so a missing one fails the
+                        // launch (#0089), whatever its extension.
+                        if !Path::new(&from_resolved).is_file() {
+                            return Err(ParseError::ParamFileNotFound {
+                                file: from_resolved,
+                                node: resolve_substitutions(&name, context)
+                                    .unwrap_or_else(|_| name_str.clone()),
+                            });
+                        }
                         if from_resolved.ends_with(".yaml") || from_resolved.ends_with(".yml") {
                             match extract_params_from_yaml(Path::new(&from_resolved), context) {
                                 Ok(yaml_params) => {

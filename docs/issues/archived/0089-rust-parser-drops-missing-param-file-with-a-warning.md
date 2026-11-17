@@ -1,7 +1,7 @@
 ---
 id: 89
 title: "Rust parser drops a node's missing parameter file with a WARN and resolves on, where `ros2 launch` and `--parser python` fail"
-status: open
+status: resolved
 type: defect
 severity: medium
 ---
@@ -62,3 +62,36 @@ every migration step) reports a clean model for a launch that cannot run.
 
 Same as `ros2 launch`: an error naming the file and the node, and no model.
 If a lenient mode is wanted for inspection, make it a flag, off by default.
+
+## Resolution (2026-11-17)
+
+Checked against stock `ros2 launch` (Humble) first, and the issue's
+reproduction turned out to be the one case where launch does NOT fail: a
+plain `<node>`'s missing parameter file is a warning there
+(`launch_ros.actions.node: Parameter file path is not a file: ...`), and the
+node starts without it. A composable node's missing file fails the launch
+(`[Errno 2] No such file or directory`), because `LoadComposableNodes` opens
+it to build the request. CenterPoint is a composable, so the golf cart case
+is the second. The Rust parser had both backwards: a plain node's missing
+file was a hard error, a composable's a warning.
+
+Now, on both frontends:
+- a composable node's missing parameter file is
+  `ParseError::ParamFileNotFound` (XML, `actions/container.rs`) or a Python
+  `FileNotFoundError` (`pyexec` `ComposableNode`), naming the file and the
+  node; `resolve` exits 1 with no model;
+- a plain node's missing file is warned about in launch's words and left out
+  of the record and the command line (`record/generator.rs`, `pyexec`
+  `Node`), except with `allow_substs="true"`, where launch opens the file and
+  fails, and so does the parser.
+
+`--parser python` already behaved as `ros2 launch` in all four cases.
+
+Tests: `tests/missing_files.rs` (composable error, plain warning, the
+`allow_substs` error). `python_tests.rs::test_parse_python_parameters`
+asserted a path in `params_files` only because its fixture named a file that
+does not exist, so the unread path stood in for the content; the fixture now
+names a real file and the test checks its content.
+
+Not fixed here: the plain-node warning from a `.launch.py` is not printed,
+because the dlopen'd `pyexec` object has no logger (#0093).

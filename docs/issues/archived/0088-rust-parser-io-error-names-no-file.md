@@ -1,7 +1,7 @@
 ---
 id: 88
 title: "Rust parser reports a missing include as `IO error: No such file or directory (os error 2)` without naming the file or the including file"
-status: open
+status: resolved
 type: friction
 severity: low
 ---
@@ -56,3 +56,19 @@ parser has it), as `ParseError::FileNotFound` already can:
 Likely fix: map `io::ErrorKind::NotFound` on the include read to
 `FileNotFound(path)` instead of the blanket `#[from]`, and wrap other IO
 errors with the path. Skip the "--parser python" hint for a not-found file.
+
+## Resolution (2026-11-17)
+
+`process_include_target` checks the resolved path before the frontend split
+and returns `ParseError::IncludeNotFound { file, includer }`, so an XML, YAML
+or `.launch.py` target reports
+`Included launch file not found: <path> (included from <includer>)`. Every
+other read through `read_file_cached` names its path
+(`ParseError::FileRead`). `ParseError::is_missing_file()` tells the resolver
+the launch tree is at fault, and it then leaves out the `--parser python`
+hint, since that parser fails on the same file.
+
+Tests: `tests/missing_files.rs`
+(`a_missing_include_names_the_file_and_the_includer`, XML and YAML
+includers); `edge_cases.rs::test_nonexistent_include_file`, which accepted a
+bare `IO error`, now requires the path.

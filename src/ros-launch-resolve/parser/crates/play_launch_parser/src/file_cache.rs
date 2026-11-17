@@ -23,8 +23,12 @@ static FILE_CACHE: Lazy<DashMap<PathBuf, CachedFile>> = Lazy::new(DashMap::new);
 
 /// Read file with caching and modification time validation
 pub(crate) fn read_file_cached(path: &Path) -> Result<String> {
-    let metadata = std::fs::metadata(path)?;
-    let modified = metadata.modified()?;
+    let named = |source: std::io::Error| crate::error::ParseError::FileRead {
+        path: path.display().to_string(),
+        source,
+    };
+    let metadata = std::fs::metadata(path).map_err(named)?;
+    let modified = metadata.modified().map_err(named)?;
 
     if metadata.len() > MAX_FILE_SIZE {
         return Err(std::io::Error::new(
@@ -50,7 +54,7 @@ pub(crate) fn read_file_cached(path: &Path) -> Result<String> {
     log::debug!("File cache miss: {}", path.display());
 
     // Read and cache
-    let content = std::fs::read_to_string(path)?;
+    let content = std::fs::read_to_string(path).map_err(named)?;
     FILE_CACHE.insert(
         path.to_path_buf(),
         CachedFile {

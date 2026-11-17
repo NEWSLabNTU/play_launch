@@ -233,8 +233,9 @@ fn test_nonexistent_include_file() {
     let err = result.unwrap_err();
     let err_msg = err.to_string();
     assert!(
-        err_msg.contains("IO error") || err_msg.contains("No such file"),
-        "Error should mention file not found: {}",
+        // The path, not a bare `IO error` (#0088).
+        err_msg.contains("Included launch file not found: /nonexistent/path/to/file.launch.xml"),
+        "Error should name the missing file: {}",
         err_msg
     );
 }

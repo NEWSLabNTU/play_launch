@@ -140,7 +140,15 @@ impl ComposableNode {
             if !params.is_none() {
                 for item in params.try_iter()? {
                     for (key, value) in parse_parameter_item(&item?)? {
-                        if key == "__param_file" && is_yaml_file(&value) {
+                        if key == "__param_file" && !std::path::Path::new(&value).is_file() {
+                            // `LoadComposableNodes` opens the file to build
+                            // the request, so launch fails here (#0089).
+                            return Err(pyo3::exceptions::PyFileNotFoundError::new_err(format!(
+                                "Parameter file not found: {value} (composable node \
+                                 '{fqn}'). ros2 launch fails on it too: a LoadNode \
+                                 request carries the file's values"
+                            )));
+                        } else if key == "__param_file" && is_yaml_file(&value) {
                             match load_yaml_params_for_node(&value, &fqn) {
                                 Ok(loaded) => parameters.extend(loaded),
                                 Err(e) => {
