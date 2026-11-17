@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.37.0 - 2026-11-17
 
 - **Fixed (parser, #0088):** a missing include is reported as
   `Included launch file not found: <path> (included from <file>)`, for XML,
