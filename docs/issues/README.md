@@ -17,6 +17,10 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0095** -- the Rust parser skips Autoware 2.1.0's `<autoware_node>`
+(`autoware_agnocast_wrapper`) with a WARN, so the nodes it declares, three in
+golf cart perception, are missing from the model. See `0095-*`.
+
 **#0094** -- three integration tests failed only when the whole suite ran.
 Two are fixed (a report-channel race, a CPU-bound timeout); the interception
 chains test, which once saw no events at all in 90 s, now keeps the
