@@ -17,10 +17,6 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0091** -- `--parser python` still ignores `OnProcessExit(on_exit=Shutdown)`
-(#0081 reached the Rust parser only): the target respawns where `ros2 launch`
-shuts down. See `0091-*`.
-
 **#0090** -- a conditional `OnProcessExit` handler (a callable `on_exit`, e.g.
 shut down on exit code 2) is ignored under both parsers; a respawning node
 loops where `ros2 launch` ends the launch. See `0090-*`.
@@ -44,6 +40,11 @@ every frame twice under load; `stock` is clean. See `0082-*`.
 frontmatter disagree.
 
 ## Resolved
+
+**#0091** -- `--parser python` seemed to ignore an `OnProcessExit` shutdown
+handler: the binary imported a stale 0.30.0 `play_launch` package from
+`~/.local` ahead of its own. A wheel's binary now imports the package it was
+shipped with. See `archived/0091-*`.
 
 **#0093** -- the dlopen'd `pyexec` object had no logger, so every warning
 the Python frontend raised was dropped. The loader now hands it the host's

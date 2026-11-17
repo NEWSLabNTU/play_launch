@@ -26,7 +26,79 @@ fn setup_python_path(py: Python<'_>) -> PyResult<()> {
         }
     }
 
+    // A wheel's binary imports the `play_launch` package it was shipped
+    // with, ahead of everything else (#0091). Found by name, an older copy
+    // earlier on the path won: `pip install --user` leaves one in
+    // `~/.local`, which Python puts before the system's site-packages, and a
+    // 0.36.0 binary ran a 0.30.0 dumper that predated the #0081 fix. The
+    // dump-format check below could not tell, because the record's shape had
+    // not changed; only its behaviour had.
+    if let Some(root) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| wheel_package_root(&exe))
+    {
+        let root = root.to_string_lossy().into_owned();
+        debug!("importing play_launch's Python package from its wheel: {root}");
+        path.call_method1("insert", (0, root))?;
+        // Drop a copy imported before the path changed.
+        let modules = sys.getattr("modules")?;
+        let stale: Vec<String> = modules
+            .call_method0("keys")?
+            .try_iter()?
+            .filter_map(|k| k.ok()?.extract::<String>().ok())
+            .filter(|k| k == "play_launch" || k.starts_with("play_launch."))
+            .collect();
+        for k in stale {
+            modules.del_item(k)?;
+        }
+    }
+
     Ok(())
+}
+
+/// The `site-packages` directory of the wheel `exe` was installed from: a
+/// wheel puts its binaries at `<site-packages>/play_launch/dist/<distro>/bin/`
+/// (`python/play_launch/payload.py`). `None` for any other layout, such as a
+/// colcon `install/`, where `PYTHONPATH` decides.
+fn wheel_package_root(exe: &Path) -> Option<std::path::PathBuf> {
+    let bin = exe.parent()?;
+    let distro = bin.parent()?;
+    let dist = distro.parent()?;
+    let package = dist.parent()?;
+    let named = |p: &Path, n: &str| p.file_name().is_some_and(|f| f == n);
+    (named(bin, "bin")
+        && named(dist, "dist")
+        && named(package, "play_launch")
+        && package.join("__init__.py").is_file())
+    .then(|| package.parent().map(Path::to_path_buf))
+    .flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wheel_package_root;
+
+    #[test]
+    fn a_wheel_binary_finds_its_own_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let site = dir.path().join("site-packages");
+        let bin = site.join("play_launch/dist/humble/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(site.join("play_launch/__init__.py"), "").unwrap();
+        assert_eq!(wheel_package_root(&bin.join("play_launch")), Some(site));
+    }
+
+    #[test]
+    fn any_other_layout_finds_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("install/play_launch/lib/play_launch");
+        std::fs::create_dir_all(&bin).unwrap();
+        assert_eq!(wheel_package_root(&bin.join("play_launch")), None);
+        // The right shape without the package beside it is not a wheel.
+        let fake = dir.path().join("x/play_launch/dist/humble/bin");
+        std::fs::create_dir_all(&fake).unwrap();
+        assert_eq!(wheel_package_root(&fake.join("play_launch")), None);
+    }
 }
 
 /// Run dump_launch to record a launch file execution

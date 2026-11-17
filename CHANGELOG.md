@@ -8,6 +8,12 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fixed (#0091):** `--parser python` uses the Python package installed
+  with the binary. An older `play_launch` package elsewhere on the path,
+  such as one `pip install --user` left in `~/.local`, used to be imported
+  instead whenever its record format matched, and its fixes were missing
+  (here #0081's `OnProcessExit` shutdown handler).
+
 - **Fixed (parser, #0093):** warnings the default parser raises for a
   `.launch.py` are printed (they were dropped), so a `.launch.py` reports
   what the same mistake in XML reports. The parser's Python half speaks C
