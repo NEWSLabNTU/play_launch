@@ -42,7 +42,8 @@ What's compared
      - `args`, `raw_cmd`: exact match after whitespace normalization.
      - `extra_args`: exact dict match.
      - (every process, containers too) `env_unset` as a set, `launch_prefix`
-       and `cwd` exactly (#0085, #0087).
+       and `cwd` exactly (#0085, #0087); `on_exit`, `shutdown_on_exit_codes`,
+       `sigterm_timeout` and `sigkill_timeout` exactly (#0084, #0090).
      - `params` + `params_files`: `params_files` (raw external YAML,
        verbatim) is expanded and merged into the effective param set
        (inline `params` wins on key collision, mirroring the model's own
@@ -361,7 +362,9 @@ def process_diffs(rust: Dict, python: Dict) -> List[str]:
     p_unset = sorted(python.get('env_unset') or [])
     if r_unset != p_unset:
         diffs.append(f"env_unset differ: {r_unset} vs {p_unset}")
-    for key in ('launch_prefix', 'cwd'):
+    # How it ends (#0084, #0090, and #0081's `on_exit`): exactly.
+    for key in ('launch_prefix', 'cwd', 'on_exit', 'shutdown_on_exit_codes',
+                'sigterm_timeout', 'sigkill_timeout'):
         if rust.get(key) != python.get(key):
             diffs.append(f"{key}: {rust.get(key)!r} vs {python.get(key)!r}")
     return diffs

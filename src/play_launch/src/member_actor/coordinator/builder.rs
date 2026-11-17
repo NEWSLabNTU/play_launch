@@ -227,7 +227,7 @@ impl MemberCoordinatorBuilder {
         // (#0065): the flag rides on the model instance (#0063), so no name has to
         // be matched against a set, which is what let a same-named or same-stem
         // member end the launch.
-        let mut shutdown_on_exit_ids = std::collections::HashSet::new();
+        let mut shutdown_on_exit_ids = HashMap::new();
 
         for def in self.regular_nodes {
             let member_id = id_alloc.allocate(
@@ -235,8 +235,10 @@ impl MemberCoordinatorBuilder {
                 def.metadata.namespace.as_deref(),
                 &def.name,
             );
-            if def.context.record.on_exit_shutdown == Some(true) {
-                shutdown_on_exit_ids.insert(member_id.clone());
+            if let Some(policy) =
+                crate::member_actor::exit_policy::ExitPolicy::of(&def.context.record)
+            {
+                shutdown_on_exit_ids.insert(member_id.clone(), policy);
             }
             let (control_tx, control_rx) = mpsc::channel(CONTROL_CHANNEL_SIZE);
 
@@ -283,8 +285,10 @@ impl MemberCoordinatorBuilder {
             );
             // A container is a node: `on_exit=Shutdown()` on it ends the launch when
             // its process exits (#0064).
-            if def.context.record.on_exit_shutdown == Some(true) {
-                shutdown_on_exit_ids.insert(unique_member_name.clone());
+            if let Some(policy) =
+                crate::member_actor::exit_policy::ExitPolicy::of(&def.context.record)
+            {
+                shutdown_on_exit_ids.insert(unique_member_name.clone(), policy);
             }
 
             // Build the full node name BEFORE moving def.context

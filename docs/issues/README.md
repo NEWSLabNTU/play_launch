@@ -21,21 +21,24 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 interception chains) fail only when the whole suite runs, and pass alone.
 See `0094-*`.
 
-**#0090** -- a conditional `OnProcessExit` handler (a callable `on_exit`, e.g.
-shut down on exit code 2) is ignored under both parsers; a respawning node
-loops where `ros2 launch` ends the launch. See `0090-*`.
-
-**#0084** -- shutdown ignores an action's `sigterm_timeout` and `sigkill_timeout`
-and starts with SIGTERM: each node gets a fixed 2 s, then SIGTERM and SIGKILL 5 s
-later, where `ros2 launch` sends SIGINT and waits as the launch file declares. A
-stub declared with 20 s + 20 s exits at 10 s under play_launch, at 40 s under
-`ros2 launch`. Found by scenario-world-bridge, whose stack supervisor was killed
-part way through its stop. See `0084-*`.
 
 `just check-issue-index` fails if this section and the per-file `status:`
 frontmatter disagree.
 
 ## Resolved
+
+**#0090** -- a conditional `OnProcessExit` handler (an `on_exit` function,
+e.g. shut down on exit code 2) was ignored, so a respawning node looped where
+`ros2 launch` ends the launch. The function is evaluated at parse time for
+every exit code, the codes it shuts down on ride on the model, and the
+runtime ends the launch on them without respawning. A function that raises
+or keeps state is refused with a warning. See `archived/0090-*`.
+
+**#0084** -- shutdown started with SIGTERM and gave each process a fixed 2 s
+and 5 s whatever it declared. It now sends SIGINT (still leaving the ROS graph
+first and staggering the group), then SIGTERM and SIGKILL on the action's
+`sigterm_timeout` and `sigkill_timeout` (5 s and 5 s by default), carried on
+the model. See `archived/0084-*`.
 
 **#0082** -- `observable` ran a `component_container_isolated` on one
 thread for all its components. `play_launch_container --dedicated-executors`
@@ -49,7 +52,7 @@ shipped with. See `archived/0091-*`.
 
 **#0093** -- the dlopen'd `pyexec` object had no logger, so every warning
 the Python frontend raised was dropped. The loader now hands it the host's
-(C ABI 13). See `archived/0093-*`.
+(C ABI 13, now 14). See `archived/0093-*`.
 
 **#0092** -- the Rust parser did not write `SetEnvironmentVariable` to
 `os.environ`, so a later `OpaqueFunction` read the old value. The Python

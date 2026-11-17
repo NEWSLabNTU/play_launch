@@ -193,9 +193,12 @@ impl OnShutdown {
 pub(crate) enum ExitHandler {
     /// Not an `OnProcessExit`, or one whose `on_exit` does not shut down.
     Other,
-    /// Shuts down when this action's process exits.
-    ShutdownOn(Py<PyAny>),
-    /// Shuts down when ANY process exits: no `target_action`.
+    /// Shuts down when this action's process exits: on every exit, or, for
+    /// an `on_exit` FUNCTION, on the exits it returned a shutdown for
+    /// (#0090).
+    ShutdownOn(Py<PyAny>, crate::api::visit::ExitOn),
+    /// Shuts down when ANY process exits: no `target_action`, or a
+    /// `target_action` that is a matcher function.
     ShutdownOnAny,
 }
 
@@ -204,16 +207,38 @@ pub(crate) fn exit_handler(py: Python, handler: &Bound<'_, PyAny>) -> ExitHandle
         return ExitHandler::Other;
     };
     let h = h.borrow();
-    let shuts_down = h.on_exit.as_ref().is_some_and(|e| {
-        let e = e.bind(py);
-        !e.is_callable() && crate::api::launch_ros::on_exit_shuts_down(e)
-    });
-    if !shuts_down {
+    let target = h
+        .target_action
+        .as_ref()
+        .filter(|t| !t.bind(py).is_none())
+        .map(|t| t.clone_ref(py));
+    let Some(on_exit) = h.on_exit.as_ref().map(|e| e.bind(py).clone()) else {
         return ExitHandler::Other;
-    }
-    match &h.target_action {
-        Some(t) if !t.bind(py).is_none() => ExitHandler::ShutdownOn(t.clone_ref(py)),
-        _ => ExitHandler::ShutdownOnAny,
+    };
+    // A matcher function is callable; a process action (a mock) is not.
+    let target = target.filter(|t| !t.bind(py).is_callable());
+    let on = if on_exit.is_callable() {
+        let what = match &target {
+            Some(_) => "an OnProcessExit handler".to_string(),
+            None => "an OnProcessExit handler with no target_action".to_string(),
+        };
+        match crate::api::visit::probe_on_exit(
+            py,
+            &on_exit,
+            target.as_ref().map(|t| t.bind(py)),
+            &what,
+        ) {
+            Some(on) => on,
+            None => return ExitHandler::Other,
+        }
+    } else if crate::api::launch_ros::on_exit_shuts_down(&on_exit) {
+        crate::api::visit::ExitOn::Any
+    } else {
+        return ExitHandler::Other;
+    };
+    match target {
+        Some(t) => ExitHandler::ShutdownOn(t, on),
+        None => ExitHandler::ShutdownOnAny,
     }
 }
 

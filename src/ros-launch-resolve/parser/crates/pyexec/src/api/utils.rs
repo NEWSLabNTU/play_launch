@@ -533,6 +533,13 @@ pub fn pyobject_to_bool(obj: &Py<PyAny>, py: Python) -> PyResult<bool> {
     Ok(false)
 }
 
+/// A warning the user must see. Since #0093 the loader installs its logger
+/// in this object, so this is a plain `log::warn!`; it stays one function so
+/// the exit-handler warnings have one spelling.
+pub(crate) fn warn_user(msg: &str) {
+    log::warn!("{msg}");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

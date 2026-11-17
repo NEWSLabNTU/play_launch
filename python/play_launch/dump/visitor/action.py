@@ -21,6 +21,7 @@ from launch_ros.actions.lifecycle_node import LifecycleNode
 from launch_ros.actions.load_composable_nodes import LoadComposableNodes
 from launch_ros.actions.node import Node
 
+from .. import exit_probe
 from ..launch_dump import LaunchDump
 from .bare_execute_process import visit_bare_execute_process
 from .composable_node_container import visit_composable_node_container
@@ -71,24 +72,54 @@ def visit_action_by_class(
                     record.config_seq = seq
         if is_a(action, ExecuteProcess):
             # Node, LifecycleNode and ComposableNodeContainer are ExecuteProcess.
-            dump.note_process(action, dump.node[marks[0] :] + dump.container[marks[1] :])
+            records = dump.node[marks[0] :] + dump.container[marks[1] :]
+            _note_how_it_ends(action, context, records)
+            dump.note_process(action, records)
         elif is_a(action, RegisterEventHandler):
-            _note_exit_shutdown_handler(action.event_handler, dump)
+            _note_exit_shutdown_handler(action.event_handler, dump, context)
 
 
-def _note_exit_shutdown_handler(handler, dump: LaunchDump) -> None:
+def _note_how_it_ends(action, context: LaunchContext, records) -> None:
+    """A process's shutdown timeouts (#0084) and its own `on_exit` function (#0090)."""
+    if not records:
+        return
+    sigterm, sigkill = exit_probe.stop_timeouts(action, context)
+    on = None
+    on_exit = getattr(action, "_ExecuteLocal__on_exit", None)
+    if callable(on_exit):
+        on = exit_probe.probe(on_exit, action, context, f"'{records[0].exec_name}'")
+    for record in records:
+        record.sigterm_timeout = sigterm
+        record.sigkill_timeout = sigkill
+        if on is not None:
+            exit_probe.mark(record, on)
+
+
+def _note_exit_shutdown_handler(handler, dump: LaunchDump, context: LaunchContext) -> None:
     """`OnProcessExit(target_action=X, on_exit=<shutdown>)` makes X required (#0081).
 
     `ros2 launch` ends when X exits, exactly as for `X(on_exit=Shutdown())`.
-    Other exit actions, and a callable `on_exit`, are not modelled.
+    A callable `on_exit` is evaluated for every exit code (#0090, `exit_probe`);
+    other exit actions are not modelled.
     """
     if not isinstance(handler, OnProcessExit):
         return
     actions = getattr(handler, "_OnActionEventBase__actions_on_event", None)
     target = getattr(handler, "_OnActionEventBase__action_matcher", None)
-    if not actions:
+    on_event = getattr(handler, "_OnActionEventBase__on_event", None)
+    if not actions and callable(on_event):
+        # #0090: an `on_exit` function, evaluated for every exit code.
+        targeted = isinstance(target, ExecuteProcess)
+        what = "an OnProcessExit handler" + ("" if targeted else " with no target_action")
+        on = exit_probe.probe(on_event, target if targeted else None, context, what)
+        if on is None:
+            return
+        if targeted:
+            dump.shutdown_on_exit_of(target, on)
+            return
+    if not actions and not callable(on_event):
         return
-    shutdown, _others = _classify_on_exit(actions)
+    shutdown, _others = _classify_on_exit(actions) if actions else (True, [])
     if not shutdown:
         return
     if isinstance(target, ExecuteProcess):

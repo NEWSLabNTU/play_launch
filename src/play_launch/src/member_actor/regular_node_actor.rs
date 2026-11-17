@@ -19,12 +19,6 @@ use tracing::{debug, error, info, warn};
 /// Graceful shutdown timeout before escalating to SIGKILL.
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// How long the Running-state shutdown branch waits for the child to
-/// leave on its own (the group SIGTERM the shutdown protocol sends first)
-/// before signalling it directly. Issue #0033.
-#[cfg(unix)]
-const SHUTDOWN_SIGNAL_GRACE: Duration = Duration::from_secs(2);
-
 /// Send SIGTERM, wait up to 5s for graceful exit, then SIGKILL + wait.
 #[cfg(unix)]
 async fn graceful_kill(child: &mut tokio::process::Child, pid: u32, name: &str) {
@@ -366,8 +360,13 @@ impl RegularNodeActor {
                     oom_killed,
                 }).await;
 
-                // Decide next state
-                if self.config.respawn_enabled {
+                // Decide next state. An exit that ends the launch is not
+                // respawned from: the shutdown it starts is coming (#0090).
+                let ends_launch = crate::member_actor::exit_policy::ExitPolicy::of(
+                    &self.context.record,
+                )
+                .is_some_and(|p| p.ends_launch(exit_code, signal));
+                if self.config.respawn_enabled && !ends_launch {
                     self.transition_to_respawning(exit_code, self.respawn_count)
                         .await?;
                     Ok(true) // Continue running
@@ -389,34 +388,21 @@ impl RegularNodeActor {
                 if *self.shutdown_rx.borrow() {
                     debug!("[{}] Shutdown signal received in Running state", self.name);
 
-                    // On Unix the shutdown protocol sends SIGTERM to the whole
-                    // process group before flipping this channel, so the child
-                    // is normally already on its way out. Issue #0033: do not
-                    // bet the run on it. If the child is still alive after a
-                    // short grace, signal it directly rather than wait forever
-                    // on a healthy process.
+                    // The shutdown protocol sends the whole process group
+                    // SIGINT, staggered, after play_launch leaves the ROS
+                    // graph. From that SIGINT the child has the action's
+                    // `sigterm_timeout` before a SIGTERM and `sigkill_timeout`
+                    // more before a SIGKILL, as under `ros2 launch` (#0084).
+                    // Issue #0033: the child is always stopped directly if it
+                    // outlasts them, never waited on forever.
                     #[cfg(unix)]
                     {
-                        debug!("[{}] Waiting for child to exit", self.name);
-                        match tokio::time::timeout(SHUTDOWN_SIGNAL_GRACE, child.wait()).await {
-                            Ok(Ok(status)) => {
-                                debug!("[{}] Process exited with status: {:?}", self.name, status);
-                            }
-                            Ok(Err(e)) => {
-                                warn!("[{}] Failed to wait for process: {}", self.name, e);
-                            }
-                            Err(_elapsed) => {
-                                warn!(
-                                    "[{}] Still running {}s after shutdown began; stopping pid {} directly",
-                                    self.name,
-                                    SHUTDOWN_SIGNAL_GRACE.as_secs(),
-                                    pid
-                                );
-                                // The ladder the Stop/Restart control events
-                                // already use: SIGTERM, five seconds, SIGKILL.
-                                graceful_kill(&mut child, pid, &self.name).await;
-                            }
-                        }
+                        let schedule = crate::process::StopSchedule::new(
+                            self.context.record.sigterm_timeout,
+                            self.context.record.sigkill_timeout,
+                        );
+                        crate::process::stop_at_shutdown(&mut child, pid, &self.name, schedule)
+                            .await;
                     }
                     #[cfg(not(unix))]
                     {

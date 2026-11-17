@@ -126,15 +126,15 @@ impl RegisterEventHandler {
         let handler = this.borrow().event_handler.clone_ref(py);
         use crate::api::event_handlers::{ExitHandler, exit_handler};
         match exit_handler(py, handler.bind(py)) {
-            ExitHandler::ShutdownOn(target) => {
-                crate::api::visit::shutdown_on_exit_of(target.bind(py));
+            ExitHandler::ShutdownOn(target, on) => {
+                crate::api::visit::shutdown_on_exit_of(target.bind(py), on);
                 return Ok(());
             }
             ExitHandler::ShutdownOnAny => {
-                log::warn!(
+                crate::api::utils::warn_user(
                     "An OnProcessExit handler with no target_action shuts the launch down when \
                      ANY process exits; play_launch does not model that, so no exit ends this \
-                     launch. Give the handler a target_action."
+                     launch. Give the handler a target_action.",
                 );
                 return Ok(());
             }

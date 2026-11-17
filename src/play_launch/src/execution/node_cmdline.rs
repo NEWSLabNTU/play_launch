@@ -416,6 +416,11 @@ pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeR
         // `on_exit=Shutdown()` rides on the model (#0063), so a node started
         // by `up <model.yaml>` is as required as one started by `launch`.
         on_exit_shutdown: (inst.on_exit == Some(model::OnExit::Shutdown)).then_some(true),
+        // An `on_exit` function's exit codes (#0090) and the shutdown
+        // timeouts (#0084), from the model for `up` as for `launch`.
+        shutdown_on_exit_codes: inst.shutdown_on_exit_codes.clone(),
+        sigterm_timeout: inst.sigterm_timeout,
+        sigkill_timeout: inst.sigkill_timeout,
         // Informational on the record: `up` drives a lifecycle node's
         // autostart from the MODEL (`execution::lifecycle_autostart`), never
         // from here, so nothing on the spawn path reads these.
@@ -503,8 +508,12 @@ impl NodeCommandLine {
             package,
             name,
             namespace,
-            // Consumed by the coordinator, not by command-line construction.
+            // Consumed by the coordinator and the actor, not by command-line
+            // construction.
             on_exit_shutdown: _,
+            shutdown_on_exit_codes: _,
+            sigterm_timeout: _,
+            sigkill_timeout: _,
             // Not part of the command line: `up` drives transitions itself.
             lifecycle: _,
             lifecycle_autostart: _,
@@ -1904,6 +1913,9 @@ mod tests {
             respawn: Some(true),
             respawn_delay: Some(2.5),
             on_exit: None,
+            shutdown_on_exit_codes: None,
+            sigterm_timeout: None,
+            sigkill_timeout: None,
             env: vec![model::EnvVar {
                 name: "CUDA_VISIBLE_DEVICES".to_string(),
                 value: "0".to_string(),
@@ -1982,6 +1994,9 @@ mod tests {
             respawn: None,
             respawn_delay: None,
             on_exit: None,
+            shutdown_on_exit_codes: None,
+            sigterm_timeout: None,
+            sigkill_timeout: None,
             env: Vec::new(),
             args: Vec::new(),
             params_files: Vec::new(),
@@ -2026,6 +2041,9 @@ mod tests {
             respawn: None,
             respawn_delay: None,
             on_exit: None,
+            shutdown_on_exit_codes: None,
+            sigterm_timeout: None,
+            sigkill_timeout: None,
             env: Vec::new(),
             args: Vec::new(),
             params_files: Vec::new(),
@@ -2079,6 +2097,9 @@ mod tests {
             respawn: None,
             respawn_delay: None,
             on_exit: None,
+            shutdown_on_exit_codes: None,
+            sigterm_timeout: None,
+            sigkill_timeout: None,
             env: Vec::new(),
             args: Vec::new(),
             params_files: Vec::new(),

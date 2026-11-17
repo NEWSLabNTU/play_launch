@@ -322,6 +322,7 @@ fn ir_to_node_action(kind: &ActionKind) -> NodeAction {
             // Nor a prefix or a working directory.
             launch_prefix: None,
             cwd: None,
+            stop: Default::default(),
             package: package.parts.clone(),
             executable: executable.parts.clone(),
             name: name.as_ref().map(|n| n.parts.clone()),
@@ -362,6 +363,7 @@ fn ir_to_executable_action(kind: &ActionKind) -> ExecutableAction {
             launch_prefix: None,
             cmd: cmd.parts.clone(),
             cwd: None,
+            stop: Default::default(),
             name: name.as_ref().map(|n| n.parts.clone()),
             shell: false,
             output: None,
@@ -390,6 +392,7 @@ fn ir_to_container_action(
             on_exit_shutdown: None,
             launch_prefix: None,
             cwd: None,
+            stop: Default::default(),
             package: package.parts.clone(),
             executable: executable.parts.clone(),
             name: name.parts.clone(),

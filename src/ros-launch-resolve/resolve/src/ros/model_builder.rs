@@ -1072,9 +1072,18 @@ pub fn build_system_model(
         };
 
     /// `on_exit_shutdown: Some(true)` in the dump is `on_exit: shutdown` in the
-    /// model; anything else is the launch default, absent.
-    fn lower_on_exit(on_exit_shutdown: Option<bool>) -> Option<model::OnExit> {
-        (on_exit_shutdown == Some(true)).then_some(model::OnExit::Shutdown)
+    /// model; anything else is the launch default, absent. The exits that end the launch (#0081, #0090): every exit is
+    /// `on_exit: shutdown`, which wins over any code set; a set holding
+    /// every code is `on_exit: shutdown` too.
+    fn lower_exit(
+        on_exit_shutdown: Option<bool>,
+        codes: Option<&model::ExitCodes>,
+    ) -> (Option<model::OnExit>, Option<model::ExitCodes>) {
+        let every = matches!(codes, Some(model::ExitCodes::Except { except }) if except.is_empty());
+        if on_exit_shutdown == Some(true) || every {
+            return (Some(model::OnExit::Shutdown), None);
+        }
+        (None, codes.cloned())
     }
 
     /// play_launch phase 86 — a lifecycle node's `autostart` from the launch
@@ -1155,7 +1164,15 @@ pub fn build_system_model(
                 respawn_delay: n.respawn_delay,
                 // `on_exit=Shutdown()`: required, its exit ends the system
                 // (#0063). On the model so `up <model.yaml>` sees it too.
-                on_exit: lower_on_exit(n.on_exit_shutdown),
+                on_exit: lower_exit(n.on_exit_shutdown, n.shutdown_on_exit_codes.as_ref()).0,
+                shutdown_on_exit_codes: lower_exit(
+                    n.on_exit_shutdown,
+                    n.shutdown_on_exit_codes.as_ref(),
+                )
+                .1,
+                // How it is stopped at shutdown (#0084).
+                sigterm_timeout: n.sigterm_timeout,
+                sigkill_timeout: n.sigkill_timeout,
                 // `<timer period="N">` — seconds before the FIRST spawn,
                 // accumulated across nested timers by the parser. Unrelated
                 // to `respawn_delay` above; a node may carry both.
@@ -1222,7 +1239,14 @@ pub fn build_system_model(
                 ros_args: c.ros_args.clone().unwrap_or_default(),
                 respawn: c.respawn,
                 respawn_delay: c.respawn_delay,
-                on_exit: lower_on_exit(c.on_exit_shutdown),
+                on_exit: lower_exit(c.on_exit_shutdown, c.shutdown_on_exit_codes.as_ref()).0,
+                shutdown_on_exit_codes: lower_exit(
+                    c.on_exit_shutdown,
+                    c.shutdown_on_exit_codes.as_ref(),
+                )
+                .1,
+                sigterm_timeout: c.sigterm_timeout,
+                sigkill_timeout: c.sigkill_timeout,
                 // A container's own delay. Its composables ride along: they
                 // cannot load before the container process exists.
                 start_delay_secs: c.start_delay_secs,
@@ -1280,6 +1304,9 @@ pub fn build_system_model(
                 // No process of its own, so no `on_exit`: it ends with its
                 // container, whose flag is the one that counts.
                 on_exit: None,
+                shutdown_on_exit_codes: None,
+                sigterm_timeout: None,
+                sigkill_timeout: None,
                 // A composable has no respawn policy, but a `<timer>` CAN
                 // enclose one — what it delays there is the LoadNode request,
                 // not a process. Carried because the producer knows it; see
@@ -2797,7 +2824,8 @@ mod tests {
                 "env": [["CUDA_VISIBLE_DEVICES", "0"]],
                 "env_unset": ["DISPLAY"],
                 "launch_prefix": "nice -n 5",
-                "cwd": "/srv/bags"
+                "cwd": "/srv/bags",
+                "shutdown_on_exit_codes": { "only": [2] }
             }],
             "container": [{
                 "executable": "component_container",
@@ -2811,7 +2839,10 @@ mod tests {
                 "respawn": false,
                 "env": [["OMP_NUM_THREADS", "4"]],
                 "env_unset": ["DISPLAY", "LD_PRELOAD"],
-                "launch_prefix": "env -u DISPLAY"
+                "launch_prefix": "env -u DISPLAY",
+                "sigterm_timeout": 90.0,
+                "sigkill_timeout": 20.0,
+                "shutdown_on_exit_codes": { "only": [2] }
             }],
             "load_node": [{
                 "package": "tracker_pkg",
@@ -2920,6 +2951,33 @@ mod tests {
         assert_eq!(c.cwd, None);
         let t = &model.structure.nodes["/perception/tracker"];
         assert!(t.env_unset.is_empty() && t.launch_prefix.is_none() && t.cwd.is_none());
+    }
+
+    /// #0084, #0090: how a process stops and which exits end the launch
+    /// reach the model; `on_exit: shutdown` (every exit) wins over a code
+    /// set, and a composable carries neither.
+    #[test]
+    fn processes_carry_stop_timeouts_and_exit_codes() {
+        let dump = dump_with_launch_fields();
+        let index = ManifestIndex::default();
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let node = &model.structure.nodes["/perception/detector"];
+        assert_eq!(node.on_exit, Some(model::OnExit::Shutdown));
+        assert_eq!(node.shutdown_on_exit_codes, None);
+        assert_eq!((node.sigterm_timeout, node.sigkill_timeout), (None, None));
+        let c = &model.structure.nodes["/perception/pipeline_container"];
+        assert_eq!(c.on_exit, None);
+        assert_eq!(
+            c.shutdown_on_exit_codes,
+            Some(model::ExitCodes::Only { only: vec![2] })
+        );
+        assert_eq!(
+            (c.sigterm_timeout, c.sigkill_timeout),
+            (Some(90.0), Some(20.0))
+        );
+        let t = &model.structure.nodes["/perception/tracker"];
+        assert!(t.shutdown_on_exit_codes.is_none() && t.sigterm_timeout.is_none());
     }
 
     #[test]

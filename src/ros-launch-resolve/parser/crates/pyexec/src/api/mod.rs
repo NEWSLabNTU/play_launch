@@ -3,6 +3,7 @@
 pub mod actions;
 pub mod conditions;
 pub mod event_handlers;
+pub(crate) mod exit_probe;
 pub mod launch;
 pub mod launch_description_sources;
 pub mod launch_ros;

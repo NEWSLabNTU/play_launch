@@ -430,6 +430,7 @@ impl CommandGenerator {
         let spawn = crate::actions::process::resolve_spawn(
             node.launch_prefix.as_deref(),
             node.cwd.as_deref(),
+            &node.stop,
             &executable,
             node.environment.iter().map(|(k, _)| k.as_str()),
             context,
@@ -635,6 +636,7 @@ impl CommandGenerator {
         let mut spawn = crate::actions::process::resolve_spawn(
             exec.launch_prefix.as_deref(),
             exec.cwd.as_deref(),
+            &exec.stop,
             &cmd_str,
             exec.environment.iter().map(|(k, _)| k.as_str()),
             context,
@@ -773,6 +775,7 @@ mod tests {
             autostart: None,
             launch_prefix: None,
             cwd: None,
+            stop: Default::default(),
         };
 
         let context = LaunchContext::new();
@@ -819,6 +822,7 @@ mod tests {
             autostart: None,
             launch_prefix: None,
             cwd: None,
+            stop: Default::default(),
         };
 
         let context = LaunchContext::new();
@@ -853,6 +857,7 @@ mod tests {
             autostart: None,
             launch_prefix: None,
             cwd: None,
+            stop: Default::default(),
         };
 
         let context = LaunchContext::new();

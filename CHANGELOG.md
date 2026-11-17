@@ -40,6 +40,28 @@ allowance heavily.
   fixed: when several `OpaqueFunction`s returned a fresh action each, all but
   the first could be dropped (logged as `Unsupported action type: timer`).
 
+- **Fixed (#0084):** a launch is shut down as `ros2 launch` shuts it down.
+  Each process gets SIGINT (it got SIGTERM), then SIGTERM once its action's
+  `sigterm_timeout` has passed and SIGKILL after its `sigkill_timeout`, 5 s
+  and 5 s when it declares none (it got a fixed 2 s, SIGTERM, 5 s, SIGKILL).
+  The timeouts are the action's own (`ExecuteProcess(sigterm_timeout=...)`,
+  Jazzy's XML and YAML attributes), else the `sigterm_timeout` /
+  `sigkill_timeout` launch configuration, and they ride on the model, so
+  `up` honours them too. play_launch still leaves the ROS graph first and
+  signals the processes one at a time. A process left behind by one that
+  has ended is stopped with SIGTERM, then SIGKILL, once every launched
+  process is gone. The console says which signal it received.
+
+- **Fixed (#0090):** an `on_exit` that is a function of the exit event, in
+  an `OnProcessExit` handler or on the process itself, is honoured. The
+  function is evaluated when the launch file is parsed, once for every exit
+  code, and the launch ends on the codes it returns a shutdown for; the
+  process does not respawn from that exit. A function that raises, or keeps
+  state, cannot be evaluated this way and is reported with a warning. Both
+  parsers; pyexec C ABI 14, Python dump format 4; needs the
+  ros-launch-manifest release carrying `NodeInstance::{sigterm_timeout,
+  sigkill_timeout, shutdown_on_exit_codes}`.
+
 ## 0.37.0 - 2026-11-17
 
 - **Fixed (parser, #0088):** a missing include is reported as

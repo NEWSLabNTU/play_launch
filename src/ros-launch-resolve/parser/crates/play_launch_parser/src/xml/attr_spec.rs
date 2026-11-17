@@ -82,6 +82,12 @@ const NODE_SUPPORTED: &[&str] = &[
     // container's prefix survives `--container-mode` replacing its binary.
     "launch-prefix",
     "cwd",
+    // JAZZY-ONLY (union policy, see the module doc): read by Jazzy's
+    // `ExecuteProcess.parse`, which Humble's lacks. Carried to the shutdown
+    // since #0084; on Humble, where `ros2 launch` rejects them, they are
+    // honoured anyway (the warn-not-error direction of the union policy).
+    "sigkill_timeout",
+    "sigterm_timeout",
 ];
 const NODE_KNOWN_UNSUPPORTED: &[&str] = &[
     "exec_name",
@@ -91,11 +97,10 @@ const NODE_KNOWN_UNSUPPORTED: &[&str] = &[
     "shell",
     // JAZZY-ONLY (union policy, see the module doc). Added to
     // `ExecuteProcess.parse` after Humble, and reached from `<node>` via
-    // `super().parse(...)`. Humble rejects all three; we warn on both
-    // distros rather than hard-erroring on Jazzy, where they are valid.
+    // `super().parse(...)`. Humble rejects it; we warn on both distros
+    // rather than hard-erroring on Jazzy, where it is valid. (The two
+    // timeouts beside it are supported since #0084.)
     "respawn_max_retries",
-    "sigkill_timeout",
-    "sigterm_timeout",
     // ROS 2's frontend consumes this without complaint — `node.py:316`
     // (`entity.get_attr('node-name', optional=True)`) unconditionally reads
     // it, so `assert_entity_completely_parsed()` never flags it as
@@ -137,6 +142,8 @@ const LIFECYCLE_NODE_SUPPORTED: &[&str] = &[
     "on_exit",
     "launch-prefix",
     "cwd",
+    "sigkill_timeout",
+    "sigterm_timeout",
     // JAZZY: `entity.get_attr('autostart', data_type=bool, optional=True,
     // can_be_str=True)`. Resolved true gives the model
     // `lifecycle_autostart: active`; absent or false gives none.
@@ -198,6 +205,9 @@ static SPECS: &[AttrSpec] = &[
             "shell",
             "launch-prefix",
             "cwd",
+            // Jazzy-only (union policy); honoured since #0084.
+            "sigkill_timeout",
+            "sigterm_timeout",
         ],
         // `<executable node-name=…>` is genuinely rejected by ROS 2 with
         // "Unexpected attribute" (`ExecuteProcess.parse` never reads it,
@@ -206,8 +216,6 @@ static SPECS: &[AttrSpec] = &[
             "emulate_tty",
             // Jazzy-only, same union rationale as `<node>`.
             "respawn_max_retries",
-            "sigkill_timeout",
-            "sigterm_timeout",
         ],
         children: &["env", "arg"],
     },

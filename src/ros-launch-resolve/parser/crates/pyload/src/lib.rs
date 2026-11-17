@@ -183,7 +183,10 @@ impl std::error::Error for LoadError {}
 /// `env_unset`, `launch_prefix` and `cwd` (play_launch #0085, #0087). A v11
 /// object reports none, so an unset or a `prefix=`/`cwd=` in a `.launch.py`
 /// would silently not reach the process.
-const ABI_VERSION: u32 = 13;
+/// 13: the loader hands the object its logger (play_launch #0093).
+/// 14: the captures carry the shutdown timeouts and the exit codes that end
+/// the launch (play_launch #0084, #0090).
+const ABI_VERSION: u32 = 14;
 
 type SetLoggerFn =
     unsafe extern "C" fn(extern "C" fn(u32, *const std::ffi::c_char, *const std::ffi::c_char), u32);

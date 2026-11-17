@@ -50,6 +50,8 @@ pub struct ContainerAction {
     pub launch_prefix: Option<Vec<Substitution>>,
     /// `cwd=…` (#0087).
     pub cwd: Option<Vec<Substitution>>,
+    /// `sigterm_timeout=` / `sigkill_timeout=` (#0084; Jazzy XML), unresolved.
+    pub stop: crate::actions::process::StopTimeouts,
 }
 
 /// The container's `respawn`/`respawn_delay`, resolved the way the Python
@@ -243,6 +245,7 @@ impl ContainerAction {
                 .optional_attr_str("cwd")?
                 .map(|s| parse_substitutions(&s))
                 .transpose()?,
+            stop: crate::actions::process::StopTimeouts::from_entity(entity)?,
         })
     }
 
@@ -255,6 +258,7 @@ impl ContainerAction {
         crate::actions::process::resolve_spawn(
             self.launch_prefix.as_deref(),
             self.cwd.as_deref(),
+            &self.stop,
             executable,
             self.environment.iter().map(|(k, _)| k.as_str()),
             context,

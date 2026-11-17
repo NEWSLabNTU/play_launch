@@ -40,7 +40,9 @@ def _classify_on_exit(handlers):
     # `on_exit` accepts a single action, a list of them, or a callable. launch does not
     # always normalize it before it reaches here, and assuming a list made the dump die
     # with "'Shutdown' object is not iterable" on exactly the launch files this is for.
-    if handlers is None:
+    if handlers is None or callable(handlers):
+        # A function is evaluated for every exit code instead (#0090,
+        # `exit_probe`, from `visit_action_by_class`).
         handlers = []
     elif not isinstance(handlers, (list, tuple)):
         handlers = [handlers]

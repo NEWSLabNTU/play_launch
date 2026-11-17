@@ -168,9 +168,10 @@ refused.
 A few attributes ROS 2 accepts are recognised but not implemented, and warn
 rather than erroring: `exec_name`, `emulate_tty` (output always goes to the
 log files; `false` is silent), `shell` on a `<node>` (`false` is silent),
-`respawn_max_retries`, `sigterm_timeout` and `sigkill_timeout`.
-`launch-prefix`, `cwd`, `ros_args`, `on_exit` and `<executable shell=…>` are
-honoured.
+and `respawn_max_retries`. `launch-prefix`, `cwd`, `ros_args`, `on_exit`,
+`sigterm_timeout`, `sigkill_timeout` and `<executable shell=…>` are honoured
+(the two timeouts on Humble too, where stock `ros2 launch` rejects them as
+XML attributes).
 
 Two long-standing extensions are also accepted with a warning because
 existing launch files rely on them, though stock `ros2 launch` rejects both:

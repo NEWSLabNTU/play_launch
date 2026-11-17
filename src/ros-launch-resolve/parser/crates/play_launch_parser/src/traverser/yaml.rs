@@ -511,6 +511,7 @@ impl LaunchTraverser {
                 .map(parse_substitutions)
                 .transpose()?,
             cwd: yaml_str(map, "cwd").map(parse_substitutions).transpose()?,
+            stop: yaml_stop(map)?,
         };
 
         let record = CommandGenerator::generate_node_record(&node, &self.context)
@@ -696,6 +697,7 @@ impl LaunchTraverser {
             launch_prefix: yaml_str(map, "launch-prefix")
                 .map(parse_substitutions)
                 .transpose()?,
+            stop: yaml_stop(map)?,
         };
 
         let record = CommandGenerator::generate_executable_record(&exec, &self.context)
@@ -798,6 +800,7 @@ impl LaunchTraverser {
                 .map(parse_substitutions)
                 .transpose()?,
             cwd: yaml_str(map, "cwd").map(parse_substitutions).transpose()?,
+            stop: yaml_stop(map)?,
         };
 
         self.containers
@@ -1025,6 +1028,20 @@ fn parse_yaml_composable_node(
 }
 
 /// Extract a string value from a YAML mapping by key
+/// `sigterm_timeout` / `sigkill_timeout` (#0084). A native number reads
+/// as its text, as launch's frontend gives it.
+fn yaml_stop(map: &Mapping) -> Result<crate::actions::process::StopTimeouts> {
+    let get = |key: &str| -> Result<Option<Vec<crate::substitution::Substitution>>> {
+        yaml_value_string(map, key)
+            .map(|s| parse_substitutions(&s))
+            .transpose()
+    };
+    Ok(crate::actions::process::StopTimeouts {
+        sigterm: get("sigterm_timeout")?,
+        sigkill: get("sigkill_timeout")?,
+    })
+}
+
 fn yaml_str<'a>(map: &'a Mapping, key: &str) -> Option<&'a str> {
     map.get(Value::String(key.to_string()))
         .and_then(|v| v.as_str())

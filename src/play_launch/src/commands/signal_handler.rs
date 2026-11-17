@@ -21,6 +21,11 @@ const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10
 /// every peer is alive; this bounds a holder that does not let go.
 const LEAVE_ROS_GRAPH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// How long a process left in the group after every launched process ended
+/// has between SIGTERM and SIGKILL.
+#[cfg(unix)]
+const LEFTOVER_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Interval for checking if all nodes have finished loading
 const COMPLETION_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
@@ -29,8 +34,9 @@ const COMPLETION_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from
 /// `on_exit=Shutdown()`, or a strict runtime-enforcement violation.
 ///
 /// Three levers, always pulled together, because each reaches a different
-/// party: the process GROUP gets SIGTERM (on Unix the actors wait for their
-/// child to exit rather than killing it themselves), the run-level watch
+/// party: the process GROUP gets SIGINT, as `ros2 launch` starts a shutdown
+/// (#0084; each actor then escalates its own child to SIGTERM and SIGKILL on
+/// the action's `sigterm_timeout`/`sigkill_timeout`), the run-level watch
 /// channel stops the background tasks, and `member_handle.shutdown()`
 /// reaches the actors on the separate channel the builder created. Issue
 /// #0033 was one caller pulling the middle lever only: every node stayed
@@ -66,7 +72,7 @@ pub(crate) fn initiate_shutdown(
                     crate::process::stop_process_group_staggered(pgid).await;
                 });
             }
-            Err(_) => crate::process::kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM),
+            Err(_) => crate::process::kill_process_group(pgid, nix::sys::signal::Signal::SIGINT),
         }
     }
     #[cfg(not(unix))]
@@ -84,7 +90,8 @@ pub(crate) struct CompletionContext {
 /// Wait for completion with Unix signal handling (SIGINT/SIGTERM).
 ///
 /// Uses 3-stage escalation:
-/// 1. First signal: graceful SIGTERM + shutdown broadcast
+/// 1. First signal: graceful shutdown -- SIGINT to every process, then each
+///    process's own `sigterm_timeout`/`sigkill_timeout` (#0084)
 /// 2. Second signal: force SIGTERM
 /// 3. Third signal: SIGKILL + immediate exit
 #[cfg(unix)]
@@ -110,15 +117,16 @@ pub(crate) async fn wait_for_completion_unix<F>(
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .expect("Failed to register SIGTERM handler");
 
-    // Fuse SIGINT and SIGTERM streams into a unified termination signal stream
+    // Fuse SIGINT and SIGTERM streams into a unified termination signal
+    // stream, each item naming the signal that arrived.
     let sigint_stream = async_stream::stream! {
         while let Some(()) = sigint.recv().await {
-            yield ();
+            yield "SIGINT";
         }
     };
     let sigterm_stream = async_stream::stream! {
         while let Some(()) = sigterm.recv().await {
-            yield ();
+            yield "SIGTERM";
         }
     };
     let termination_signals = futures::stream::select(sigint_stream, sigterm_stream);
@@ -147,7 +155,7 @@ pub(crate) async fn wait_for_completion_unix<F>(
             biased;  // Process signals first for responsive shutdown
 
             // Unified signal handling for both SIGINT and SIGTERM with 3-stage escalation
-            _ = termination_signals.next() => {
+            Some(received) = termination_signals.next() => {
                 // Ignore feedback signals within 200ms of our own kill_process_group
                 // This prevents feedback loops while still allowing future user Ctrl-C presses
                 let now = std::time::Instant::now();
@@ -161,7 +169,7 @@ pub(crate) async fn wait_for_completion_unix<F>(
 
                 match kill_level {
                     1 => {
-                        info!("Shutting down gracefully (SIGTERM)...");
+                        info!("Received {received}; shutting down gracefully...");
                         info!("Press Ctrl-C again to force terminate");
                         last_signal_sent = std::time::Instant::now();
                         initiate_shutdown(pgid, &ctx.shutdown_tx, &ctx.member_handle);
@@ -225,6 +233,11 @@ pub(crate) async fn wait_for_completion_unix<F>(
             }
         }
     }
+
+    // Every launched process has ended. Whatever one of them started and
+    // left behind is still in the group; stop it (#0084: the group gets
+    // SIGINT now, which a shell's background job ignores).
+    crate::process::stop_leftovers(pgid, LEFTOVER_GRACE).await;
 
     // Trigger shutdown for any remaining tasks
     debug!("Triggering shutdown for remaining tasks...");

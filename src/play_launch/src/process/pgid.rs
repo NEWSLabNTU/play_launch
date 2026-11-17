@@ -67,7 +67,33 @@ const STAGGER_BUDGET: std::time::Duration = std::time::Duration::from_secs(1);
 /// Gap between two processes' SIGTERM when the group is small enough.
 const STAGGER_STEP: std::time::Duration = std::time::Duration::from_millis(5);
 
-/// Stop a process group with SIGTERM, one process at a time.
+/// Set once the shutdown's SIGINT has reached every process of the group
+/// ([`stop_process_group_staggered`]). Each member's actor times its
+/// `sigterm_timeout` from then, not from the moment shutdown began: leaving
+/// the ROS graph and the stagger come first, and the timeout is the time a
+/// process has after its SIGINT, as in `ros2 launch` (#0084).
+static GROUP_SIGNALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the shutdown's SIGINT has been sent to the group, waiting up to
+/// `timeout` for it.
+pub async fn group_signalled(timeout: std::time::Duration) -> bool {
+    use std::sync::atomic::Ordering;
+    let start = std::time::Instant::now();
+    loop {
+        if GROUP_SIGNALLED.load(Ordering::Acquire) {
+            return true;
+        }
+        if start.elapsed() >= timeout {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+/// Stop a process group with SIGINT, one process at a time: the signal
+/// `ros2 launch` starts a shutdown with (#0084). Each actor then escalates
+/// its own process to SIGTERM and SIGKILL on the action's
+/// `sigterm_timeout`/`sigkill_timeout` ([`crate::process::stop_at_shutdown`]).
 ///
 /// One `killpg` makes every node leave the DDS domain in the same instant,
 /// and stock rclcpp nodes then sometimes crash or hang in their own
@@ -85,11 +111,8 @@ const STAGGER_STEP: std::time::Duration = std::time::Duration::from_millis(5);
 /// new, so a process forked meanwhile is not missed; where `/proc` lists
 /// nobody, one `killpg` stands in.
 #[cfg(target_os = "linux")]
-pub async fn stop_process_group_staggered(pgid: i32) {
-    use nix::{
-        sys::signal::{Signal, kill},
-        unistd::Pid,
-    };
+async fn signal_group_staggered(pgid: i32, signal: nix::sys::signal::Signal) {
+    use nix::{sys::signal::kill, unistd::Pid};
 
     let mut signalled = std::collections::HashSet::new();
     for scan in 0..10 {
@@ -99,26 +122,76 @@ pub async fn stop_process_group_staggered(pgid: i32) {
             .collect();
         if pending.is_empty() {
             if scan == 0 {
-                kill_process_group(pgid, Signal::SIGTERM);
+                kill_process_group(pgid, signal);
             }
             break;
         }
         let step = STAGGER_STEP.min(STAGGER_BUDGET / pending.len() as u32);
         debug!(
-            "Stopping {} process(es) of group {pgid}, {step:?} apart",
+            "Sending {signal:?} to {} process(es) of group {pgid}, {step:?} apart",
             pending.len()
         );
         for pid in pending {
             signalled.insert(pid);
-            let _ = kill(Pid::from_raw(pid), Signal::SIGTERM);
+            let _ = kill(Pid::from_raw(pid), signal);
             tokio::time::sleep(step).await;
         }
     }
 }
 
-#[cfg(all(unix, not(target_os = "linux")))]
+/// [`signal_group_staggered`] with SIGINT, then marks the group signalled.
+#[cfg(unix)]
 pub async fn stop_process_group_staggered(pgid: i32) {
-    kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
+    signal_group_staggered(pgid, nix::sys::signal::Signal::SIGINT).await;
+    GROUP_SIGNALLED.store(true, std::sync::atomic::Ordering::Release);
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+async fn signal_group_staggered(pgid: i32, signal: nix::sys::signal::Signal) {
+    kill_process_group(pgid, signal);
+}
+
+/// Stop what is left of the group once every launched process has ended:
+/// a process one of them started and did not take with it. `ros2 launch`
+/// leaves those running; play_launch signalled the whole group at shutdown
+/// before #0084 and still does, now with SIGINT, which a background job of a
+/// shell ignores. So whatever outlives the launch's own processes is sent
+/// SIGTERM, staggered, and SIGKILL after `grace`.
+#[cfg(unix)]
+pub async fn stop_leftovers(pgid: i32, grace: std::time::Duration) {
+    #[cfg(target_os = "linux")]
+    {
+        let left = group_members_deepest_first(pgid);
+        if left.is_empty() {
+            return;
+        }
+        debug!(
+            "{} process(es) of group {pgid} outlived the launch's own; stopping them",
+            left.len()
+        );
+        signal_group_staggered(pgid, nix::sys::signal::Signal::SIGTERM).await;
+        let start = std::time::Instant::now();
+        while start.elapsed() < grace {
+            if group_members_deepest_first(pgid).is_empty() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let left = group_members_deepest_first(pgid);
+        if !left.is_empty() {
+            warn!(
+                "{} process(es) of group {pgid} ignored SIGTERM for {}s; sending SIGKILL",
+                left.len(),
+                grace.as_secs()
+            );
+            kill_process_group(pgid, nix::sys::signal::Signal::SIGKILL);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = grace;
+        kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
+    }
 }
 
 /// The live members of process group `pgid`, each after every member it
@@ -211,7 +284,9 @@ mod tests {
             members[1], pgid,
             "the forking shell comes last: {members:?}"
         );
-        stop_process_group_staggered(pgid).await;
+        // SIGTERM: a background job of `sh` ignores SIGINT, which is why
+        // `stop_leftovers` exists; the order is the same for either signal.
+        signal_group_staggered(pgid, nix::sys::signal::Signal::SIGTERM).await;
         // `sleep` goes first, so the shell's `wait` usually returns and it
         // exits 0 before its own SIGTERM lands; either way it is gone.
         parent.wait().expect("wait sh");

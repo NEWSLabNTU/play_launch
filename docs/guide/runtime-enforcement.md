@@ -238,7 +238,8 @@ and the static checker does not know about it.
 
 **The teardown is a real teardown.** On the first violation at or above the
 threshold the watcher calls the same `initiate_shutdown` the SIGTERM path and
-`--on-startup-failure exit` call: SIGTERM to the process group, the shutdown
+`--on-startup-failure exit` call: SIGINT to the process group (then each
+process's own `sigterm_timeout`/`sigkill_timeout`, as `ros2 launch`), the shutdown
 broadcast, and the member handle's shutdown, in that order. It used to send
 only the broadcast, which left every actor waiting on a child nobody had
 signalled — the supervisor stayed alive with its nodes still running until an

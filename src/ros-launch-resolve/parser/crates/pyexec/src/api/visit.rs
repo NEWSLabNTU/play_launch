@@ -57,14 +57,40 @@ struct Frame {
     /// epoch, and the lens before and after it executed (#0081).
     process_captures: HashMap<usize, (u64, Lens, Lens)>,
     /// Actions an `OnProcessExit` shutdown handler targets that have not
-    /// executed yet, by object identity (#0081).
-    exit_shutdown_targets: std::collections::HashSet<usize>,
-    /// Every object whose address keys `executed` or `process_captures`.
-    /// Python reuses a freed object's address, so an action an
-    /// `OpaqueFunction` returned and the walk dropped would make the next
-    /// one built at that address read as "executed more than once" and be
-    /// discarded. Holding them keeps each address unique for the frame.
+    /// executed yet, by object identity, with the exits that end the launch
+    /// (#0081, #0090).
+    exit_shutdown_targets: HashMap<usize, ExitOn>,
+    /// Every object whose address keys `executed`, `process_captures` or
+    /// `exit_shutdown_targets`. Python reuses a freed object's address, so
+    /// an action an `OpaqueFunction` returned and the walk dropped would
+    /// make the next one built at that address read as "executed more than
+    /// once" and be discarded. Holding them keeps each address unique for
+    /// the frame.
     keep_alive: Vec<Py<PyAny>>,
+}
+
+/// Which exits of a process end the launch (#0081, #0090).
+#[derive(Clone)]
+pub(crate) enum ExitOn {
+    /// Every exit: `on_exit=Shutdown()` and its handler spelling.
+    Any,
+    /// The exits an `on_exit` function returned a shutdown for.
+    Codes(play_launch_parser::record::ExitCodes),
+}
+
+impl ExitOn {
+    /// Both handlers' exits, as one.
+    fn union(a: &ExitOn, b: &ExitOn) -> ExitOn {
+        match (a, b) {
+            (ExitOn::Codes(x), ExitOn::Codes(y)) => {
+                match play_launch_parser::record::ExitCodes::union(Some(x), Some(y)) {
+                    Some(c) if !c.is_every_code() => ExitOn::Codes(c),
+                    _ => ExitOn::Any,
+                }
+            }
+            _ => ExitOn::Any,
+        }
+    }
 }
 
 thread_local! {
@@ -407,17 +433,88 @@ pub(crate) fn lens() -> Lens {
     })
 }
 
-/// Mark the process captures in `from..to` as required: their exit ends
-/// the launch (`on_exit_shutdown`).
-fn mark_required(from: Lens, to: Lens) {
+/// Mark the process captures in `from..to`: the exits `on` names end the
+/// launch. Every exit is `on_exit_shutdown` (required); some is
+/// `shutdown_on_exit_codes`, added to any the capture already has, and
+/// dropped where the capture is required anyway.
+fn mark_required(from: Lens, to: Lens, on: &ExitOn) {
+    fn mark(
+        on_exit_shutdown: &mut Option<bool>,
+        codes: &mut Option<play_launch_parser::record::ExitCodes>,
+        on: &ExitOn,
+    ) {
+        let merged = match (on, codes.take()) {
+            (ExitOn::Any, _) => ExitOn::Any,
+            (on, None) => on.clone(),
+            (on, Some(had)) => ExitOn::union(on, &ExitOn::Codes(had)),
+        };
+        match merged {
+            ExitOn::Any => *on_exit_shutdown = Some(true),
+            ExitOn::Codes(c) => *codes = Some(c),
+        }
+        if *on_exit_shutdown == Some(true) {
+            *codes = None;
+        }
+    }
     with_launch_context(|ctx| {
         for n in &mut ctx.captured_nodes_mut()[from.nodes..to.nodes] {
-            n.on_exit_shutdown = Some(true);
+            mark(
+                &mut n.on_exit_shutdown,
+                &mut n.spawn.shutdown_on_exit_codes,
+                on,
+            );
         }
         for c in &mut ctx.captured_containers_mut()[from.containers..to.containers] {
-            c.on_exit_shutdown = Some(true);
+            mark(
+                &mut c.on_exit_shutdown,
+                &mut c.spawn.shutdown_on_exit_codes,
+                on,
+            );
         }
     });
+}
+
+/// The `on_exit=` function a process action was given, if any (#0090).
+fn on_exit_function(py: Python, entity: &Bound<'_, PyAny>) -> Option<Py<PyAny>> {
+    use crate::api::{actions as a, launch_ros as r};
+    if let Ok(x) = entity.cast::<a::ExecuteProcess>() {
+        return x.borrow().on_exit_fn(py);
+    }
+    if let Ok(x) = entity.cast::<r::Node>() {
+        return x.borrow().on_exit_fn(py);
+    }
+    if let Ok(x) = entity.cast::<r::LifecycleNode>() {
+        return x.borrow().on_exit_fn(py);
+    }
+    if let Ok(x) = entity.cast::<r::ComposableNodeContainer>() {
+        return x.borrow().on_exit_fn(py);
+    }
+    None
+}
+
+/// What an `on_exit` function makes of a process's exits, evaluated now
+/// (`exit_probe`); `None`, after a warning naming `what`, when it cannot be.
+pub(crate) fn probe_on_exit(
+    py: Python,
+    f: &Bound<'_, PyAny>,
+    target: Option<&Bound<'_, PyAny>>,
+    what: &str,
+) -> Option<ExitOn> {
+    use crate::api::exit_probe::{Probed, probe};
+    match probe(py, f, target, what) {
+        Probed::Never => None,
+        Probed::Always => Some(ExitOn::Any),
+        Probed::Codes(c) => Some(ExitOn::Codes(c)),
+        Probed::Refused(why) => {
+            crate::api::utils::warn_user(&format!(
+                "The on_exit function of {what} cannot be evaluated at parse time ({why}). \
+                 play_launch evaluates such a function for every exit code when it parses \
+                 the launch file, since it runs no Python when the process exits; this \
+                 one's exits will not end the launch."
+            ));
+            None
+        }
+    }
 }
 
 /// Execute a process action (`ExecuteProcess`, `Node`, `LifecycleNode`,
@@ -425,21 +522,28 @@ fn mark_required(from: Lens, to: Lens) {
 /// `OnProcessExit` handler can find them, and marking them required now if an
 /// earlier one already targets it (#0081).
 fn execute_process(entity: &Bound<'_, PyAny>, f: impl FnOnce() -> PyResult<()>) -> PyResult<()> {
+    let py = entity.py();
     let before = lens();
     f()?;
     let after = lens();
     let id = entity.as_ptr() as usize;
     let targeted = FRAMES.with(|fr| {
         let mut fr = fr.borrow_mut();
-        let Some(fr) = fr.last_mut() else {
-            return false;
-        };
+        let fr = fr.last_mut()?;
         fr.process_captures.insert(id, (fr.epoch, before, after));
         fr.keep_alive.push(entity.clone().unbind());
         fr.exit_shutdown_targets.remove(&id)
     });
-    if targeted {
-        mark_required(before, after);
+    if let Some(on) = targeted {
+        mark_required(before, after, &on);
+    }
+    // `ExecuteProcess(..., on_exit=<function>)` (#0090): the process's own
+    // handler, evaluated now that it has executed.
+    if let Some(func) = on_exit_function(py, entity) {
+        let what = describe_since(before).join(", ");
+        if let Some(on) = probe_on_exit(py, func.bind(py), Some(entity), &format!("'{what}'")) {
+            mark_required(before, after, &on);
+        }
     }
     Ok(())
 }
@@ -448,7 +552,7 @@ fn execute_process(entity: &Bound<'_, PyAny>, f: impl FnOnce() -> PyResult<()>) 
 /// `launch` ends when X's process exits, as for `X(on_exit=Shutdown())`
 /// (#0081). X may have executed already -- the usual order, the handler
 /// listed after its target -- or may be yet to.
-pub(crate) fn shutdown_on_exit_of(target: &Bound<'_, PyAny>) {
+pub(crate) fn shutdown_on_exit_of(target: &Bound<'_, PyAny>, on: ExitOn) {
     let id = target.as_ptr() as usize;
     let seen = FRAMES.with(|fr| {
         let mut fr = fr.borrow_mut();
@@ -456,19 +560,23 @@ pub(crate) fn shutdown_on_exit_of(target: &Bound<'_, PyAny>) {
         match fr.process_captures.get(&id) {
             Some(&(epoch, before, after)) => Some(Some((epoch == fr.epoch, before, after))),
             None => {
-                fr.exit_shutdown_targets.insert(id);
+                let merged = match fr.exit_shutdown_targets.get(&id) {
+                    Some(had) => ExitOn::union(had, &on),
+                    None => on.clone(),
+                };
+                fr.exit_shutdown_targets.insert(id, merged);
                 fr.keep_alive.push(target.clone().unbind());
                 Some(None)
             }
         }
     });
     match seen {
-        Some(Some((true, before, after))) => mark_required(before, after),
-        Some(Some((false, _, _))) => log::warn!(
+        Some(Some((true, before, after))) => mark_required(before, after, &on),
+        Some(Some((false, _, _))) => crate::api::utils::warn_user(
             "An OnProcessExit handler shuts the launch down when a process exits, but an \
              include came between that process and the handler, so this model cannot mark \
              it required: its exit will not end the launch. Register the handler before \
-             the include, or give the process on_exit=Shutdown()."
+             the include, or give the process on_exit=Shutdown().",
         ),
         _ => {}
     }

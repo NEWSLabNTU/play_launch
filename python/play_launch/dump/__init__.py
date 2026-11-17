@@ -34,10 +34,14 @@ from .inspector import LaunchInspector
 #       `executable`/`package`/`cmd`. Implied by the constant's ABSENCE, since
 #       no such install defines it.
 #   2 — full container records, scope paths.
-#   3 — current: process records carry `env_unset`, `launch_prefix` and
-#       `cwd` (#0085, #0087). A version-2 install omits them, which is no
-#       error at all: an unset or a prefix silently does not reach the process.
-DUMP_FORMAT_VERSION = 3
+#   3 — process records carry `env_unset`, `launch_prefix` and `cwd` (#0085,
+#       #0087). A version-2 install omits them, which is no error at all: an
+#       unset or a prefix silently does not reach the process.
+#   4 — current: process records carry `sigterm_timeout`, `sigkill_timeout`
+#       and `shutdown_on_exit_codes` (#0084, #0090). A version-3 install
+#       omits them: a declared timeout and an `on_exit` function's shutdown
+#       would be dropped, silently.
+DUMP_FORMAT_VERSION = 4
 
 
 def main() -> int:

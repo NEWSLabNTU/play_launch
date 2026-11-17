@@ -712,6 +712,28 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-11-17**: **How a launch ends matches `ros2 launch`** (#0084,
+  #0090; rlm `NodeInstance::{sigterm_timeout, sigkill_timeout,
+  shutdown_on_exit_codes}`, pyexec C ABI 14, Python dump format 4).
+  Shutdown sends the group SIGINT, still staggered and still after leaving
+  the ROS graph (2026-10-15), and each actor runs launch's ladder on its own
+  process from that SIGINT (`process/stop.rs::stop_at_shutdown`): the
+  action's `sigterm_timeout`, SIGTERM, its `sigkill_timeout`, SIGKILL, 5 s
+  each by default. An `on_exit` FUNCTION is evaluated at parse time for
+  every exit code (0..=255 and `-1..=-64`; `pyexec/src/api/exit_probe.rs`,
+  `python/play_launch/dump/exit_probe.py`, one rule on both sides) and the
+  codes it shuts down on ride on the model; the runner ends the launch on
+  them and the actor does not respawn from that exit
+  (`member_actor/exit_policy.rs`). Three things a later change must keep:
+  a function that raises or answers differently on a second pass (state)
+  is REFUSED with a warning, never half-recorded; a function that shuts down
+  on every code is `on_exit: shutdown`, which wins over codes; and the
+  timeouts follow launch's default, `LaunchConfiguration('sigterm_timeout',
+  default=5)`, so a launch argument of that name reaches every process (a 5
+  is recorded as absent). After every actor ends, what is left in the group
+  is SIGTERMed then SIGKILLed (`pgid::stop_leftovers`), since a shell's
+  background job ignores the SIGINT that replaced the group SIGTERM.
+
 - **2026-11-17**: **Every mock substitution performs, through the engine**
   (#0086). `context.perform_substitution` calls `perform(context)` strictly,
   as `launch` does, so a mock substitution without one fails the whole file

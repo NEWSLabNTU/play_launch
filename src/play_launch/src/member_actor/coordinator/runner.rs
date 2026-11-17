@@ -6,12 +6,9 @@
 //! a documented no-op and every actor triple-wrote its transitions.
 
 use super::state_reducer;
-use crate::member_actor::{events::StateEvent, model::MemberState};
+use crate::member_actor::{events::StateEvent, exit_policy::ExitPolicy, model::MemberState};
 use eyre::Result;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
@@ -31,8 +28,9 @@ pub struct MemberRunner {
     restart_counts: Arc<state_reducer::RestartCounts>,
     /// Recent exits per member — written ONLY via `state_reducer`
     exit_history: Arc<state_reducer::ExitHistory>,
-    /// Members launched with `on_exit=Shutdown()`, by canonical member id
-    shutdown_on_exit: HashSet<String>,
+    /// Members whose exit ends the launch (`on_exit=Shutdown()`, or an
+    /// `on_exit` function's exit codes), by canonical member id
+    shutdown_on_exit: HashMap<String, ExitPolicy>,
     /// The same shutdown lever `MemberHandle::shutdown` pulls. Stops the actors, but
     /// on its own it does not reap their children — see `shutdown_hook`.
     shutdown_tx: Arc<watch::Sender<bool>>,
@@ -51,7 +49,7 @@ impl MemberRunner {
         shared_state: Arc<dashmap::DashMap<String, MemberState>>,
         restart_counts: Arc<state_reducer::RestartCounts>,
         exit_history: Arc<state_reducer::ExitHistory>,
-        shutdown_on_exit: HashSet<String>,
+        shutdown_on_exit: HashMap<String, ExitPolicy>,
         shutdown_tx: Arc<watch::Sender<bool>>,
     ) -> Self {
         Self {
@@ -85,24 +83,30 @@ impl MemberRunner {
     /// Pulling `shutdown_tx` stops every actor, which completes the runner task, which
     /// is what the command layer already treats as "the launch is over".
     fn honour_on_exit_shutdown(
-        shutdown_on_exit: &HashSet<String>,
+        shutdown_on_exit: &HashMap<String, ExitPolicy>,
         shutdown_tx: &watch::Sender<bool>,
         shutdown_hook: Option<&Arc<dyn Fn() + Send + Sync>>,
         event: &StateEvent,
     ) {
         if let StateEvent::Exited {
-            name, exit_code, ..
+            name,
+            exit_code,
+            signal,
+            ..
         } = event
-            && shutdown_on_exit.contains(name)
+            && let Some(policy) = shutdown_on_exit.get(name)
+            && policy.ends_launch(*exit_code, *signal)
             && !*shutdown_tx.borrow()
         {
             tracing::info!(
-                "[{}] exited ({}) and was declared on_exit=Shutdown: shutting down the launch",
+                "[{}] exited ({}) and was declared {}: shutting down the launch",
                 name,
-                match exit_code {
-                    Some(code) => format!("code {code}"),
-                    None => "no exit code".to_string(),
-                }
+                match (exit_code, signal) {
+                    (Some(code), _) => format!("code {code}"),
+                    (None, Some(sig)) => format!("signal {sig}"),
+                    (None, None) => "no exit code".to_string(),
+                },
+                policy.describe()
             );
             let _ = shutdown_tx.send(true);
             if let Some(hook) = shutdown_hook {
@@ -249,7 +253,8 @@ mod tests {
         let hook: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
             ran_in_hook.store(true, std::sync::atomic::Ordering::SeqCst);
         });
-        let required: HashSet<String> = ["node:/scenario_test_runner".to_string()].into();
+        let required: HashMap<String, ExitPolicy> =
+            [("node:/scenario_test_runner".to_string(), ExitPolicy::Any)].into();
 
         MemberRunner::honour_on_exit_shutdown(
             &required,
@@ -269,7 +274,8 @@ mod tests {
     fn an_ordinary_member_exiting_leaves_the_launch_alone() {
         let (tx, _rx) = watch::channel(false);
         let tx = Arc::new(tx);
-        let required: HashSet<String> = ["node:/scenario_test_runner".to_string()].into();
+        let required: HashMap<String, ExitPolicy> =
+            [("node:/scenario_test_runner".to_string(), ExitPolicy::Any)].into();
 
         MemberRunner::honour_on_exit_shutdown(&required, &tx, None, &exited("node:/talker"));
 
@@ -290,7 +296,8 @@ mod tests {
         let hook: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
             calls_in_hook.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         });
-        let required: HashSet<String> = ["node:/scenario_test_runner".to_string()].into();
+        let required: HashMap<String, ExitPolicy> =
+            [("node:/scenario_test_runner".to_string(), ExitPolicy::Any)].into();
 
         MemberRunner::honour_on_exit_shutdown(
             &required,

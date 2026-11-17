@@ -26,6 +26,8 @@ pub struct ExecutableAction {
     pub respawn_delay: Option<Vec<Substitution>>,
     /// `launch-prefix=…` (#0085), unresolved.
     pub launch_prefix: Option<Vec<Substitution>>,
+    /// `sigterm_timeout=` / `sigkill_timeout=` (#0084; Jazzy XML), unresolved.
+    pub stop: crate::actions::process::StopTimeouts,
 }
 
 impl ExecutableAction {
@@ -125,6 +127,7 @@ impl ExecutableAction {
                 .optional_attr_str("launch-prefix")?
                 .map(|s| parse_substitutions(&s))
                 .transpose()?,
+            stop: crate::actions::process::StopTimeouts::from_entity(entity)?,
         })
     }
 
@@ -184,6 +187,7 @@ impl ExecutableAction {
             spawn: crate::actions::process::resolve_spawn(
                 self.launch_prefix.as_deref(),
                 self.cwd.as_deref(),
+                &self.stop,
                 &executable,
                 self.environment.iter().map(|(k, _)| k.as_str()),
                 context,

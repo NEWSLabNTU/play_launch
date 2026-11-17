@@ -16,6 +16,10 @@
 //! - The unsets are launch's environment deletions in effect here, minus any
 //!   name the process's own environment sets again, and minus any name the
 //!   launcher's environment does not have (unsetting it changes nothing).
+//! - `sigterm_timeout` / `sigkill_timeout` (#0084): the action's own, else
+//!   the launch configuration of the same name, else 5 -- launch's default
+//!   is literally `LaunchConfiguration('sigterm_timeout', default=5)`. A
+//!   value of 5 is recorded as absent.
 
 use crate::{
     error::SubstitutionError,
@@ -79,6 +83,71 @@ pub fn prefix_words(prefix: &str) -> Vec<String> {
     shlex::split(prefix).unwrap_or_default()
 }
 
+/// `sigterm_timeout=` / `sigkill_timeout=` as an action was given them
+/// (#0084), unresolved. `None` falls back to the launch configuration.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StopTimeouts {
+    pub sigterm: Option<Vec<Substitution>>,
+    pub sigkill: Option<Vec<Substitution>>,
+}
+
+impl StopTimeouts {
+    /// Already-resolved text (the Python mocks perform substitutions
+    /// themselves).
+    pub fn from_resolved(sigterm: Option<String>, sigkill: Option<String>) -> Self {
+        Self {
+            sigterm: sigterm.map(|t| vec![Substitution::Text(t)]),
+            sigkill: sigkill.map(|t| vec![Substitution::Text(t)]),
+        }
+    }
+}
+
+impl StopTimeouts {
+    /// Both attributes of an XML process element.
+    pub fn from_entity(entity: &crate::xml::XmlEntity) -> crate::error::Result<Self> {
+        use crate::xml::Entity as _;
+        let attr = |name: &str| -> crate::error::Result<Option<Vec<Substitution>>> {
+            entity
+                .optional_attr_str(name)?
+                .map(|s| crate::substitution::parse_substitutions(&s))
+                .transpose()
+        };
+        Ok(Self {
+            sigterm: attr("sigterm_timeout")?,
+            sigkill: attr("sigkill_timeout")?,
+        })
+    }
+}
+
+/// launch's default for both timeouts.
+pub const DEFAULT_STOP_TIMEOUT: f64 = 5.0;
+
+/// One timeout, as launch reads it: the action's text, else the launch
+/// configuration `name`, else 5; then `float(...)`. `None` when it is 5.
+pub fn resolve_timeout(
+    own: Option<&[Substitution]>,
+    name: &str,
+    context: &LaunchContext,
+) -> Result<Option<f64>, SubstitutionError> {
+    let text = match own {
+        Some(subs) => resolve_substitutions(subs, context)?,
+        None => match context.get_configuration_lenient(name) {
+            Some(v) => v,
+            None => return Ok(None),
+        },
+    };
+    let secs: f64 = text
+        .trim()
+        .parse()
+        .map_err(|_| invalid(format!("{name} '{text}' is not a number of seconds")))?;
+    if !secs.is_finite() || secs < 0.0 {
+        return Err(invalid(format!(
+            "{name} '{text}' is not a number of seconds"
+        )));
+    }
+    Ok((secs != DEFAULT_STOP_TIMEOUT).then_some(secs))
+}
+
 /// Everything [`ProcessSpawn`] carries for a process declared here.
 ///
 /// `program` is the command's first word (for `launch-prefix-filter`);
@@ -87,12 +156,16 @@ pub fn prefix_words(prefix: &str) -> Vec<String> {
 pub fn resolve_spawn<'a>(
     prefix: Option<&[Substitution]>,
     cwd: Option<&[Substitution]>,
+    stop: &StopTimeouts,
     program: &str,
     own_env: impl IntoIterator<Item = &'a str>,
     context: &LaunchContext,
 ) -> Result<ProcessSpawn, SubstitutionError> {
     let own: std::collections::HashSet<&str> = own_env.into_iter().collect();
     Ok(ProcessSpawn {
+        sigterm_timeout: resolve_timeout(stop.sigterm.as_deref(), "sigterm_timeout", context)?,
+        sigkill_timeout: resolve_timeout(stop.sigkill.as_deref(), "sigkill_timeout", context)?,
+        shutdown_on_exit_codes: None,
         // Only what the launcher's own environment has: unsetting a name it
         // lacks changes nothing for the process, and the Python dumper, which
         // sees launch's environment rather than its actions, cannot record
@@ -136,13 +209,21 @@ fn launcher_has(name: &str) -> bool {
 pub fn spawn_from_resolved<'a>(
     prefix: Option<String>,
     cwd: Option<String>,
+    stop: &StopTimeouts,
     program: &str,
     own_env: impl IntoIterator<Item = &'a str>,
     context: &LaunchContext,
 ) -> Result<ProcessSpawn, SubstitutionError> {
     let subs = prefix.map(|p| vec![Substitution::Text(p)]);
     let cwd = cwd.map(|c| vec![Substitution::Text(c)]);
-    resolve_spawn(subs.as_deref(), cwd.as_deref(), program, own_env, context)
+    resolve_spawn(
+        subs.as_deref(),
+        cwd.as_deref(),
+        stop,
+        program,
+        own_env,
+        context,
+    )
 }
 
 #[cfg(test)]
@@ -204,7 +285,29 @@ mod tests {
         ctx.unset_environment_variable("HOME");
         ctx.unset_environment_variable("PATH");
         ctx.unset_environment_variable("PL_NEVER_INHERITED_0085");
-        let s = resolve_spawn(None, None, "x", ["HOME"], &ctx).unwrap();
+        let s = resolve_spawn(None, None, &StopTimeouts::default(), "x", ["HOME"], &ctx).unwrap();
         assert_eq!(s.env_unset, vec!["PATH".to_string()]);
+    }
+
+    /// #0084: the action's own timeout wins, else the launch configuration
+    /// of the same name, else launch's 5, which is recorded as absent.
+    #[test]
+    fn a_stop_timeout_is_the_actions_else_the_configurations() {
+        let mut ctx = LaunchContext::new();
+        let none = StopTimeouts::default();
+        let s = resolve_spawn(None, None, &none, "x", [], &ctx).unwrap();
+        assert_eq!((s.sigterm_timeout, s.sigkill_timeout), (None, None));
+
+        ctx.set_configuration_literal("sigterm_timeout".into(), "12".into());
+        let s = resolve_spawn(None, None, &none, "x", [], &ctx).unwrap();
+        assert_eq!((s.sigterm_timeout, s.sigkill_timeout), (Some(12.0), None));
+
+        let own = StopTimeouts::from_resolved(Some("20".into()), Some("5.0".into()));
+        let s = resolve_spawn(None, None, &own, "x", [], &ctx).unwrap();
+        assert_eq!((s.sigterm_timeout, s.sigkill_timeout), (Some(20.0), None));
+
+        let bad = StopTimeouts::from_resolved(Some("soon".into()), None);
+        let e = resolve_spawn(None, None, &bad, "x", [], &ctx).unwrap_err();
+        assert!(e.to_string().contains("sigterm_timeout 'soon'"), "{e}");
     }
 }

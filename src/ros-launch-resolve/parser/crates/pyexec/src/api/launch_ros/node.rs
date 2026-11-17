@@ -36,13 +36,18 @@ pub(crate) struct NodeSpec {
     pub process: ProcessArgs,
 }
 
-/// `prefix=` and `cwd=` as an `ExecuteProcess` (and so every `Node`,
-/// `LifecycleNode` and `ComposableNodeContainer`) was constructed with them,
-/// performed only when the action executes (#0085, #0087).
+/// `prefix=`, `cwd=`, `sigterm_timeout=` and `sigkill_timeout=` as an
+/// `ExecuteProcess` (and so every `Node`, `LifecycleNode` and
+/// `ComposableNodeContainer`) was constructed with them, performed only when
+/// the action executes (#0084, #0085, #0087); and an `on_exit=` that is a
+/// function (#0090), which the walk evaluates for every exit code.
 #[derive(Clone, Default)]
 pub(crate) struct ProcessArgs {
     prefix: Option<Py<PyAny>>,
     cwd: Option<Py<PyAny>>,
+    sigterm_timeout: Option<Py<PyAny>>,
+    sigkill_timeout: Option<Py<PyAny>>,
+    on_exit_fn: Option<Py<PyAny>>,
 }
 
 impl ProcessArgs {
@@ -58,7 +63,20 @@ impl ProcessArgs {
         Self {
             prefix: get("prefix"),
             cwd: get("cwd"),
+            sigterm_timeout: get("sigterm_timeout"),
+            sigkill_timeout: get("sigkill_timeout"),
+            // `launch` calls a callable `on_exit` with the exit event; an
+            // action or a list of them is not callable.
+            on_exit_fn: kwargs
+                .and_then(|k| k.get_item("on_exit").ok().flatten())
+                .filter(|v| !v.is_none() && v.is_callable())
+                .map(Bound::unbind),
         }
+    }
+
+    /// The `on_exit=` function, if the action was given one (#0090).
+    pub(crate) fn on_exit_fn(&self, py: Python) -> Option<Py<PyAny>> {
+        self.on_exit_fn.as_ref().map(|f| f.clone_ref(py))
     }
 
     /// What the process starts in and under, in the context the walk is in
@@ -78,9 +96,13 @@ impl ProcessArgs {
         };
         let prefix = perform(&self.prefix)?;
         let cwd = perform(&self.cwd)?;
+        let stop = play_launch_parser::actions::process::StopTimeouts::from_resolved(
+            perform(&self.sigterm_timeout)?,
+            perform(&self.sigkill_timeout)?,
+        );
         with_launch_context(|ctx| {
             play_launch_parser::actions::process::spawn_from_resolved(
-                prefix, cwd, program, own_env, ctx,
+                prefix, cwd, &stop, program, own_env, ctx,
             )
         })
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
@@ -709,6 +731,13 @@ pub(crate) fn node_value(value: &Bound<'_, PyAny>) -> PyResult<String> {
 /// `launch.actions.Shutdown`, or any `EmitEvent` whose event is
 /// `launch.events.Shutdown` -- SSv2's `ShutdownOnce` is one. Other handlers
 /// are not modelled (`Some(false)`), and no `on_exit` at all is `None`.
+impl Node {
+    /// The `on_exit=` function, if given one (#0090).
+    pub(crate) fn on_exit_fn(&self, py: Python) -> Option<Py<PyAny>> {
+        self.spec.process.on_exit_fn(py)
+    }
+}
+
 pub(crate) fn on_exit_shuts_down(on_exit: &Bound<'_, PyAny>) -> bool {
     let one = |a: &Bound<'_, PyAny>| {
         a.is_instance_of::<crate::api::actions::Shutdown>()

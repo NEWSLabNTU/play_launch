@@ -215,6 +215,16 @@ pub struct NodeContainerRecord {
     /// `cwd`, after substitution (#0087).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// Seconds from the shutdown's SIGINT to a SIGTERM (#0084); `None` is
+    /// launch's 5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sigterm_timeout: Option<f64>,
+    /// Seconds from that SIGTERM to a SIGKILL (#0084); `None` is 5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sigkill_timeout: Option<f64>,
+    /// The exits that end the launch, from an `on_exit` function (#0090).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shutdown_on_exit_codes: Option<ros_launch_manifest_model::ExitCodes>,
     #[serde(default)]
     pub respawn: Option<bool>,
     #[serde(default)]
@@ -295,6 +305,16 @@ pub struct NodeRecord {
     /// `cwd`, after substitution (#0087).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// Seconds from the shutdown's SIGINT to a SIGTERM (#0084); `None` is
+    /// launch's 5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sigterm_timeout: Option<f64>,
+    /// Seconds from that SIGTERM to a SIGKILL (#0084); `None` is 5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sigkill_timeout: Option<f64>,
+    /// The exits that end the launch, from an `on_exit` function (#0090).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shutdown_on_exit_codes: Option<ros_launch_manifest_model::ExitCodes>,
     #[serde(default)]
     pub respawn: Option<bool>,
     #[serde(default)]
@@ -398,7 +418,7 @@ pub fn load_launch_dump(dump_file: &Path) -> eyre::Result<LaunchDump> {
 /// Kept in step with `DUMP_FORMAT_VERSION` in
 /// `python/play_launch/dump/__init__.py`, which documents what each version
 /// means.
-pub const MIN_DUMP_FORMAT_VERSION: u32 = 3;
+pub const MIN_DUMP_FORMAT_VERSION: u32 = 4;
 
 /// Issue #0020 — refuse a stale `play_launch` Python install at IMPORT time,
 /// before it parses anything.

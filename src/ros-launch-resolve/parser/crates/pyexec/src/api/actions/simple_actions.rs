@@ -168,6 +168,11 @@ impl ExecuteProcess {
 }
 
 impl ExecuteProcess {
+    /// The `on_exit=` function, if given one (#0090).
+    pub(crate) fn on_exit_fn(&self, py: Python) -> Option<Py<PyAny>> {
+        self.process.on_exit_fn(py)
+    }
+
     pub(crate) fn execute(this: &Bound<'_, Self>, py: Python) -> PyResult<()> {
         if !crate::api::visit::claim_execution(this.as_any(), "ExecuteProcess") {
             return Ok(());

@@ -52,6 +52,7 @@ pub mod container_actor;
 pub mod container_control;
 pub mod coordinator;
 pub mod events;
+pub mod exit_policy;
 pub mod member_id;
 pub mod model;
 pub mod regular_node_actor;

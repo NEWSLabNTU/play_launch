@@ -182,3 +182,10 @@ impl LifecycleTransition {
         }
     }
 }
+
+impl LifecycleNode {
+    /// The `on_exit=` function, if given one (#0090).
+    pub(crate) fn on_exit_fn(&self, py: Python) -> Option<Py<PyAny>> {
+        self.spec.process.on_exit_fn(py)
+    }
+}

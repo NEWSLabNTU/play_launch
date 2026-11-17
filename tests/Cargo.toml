@@ -125,6 +125,10 @@ path = "tests/param_lists.rs"
 name = "process_spawn"
 path = "tests/process_spawn.rs"
 
+[[test]]
+name = "shutdown_semantics"
+path = "tests/shutdown_semantics.rs"
+
 [dependencies]
 libc = "0.2"
 # `testdata` exposes `fixture_dir()`. `manifest_check.rs` drives the CLI

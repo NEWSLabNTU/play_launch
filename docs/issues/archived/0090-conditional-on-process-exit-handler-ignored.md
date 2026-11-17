@@ -1,7 +1,7 @@
 ---
 id: 90
 title: "A conditional `OnProcessExit` handler (a callable `on_exit`) is ignored; a respawning node loops where `ros2 launch` shuts down"
-status: open
+status: resolved
 type: defect
 severity: medium
 ---
@@ -81,3 +81,52 @@ action list) with its target, and on the target's exit call it with an event car
 and `LogInfo`), and suppress the respawn when the launch is shutting down. If a callable cannot
 be run in the runtime, at least warn at parse time that a conditional handler is not honoured.
 Test: the repro above starts the stub once and exits; with `sys.exit(1)` it respawns.
+
+## Resolution (2026-11-17)
+
+An `on_exit` that is a FUNCTION of the exit event, in an `OnProcessExit`
+handler or given to the process itself, is honoured for the exit codes it
+shuts down on.
+
+**Design.** The runtime runs no Python, so the function cannot be called at
+the exit. It is called at PARSE time instead, once for every code a process
+can exit with (launch's `returncode`: a status 0 to 255, or `-N` for a death
+by signal N, 1 to 64), with an event carrying `returncode`, `action`,
+`pid`, `cmd`, `name` and the launch context, and the codes it returns a
+shutdown for (`Shutdown()`, or an `EmitEvent` of `launch.events.Shutdown`)
+are recorded. That is exact for a function of the exit code, which is what
+such handlers are. It is refused with a warning, and nothing recorded, when
+it is not: a function that raises, or one that answers differently when
+called twice for the same code (it keeps state). Its prints are swallowed;
+other actions it returns are reported as not run (`LogInfo` silently).
+Rejected alternatives: embedding Python in the runtime (the layer-2 split
+exists to avoid it), and a warning alone (the issue's minimum), which leaves
+the loop.
+
+- **Model**: ros-launch-manifest `NodeInstance::shutdown_on_exit_codes`, an
+  `ExitCodes` written `only: [2]` or `except: [0]`, whichever is shorter. A
+  function that shuts down on every code is `on_exit: shutdown`, which
+  wins.
+- **Rust parser** (`pyexec/src/api/exit_probe.rs`, `visit.rs`): the
+  handler's bookkeeping from #0081 now carries which exits (`ExitOn`), so a
+  handler registered before or after its target, several handlers on one
+  target, and `ExecuteProcess(on_exit=<function>)` all merge. pyexec's
+  warnings for these go to stderr when the dlopen'd object has no logger
+  (the general case is #0093).
+- **Python dumper** (`dump/exit_probe.py`, `visitor/action.py`): the same
+  rule and spelling; `compare_models.py` compares `on_exit`,
+  `shutdown_on_exit_codes` and the timeouts on every process.
+- **Runtime**: the runner shuts the launch down when a member exits with a
+  matching code (`member_actor/exit_policy.rs`), and the member does not
+  respawn from that exit, as launch skips a respawn once shutting down.
+
+Tests: `tests/tests/shutdown_semantics.rs` on
+`tests/fixtures/shutdown/exit_handler.launch.py` (a respawning process
+exiting with the `code` argument, a handler shutting down on 2): `ros2
+launch`, both parsers and `up` start it once and end; with `code:=1` it
+respawns under `ros2 launch` and both parsers. Parser: `shutdown_tests.rs`
+(a code-2 handler, a handler registered before its target that always shuts
+down, an `on_exit=` function on the process, a stateful and a raising one
+refused). Negative control: with the source change reverted, the three
+"ends on the handler's code" play_launch tests time out at 30 s with the
+process respawning.

@@ -452,7 +452,13 @@ pub extern "C" fn play_launch_py_abi_version() -> u32 {
     //
     // 13: `play_launch_py_set_logger`, which the loader calls (#0093). A v12
     // object lacks the symbol.
-    13
+    //
+    // 14: the captures carry `sigterm_timeout`, `sigkill_timeout` and
+    // `shutdown_on_exit_codes` (play_launch #0084, #0090). Serde-defaulted,
+    // so a v13 object reports none: a process would be killed on launch's
+    // default schedule whatever it declared, and an `on_exit` function's
+    // shutdown would be dropped, silently.
+    14
 }
 
 #[cfg(test)]
@@ -814,7 +820,7 @@ mod tests {
     /// launch tree that silently resolves to nothing.
     #[test]
     fn the_abi_version_moved_with_the_contract() {
-        assert_eq!(play_launch_py_abi_version(), 13);
+        assert_eq!(play_launch_py_abi_version(), 14);
     }
 
     /// `exec_file` on the old entry point is refused by name, not answered

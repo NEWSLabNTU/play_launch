@@ -437,7 +437,8 @@ pub enum ParamSource {
 
 /// What a process starts IN and UNDER, beyond its command line: the
 /// variables launch removed from its environment, the command it runs under,
-/// and its working directory (#0085, #0087). Flattened into the process
+/// and its working directory (#0085, #0087); and how it ENDS: how long it
+/// has to stop at shutdown (#0084) and which exits end the launch (#0090). Flattened into the process
 /// records, so each key is omitted when empty and a record without them
 /// reads as before.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -455,6 +456,85 @@ pub struct ProcessSpawn {
     /// `cwd`, after substitution. `None` is the launcher's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// How the process is stopped at shutdown (#0084): seconds from the
+    /// SIGINT to a SIGTERM (`sigterm_timeout`, the action's own, else the
+    /// `sigterm_timeout` launch configuration). `None` is launch's default,
+    /// 5, and is what any value equal to it is recorded as.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sigterm_timeout: Option<f64>,
+    /// Seconds from that SIGTERM to a SIGKILL (`sigkill_timeout`), likewise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sigkill_timeout: Option<f64>,
+    /// The exit codes on which the process's exit ends the launch, from an
+    /// `on_exit` that is a function of the exit event (#0090), evaluated
+    /// for every code at parse time. A function that shuts down on every
+    /// code is `on_exit_shutdown` instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shutdown_on_exit_codes: Option<ExitCodes>,
+}
+
+/// The codes a process can exit with, in `launch`'s terms: a status 0 to
+/// 255, or `-N` for a death by signal N (1 to 64).
+pub fn all_exit_codes() -> impl Iterator<Item = i32> {
+    (0..=255).chain((1..=64).map(|s| -s))
+}
+
+/// A set of exit codes (#0090), written whichever way is shorter. The same
+/// shape as the SystemModel's `ExitCodes` and the Python dumper's: a map
+/// with `only` or `except`, each list sorted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ExitCodes {
+    /// These codes, and no other.
+    Only { only: Vec<i32> },
+    /// Every code but these.
+    Except { except: Vec<i32> },
+}
+
+impl ExitCodes {
+    /// Whether an exit with `code` is in the set.
+    pub fn contains(&self, code: i32) -> bool {
+        match self {
+            ExitCodes::Only { only } => only.contains(&code),
+            ExitCodes::Except { except } => !except.contains(&code),
+        }
+    }
+
+    /// The set as the codes it holds, out of [`all_exit_codes`].
+    pub fn codes(&self) -> std::collections::BTreeSet<i32> {
+        all_exit_codes().filter(|c| self.contains(*c)).collect()
+    }
+
+    /// The shorter spelling of `codes`; `None` for an empty set. A set of
+    /// every code is `Except { except: [] }`: the caller decides whether
+    /// that is `on_exit_shutdown` instead.
+    pub fn from_codes(codes: &std::collections::BTreeSet<i32>) -> Option<Self> {
+        if codes.is_empty() {
+            return None;
+        }
+        let rest: Vec<i32> = all_exit_codes().filter(|c| !codes.contains(c)).collect();
+        let mut only: Vec<i32> = codes.iter().copied().collect();
+        only.sort_unstable();
+        let mut except = rest;
+        except.sort_unstable();
+        Some(if only.len() <= except.len() {
+            ExitCodes::Only { only }
+        } else {
+            ExitCodes::Except { except }
+        })
+    }
+
+    /// Every code a process can exit with.
+    pub fn is_every_code(&self) -> bool {
+        matches!(self, ExitCodes::Except { except } if except.is_empty())
+    }
+
+    /// The union of two sets (two handlers on one process).
+    pub fn union(a: Option<&Self>, b: Option<&Self>) -> Option<Self> {
+        let mut codes = a.map(Self::codes).unwrap_or_default();
+        codes.extend(b.map(Self::codes).unwrap_or_default());
+        Self::from_codes(&codes)
+    }
 }
 
 /// Fields ordered alphabetically to match Python output

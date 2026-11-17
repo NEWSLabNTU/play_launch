@@ -118,6 +118,12 @@ class NodeRecord:
     env_unset: list[str] = field(default_factory=list)
     launch_prefix: str | None = None
     cwd: str | None = None
+    # How it ends (#0084, #0090): seconds from SIGINT to SIGTERM and from
+    # SIGTERM to SIGKILL (None is launch's 5), and the exit codes an `on_exit`
+    # function shuts the launch down on (`{"only": [...]}`/`{"except": [...]}`).
+    sigterm_timeout: float | None = None
+    sigkill_timeout: float | None = None
+    shutdown_on_exit_codes: dict | None = None
 
 
 @dataclass
@@ -168,6 +174,12 @@ class ComposableNodeContainerRecord:
     env_unset: list[str] = field(default_factory=list)
     launch_prefix: str | None = None
     cwd: str | None = None
+    # How it ends (#0084, #0090): seconds from SIGINT to SIGTERM and from
+    # SIGTERM to SIGKILL (None is launch's 5), and the exit codes an `on_exit`
+    # function shuts the launch down on (`{"only": [...]}`/`{"except": [...]}`).
+    sigterm_timeout: float | None = None
+    sigkill_timeout: float | None = None
+    shutdown_on_exit_codes: dict | None = None
 
 
 @dataclass
@@ -189,25 +201,33 @@ class LaunchDump:
     # handler may run before or after X, so both sides are remembered, keyed
     # by object identity. Plain attributes, not fields: `dataclasses.asdict`
     # would deep-copy the launch actions they hold.
+    # #0090: an `on_exit` function shuts down on some exits only; `on` is
+    # "always" or the set of exit codes (`exit_probe`).
     def note_process(self, action, records) -> None:
         """`action` (a process) produced `records`; mark them if a handler wants it."""
+        from .exit_probe import mark
+
         processes = self.__dict__.setdefault("_process_records", {})
         targets = self.__dict__.setdefault("_exit_shutdown_targets", {})
         processes[id(action)] = (action, records)
-        if targets.pop(id(action), None) is not None:
+        pending = targets.pop(id(action), None)
+        if pending is not None:
             for record in records:
-                record.on_exit_shutdown = True
+                mark(record, pending[1])
 
-    def shutdown_on_exit_of(self, action) -> None:
+    def shutdown_on_exit_of(self, action, on="always") -> None:
         """An OnProcessExit handler shuts the launch down when `action` exits."""
+        from .exit_probe import mark, merge
+
         processes = self.__dict__.setdefault("_process_records", {})
         targets = self.__dict__.setdefault("_exit_shutdown_targets", {})
         entry = processes.get(id(action))
         if entry is None:
-            targets[id(action)] = action
+            had = targets.get(id(action))
+            targets[id(action)] = (action, merge(had[1] if had else None, on))
             return
         for record in entry[1]:
-            record.on_exit_shutdown = True
+            mark(record, on)
 
     def set_env_in_scope(self, context) -> dict[str, str]:
         """The variables `<set_env>` (`SetEnvironmentVariable`) set in scope (#0077).
