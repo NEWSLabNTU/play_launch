@@ -55,3 +55,9 @@ Each test asserts what it means, not a race:
   nothing ran. The test used to send play_launch's output to `/dev/null`;
   it now keeps it and prints its tail on failure, so the next occurrence
   names the cause.
+- **shutdown_semantics::ros2_launch_respawns_on_another_code: fixed**
+  (found later the same day, merging #0095). The STOCK side failed: a
+  Ctrl-C landed while `ros2 launch` was respawning the stub, so launch
+  walked its full ladder (SIGINT, 5 s, SIGTERM, 10 s, SIGKILL), which the
+  test's 20 s bound did not cover under load. The bound is 40 s; the test
+  is about the respawns before the Ctrl-C.

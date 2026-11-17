@@ -382,8 +382,12 @@ fn respawns_on_another_code(launcher: Launcher) {
         run.console()
     );
     run.ctrl_c();
+    // A Ctrl-C can land while the stub is being respawned, and then stock
+    // launch walks its whole ladder: 5 s to SIGTERM, 10 s more to SIGKILL
+    // (seen once under the full suite's load, #0094). The bound only has to
+    // exceed that ladder; what this test checks is the respawning above.
     assert!(
-        run.exit_within(run.started.elapsed() + Duration::from_secs(20))
+        run.exit_within(run.started.elapsed() + Duration::from_secs(40))
             .is_some(),
         "{launcher:?}: did not stop after Ctrl-C:\n{}",
         run.console()
