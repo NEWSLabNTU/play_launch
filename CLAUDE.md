@@ -367,7 +367,7 @@ Key flags: `--config <PATH>`, `--disable-monitoring`, `--disable-diagnostics`, `
 - `isolated` — use `play_launch_container` with `--isolated` (fork+exec per-node process isolation)
 - `stock` — use the original container binary from the launch file (no override, no `ComponentEvent` subscription)
 
-When mode is not `stock`, `prepare_container_contexts()` in `src/execution/context.rs` overrides the container's `package` and `executable`. If the original was `component_container_mt`, `--use_multi_threaded_executor` is prepended to args. Original `args` from the launch file (e.g. `--isolated`) are preserved.
+When mode is not `stock`, `prepare_container_contexts()` in `src/execution/context.rs` overrides the container's `package` and `executable`. If the original was `component_container_mt`, `--use_multi_threaded_executor` is prepended to args. If it was `component_container_isolated`, `observable` prepends `--dedicated-executors`, so each component keeps an executor and a thread of its own as stock gives it (#0082; without it every component shared the manager's one thread). Original `args` from the launch file are preserved, except the isolation flags, which `--container-mode` decides.
 
 See `tests/fixtures/autoware/autoware_config.yaml` for an example config (not exhaustive — full field reference: `src/play_launch/src/cli/config.rs`).
 

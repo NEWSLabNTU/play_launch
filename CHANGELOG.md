@@ -8,6 +8,13 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fixed (#0082):** under `--container-mode observable` (the default), a
+  `component_container_isolated` keeps stock's executor model: each
+  component has an executor and a thread of its own, multi-threaded with
+  `--use_multi_threaded_executor`. All of a container's components used to
+  share one thread, which on the golf cart made an H.264 encoder beside a
+  ZED X emit frames twice.
+
 - **Fixed (#0091):** `--parser python` uses the Python package installed
   with the binary. An older `play_launch` package elsewhere on the path,
   such as one `pip install --user` left in `~/.local`, used to be imported

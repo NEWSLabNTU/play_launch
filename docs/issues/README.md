@@ -28,18 +28,15 @@ stub declared with 20 s + 20 s exits at 10 s under play_launch, at 40 s under
 `ros2 launch`. Found by scenario-world-bridge, whose stack supervisor was killed
 part way through its stop. See `0084-*`.
 
-**#0082** -- `--container-mode observable` turns a
-`component_container_isolated` into a play_launch_container with ONE
-SingleThreadedExecutor for all its components (only `component_container_mt`
-gets `--use_multi_threaded_executor`), where the stock executable gives each
-component its own thread. On the golf cart's ZED X container (ZED wrapper +
-two Isaac ROS converters + two NVENC H.264 encoders) one encoder then emits
-every frame twice under load; `stock` is clean. See `0082-*`.
-
 `just check-issue-index` fails if this section and the per-file `status:`
 frontmatter disagree.
 
 ## Resolved
+
+**#0082** -- `observable` ran a `component_container_isolated` on one
+thread for all its components. `play_launch_container --dedicated-executors`
+now gives each an executor and a thread, as stock does, and `observable`
+passes it for such a container. See `archived/0082-*`.
 
 **#0091** -- `--parser python` seemed to ignore an `OnProcessExit` shutdown
 handler: the binary imported a stale 0.30.0 `play_launch` package from

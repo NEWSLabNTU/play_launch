@@ -1,7 +1,7 @@
 ---
 id: 82
 title: "`observable` runs a `component_container_isolated` on one thread: an Isaac ROS H.264 encoder beside the ZED X then gets each frame twice"
-status: open
+status: resolved
 type: defect
 severity: high
 ---
@@ -92,3 +92,34 @@ parameter.
 
 `--container-mode stock` for the affected host. 2026-golf-cart runs its orin
 in `stock` (`config/runtime.conf`) since 2026-11-10.
+
+## Resolution (2026-11-17)
+
+`play_launch_container` gains `--dedicated-executors`
+(`DedicatedExecutorComponentManager`, container commit 394be0b): the
+observable manager with `rclcpp_components::ComponentManagerIsolated`'s
+executor model, an executor and a thread per component, multi-threaded when
+the container also has `--use_multi_threaded_executor`. It cannot derive
+from `ComponentManagerIsolated`, which derives from `ComponentManager`
+rather than from the observable manager. Under `--container-mode
+observable`, a container whose launch-file executable is
+`component_container_isolated` gets the flag
+(`prepare_container_contexts_from_model`). `isolated` and `clone-vm` already
+run each component in a process of its own and are unchanged.
+
+On `use_multi_threaded_executor`: stock Humble's
+`component_container_isolated` reads it only as the CLI flag
+`--use_multi_threaded_executor` (it is in the binary's strings, and there
+is no such parameter), and the launch file's `args` reach
+`play_launch_container` unchanged, so it is honoured the same way. A
+`component_container` with a `use_multi_threaded_executor` parameter is
+single-threaded under stock too, so nothing changes there.
+
+Not verified here: the doubled H.264 frames. That needs the ZED X and the
+Isaac ROS encoders on the golf cart; what is verified is the threading
+difference the issue names as the cause.
+
+Test: `tests/tests/container_executors.rs` counts the container's threads
+with three components. The threads an isolated container holds beyond a
+plain one must be the same under `observable` as under `stock`; stock
+measures 3. Without the flag, observable measures 0 and the test fails.

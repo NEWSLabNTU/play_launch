@@ -532,6 +532,19 @@ pub fn prepare_container_contexts_from_model(
                 if record.executable == "component_container_mt" {
                     args.push("--use_multi_threaded_executor".to_string());
                 }
+                // Stock `component_container_isolated` gives each component
+                // an executor and a thread of its own (multi-threaded with
+                // `--use_multi_threaded_executor`, which reaches the container
+                // through the launch file's own args below). Under
+                // `observable` every component used to share the manager's
+                // one thread instead, and a starved NVENC encoder beside a
+                // ZED X emitted frames twice (#0082). `isolated` and
+                // `clone-vm` already run each component on its own.
+                if record.executable == "component_container_isolated"
+                    && container_mode == ContainerMode::Observable
+                {
+                    args.push("--dedicated-executors".to_string());
+                }
                 if container_mode == ContainerMode::Isolated {
                     args.push("--isolated".to_string());
                 }
@@ -558,7 +571,10 @@ pub fn prepare_container_contexts_from_model(
             args.into_iter()
                 .filter(|a| {
                     !(container_mode != ContainerMode::Stock
-                        && matches!(a.as_str(), "--isolated" | "--clone-vm"))
+                        && matches!(
+                            a.as_str(),
+                            "--isolated" | "--clone-vm" | "--dedicated-executors"
+                        ))
                 })
                 .collect::<Vec<_>>()
         });
