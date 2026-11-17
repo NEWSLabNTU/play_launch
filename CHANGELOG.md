@@ -58,9 +58,9 @@ allowance heavily.
   code, and the launch ends on the codes it returns a shutdown for; the
   process does not respawn from that exit. A function that raises, or keeps
   state, cannot be evaluated this way and is reported with a warning. Both
-  parsers; pyexec C ABI 14, Python dump format 4; needs the
-  ros-launch-manifest release carrying `NodeInstance::{sigterm_timeout,
-  sigkill_timeout, shutdown_on_exit_codes}`.
+  parsers; pyexec C ABI 14, Python dump format 4; rlm v0.3.29
+  (`NodeInstance::{sigterm_timeout, sigkill_timeout,
+  shutdown_on_exit_codes}`).
 
 ## 0.37.0 - 2026-11-17
 
