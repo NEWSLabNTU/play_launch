@@ -148,6 +148,9 @@ if not _ok:
                     e
                 ))
             })?;
+            // What the includer's environment actions left (#0092): a
+            // file's top level may read `os.environ` too.
+            crate::api::visit::sync_os_environ(py).map_err(py_err)?;
             if let Err(e) = py.run(&code_cstr, Some(&globals), None) {
                 log::error!("Python execution failed: {}", e);
                 // Log the Python traceback if available

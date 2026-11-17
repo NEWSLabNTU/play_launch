@@ -6,6 +6,16 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Fixed (parser, #0092):** under the default parser, a `.launch.py` reads
+  in `os.environ` what the launch's environment actions set, as under `ros2
+  launch`: a `SetEnvironmentVariable` before an `OpaqueFunction`, an
+  including XML file's `<set_env>`, scoped by `GroupAction`. A launch file's
+  own `os.environ[...] = ...` reaches the processes started after it. Also
+  fixed: when several `OpaqueFunction`s returned a fresh action each, all but
+  the first could be dropped (logged as `Unsupported action type: timer`).
+
 ## 0.37.0 - 2026-11-17
 
 - **Fixed (parser, #0088):** a missing include is reported as

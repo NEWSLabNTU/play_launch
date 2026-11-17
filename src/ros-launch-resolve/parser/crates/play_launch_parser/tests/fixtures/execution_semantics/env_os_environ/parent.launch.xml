@@ -1,0 +1,6 @@
+<launch>
+  <!-- #0092: an environment action writes os.environ, which a later .launch.py
+       reads at its top level and from an OpaqueFunction. -->
+  <set_env name="PL_XML" value="x"/>
+  <include file="$(dirname)/child.launch.py"/>
+</launch>

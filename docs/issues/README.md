@@ -21,10 +21,6 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 `log::warn!` in the Python frontend is dropped (the #0089 plain-node warning
 does not print for a `.launch.py`). See `0093-*`.
 
-**#0092** -- the Rust parser does not apply `SetEnvironmentVariable` to
-`os.environ`, so a later `OpaqueFunction` reads the old value; `ros2 launch`
-and `--parser python` read the new one. See `0092-*`.
-
 **#0091** -- `--parser python` still ignores `OnProcessExit(on_exit=Shutdown)`
 (#0081 reached the Rust parser only): the target respawns where `ros2 launch`
 shuts down. See `0091-*`.
@@ -52,6 +48,12 @@ every frame twice under load; `stock` is clean. See `0082-*`.
 frontmatter disagree.
 
 ## Resolved
+
+**#0092** -- the Rust parser did not write `SetEnvironmentVariable` to
+`os.environ`, so a later `OpaqueFunction` read the old value. The Python
+frontend now keeps `os.environ` and the launch environment as one, as
+`launch` does. Fixed on the way: a reused object address discarded a
+distinct action as executed twice. See `archived/0092-*`.
 
 **#0089** -- a missing parameter file was judged backwards by the Rust
 parser: a plain node's was an error and a composable's a warning, where

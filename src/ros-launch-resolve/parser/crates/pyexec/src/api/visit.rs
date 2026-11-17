@@ -59,10 +59,24 @@ struct Frame {
     /// Actions an `OnProcessExit` shutdown handler targets that have not
     /// executed yet, by object identity (#0081).
     exit_shutdown_targets: std::collections::HashSet<usize>,
+    /// Every object whose address keys `executed` or `process_captures`.
+    /// Python reuses a freed object's address, so an action an
+    /// `OpaqueFunction` returned and the walk dropped would make the next
+    /// one built at that address read as "executed more than once" and be
+    /// discarded. Holding them keeps each address unique for the frame.
+    keep_alive: Vec<Py<PyAny>>,
 }
 
 thread_local! {
     static FRAMES: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) };
+    /// `os.environ` as the outermost execution found it (#0092). `launch`'s
+    /// environment actions write `os.environ` itself, so the walk keeps it
+    /// equal to this plus the context's overlay, and puts it back at the end.
+    static BASE_ENVIRON: RefCell<Option<Vec<(String, String)>>> = const { RefCell::new(None) };
+    /// What [`sync_os_environ`] left in `os.environ`, per variable it wrote
+    /// (`None`: removed). Anything else that differs was Python's own write.
+    static MIRROR_ENV: RefCell<HashMap<String, Option<String>>> =
+        RefCell::new(HashMap::new());
     /// How many entities with a `condition=` the walk is inside. A
     /// declaration under one is "conditionally included" in `launch`'s
     /// include-time check, which therefore does not demand it.
@@ -85,6 +99,14 @@ pub(crate) fn with_frame<R>(
     // stack, i.e. strictly inside this call, during which `host` is borrowed.
     let host: *mut (dyn IncludeHost + '_) = host;
     let host: *mut (dyn IncludeHost + 'static) = unsafe { std::mem::transmute(host) };
+    let outermost = FRAMES.with(|f| f.borrow().is_empty());
+    if outermost {
+        Python::attach(|py| {
+            if let Err(e) = snapshot_os_environ(py) {
+                log::warn!("cannot read os.environ: {e}");
+            }
+        });
+    }
     FRAMES.with(|f| {
         f.borrow_mut().push(Frame {
             host,
@@ -96,6 +118,7 @@ pub(crate) fn with_frame<R>(
             epoch: 0,
             process_captures: HashMap::new(),
             exit_shutdown_targets: Default::default(),
+            keep_alive: Vec::new(),
         })
     });
     struct Pop;
@@ -110,7 +133,129 @@ pub(crate) fn with_frame<R>(
     let result = f();
     let sync = FRAMES.with(|f| f.borrow().last().map(|fr| fr.sync).unwrap_or_default());
     drop(pop);
+    if outermost {
+        // The parser runs in play_launch's own process: what a launch file
+        // set must not stay in it (the Python dumper restores it too).
+        Python::attach(|py| {
+            if let Err(e) = restore_os_environ(py) {
+                log::warn!("cannot restore os.environ: {e}");
+            }
+        });
+    }
     (result, sync)
+}
+
+fn snapshot_os_environ(py: Python) -> PyResult<()> {
+    let environ = py.import("os")?.getattr("environ")?;
+    let mut base = Vec::new();
+    for item in environ.call_method0("items")?.try_iter()? {
+        base.push(item?.extract::<(String, String)>()?);
+    }
+    play_launch_parser::actions::process::set_launcher_environment(Some(
+        base.iter().map(|(k, _)| k.clone()).collect(),
+    ));
+    BASE_ENVIRON.with(|b| *b.borrow_mut() = Some(base));
+    MIRROR_ENV.with(|m| m.borrow_mut().clear());
+    Ok(())
+}
+
+/// Make `os.environ` hold exactly `want`.
+fn write_os_environ(py: Python, want: &HashMap<String, String>) -> PyResult<()> {
+    let environ = py.import("os")?.getattr("environ")?;
+    let mut have = HashMap::new();
+    for item in environ.call_method0("items")?.try_iter()? {
+        let (k, v) = item?.extract::<(String, String)>()?;
+        have.insert(k, v);
+    }
+    for k in have.keys() {
+        if !want.contains_key(k) {
+            environ.del_item(k)?;
+        }
+    }
+    for (k, v) in want {
+        if have.get(k) != Some(v) {
+            environ.set_item(k, v)?;
+        }
+    }
+    Ok(())
+}
+
+/// Keep `os.environ` and the launch context's environment one environment
+/// (#0092). Under `launch` they are the same object: `SetEnvironmentVariable`
+/// and friends write `os.environ`, and a launch file's own
+/// `os.environ[...] = ...` is part of the environment its later processes
+/// start with. Run before each entity executes and before a file's own code.
+///
+/// First, what Python wrote to `os.environ` since the last call (anything
+/// that differs from what this function left) is recorded in the context, in
+/// the scope in effect. Then every set and unset the context has, scoped as
+/// it scopes them, is written to `os.environ`; a variable whose scope was
+/// popped goes back to what the launch started with.
+pub(crate) fn sync_os_environ(py: Python) -> PyResult<()> {
+    let Some(base) = BASE_ENVIRON.with(|b| b.borrow().clone()) else {
+        return Ok(());
+    };
+    let base: HashMap<String, String> = base.into_iter().collect();
+    let environ = py.import("os")?.getattr("environ")?;
+    let mut have: HashMap<String, String> = HashMap::new();
+    for item in environ.call_method0("items")?.try_iter()? {
+        let (k, v) = item?.extract::<(String, String)>()?;
+        have.insert(k, v);
+    }
+    let mut mirror = MIRROR_ENV.with(|m| m.borrow().clone());
+    let expected = |k: &str| -> Option<String> {
+        match mirror.get(k) {
+            Some(v) => v.clone(),
+            None => base.get(k).cloned(),
+        }
+    };
+    let mut keys: std::collections::HashSet<String> = have.keys().cloned().collect();
+    keys.extend(base.keys().cloned());
+    keys.extend(mirror.keys().cloned());
+    let written: Vec<(String, Option<String>)> = keys
+        .into_iter()
+        .filter_map(|k| {
+            let now = have.get(&k).cloned();
+            (now != expected(&k)).then_some((k, now))
+        })
+        .collect();
+    if !written.is_empty() {
+        with_launch_context(|ctx| {
+            for (k, v) in &written {
+                match v {
+                    Some(v) => ctx.set_environment_variable(k.clone(), v.clone()),
+                    None => ctx.unset_environment_variable(k),
+                }
+            }
+        });
+    }
+    let overlay = with_launch_context(|ctx| ctx.environment_overlay());
+    let mut touched: std::collections::HashSet<String> = mirror.keys().cloned().collect();
+    touched.extend(overlay.keys().cloned());
+    for k in touched {
+        let want = match overlay.get(&k) {
+            Some(v) => v.clone(),
+            None => base.get(&k).cloned(),
+        };
+        let now = have.get(&k).cloned();
+        if now != want {
+            match &want {
+                Some(v) => environ.set_item(&k, v)?,
+                None => environ.del_item(&k)?,
+            }
+        }
+        mirror.insert(k, want);
+    }
+    MIRROR_ENV.with(|m| *m.borrow_mut() = mirror);
+    Ok(())
+}
+
+fn restore_os_environ(py: Python) -> PyResult<()> {
+    play_launch_parser::actions::process::set_launcher_environment(None);
+    let Some(base) = BASE_ENVIRON.with(|b| b.borrow_mut().take()) else {
+        return Ok(());
+    };
+    write_os_environ(py, &base.into_iter().collect())
 }
 
 /// The start delay the walk is under: the sum of the enclosing timers.
@@ -152,6 +297,7 @@ pub(crate) fn claim_execution(obj: &Bound<'_, PyAny>, what: &str) -> bool {
             return Some(prev.clone());
         }
         fr.executed.insert(id, (now, what.to_string()));
+        fr.keep_alive.push(obj.clone().unbind());
         None
     });
     let Some((then, _)) = earlier else {
@@ -289,6 +435,7 @@ fn execute_process(entity: &Bound<'_, PyAny>, f: impl FnOnce() -> PyResult<()>) 
             return false;
         };
         fr.process_captures.insert(id, (fr.epoch, before, after));
+        fr.keep_alive.push(entity.clone().unbind());
         fr.exit_shutdown_targets.remove(&id)
     });
     if targeted {
@@ -310,6 +457,7 @@ pub(crate) fn shutdown_on_exit_of(target: &Bound<'_, PyAny>) {
             Some(&(epoch, before, after)) => Some(Some((epoch == fr.epoch, before, after))),
             None => {
                 fr.exit_shutdown_targets.insert(id);
+                fr.keep_alive.push(target.clone().unbind());
                 Some(None)
             }
         }
@@ -454,6 +602,7 @@ pub(crate) fn visit_entity(py: Python, entity: &Bound<'_, PyAny>) -> PyResult<()
     if conditional {
         CONDITIONAL_DEPTH.with(|d| d.set(d.get() + 1));
     }
+    sync_os_environ(py)?;
     let result = execute_entity(py, entity);
     if conditional {
         CONDITIONAL_DEPTH.with(|d| d.set(d.get() - 1));

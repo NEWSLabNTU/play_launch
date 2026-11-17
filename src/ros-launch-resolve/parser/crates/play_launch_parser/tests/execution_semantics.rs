@@ -341,6 +341,32 @@ fn an_environment_variable_performs_from_an_opaque_function() {
     assert_eq!(fqns(&resolve("env_perform_repro")), ["/agnocast_0"]);
 }
 
+/// Issue #0092: launch's environment actions write `os.environ`, so a
+/// `.launch.py` reads at its top level what an including XML file's
+/// `<set_env>` set, and an `OpaqueFunction` reads what a
+/// `SetEnvironmentVariable` before it set, scoped by a `GroupAction`. A
+/// launch file's own `os.environ` write stays. Stock Humble starts exactly
+/// these four (`tests/stock_parity/cases/env_os_environ`, which also compares
+/// each node's `env` and `env_unset`).
+///
+/// The fixture's three `OpaqueFunction`s each build a fresh `Node`: before
+/// the walk held the actions it executed, Python reused a dropped one's
+/// address and the next node was discarded as "executed more than once".
+#[test]
+fn environment_actions_write_os_environ() {
+    let _guard = python_test_guard();
+    assert_eq!(
+        fqns(&resolve("env_os_environ")),
+        ["/a1_7_home_d", "/a2_8_nohome_d", "/a3_7_home_d", "/top_x"]
+    );
+    // The parser runs in play_launch's own process: nothing a launch file
+    // set stays there.
+    for name in ["PL_XML", "PL_SET", "PL_DIRECT"] {
+        assert!(std::env::var_os(name).is_none(), "{name} leaked");
+    }
+    assert!(std::env::var_os("HOME").is_some(), "HOME not restored");
+}
+
 /// Issue #0086: every mock substitution performs, through
 /// `context.perform_substitution` and `launch.utilities.perform_substitutions`,
 /// and `DeclareLaunchArgument(default_value=EnvironmentVariable(...))` (Autoware

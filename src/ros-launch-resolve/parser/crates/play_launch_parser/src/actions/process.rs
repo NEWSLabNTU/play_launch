@@ -100,13 +100,35 @@ pub fn resolve_spawn<'a>(
         env_unset: context
             .environment_unset()
             .into_iter()
-            .filter(|k| !own.contains(k.as_str()) && std::env::var_os(k).is_some())
+            .filter(|k| !own.contains(k.as_str()) && launcher_has(k))
             .collect(),
         launch_prefix: resolve_prefix(prefix, program, context)?,
         cwd: cwd
             .map(|subs| resolve_substitutions(subs, context))
             .transpose()?,
     })
+}
+
+thread_local! {
+    /// The launcher's environment as the launch started, while a walk
+    /// rewrites the process's own (#0092): the Python frontend keeps
+    /// `os.environ` in step with the launch's environment actions, so once an
+    /// `UnsetEnvironmentVariable` has run, `std::env` no longer has the name.
+    static LAUNCHER_ENV: std::cell::RefCell<Option<std::collections::HashSet<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Set (or, with `None`, clear) the names the launcher's environment had
+/// when the launch started; see [`LAUNCHER_ENV`].
+pub fn set_launcher_environment(names: Option<std::collections::HashSet<String>>) {
+    LAUNCHER_ENV.with(|e| *e.borrow_mut() = names);
+}
+
+/// Whether the launcher's environment, as the launch started, has `name`.
+fn launcher_has(name: &str) -> bool {
+    LAUNCHER_ENV
+        .with(|e| e.borrow().as_ref().map(|names| names.contains(name)))
+        .unwrap_or_else(|| std::env::var_os(name).is_some())
 }
 
 /// [`resolve_spawn`] for a frontend that has already resolved its values
