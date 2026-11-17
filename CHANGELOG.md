@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.39.0 - 2026-11-18
 
 - **Fixed (parser, #0095):** Autoware 2.1.0's `<autoware_node>` launch
   action is supported by the default parser, in XML, YAML and a
