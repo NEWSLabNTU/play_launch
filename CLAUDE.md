@@ -712,6 +712,27 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-11-17**: **`<autoware_node>`, and an unknown tag is an error**
+  (#0095). Autoware 2.1.0's launch action (`autoware_agnocast_wrapper`) is
+  executed as upstream's `AutowareNode.execute` does
+  (`actions/autoware_node.rs`), deciding a component or a process and then
+  handing a `LoadComposableNodeAction` or a `NodeAction` to the paths
+  `<load_composable_node>` and `<node>` already take. In a `.launch.py`,
+  pyexec runs any `launch.Action` subclass's own `execute(context)` and
+  walks what it returns (`visit.rs`), so the upstream class runs on the
+  stand-ins. Three things a later change must keep: the Agnocast switch and
+  the plugin resource are read through the context
+  (`resolve_environment_variable`), since on Humble `<set_env>` writes the
+  `os.environ` upstream reads; a tag outside the dispatched set and outside
+  `traverser::delay::STOCK_FRONTEND_ACTIONS` is refused
+  (`Unrecognized entity of the type`), while a stock action the parser does
+  not implement stays dropped-and-recorded for `check`, so a new stock
+  action belongs in that list, not in the refusal; and the stock-parity
+  `awnode*` cases need the extension copy under the parser crate's
+  `tests/fixtures/autoware_node/python` (with its `dist-info` entry point,
+  which is how stock's XML frontend finds the tag), reached through each
+  case's `ENV` file.
+
 - **2026-11-17**: **How a launch ends matches `ros2 launch`** (#0084,
   #0090; rlm `NodeInstance::{sigterm_timeout, sigkill_timeout,
   shutdown_on_exit_codes}`, pyexec C ABI 14, Python dump format 4).

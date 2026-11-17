@@ -56,6 +56,8 @@ plus whatever it includes. It can also contain:
 | `ARGS` | Launch arguments, one line: `name:=value ...` |
 | `EXPECTED_DIFFS` | Known differences, one per line, prefix-matched against the `compare.py` output. Lines starting with `#` say why. |
 | `EXPECT_ERROR` | Both sides must refuse the file |
+| `ENV` | Environment for both sides, one `NAME=VALUE` per line, shell-expanded with `$CASE` (the case directory) and `$REPO_ROOT` set. The `awnode*` cases use it to make a launch extension importable (#0095). |
+| `PYTHON_PARITY` | Also resolve with `--parser python` and require the Rust and Python models to match (`scripts/compare_models.py`) |
 
 These differences are known, and are listed in their cases:
 

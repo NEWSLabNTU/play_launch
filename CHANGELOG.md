@@ -6,6 +6,25 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Fixed (parser, #0095):** Autoware 2.1.0's `<autoware_node>` launch
+  action is supported by the default parser, in XML, YAML and a
+  `.launch.py` that imports `AutowareNode`. It was skipped with
+  `WARN Unsupported action type: autoware_node`, so its nodes were missing
+  from the model (three in the golf cart's perception launch). As upstream:
+  with `target` it is a component loaded into that container, its class from
+  the `autoware_node_plugins` ament resource; without, a process; and a node
+  built with Agnocast runs on it as a process when `use_agnocast` or
+  `ENABLE_AGNOCAST=1` enables it and `mode` is not `rclcpp`.
+
+- **Changed (parser):** a launch file tag that is no ROS 2 launch action is
+  an error, `Unrecognized entity of the type: <tag>`, as in `ros2 launch`.
+  It was dropped with a warning, with everything it would have started. A
+  launch extension's action other than `<autoware_node>` therefore needs
+  `--parser python`. A ROS 2 action the parser does not implement, such as
+  `<log>`, is still dropped with a warning, and `check` still refuses it.
+
 ## 0.38.0 - 2026-11-17
 
 - **Fixed (parser):** a missing parameter file under `allow_substs="true"`

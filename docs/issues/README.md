@@ -17,10 +17,6 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0095** -- the Rust parser skips Autoware 2.1.0's `<autoware_node>`
-(`autoware_agnocast_wrapper`) with a WARN, so the nodes it declares, three in
-golf cart perception, are missing from the model. See `0095-*`.
-
 **#0094** -- three integration tests failed only when the whole suite ran.
 Two are fixed (a report-channel race, a CPU-bound timeout); the interception
 chains test, which once saw no events at all in 90 s, now keeps the
@@ -31,6 +27,13 @@ launcher's log for the next occurrence. See `0094-*`.
 frontmatter disagree.
 
 ## Resolved
+
+**#0095** -- the Rust parser skipped Autoware 2.1.0's `<autoware_node>`
+with a WARN, losing its nodes (three in golf cart perception). It is now
+executed as upstream's action does, a component with `target` or a process
+with the Agnocast transport environment, in XML, YAML and Python, checked
+against stock `ros2 launch` running the real extension. A tag that is no
+ROS 2 action is now refused, as launch refuses it. See `archived/0095-*`.
 
 **#0090** -- a conditional `OnProcessExit` handler (an `on_exit` function,
 e.g. shut down on exit code 2) was ignored, so a respawning node looped where
