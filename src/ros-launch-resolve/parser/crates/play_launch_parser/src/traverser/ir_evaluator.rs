@@ -138,7 +138,7 @@ impl LaunchTraverser {
             ActionKind::SpawnNode { .. } => {
                 let node_action = ir_to_node_action(&action.kind);
                 let record = CommandGenerator::generate_node_record(&node_action, &self.context)
-                    .map_err(|e| ParseError::IoError(std::io::Error::other(e.to_string())))?;
+                    .map_err(ParseError::from)?;
                 self.records.push(record);
             }
 

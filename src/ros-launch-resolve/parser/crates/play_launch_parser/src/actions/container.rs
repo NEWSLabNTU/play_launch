@@ -553,8 +553,10 @@ impl ComposableNodeAction {
                         if !Path::new(&from_resolved).is_file() {
                             return Err(ParseError::ParamFileNotFound {
                                 file: from_resolved,
+                                kind: "composable node",
                                 node: resolve_substitutions(&name, context)
                                     .unwrap_or_else(|_| name_str.clone()),
+                                why: "a LoadNode request carries the file's values",
                             });
                         }
                         if from_resolved.ends_with(".yaml") || from_resolved.ends_with(".yml") {

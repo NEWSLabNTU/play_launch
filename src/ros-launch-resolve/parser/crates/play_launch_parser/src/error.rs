@@ -81,10 +81,17 @@ pub enum ParseError {
     /// `ros2 launch` fails here with `FileNotFoundError`; a plain node's
     /// missing file is only a warning there, and here.
     #[error(
-        "Parameter file not found: {file} (composable node '{node}'). \
-         ros2 launch fails on it too: a LoadNode request carries the file's values"
+        "Parameter file not found: {file} ({kind} '{node}'). ros2 launch fails on it too: {why}"
     )]
-    ParamFileNotFound { file: String, node: String },
+    ParamFileNotFound {
+        file: String,
+        /// `composable node` or `node`.
+        kind: &'static str,
+        node: String,
+        /// Why launch opens this file (and so fails), where a plain node's
+        /// missing file is only a warning.
+        why: &'static str,
+    },
 
     #[error(
         "Maximum include depth ({max}) exceeded at '{file}'. This may indicate a non-circular but excessively deep include chain."
@@ -156,6 +163,23 @@ pub enum SubstitutionError {
     CommandFailed(String),
 }
 
+impl From<GenerationError> for ParseError {
+    fn from(e: GenerationError) -> Self {
+        match e {
+            GenerationError::ParamFileNotFound { file, node } => ParseError::ParamFileNotFound {
+                file,
+                kind: "node",
+                node,
+                why: "`allow_substs=\"true\"` opens the file to substitute in it",
+            },
+            // Its message, once: the blanket `IoError(io::Error::other(e
+            // .to_string()))` read `IO error: IO error: ...`.
+            GenerationError::IoError(msg) => ParseError::IoError(std::io::Error::other(msg)),
+            other => ParseError::IoError(std::io::Error::other(other.to_string())),
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum GenerationError {
     #[error("Substitution error: {0}")]
@@ -169,6 +193,10 @@ pub enum GenerationError {
 
     #[error("IO error: {0}")]
     IoError(String),
+
+    /// A parameter file launch opens (`allow_substs="true"`) does not exist.
+    #[error("Parameter file not found: {file} (node '{node}')")]
+    ParamFileNotFound { file: String, node: String },
 }
 
 impl ParseError {

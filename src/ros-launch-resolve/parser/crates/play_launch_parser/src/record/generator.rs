@@ -358,7 +358,16 @@ impl CommandGenerator {
                             node_param_sources
                                 .push(crate::record::types::ParamSource::Inline { name, value });
                         }
-                    } else if !Path::new(&path).is_file() && *allow_substs != Some(true) {
+                    } else if !Path::new(&path).is_file() && *allow_substs == Some(true) {
+                        return Err(GenerationError::ParamFileNotFound {
+                            file: path,
+                            node: node
+                                .name
+                                .as_ref()
+                                .and_then(|n| resolve_substitutions(n, context).ok())
+                                .unwrap_or_else(|| executable.clone()),
+                        });
+                    } else if !Path::new(&path).is_file() {
                         // As launch_ros's `Node`: without `allow_substs` a
                         // parameter file is passed by path, and one that is not
                         // a file is warned about and left out (#0089). With

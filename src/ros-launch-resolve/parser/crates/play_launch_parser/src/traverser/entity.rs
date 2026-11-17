@@ -92,7 +92,7 @@ impl LaunchTraverser {
                 // XML nodes use CommandGenerator for complete parameter file loading
                 let node = NodeAction::from_entity(entity)?;
                 let mut record = CommandGenerator::generate_node_record(&node, &self.context)
-                    .map_err(|e| ParseError::IoError(std::io::Error::other(e.to_string())))?;
+                    .map_err(ParseError::from)?;
                 record.scope = Some(self.current_scope_id);
                 self.records.push(record);
             }

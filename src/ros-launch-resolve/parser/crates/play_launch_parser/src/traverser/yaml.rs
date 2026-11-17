@@ -514,7 +514,7 @@ impl LaunchTraverser {
         };
 
         let record = CommandGenerator::generate_node_record(&node, &self.context)
-            .map_err(|e| ParseError::IoError(std::io::Error::other(e.to_string())))?;
+            .map_err(ParseError::from)?;
         self.records.push(record);
         Ok(())
     }

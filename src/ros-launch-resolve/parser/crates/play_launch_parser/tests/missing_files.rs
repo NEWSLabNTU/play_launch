@@ -108,8 +108,14 @@ fn a_missing_param_file_with_allow_substs_is_an_error() {
 </launch>
 "#,
     );
-    let msg = parse_launch_file(&root, HashMap::new())
-        .unwrap_err()
-        .to_string();
-    assert!(msg.contains("/nonexistent/params.yaml"), "{msg}");
+    let err = parse_launch_file(&root, HashMap::new()).unwrap_err();
+    let msg = err.to_string();
+    // Named once, with the node, and judged a launch-file defect so the
+    // resolver gives no `--parser python` hint (golf cart, after 0.37.0).
+    assert!(err.is_missing_file(), "{msg}");
+    assert_eq!(
+        msg,
+        "Parameter file not found: /nonexistent/params.yaml (node 't'). ros2 launch fails on \
+         it too: `allow_substs=\"true\"` opens the file to substitute in it"
+    );
 }

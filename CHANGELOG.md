@@ -8,6 +8,12 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fixed (parser):** a missing parameter file under `allow_substs="true"`
+  is reported as `Parameter file not found: <path> (node '<name>')`, without
+  the `--parser python` hint, as #0088 does for includes. It read `IO error:
+  IO error: Failed to load and resolve parameter file ...`. Reported by the
+  golf cart after 0.37.0.
+
 - **Fixed (#0082):** under `--container-mode observable` (the default), a
   `component_container_isolated` keeps stock's executor model: each
   component has an executor and a thread of its own, multi-threaded with
