@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.40.0 - 2026-11-18
 
 - **Changed (#0098):** `diagnostics.csv` records one row when a diagnostic
   first appears and each time its level changes, without key/value rows.
