@@ -2,7 +2,7 @@ use super::{
     diagnostic_data::{DiagnosticLevel, DiagnosticRegistry, DiagnosticStatus},
     storage::DiagnosticCsvWriter,
 };
-use crate::cli::config::DiagnosticsSettings;
+use crate::cli::config::{DiagnosticsRecord, DiagnosticsSettings};
 use eyre::{Result, WrapErr};
 use std::{
     collections::HashMap,
@@ -32,8 +32,18 @@ pub async fn run_diagnostic_task(
     );
 
     // Create CSV writer
-    let csv_writer =
-        DiagnosticCsvWriter::new(&log_dir).wrap_err("Failed to create diagnostic CSV writer")?;
+    // #0098: `diagnostics.csv` was 88-97% of an Autoware run (about 0.5 GB
+    // an hour, a row per key/value of every status every 100 ms) and nobody
+    // reading those runs ever opened it. By default it now records level
+    // changes only; the registry below is fed the same either way.
+    let record = config.record;
+    let csv_writer = match record {
+        DiagnosticsRecord::Off => None,
+        _ => Some(
+            DiagnosticCsvWriter::new(&log_dir, record == DiagnosticsRecord::All)
+                .wrap_err("Failed to create diagnostic CSV writer")?,
+        ),
+    };
 
     // Create channel for receiving diagnostic messages from ROS callback
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -158,8 +168,18 @@ pub async fn run_diagnostic_task(
                         // Update registry
                         registry.update(diagnostic_status.clone());
 
-                        // Write to CSV (buffered; flushed on the tick below)
-                        if let Err(e) = csv_writer.write_diagnostic(&diagnostic_status) {
+                        // Write to CSV (buffered; flushed on the tick below).
+                        // `changes` keeps only a first sighting or a level
+                        // transition: the rows a reader of a run looks for.
+                        let wanted = match record {
+                            DiagnosticsRecord::All => true,
+                            DiagnosticsRecord::Changes => level_changed,
+                            DiagnosticsRecord::Off => false,
+                        };
+                        if wanted
+                            && let Some(w) = &csv_writer
+                            && let Err(e) = w.write_diagnostic(&diagnostic_status)
+                        {
                             error!("Failed to write diagnostic to CSV: {:#}", e);
                         }
 
@@ -177,7 +197,7 @@ pub async fn run_diagnostic_task(
                 }
             }
             _ = flush_tick.tick() => {
-                if let Err(e) = csv_writer.flush() {
+                if let Some(Err(e)) = csv_writer.as_ref().map(DiagnosticCsvWriter::flush) {
                     error!("Failed to flush diagnostics CSV: {:#}", e);
                 }
             }
@@ -190,7 +210,7 @@ pub async fn run_diagnostic_task(
         }
     }
 
-    if let Err(e) = csv_writer.flush() {
+    if let Some(Err(e)) = csv_writer.as_ref().map(DiagnosticCsvWriter::flush) {
         error!("Failed to flush diagnostics CSV: {:#}", e);
     }
     info!("Diagnostic monitoring task stopped");

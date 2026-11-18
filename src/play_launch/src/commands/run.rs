@@ -295,6 +295,30 @@ async fn run_direct(
 
     // Create temporary log directory
     info!("Creating log directories...");
+    // #0098: opt-in retention of earlier runs, before this one is created.
+    let pruned = crate::util::play_log::prune_runs(
+        &common.log_dir,
+        runtime_config.play_log.keep_runs,
+        runtime_config.play_log.max_total_mb,
+    );
+    if !pruned.is_empty() {
+        info!(
+            "play_log: removed {} earlier run(s) (play_log.keep_runs / max_total_mb), oldest {}",
+            pruned.len(),
+            pruned[0].display()
+        );
+    }
+    // #0098: a large log directory is pointed out, off the startup path
+    // (it walks every run).
+    {
+        let base = common.log_dir.clone();
+        let remind_mb = runtime_config.play_log.remind_mb;
+        std::thread::spawn(move || {
+            if let Some(m) = crate::util::play_log::reminder(&base, remind_mb) {
+                info!("{m}");
+            }
+        });
+    }
     let log_dir = create_log_dir(&common.log_dir)?;
     info!("Log directory created: {}", log_dir.display());
     // Issue #0023: the launcher's own log joins the bundle (see `up::play`).

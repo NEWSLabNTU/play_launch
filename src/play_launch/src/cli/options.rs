@@ -216,6 +216,66 @@ pub enum Command {
         play_launch contract eject rt_demo bringup.launch.xml --into ~/.config/play_launch/contracts\n  \
         play_launch contract capture play_log/latest --model system_model.yaml")]
     Contract(ContractArgs),
+
+    /// List the runs under a log directory and remove old ones, wholly or
+    /// by kind of file (#0098).
+    Log(LogArgs),
+}
+
+/// Arguments for `play_launch log`
+#[derive(Args)]
+pub struct LogArgs {
+    #[command(subcommand)]
+    pub subcommand: LogSubcommand,
+}
+
+#[derive(Subcommand)]
+pub enum LogSubcommand {
+    /// One line per run: start time, size, and the size of each kind of
+    /// file (diagnostics, metrics, events, interception, node-logs,
+    /// launcher-log, params, other). Oldest first.
+    List(LogListArgs),
+
+    /// Remove old runs, or only some kinds of file from them. Prints what it
+    /// would remove and removes nothing unless `--yes` is given. A run a
+    /// play_launch process is still writing is never touched.
+    Prune(LogPruneArgs),
+}
+
+#[derive(Args)]
+pub struct LogListArgs {
+    /// The log directory holding the runs.
+    #[arg(long, value_name = "PATH", default_value = "play_log")]
+    pub log_dir: PathBuf,
+}
+
+#[derive(Args)]
+pub struct LogPruneArgs {
+    /// The log directory holding the runs.
+    #[arg(long, value_name = "PATH", default_value = "play_log")]
+    pub log_dir: PathBuf,
+
+    /// Select runs that started before this: a date (`2026-11-01`), a run
+    /// name (`2026-11-01_08-30-00`), or an age (`30m`, `12h`, `7d`, `2w`).
+    #[arg(long, value_name = "WHEN")]
+    pub before: Option<String>,
+
+    /// Select all but the newest N runs.
+    #[arg(long, value_name = "N")]
+    pub keep: Option<usize>,
+
+    /// Select the oldest runs until the rest fit in this many megabytes.
+    #[arg(long, value_name = "MB")]
+    pub max_total_mb: Option<u64>,
+
+    /// Remove only these kinds of file from the selected runs, keeping the
+    /// runs. Repeat for several. `interception` includes `events`.
+    #[arg(long = "class", value_name = "CLASS")]
+    pub classes: Vec<crate::util::play_log::ItemClass>,
+
+    /// Remove what was selected. Without it, only print it.
+    #[arg(long, short = 'y')]
+    pub yes: bool,
 }
 
 /// Arguments for `play_launch contract`

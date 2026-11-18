@@ -221,9 +221,11 @@ play_launch up <model.yaml>         # Spawn from a resolved SystemModel (was `re
 play_launch plot                    # Analysis
 ```
 
-**Verb surface (0.9.0):** `play_launch` has twelve verbs — `launch`, `run`,
+**Verb surface (0.9.0):** `play_launch` has thirteen verbs — `launch`, `run`,
 `up`, `resolve`, `dump`, `check`, `plot`, `contract`, `context`, `setcap`,
-`verify`, `measure` (Phase 58 W2). RFC-0060 W3 briefly moved `resolve`/`dump`/`check`/`plot`/
+`verify`, `measure` (Phase 58 W2), `log` (#0098: `list` and `prune` over the
+runs in a log directory; pruning removes nothing without `--yes` and never
+touches a run whose `run_info.json` names a live play_launch). RFC-0060 W3 briefly moved `resolve`/`dump`/`check`/`plot`/
 `contract` off it onto `ros-launch-resolve`; that was reverted (Phase 56
 amendment, D2/D5) because it left NO `play_launch` verb able to write the
 `system_model.yaml` that `up` requires, and pointed users at a binary they
@@ -520,6 +522,13 @@ play_log/<timestamp>/
                     # + out.N, err.N, pid.N, status.N: the earlier processes of a
                     #   respawned member, N = 1, 2, ... in start order (#0075)
 ```
+
+**`diagnostics.csv` records level changes only by default** (#0098,
+`diagnostics.record: changes|all|off`). Recording every status with a row
+per key/value was 88-97% of an Autoware run, about 0.5 GB an hour, and the
+teams reading those runs never opened it. The registry the web UI and
+Health read is fed the same in every mode, so do not route either through
+the file.
 
 **A respawn keeps the dead process's files** (#0075,
 `execution::context::rotate_previous_incarnation`). Every spawn goes through

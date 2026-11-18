@@ -230,6 +230,14 @@ fn dispatch(opts: &Options) -> eyre::Result<()> {
                 play_launch::commands::handle_contract_capture(capture)?;
             }
         },
+        play_launch::cli::options::Command::Log(args) => match &args.subcommand {
+            play_launch::cli::options::LogSubcommand::List(a) => {
+                play_launch::commands::log::handle_list(a)?;
+            }
+            play_launch::cli::options::LogSubcommand::Prune(a) => {
+                play_launch::commands::log::handle_prune(a)?;
+            }
+        },
     }
 
     Ok(())

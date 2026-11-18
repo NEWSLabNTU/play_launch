@@ -8,6 +8,7 @@ pub mod context;
 pub mod contract;
 pub mod dump;
 pub mod launch;
+pub mod log;
 pub mod measure;
 pub mod migrate;
 pub mod migrated;

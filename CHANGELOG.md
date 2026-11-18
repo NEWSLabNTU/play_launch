@@ -8,6 +8,27 @@ allowance heavily.
 
 ## Unreleased
 
+- **Changed (#0098):** `diagnostics.csv` records one row when a diagnostic
+  first appears and each time its level changes, without key/value rows.
+  It used to record every status every 100 ms with a row per key/value:
+  88-97% of an Autoware run's log, about 0.5 GB an hour, and nobody who
+  reported their use ever opened it. `diagnostics.record: all` restores
+  the old record and `off` writes no file. The web UI and the Health page
+  are unchanged, since they read diagnostics from memory.
+
+- **Added (#0098):** `play_launch log list` shows each run under the log
+  directory with its size by kind of file. `play_launch log prune` removes
+  runs selected by `--before` (a date or an age such as `7d`), `--keep N` or
+  `--max-total-mb`. With `--class` it removes only some kinds of file
+  (`diagnostics`, `metrics`, `events`, `interception`, `node-logs`,
+  `launcher-log`, `params`) and keeps the runs. Nothing is removed without
+  `--yes`, and a run that a play_launch process is still writing is skipped.
+  When the log directory holds more than 5 GB, each run says so at startup
+  and names the command (`play_log.remind_mb`, 0 turns it off).
+  `play_log.keep_runs` and `play_log.max_total_mb` prune at the start of
+  each run. Both are unset by default, so nothing is removed automatically
+  unless you set one.
+
 - **Added (`check --against`, #0097, GitHub #25):** how close a recorded
   run came to each subscriber's silence bound. For every subscriber that
   states a QoS `deadline`, a QoS `lease_duration` or a `max_age`, the

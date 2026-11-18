@@ -58,6 +58,10 @@ name = "run_log"
 path = "tests/run_log.rs"
 
 [[test]]
+name = "log_prune"
+path = "tests/log_prune.rs"
+
+[[test]]
 name = "startup_shortfall"
 path = "tests/startup_shortfall.rs"
 

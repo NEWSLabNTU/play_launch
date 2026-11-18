@@ -37,6 +37,36 @@ pub struct RuntimeConfig {
     /// Per-container / per-node cgroup limits (phase-66 W2)
     #[serde(default)]
     pub cgroups: CgroupSettings,
+
+    /// What happens to earlier runs under the log directory
+    #[serde(default)]
+    pub play_log: PlayLogSettings,
+}
+
+/// Retention of earlier runs under `play_log/`. Off by default: nothing a
+/// user has is deleted unless they ask. Each limit prunes the OLDEST runs at
+/// the start of a new one, and a run whose play_launch is still alive is
+/// never deleted.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PlayLogSettings {
+    /// Keep at most this many runs, the new one included.
+    pub keep_runs: Option<usize>,
+    /// Keep the earlier runs under this many megabytes in total.
+    pub max_total_mb: Option<u64>,
+    /// At the start of a run, when the log directory holds more than this
+    /// many megabytes, say so and name `play_launch log prune`. 0 = never.
+    pub remind_mb: u64,
+}
+
+impl Default for PlayLogSettings {
+    fn default() -> Self {
+        Self {
+            keep_runs: None,
+            max_total_mb: None,
+            remind_mb: 5000,
+        }
+    }
 }
 
 /// Phase 66 W2 — limits applied to the per-node and per-container cgroups
@@ -369,6 +399,15 @@ pub struct DiagnosticsSettings {
     #[serde(default = "default_stale_after_ms")]
     pub stale_after_ms: u64,
 
+    /// What `diagnostics.csv` records (#0098). `changes`, the default, writes
+    /// one row when a diagnostic first appears and each time its LEVEL
+    /// changes, with no key/value rows. `all` writes every accepted status
+    /// with a row per key/value, which on Autoware is about 0.5 GB an hour.
+    /// `off` writes no file. The web UI and the Health page read diagnostics
+    /// from memory in every mode.
+    #[serde(default)]
+    pub record: DiagnosticsRecord,
+
     /// Store diagnostics per-node (future feature)
     #[serde(default = "default_true")]
     #[allow(dead_code)]
@@ -380,6 +419,16 @@ pub struct DiagnosticsSettings {
     pub store_system_wide: bool,
 }
 
+/// See [`DiagnosticsSettings::record`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiagnosticsRecord {
+    #[default]
+    Changes,
+    All,
+    Off,
+}
+
 impl Default for DiagnosticsSettings {
     fn default() -> Self {
         Self {
@@ -388,6 +437,7 @@ impl Default for DiagnosticsSettings {
             filter_hardware_ids: Vec::new(),
             debounce_ms: default_debounce_ms(),
             stale_after_ms: default_stale_after_ms(),
+            record: DiagnosticsRecord::default(),
             store_per_node: default_true(),
             store_system_wide: default_true(),
         }
@@ -910,6 +960,8 @@ pub struct ResolvedRuntimeConfig {
     pub startup: StartupSettings,
     /// Phase 66 W2 — per-container cgroup limits.
     pub cgroups: CgroupSettings,
+    /// Retention of earlier runs (#0098).
+    pub play_log: PlayLogSettings,
 }
 
 /// Resolved monitoring configuration
@@ -1038,6 +1090,7 @@ pub fn load_runtime_config(
         interception: config.interception,
         startup: config.startup,
         cgroups: config.cgroups,
+        play_log: config.play_log,
     })
 }
 

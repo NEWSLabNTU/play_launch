@@ -24,6 +24,13 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0098** -- `play_log` filled disks: `diagnostics.csv` was 88-97% of an
+Autoware run (about 0.5 GB an hour) and no run was ever removed. It now
+records level changes only by default (`diagnostics.record`), a large
+log directory is pointed out at startup, and `play_launch log list|prune`
+removes old runs by date, count, size or kind of file. See
+`archived/0098-*`.
+
 **#0097** -- `check --against` did not report how close a recorded run
 came to each subscriber's silence bound (`deadline`, `lease_duration`,
 `max_age`): largest and 99.9th percentile inter-arrival gap, and the margin.

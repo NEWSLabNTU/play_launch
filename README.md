@@ -238,9 +238,45 @@ play_log/<timestamp>/
 ├── load_node/<name>/
 │   └── out/err           # Per-composable-node logs (isolated mode)
 ├── system_stats.csv      # System-wide metrics
-├── diagnostics.csv       # Diagnostic messages (when enabled)
+├── diagnostics.csv       # Diagnostic level changes (see below)
 └── plot/                 # Generated visualizations
 ```
+
+### Disk usage
+
+A run's largest files are the processes' own `out`/`err`, which grow as fast
+as the nodes print. `diagnostics.csv` records one row when a diagnostic first
+appears and each time its level changes. `diagnostics.record: all` records
+every status with a row per key/value, which on Autoware is about 0.5 GB an
+hour; `off` writes no file. The web UI shows live diagnostics either way.
+
+Earlier runs are kept until you remove them. When the log directory holds
+more than 5 GB, each run says so at startup (`play_log.remind_mb` sets the
+threshold; 0 turns it off). To see and remove old runs:
+
+```bash
+play_launch log list                                    # each run's size, by kind of file
+play_launch log prune --before 7d                       # show what it would remove
+play_launch log prune --before 7d --yes                 # remove runs older than a week
+play_launch log prune --keep 20 --yes                   # keep the newest 20 runs
+play_launch log prune --before 2026-11-01 --class diagnostics --class events --yes
+```
+
+`--before` takes a date, a run name or an age (`12h`, `7d`, `2w`). With
+`--class`, only those kinds of file are removed and the runs stay: `diagnostics`,
+`metrics`, `events`, `interception`, `node-logs`, `launcher-log` and `params`.
+Nothing is removed without `--yes`.
+
+To have play_launch remove the oldest runs at the start of each run, set
+either limit in `--config`:
+
+```yaml
+play_log:
+  keep_runs: 20          # at most 20 runs, the new one included
+  max_total_mb: 10000    # earlier runs under 10 GB in total
+```
+
+A run that a play_launch process is still writing is never removed.
 
 ## Command Reference
 
@@ -256,6 +292,10 @@ play_launch up system_model.yaml            # or: play_launch up --model system_
 # Parser selection (Rust is default)
 play_launch launch <pkg> <file> --parser rust     # Default, fast
 play_launch launch <pkg> <file> --parser python   # Maximum compatibility
+
+# Old runs
+play_launch log list
+play_launch log prune --before 7d --yes
 
 # Container mode
 play_launch launch <pkg> <file> --container-mode observable  # Default
