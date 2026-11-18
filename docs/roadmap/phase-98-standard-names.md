@@ -1,5 +1,7 @@
 # Phase 98 - standard names: the vocabulary in the terms its readers know
 
+**Status (2026-11-18): complete.** N6's M1-M5 reached R+2 (refused, retired in `rule_names`, listed by `check-terms`), and N7 was done as phase 99.
+
 **Status (2026-11-05): in progress -- N0-N5 done (R = rlm v0.3.3 /
 play_launch 0.24.0, R+1 = rlm v0.3.6, R+2 = rlm v0.3.9 / play_launch
 0.26.0); N6: M6 done (`carried_hops` gone in 0.26.0), M1-M5 at R+1 (rlm

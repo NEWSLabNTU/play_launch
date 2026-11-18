@@ -351,7 +351,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     (#0042), P2 `links:`, P3 `measure` proposals, P4 `check --against`
     transport; P5 (a runtime link monitor) not adopted.
     [phase-97-links.md](./phase-97-links.md).
-  - **Phase 104** - planned (2026-11-13): the contract grammar revision, in
+  - **Phase 104** - S1-S3 done (rlm v0.3.15-v0.3.27, play_launch 0.32.0-0.36.0), S4 planned (2026-11-13): the contract grammar revision, in
     stages: removals (overdue aliases, `links.monitor`, `tolerance`, a
     deprecation registry), two meanings settled, one release of
     contract-key renames and relocations (`reaction`, `functions`, rates as
@@ -361,14 +361,14 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     play_launch (Linux) and nano-ros (RTOS) follow. Design: rlm
     `docs/design/grammar-revision/`.
     [phase-104-contract-grammar-revision.md](./phase-104-contract-grammar-revision.md).
-  - **Phase 103** - planned (2026-11-13): defects the grammar review found
+  - **Phase 103** - complete (D1-D9, rlm v0.3.15, play_launch 0.32.0; 2026-11-13): defects the grammar review found
     in shipped behaviour, fixed before the revision: a constant predicate
     never judged at run time (fail-unsafe), criticality not derived for
     hazards that enter a mode, three meanings of entering a mode and of an
     omitted `on:`, independence passing on an absent node, action routes,
     and message text.
     [phase-103-contract-review-defects.md](./phase-103-contract-review-defects.md).
-  - **Phase 102** - planned (2026-11-07): the contract safety model's
+  - **Phase 102** - complete (M0-M4 built, M5 evaluated, 2026-11-09): the contract safety model's
     build order across phases 100 and 101 (foundations: a Safe-ROS fixture
     and an interceptor field reader; one rlm release for all grammar; then
     runtime checks, explain and guides, nano-ros) and its evaluation:
@@ -376,28 +376,28 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     island and Autoware, timing against fault injection, runtime cost,
     author burden, and agreement with nano-ros.
     [phase-102-safety-model-build-and-evaluation.md](./phase-102-safety-model-build-and-evaluation.md).
-  - **Phase 101** - planned (2026-11-07): fault tolerance, when most of the
+  - **Phase 101** - complete (built in phase 102, 2026-11-09): fault tolerance, when most of the
     system is safety critical (rlm `docs/design/fault-tolerance.md`, design
     issue 59; twelve case studies). Core: `m` on a redundant group (MooN), one
     `independence:` form, `on_silence` on an external subscriber, three
     `on:` classes. Derived: restart credit from `respawn`, standby,
     fail-operational, freedom from interference.
     [phase-101-fault-tolerance.md](./phase-101-fault-tolerance.md).
-  - **Phase 100** - planned (2026-11-07): safety functions, from Safe-ROS
+  - **Phase 100** - complete (built in phase 102, 2026-11-09): safety functions, from Safe-ROS
     and seven use cases (rlm `docs/design/safety-functions.md`, design
     issue 58). One new key, `modes.<m>.commands`: a commanded topic is a
     final element, its one publisher the arbiter, the invariant held for
     the whole level; plus `hazards.<h>.requirement`. Use-case specifics
     are extensions.
     [phase-100-safety-functions.md](./phase-100-safety-functions.md).
-  - **Phase 99** - planned (2026-11-05): tier rename (phase 98 N7,
+  - **Phase 99** - complete (T0-T5, rlm v0.3.10-v0.3.12, play_launch 0.27.0-0.29.0): tier rename (phase 98 N7,
     decided: rename, own phase). `tier` (rlm `TierDef`/`ResolvedTier`,
     the model's `execution.tiers`, nano-ros's `system.toml` `[tiers.*]`)
     takes the standard word for the unit; options task (recommended),
     scheduling context, executor; T0 is the user's pick. Same R / R+1 / R+2
     schedule, model schema 5 at R+1; nano-ros follows in its own phase.
     [phase-99-tier-rename.md](./phase-99-tier-rename.md).
-  - **Phase 98** - in progress (2026-11-03; N0-N2 done, rlm v0.3.3): standard names (rlm
+  - **Phase 98** - complete (N0-N7; rlm v0.3.3-v0.3.12; N7 done as phase 99): standard names (rlm
     `docs/design/standard-names.md`, design issue 57). The vocabulary takes
     the standards' words: `severity` holding an ASIL becomes `integrity`;
     rung/ladder/floor/window/scope path become degradation level, degradation

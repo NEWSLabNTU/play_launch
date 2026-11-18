@@ -1,7 +1,7 @@
 # Phase 103 - defects the grammar review found
 
 **Status (2026-11-13): D1-D9 implemented** (rlm v0.3.15, play_launch
-Unreleased); D4 and D5 decided the same day (below). The review of the contract grammar (rlm
+0.32.0); D4 and D5 decided the same day (below). The review of the contract grammar (rlm
 `docs/design/grammar-revision/`, ten topics) found defects in what ships
 today. None needs a grammar change, and two are silent, one of them
 fail-unsafe, so they are fixed before the revision itself (phase 104).
