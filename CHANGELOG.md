@@ -8,6 +8,21 @@ allowance heavily.
 
 ## Unreleased
 
+- **Added (`check --against`, #0097, GitHub #25):** how close a recorded
+  run came to each subscriber's silence bound. For every subscriber that
+  states a QoS `deadline`, a QoS `lease_duration` or a `max_age`, the
+  report gives the largest gap between messages, the 99.9th percentile
+  gap, and the margin left under each bound. `silence-margin` warns when
+  less than `--silence-margin` percent (default 20) is left.
+  `silence-exceeded` warns when a gap is past its bound. `max_age` is
+  judged on each message's age from its publish. The run must be recorded
+  with `--record-events`.
+
+- **Fixed (`check --deny`):** `--deny` ran before the findings from a
+  recorded run (`--against`), from recovery and from the platform plan
+  were added, so it could not make any of them an error. It now runs after
+  every finding.
+
 - **Fixed (parser, #0096):** an untyped parameter value produced by a
   substitution, such as `$(command 'xacro ...')`, that YAML cannot read is
   an error, `Failed to convert '...' using yaml rules`, as in `ros2 launch`.

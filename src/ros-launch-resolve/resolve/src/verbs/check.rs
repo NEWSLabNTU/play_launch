@@ -83,6 +83,9 @@ pub struct CheckInputs {
     /// Phase 85 D6: a recorded run whose created endpoints are compared with
     /// the contracts' declared ones (`contract-vs-code`).
     pub against: Option<PathBuf>,
+    /// Issue #0097: the percent of a subscriber's silence bound a run must
+    /// leave at its worst before `--against` warns (`silence-margin`).
+    pub silence_margin: f64,
     /// Emit a derived artifact instead of running the checks. Today:
     /// `diagnostics-params` — `diagnostic_updater` parameters restated from
     /// the declared endpoint bounds (phase 71 W5).
@@ -239,7 +242,6 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     if inputs.strict {
         crate::ros::extensions::strict(&mut index);
     }
-    deny(&mut index, &inputs.deny);
     if inputs.update_lock {
         let written = crate::ros::extensions::write_locks(&index).map_err(|e| eyre::eyre!(e))?;
         for path in &written {
@@ -349,6 +351,16 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
             crate::say!("Links in {}: {sum}", run.display());
         }
         index.merge_diagnostics.extend(link_diags);
+        // Issue #0097: how close the run came to each silence bound.
+        let (silence_diags, silence_lines) =
+            crate::ros::silence_margins::check_against(&index, run, inputs.silence_margin);
+        if !silence_lines.is_empty() {
+            crate::say!("Silence bounds in {}:", run.display());
+            for l in &silence_lines {
+                crate::say!("  {l}");
+            }
+        }
+        index.merge_diagnostics.extend(silence_diags);
         let against = crate::ros::contract_vs_code::check_against(&index, run)?;
         crate::say!(
             "Compared with {}: {} endpoint(s) created{}, {} contract-vs-code finding(s)",
@@ -363,6 +375,12 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
         );
         index.merge_diagnostics.extend(against.diagnostics);
     }
+
+    // `--deny` grades every finding, so it runs after the last one is added
+    // (the platform plan's, recovery's, `--against`'s) and before
+    // `acknowledged:`. Run straight after loading, it missed every rule
+    // reported from a recorded run (#0097).
+    deny(&mut index, &inputs.deny);
 
     // Phase 100 F3: the findings added since loading name their hazard's
     // requirement too.

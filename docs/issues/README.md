@@ -19,11 +19,16 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 None.
 
-
 `just check-issue-index` fails if this section and the per-file `status:`
 frontmatter disagree.
 
 ## Resolved
+
+**#0097** -- `check --against` did not report how close a recorded run
+came to each subscriber's silence bound (`deadline`, `lease_duration`,
+`max_age`): largest and 99.9th percentile inter-arrival gap, and the margin.
+GitHub #25, L4 PL-11. Now reported, with `silence-margin` and
+`silence-exceeded` warnings. See `archived/0097-*`.
 
 **#0096** -- the default parser accepted an untyped parameter value from a
 substitution (`$(command 'xacro ...')`) that YAML cannot read, where

@@ -2328,6 +2328,44 @@ fn a_run_over_the_links_bound_fails_transport_exceeded() {
     );
 }
 
+/// Issue #0097 (GitHub #25): `check --against` reports how close a run came
+/// to each subscriber's silence bound. In `run_quiet` the gate goes quiet
+/// for 450 ms against the handler's 500 ms lease: 10% left, under the
+/// default 20%, so `silence-margin` warns and the check still passes; with
+/// `--silence-margin 5` it is quiet, and `--deny silence-margin` fails it.
+#[test]
+fn a_run_close_to_a_silence_bound_warns_silence_margin() {
+    let run = fixtures::repo_root().join("tests/fixtures/contract_takeover_named_link/run_quiet");
+    let run = run.to_str().unwrap();
+    let (code, out) = check_takeover("contract_takeover_named_link", &["--against", run]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains(
+            "/availability into /handler: 4 take(s), max gap 450.00ms (0.65s in), p99.9 gap \
+             450.00ms; qos.lease_duration 500.00ms, margin 50.00ms (10%)"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("warning[silence-margin]")
+            && out.contains("the run's worst gap 450.00ms leaves 50.00ms (10%)"),
+        "{out}"
+    );
+
+    let (code, out) = check_takeover(
+        "contract_takeover_named_link",
+        &["--against", run, "--silence-margin", "5"],
+    );
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("silence-margin]"), "{out}");
+
+    let (code, out) = check_takeover(
+        "contract_takeover_named_link",
+        &["--against", run, "--deny", "silence-margin"],
+    );
+    assert_ne!(code, 0, "{out}");
+}
+
 /// Phase 85 T1 (I1): the island's shape -- an availability publisher outside
 /// the tree, behind a link the detecting subscriber states as
 /// `max_transport: 57ms`, and a `call_mrm` that holds only the tick and the

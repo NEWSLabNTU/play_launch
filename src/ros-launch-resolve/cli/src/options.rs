@@ -715,6 +715,12 @@ pub struct CheckArgs {
     #[arg(long, value_name = "RUN_DIR")]
     pub against: Option<std::path::PathBuf>,
 
+    /// Issue #0097: with `--against`, warn (`silence-margin`) when a
+    /// subscriber's QoS `deadline`, QoS `lease_duration` or `max_age` had
+    /// less than this percent left at the run's worst gap or age.
+    #[arg(long, value_name = "PCT", default_value_t = 20.0)]
+    pub silence_margin: f64,
+
     /// Output format: terminal (default, with source excerpts) or json
     #[arg(long, default_value = "terminal")]
     pub format: String,

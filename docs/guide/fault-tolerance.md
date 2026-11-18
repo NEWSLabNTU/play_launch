@@ -118,6 +118,45 @@ restarts with its container, so its container's `respawn` is what counts.
 At run time `hazard-recovered` says whether the guard came back inside the
 FTTI or past it.
 
+### How close a run came to tripping a detector
+
+A silence bound that is too tight trips on a loaded system that has no
+fault. That is a false trip, and it starts the reaction anyway. Before you
+rely on a detector, check how close a real run came to its bound. Record
+the run with `--interception on --record-events`, then give it to
+`check --against`. For each subscriber whose contract states a QoS
+`deadline`, a QoS `lease_duration` or a `max_age`, it reports:
+
+- the largest gap between messages;
+- the 99.9th percentile gap;
+- each bound, and the margin the worst case left.
+
+```text
+$ play_launch check bringup.launch.xml --against play_log/<run>
+Silence bounds in play_log/<run>:
+  /availability into /handler: 4 take(s), max gap 450.00ms (0.65s in),
+  p99.9 gap 450.00ms; qos.lease_duration 500.00ms, margin 50.00ms (10%)
+warning[silence-margin]: /availability into /handler: the run's worst gap
+450.00ms leaves 50.00ms (10%) of its qos.lease_duration 500.00ms, under the
+20% asked for (`--silence-margin`)
+```
+
+`deadline` and `lease_duration` are judged on the gap. `max_age` is judged
+on the age a message reached before the next one arrived, measured from its
+publish. When the run did not record the publish, the gap is used instead,
+and the report says that the age is a lower bound.
+
+A gap past its bound is `silence-exceeded`: the detector would have
+tripped. `--silence-margin <PCT>` sets how much of each bound must be left
+(default 20). Both findings are warnings, because a run with an injected
+fault is meant to trip. On a run with no fault injected, add
+`--deny silence-exceeded --deny silence-margin` to make them errors.
+
+The gaps are measured in the subscriber's process. A composable node's
+messages are recorded under its container, so its own gaps are not
+measured, and the same goes for a subscriber on another host. Each case is
+reported as `silence-unmeasured`.
+
 ## 4. Communication faults
 
 `on:` names the fault classes a hazard is about. Besides `omission`,

@@ -27,5 +27,6 @@ pub mod rlm_lock;
 pub(crate) mod safety_function;
 pub mod sched_derive;
 pub mod sched_loader;
+pub mod silence_margins;
 pub mod supervision;
 pub mod value_rules;
