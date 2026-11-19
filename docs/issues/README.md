@@ -24,6 +24,13 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0100** -- under the Rust parser a launch file's own `OpaqueFunction`
+could not import `launch_ros.ros_adapters` (`get_ros_node`, to wait for a
+service), read `context.is_shutdown`, or call `ParameterFile.evaluate`
+(ceilbot's `nav2_composed.launch.py`). All three are stand-ins now: the
+node has no graph and a wait returns at once, and `evaluate` writes the
+substituted copy `launch_ros` writes. See `archived/0100-*`.
+
 **#0099** -- the Rust parser refused a substitution a launch extension
 defines (`@expose_substitution` under the `launch.frontend.launch_extension`
 entry points, e.g. ceilbot's `$(robot-value ...)`) with `Unknown

@@ -22,8 +22,10 @@ use pyo3::{prelude::*, types::PyDict};
 #[derive(Clone)]
 pub struct ParameterFile {
     param_file: Py<PyAny>,
-    #[allow(dead_code)] // For API compatibility
     allow_substs: bool,
+    /// What `evaluate` returned: `launch_ros` keeps it, so a second call is
+    /// the same file.
+    evaluated: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -38,7 +40,58 @@ impl ParameterFile {
         Ok(Self {
             param_file,
             allow_substs: allow_substs.unwrap_or(false),
+            evaluated: None,
         })
+    }
+
+    /// `ParameterFile.evaluate(context)`, as `launch_ros` does it: the file's
+    /// path, performed. With `allow_substs`, a temporary copy
+    /// (`launch_params_*`) with the `$(...)` in its text performed in the
+    /// walk's context, refused unless it is still YAML. A launch file may call
+    /// it itself and open the result (ceilbot's `nav2_composed.launch.py`,
+    /// #0100).
+    fn evaluate(&mut self, py: Python, _context: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        use crate::api::utils::SubstitutionFailure;
+        if let Some(path) = &self.evaluated {
+            return Ok(path.clone_ref(py));
+        }
+        let mut path = crate::api::utils::pyobject_to_string(py, &self.param_file)?;
+        if self.allow_substs {
+            use play_launch_parser::{
+                bridge::try_with_launch_context,
+                substitution::{parse_substitutions, resolve_substitutions},
+            };
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("{path}: {e}")))?;
+            let subs = parse_substitutions(&text)
+                .map_err(|e| SubstitutionFailure::new_err(format!("{path}: {e}")))?;
+            let parsed = try_with_launch_context(|ctx| resolve_substitutions(&subs, ctx))
+                .ok_or_else(|| SubstitutionFailure::new_err("no launch context"))?
+                .map_err(|e| SubstitutionFailure::new_err(format!("{path}: {e}")))?;
+            if serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&parsed).is_err() {
+                return Err(SubstitutionFailure::new_err(
+                    "The substituted parameter file is not a valid yaml file",
+                ));
+            }
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("mode", "w")?;
+            kwargs.set_item("prefix", "launch_params_")?;
+            kwargs.set_item("delete", false)?;
+            let file = py
+                .import("tempfile")?
+                .getattr("NamedTemporaryFile")?
+                .call((), Some(&kwargs))?;
+            file.call_method1("write", (parsed,))?;
+            file.call_method0("close")?;
+            path = file.getattr("name")?.extract::<String>()?;
+        }
+        let path = py
+            .import("pathlib")?
+            .getattr("Path")?
+            .call1((path,))?
+            .unbind();
+        self.evaluated = Some(path.clone_ref(py));
+        Ok(path)
     }
 
     fn __repr__(&self, py: Python) -> String {

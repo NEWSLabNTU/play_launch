@@ -225,6 +225,13 @@ impl LaunchContextView {
         Ok(d.into_any().unbind())
     }
 
+    /// `context.is_shutdown`: a walk models the launch coming up, which has
+    /// not been asked to shut down (a wait loop reads it, #0100).
+    #[getter]
+    fn is_shutdown(&self) -> bool {
+        false
+    }
+
     /// `context.locals`: nothing this frontend models lives there.
     #[getter]
     fn locals(&self, py: Python) -> PyResult<Py<PyAny>> {

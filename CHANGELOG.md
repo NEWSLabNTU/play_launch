@@ -19,6 +19,15 @@ allowance heavily.
   imported named. The Python half's C ABI is version 15, so a
   `libplay_launch_parser_pyexec.so` from an older release does not load.
 
+- **Fixed (#0100):** with the default parser, a launch file's own
+  `OpaqueFunction` can wait for a service through
+  `launch_ros.ros_adapters.get_ros_node(context)`, read
+  `context.is_shutdown`, and call `ParameterFile.evaluate(context)`. These
+  failed with `ModuleNotFoundError` or `AttributeError`. While a launch is
+  resolved nothing runs, so a service is found and a request answered at
+  once, and the wait returns. `evaluate` writes the parameter file with its
+  substitutions performed, as `launch_ros` does.
+
 ## 0.40.0 - 2026-11-18
 
 - **Changed (#0098):** `diagnostics.csv` records one row when a diagnostic

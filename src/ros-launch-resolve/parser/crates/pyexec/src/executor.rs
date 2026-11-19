@@ -53,6 +53,7 @@ our_mocks = {
     'launch.utilities.type_utils', 'launch.logging', 'launch.some_substitutions_type',
     'launch_ros', 'launch_ros.actions', 'launch_ros.descriptions',
     'launch_ros.substitutions', 'launch_ros.parameter_descriptions', 'launch_ros.utilities',
+    'launch_ros.ros_adapters',
     'launch_xml', 'launch_xml.launch_description_sources',
 }
 

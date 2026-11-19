@@ -511,6 +511,84 @@ def get_logger(name=None):
     launch_ros_subs.add("FindPackagePrefix", launch_ros_subs.getattr("FindPackage")?)?;
     launch_ros_subs.add_class::<substitutions::Parameter>()?;
 
+    // `launch_ros.ros_adapters.get_ros_node(context)`: the node `launch_ros`
+    // runs for actions that talk to the graph, as a launch file's own
+    // `OpaqueFunction` may (ceilbot's `nav2_composed.launch.py` waits for its
+    // container's `list_nodes`, #0100). A walk models the launch coming up,
+    // and has no graph: this node's clients find their service at once and
+    // every request is answered at once, so a wait returns where the running
+    // launch would have gone on. Nothing is sent anywhere.
+    let launch_ros_adapters = PyModule::new(py, "launch_ros.ros_adapters")?;
+    py.run(
+        cr#"
+import logging as _logging
+
+
+class _Future:
+    def done(self):
+        return True
+
+    def cancelled(self):
+        return False
+
+    def result(self):
+        return None
+
+    def exception(self):
+        return None
+
+    def add_done_callback(self, callback):
+        callback(self)
+
+    def cancel(self):
+        return False
+
+
+class _Client:
+    def __init__(self, srv_type, srv_name):
+        self.srv_type = srv_type
+        self.srv_name = srv_name
+
+    def wait_for_service(self, timeout_sec=None):
+        return True
+
+    def service_is_ready(self):
+        return True
+
+    def call_async(self, request):
+        return _Future()
+
+    def call(self, request, timeout_sec=None):
+        return None
+
+    def destroy(self):
+        return None
+
+
+class _Node:
+    def get_name(self):
+        return 'launch_ros'
+
+    def get_logger(self):
+        return _logging.getLogger('launch_ros')
+
+    def create_client(self, srv_type, srv_name, **kwargs):
+        return _Client(srv_type, srv_name)
+
+    def destroy_client(self, client):
+        return True
+
+
+_node = _Node()
+
+
+def get_ros_node(context):
+    return _node
+"#,
+        Some(&launch_ros_adapters.dict()),
+        None,
+    )?;
+
     // Create launch_ros.parameter_descriptions submodule
     let launch_ros_param_desc = PyModule::new(py, "launch_ros.parameter_descriptions")?;
     launch_ros_param_desc.add_class::<parameter_descriptions::ParameterFile>()?;
@@ -533,6 +611,7 @@ def get_logger(name=None):
     add_submodule_both_names(&launch_ros_mod, &launch_ros_subs)?;
     add_submodule_both_names(&launch_ros_mod, &launch_ros_param_desc)?;
     add_submodule_both_names(&launch_ros_mod, &launch_ros_utilities)?;
+    add_submodule_both_names(&launch_ros_mod, &launch_ros_adapters)?;
 
     // Also set as direct attributes for Python's attribute access
     launch_ros_mod.add("actions", &launch_ros_actions)?;
@@ -570,6 +649,7 @@ def get_logger(name=None):
         "launch_ros.substitutions",
         "launch_ros.parameter_descriptions",
         "launch_ros.utilities",
+        "launch_ros.ros_adapters",
         "launch_xml",
         "launch_xml.launch_description_sources",
         // Also remove internal modules
@@ -604,6 +684,7 @@ def get_logger(name=None):
     modules.set_item("launch_ros.substitutions", &launch_ros_subs)?;
     modules.set_item("launch_ros.parameter_descriptions", &launch_ros_param_desc)?;
     modules.set_item("launch_ros.utilities", &launch_ros_utilities)?;
+    modules.set_item("launch_ros.ros_adapters", &launch_ros_adapters)?;
 
     // Create and register launch.some_substitutions_type submodule
     let launch_some_subs_type = some_substitutions_type::register_module(py)?;
