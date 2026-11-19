@@ -1,0 +1,5 @@
+<!-- A substitution no launch extension exposes (#0099): refused, as launch
+     refuses it, naming the extension that could not be loaded. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="$(fixture-nope a)"/>
+</launch>

@@ -55,6 +55,26 @@ pub trait PythonBackend: Send + Sync {
 
     /// Evaluate a `$(eval …)` expression to its string result.
     fn eval_expr(&self, expr: &str) -> Result<String, String>;
+
+    /// Perform `$(name args…)` for a `name` that is none of `launch`'s own
+    /// substitutions: a launch extension's, which a module the
+    /// `launch.frontend.launch_extension` entry points name registers with
+    /// `@expose_substitution(name)` — `ceilbot_profiles`' `$(robot-value …)`
+    /// (#0099). `args` are its arguments, already performed; `state` is the
+    /// launch context it is performed in.
+    ///
+    /// `Err` says what went wrong, and is `Unknown substitution type: <name>`
+    /// when no extension exposes `name`. That is also the default, for a
+    /// backend that cannot load extensions.
+    fn perform_substitution(
+        &self,
+        name: &str,
+        args: &[String],
+        state: crate::exchange::ContextState,
+    ) -> Result<String, String> {
+        let _ = (args, state);
+        Err(format!("Unknown substitution type: {name}"))
+    }
 }
 
 /// What was wanted, so the message can say so.
@@ -64,6 +84,9 @@ pub enum PythonNeed {
     LaunchFile,
     /// A `$(eval …)` substitution — reachable from XML and YAML too.
     EvalSubstitution,
+    /// A substitution none of `launch`'s own, which only a launch
+    /// extension's Python can provide (#0099).
+    ExtensionSubstitution,
 }
 
 impl PythonNeed {
@@ -71,6 +94,10 @@ impl PythonNeed {
         match self {
             Self::LaunchFile => "a Python launch file",
             Self::EvalSubstitution => "a `$(eval …)` substitution",
+            Self::ExtensionSubstitution => {
+                "a substitution that is not one of `launch`'s own, which only a launch \
+                 extension can provide,"
+            }
         }
     }
 }
@@ -89,9 +116,10 @@ impl std::fmt::Display for PythonUnavailable {
             f,
             "no Python backend is loaded, and {} needs one: {}\n\
              \n\
-             ROS 2 defines `.launch.py` files and `$(eval …)` in terms of CPython, so \
-             these cannot be evaluated without an interpreter. XML and YAML launch files \
-             that use neither are unaffected and were parsed normally.",
+             ROS 2 defines `.launch.py` files and `$(eval …)` in terms of CPython, and a \
+             launch extension's substitutions are Python classes, so these cannot be \
+             evaluated without an interpreter. XML and YAML launch files that use none of \
+             them are unaffected and were parsed normally.",
             self.need.what(),
             self.subject,
         )?;
@@ -181,6 +209,20 @@ mod tests {
         assert!(s.contains("$(eval 1 + 1)"), "names the subject: {s}");
         // The reassurance matters as much as the error: a user whose launch
         // tree is pure XML should not think the whole parse failed.
+        assert!(s.contains("XML and YAML"), "says what still worked: {s}");
+    }
+
+    /// #0099: an XML file whose only Python is a launch extension's
+    /// substitution says which substitution, and that an extension is why.
+    #[test]
+    fn extension_need_names_the_substitution() {
+        let e = PythonUnavailable {
+            need: PythonNeed::ExtensionSubstitution,
+            subject: "$(robot-value …)".into(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("$(robot-value …)"), "names the subject: {s}");
+        assert!(s.contains("launch extension"), "says why: {s}");
         assert!(s.contains("XML and YAML"), "says what still worked: {s}");
     }
 

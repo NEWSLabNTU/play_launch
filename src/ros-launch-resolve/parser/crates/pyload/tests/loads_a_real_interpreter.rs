@@ -223,6 +223,22 @@ fn loads_and_evaluates_across_the_boundary() {
         .expect_err("a syntax error must be an Err");
     assert!(!e.is_empty(), "the error must say something");
 
+    // ABI 15 (play_launch #0099): a launch extension's substitution crosses
+    // too. Nothing exposes this name, so the answer is `launch`'s own
+    // refusal, through the channel — not `unknown op`, which is what a v14
+    // object would say.
+    let e = loaded
+        .perform_substitution(
+            "play-launch-no-such-substitution",
+            &["a".to_string()],
+            Default::default(),
+        )
+        .expect_err("a substitution nothing exposes must be an Err");
+    assert!(
+        e.contains("Unknown substitution type: play-launch-no-such-substitution"),
+        "{e}"
+    );
+
     eprintln!(
         "loaded {} against Python {} and evaluated across the C boundary",
         pyexec.display(),

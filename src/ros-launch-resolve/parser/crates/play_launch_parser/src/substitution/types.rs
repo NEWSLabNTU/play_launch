@@ -530,10 +530,36 @@ fn resolve_call(
                 std::env::var("HOME").unwrap_or_else(|_| "~".to_string())
             )
         })),
-        other => Err(SubstitutionError::InvalidSubstitution(format!(
-            "Unknown substitution type: {other}"
-        ))),
+        // None of `launch`'s own: a launch extension's (#0099).
+        other => perform_extension(other, args, context),
     }
+}
+
+/// `$(name arg…)` for a `name` none of `launch`'s own: a launch extension's
+/// substitution, which a module the `launch.frontend.launch_extension` entry
+/// points name registers with `@expose_substitution(name)` and which `launch`
+/// loads before it parses a frontend file (`ceilbot_profiles`'
+/// `$(robot-value …)`, #0099). The extension's own class performs it, in the
+/// Python half, in this context; its arguments are performed here first,
+/// each as the one string `launch` would make of it.
+fn perform_extension(
+    name: &str,
+    args: &[Vec<Substitution>],
+    context: &LaunchContext,
+) -> Result<String, SubstitutionError> {
+    let backend = crate::python_backend::require(
+        crate::python_backend::PythonNeed::ExtensionSubstitution,
+        &format!("$({name} …)"),
+    )
+    .map_err(|e| SubstitutionError::InvalidSubstitution(e.to_string()))?;
+    let performed = args
+        .iter()
+        .map(|arg| resolve_substitutions(arg, context))
+        .collect::<Result<Vec<_>, _>>()?;
+    let state = context.export_state(&crate::exchange::ListSync::default());
+    backend
+        .perform_substitution(name, &performed, state)
+        .map_err(SubstitutionError::InvalidSubstitution)
 }
 
 /// Resolve list of substitutions to single string

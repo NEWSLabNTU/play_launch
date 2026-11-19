@@ -37,12 +37,18 @@ use std::ffi::{CStr, CString, c_char};
 /// in the same terms the in-process path would have.
 #[derive(serde::Deserialize)]
 struct Request {
-    /// `eval_expr` — the one operation left on this entry point. Running a
+    /// `eval_expr`, or `perform_substitution` (ABI 15). Running a
     /// `.launch.py` goes through [`play_launch_py_exec`] (ABI 7), because it
     /// needs a channel BACK to the caller at every include.
     op: String,
-    /// An expression.
+    /// An expression, or the name of a launch extension's substitution.
     arg: String,
+    /// `perform_substitution`: its arguments, performed.
+    #[serde(default)]
+    args: Vec<String>,
+    /// `perform_substitution`: the launch context it is performed in.
+    #[serde(default)]
+    state: play_launch_parser::exchange::ContextState,
 }
 
 #[derive(serde::Serialize)]
@@ -166,6 +172,8 @@ unsafe fn call_inner(req: *const c_char) -> Response {
     let backend = crate::Pyo3Backend;
     let result = match req.op.as_str() {
         "eval_expr" => backend.eval_expr(&req.arg),
+        // A launch extension's substitution (ABI 15, play_launch #0099).
+        "perform_substitution" => backend.perform_substitution(&req.arg, &req.args, req.state),
         "exec_file" => {
             Err("pyexec: `exec_file` moved to `play_launch_py_exec` in C ABI 7".to_string())
         }
@@ -176,7 +184,7 @@ unsafe fn call_inner(req: *const c_char) -> Response {
         #[cfg(test)]
         "__test_panic" => panic!("deliberate panic from the test op"),
         other => Err(format!(
-            "pyexec: unknown op `{other}` (expected `eval_expr`)"
+            "pyexec: unknown op `{other}` (expected `eval_expr` or `perform_substitution`)"
         )),
     };
     match result {
@@ -458,7 +466,12 @@ pub extern "C" fn play_launch_py_abi_version() -> u32 {
     // so a v13 object reports none: a process would be killed on launch's
     // default schedule whatever it declared, and an `on_exit` function's
     // shutdown would be dropped, silently.
-    14
+    //
+    // 15: the `perform_substitution` op, a launch extension's substitution
+    // (play_launch #0099). A v14 object answers it `unknown op`, so every XML
+    // file using one (`$(robot-value …)`) would fail with a message about the
+    // channel instead of the launch file.
+    15
 }
 
 #[cfg(test)]
@@ -493,6 +506,21 @@ mod tests {
         let v = call(r#"{"op":"eval_expr","arg":"1 +"}"#);
         assert_eq!(v["ok"], false, "{v}");
         assert!(!v["error"].as_str().unwrap().is_empty());
+    }
+
+    /// ABI 15 (#0099): a substitution no launch extension exposes comes back
+    /// as `launch`'s own answer, through the channel — not `unknown op`.
+    #[test]
+    fn a_substitution_no_extension_exposes_is_unknown() {
+        let v = call(
+            r#"{"op":"perform_substitution","arg":"play-launch-no-such-substitution","args":["a"]}"#,
+        );
+        assert_eq!(v["ok"], false, "{v}");
+        let e = v["error"].as_str().unwrap();
+        assert!(
+            e.contains("Unknown substitution type: play-launch-no-such-substitution"),
+            "{e}"
+        );
     }
 
     #[test]
@@ -820,7 +848,7 @@ mod tests {
     /// launch tree that silently resolves to nothing.
     #[test]
     fn the_abi_version_moved_with_the_contract() {
-        assert_eq!(play_launch_py_abi_version(), 14);
+        assert_eq!(play_launch_py_abi_version(), 15);
     }
 
     /// `exec_file` on the old entry point is refused by name, not answered

@@ -445,12 +445,14 @@ fn build(ident: &str, mut args: Vec<Vec<Substitution>>) -> Result<Substitution> 
                 args,
             }
         }
-        _ => {
-            return Err(ParseError::InvalidSubstitution(format!(
-                "Unknown substitution type: {}",
-                ident
-            )));
-        }
+        // None of `launch`'s own: a launch extension may expose it
+        // (`@expose_substitution`, `ceilbot_profiles`' `$(robot-value …)`).
+        // Only its Python knows whether it exists and what arguments it
+        // takes, so both are settled when it is performed (#0099).
+        _ => Substitution::Call {
+            name: ident.into(),
+            args,
+        },
     })
 }
 
@@ -463,6 +465,33 @@ mod tests {
         let subs = parse_substitutions("hello world").unwrap();
         assert_eq!(subs.len(), 1);
         assert_eq!(subs[0], Substitution::Text("hello world".to_string()));
+    }
+
+    /// #0099: a name none of `launch`'s own parses, with its arguments, for
+    /// a launch extension to perform; nested substitutions stay nested.
+    #[test]
+    fn test_parse_extension_substitution() {
+        let subs = parse_substitutions("$(robot-value $(var robot) platform.footprint)").unwrap();
+        assert_eq!(
+            subs,
+            vec![Substitution::Call {
+                name: "robot-value".into(),
+                args: vec![
+                    vec![Substitution::LaunchConfiguration(vec![Substitution::Text(
+                        "robot".into()
+                    )])],
+                    vec![Substitution::Text("platform.footprint".into())],
+                ],
+            }]
+        );
+        // No arguments is a shape an extension may take, too.
+        assert_eq!(
+            parse_substitutions("$(robot-default)").unwrap(),
+            vec![Substitution::Call {
+                name: "robot-default".into(),
+                args: vec![],
+            }]
+        );
     }
 
     #[test]

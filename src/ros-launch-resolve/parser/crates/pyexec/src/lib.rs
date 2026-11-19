@@ -33,6 +33,8 @@ pub mod api;
 pub mod c_abi;
 pub mod eval_impl;
 pub mod executor;
+// A launch extension's substitution (#0099).
+mod extension_impl;
 
 pub use executor::PythonLaunchExecutor;
 
@@ -80,6 +82,15 @@ impl play_launch_parser::python_backend::PythonBackend for Pyo3Backend {
 
     fn eval_expr(&self, expr: &str) -> Result<String, String> {
         eval_impl::eval_expr_pyo3(expr).map_err(|e| e.to_string())
+    }
+
+    fn perform_substitution(
+        &self,
+        name: &str,
+        args: &[String],
+        state: play_launch_parser::exchange::ContextState,
+    ) -> Result<String, String> {
+        extension_impl::perform_substitution_pyo3(name, args, &state)
     }
 }
 

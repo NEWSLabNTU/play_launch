@@ -6,6 +6,19 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Fixed (#0099):** the default parser performs a substitution that a
+  launch extension defines, such as ceilbot's `$(robot-value ...)` or any
+  other registered with `@expose_substitution` under the
+  `launch.frontend.launch_extension` entry points. It used to refuse the
+  launch with `Unknown substitution type`, and only `--parser python`
+  resolved it. The extension's own class performs it, loaded as `ros2
+  launch` loads it, in the launch's context. A name that no extension
+  exposes is still refused, now with the extensions that could not be
+  imported named. The Python half's C ABI is version 15, so a
+  `libplay_launch_parser_pyexec.so` from an older release does not load.
+
 ## 0.40.0 - 2026-11-18
 
 - **Changed (#0098):** `diagnostics.csv` records one row when a diagnostic

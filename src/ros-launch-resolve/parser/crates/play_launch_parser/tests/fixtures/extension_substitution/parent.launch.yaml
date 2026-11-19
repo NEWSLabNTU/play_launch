@@ -1,0 +1,15 @@
+# Substitutions only the fixture's launch extension defines (#0099), in YAML:
+# python/fixture_ext, importable from tests/extension_substitution_tests.rs.
+launch:
+- arg:
+    name: robot
+    default: r1
+- node:
+    pkg: demo_nodes_cpp
+    exec: talker
+    name: $(fixture-join talker $(var robot))
+    param:
+    - name: robot
+      value: $(fixture-config robot)
+    - name: shout
+      value: $(fixture-upper $(var robot))

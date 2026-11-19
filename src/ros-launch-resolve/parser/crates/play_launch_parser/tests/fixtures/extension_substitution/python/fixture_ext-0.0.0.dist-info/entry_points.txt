@@ -1,0 +1,2 @@
+[launch.frontend.launch_extension]
+fixture_ext = fixture_ext.launch_ext

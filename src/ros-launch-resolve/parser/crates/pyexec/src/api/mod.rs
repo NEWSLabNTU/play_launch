@@ -40,6 +40,101 @@ fn add_submodule_both_names(
     Ok(())
 }
 
+/// The module `launch_extensions` keeps in `sys.modules`.
+const LAUNCH_EXTENSIONS: &str = "_play_launch_launch_extensions";
+
+/// What launch extensions expose, by name: the stand-in for `launch`'s
+/// frontend registry (`launch.frontend.expose`) and for
+/// `Parser.load_launch_extensions`, after `launch` Jazzy (#0099).
+///
+/// A module of its own, outside `launch.*`, made once per interpreter:
+/// [`register_modules`] rebuilds the stand-ins for every file, while an
+/// extension's module is imported once and its decorators run once, so what
+/// they register has to outlive the rebuilds. `perform_substitution` is what
+/// `crate::extension_impl` calls; the rest mirrors `launch`:
+///
+/// - a class is exposed through its `parse` class method, and a function as
+///   the parse method itself; a substitution class without one is refused,
+///   as `launch` refuses it. An action is recorded and never refused — one
+///   may inherit `parse` from `launch.Action`, which the stand-in does not
+///   define, and pyexec runs an extension's action through its own
+///   `execute` (#0095);
+/// - extensions load once; one that fails to import is skipped, and why is
+///   kept for the error that names a substitution nothing exposes;
+/// - `$(name a b)` is `parse([[a], [b]])` — `launch`'s grammar hands one
+///   list of substitutions per argument — and `type(**kwargs)` of what it
+///   returns, performed in the context.
+pub(crate) fn launch_extensions(py: Python<'_>) -> PyResult<Bound<'_, PyModule>> {
+    let modules = py.import("sys")?.getattr("modules")?;
+    if !modules.contains(LAUNCH_EXTENSIONS)? {
+        let module = PyModule::new(py, LAUNCH_EXTENSIONS)?;
+        py.run(
+            cr#"
+import importlib.metadata
+import inspect
+import traceback
+
+substitutions = {}
+actions = {}
+failures = []
+_loaded = []
+
+
+def _expose(name, registry, kind):
+    def expose(exposed):
+        if inspect.isclass(exposed):
+            if 'parse' in dir(exposed) and inspect.ismethod(exposed.parse):
+                registry[name] = exposed.parse
+            elif kind == 'substitution':
+                raise RuntimeError(
+                    "Did not find a class method called 'parse' in the class being decorated.")
+        elif inspect.isfunction(exposed):
+            registry[name] = exposed
+        elif kind == 'substitution':
+            raise RuntimeError(
+                f'Exposed {kind} parser for {name} is not a callable or a class'
+                ' containing a parse method')
+        return exposed
+    return expose
+
+
+def expose_substitution(name):
+    return _expose(name, substitutions, 'substitution')
+
+
+def expose_action(name):
+    return _expose(name, actions, 'action')
+
+
+def load_launch_extensions():
+    if _loaded:
+        return
+    _loaded.append(True)
+    for entry_point in importlib.metadata.entry_points(
+            group='launch.frontend.launch_extension'):
+        try:
+            entry_point.load()
+        except Exception:
+            failures.append(f'{entry_point.name}: {traceback.format_exc()}')
+
+
+def perform_substitution(name, args, context):
+    load_launch_extensions()
+    parse = substitutions.get(name)
+    if parse is None:
+        return None
+    from launch.substitutions import TextSubstitution
+    subst_type, kwargs = parse([[TextSubstitution(text=arg)] for arg in args])
+    return context.perform_substitution(subst_type(**kwargs))
+"#,
+            Some(&module.dict()),
+            None,
+        )?;
+        modules.set_item(LAUNCH_EXTENSIONS, &module)?;
+    }
+    py.import(LAUNCH_EXTENSIONS)
+}
+
 /// Register all mock Python modules in sys.modules
 ///
 /// This creates mock versions of:
@@ -62,6 +157,9 @@ pub fn register_modules(py: Python) -> PyResult<()> {
 
     // Create launch module
     let launch_mod = PyModule::new(py, "launch")?;
+    // What `crate::executor::ensure_mocks` looks for: these stand-ins, not
+    // the real package, are what `sys.modules` holds.
+    launch_mod.add("__play_launch_mock__", true)?;
     launch_mod.add_class::<launch::LaunchDescription>()?;
 
     // Add SomeSubstitutionsType_types_tuple to launch module (for top-level imports)
@@ -111,6 +209,14 @@ class Action:
     for name in ["Substitution", "Condition", "Action"] {
         launch_mod.add(name, base_locals.get_item(name)?.unwrap())?;
     }
+    // `launch.substitution`, the module `launch` defines that base in, and
+    // where a launch extension imports it from (`from launch.substitution
+    // import Substitution`, `ceilbot_profiles`, #0099).
+    let launch_substitution = PyModule::new(py, "launch.substitution")?;
+    launch_substitution.add(
+        "Substitution",
+        base_locals.get_item("Substitution")?.unwrap(),
+    )?;
 
     // Create launch.actions submodule
     let launch_actions = PyModule::new(py, "launch.actions")?;
@@ -268,24 +374,16 @@ class LaunchContext:
     // Add stub Parser class
     let parser_class = py.eval(c"type('Parser', (), {})", None, None)?;
     launch_frontend.add("Parser", &parser_class)?;
-    // `@expose_action("name")` / `@expose_substitution("name")` register a
-    // class with the XML/YAML frontends, which this walk never uses; they
-    // must still be decorators that return the class, or a module defining
-    // a launch extension cannot be imported (`autoware_agnocast_wrapper`'s
-    // `AutowareNode`, #0095).
-    let expose_locals = pyo3::types::PyDict::new(py);
-    py.run(
-        c"
-def expose_action(name):
-    return lambda cls: cls
-def expose_substitution(name):
-    return lambda cls: cls
-",
-        None,
-        Some(&expose_locals),
-    )?;
+    // `@expose_action("name")` / `@expose_substitution("name")`: `launch`'s
+    // frontend registry. They must be decorators that return what they
+    // decorate, or a module defining a launch extension cannot be imported
+    // (`autoware_agnocast_wrapper`'s `AutowareNode`, #0095), and they record
+    // it, so a substitution only an extension defines can be performed
+    // (`$(robot-value …)`, #0099). The record is `launch_extensions`', which
+    // outlives these stand-ins.
+    let extensions = launch_extensions(py)?;
     for name in ["expose_action", "expose_substitution"] {
-        launch_frontend.add(name, expose_locals.get_item(name)?.unwrap())?;
+        launch_frontend.add(name, extensions.getattr(name)?)?;
     }
 
     // `launch.logging.get_logger`, which an action's `execute` logs through
@@ -364,6 +462,7 @@ def get_logger(name=None):
     add_submodule_both_names(&launch_mod, &launch_frontend)?;
     add_submodule_both_names(&launch_mod, &launch_utilities)?;
     add_submodule_both_names(&launch_mod, &launch_logging)?;
+    add_submodule_both_names(&launch_mod, &launch_substitution)?;
 
     // Create launch_ros module
     let launch_ros_mod = PyModule::new(py, "launch_ros")?;
@@ -452,6 +551,7 @@ def get_logger(name=None):
         "launch",
         "launch.actions",
         "launch.substitutions",
+        "launch.substitution",
         "launch.conditions",
         "launch.event_handlers",
         "launch.launch_description_sources",
@@ -489,6 +589,7 @@ def get_logger(name=None):
     modules.set_item("launch.events.process", &launch_events_process)?;
     modules.set_item("launch.launch_context", &launch_context_mod)?;
     modules.set_item("launch.substitutions", &launch_subs)?;
+    modules.set_item("launch.substitution", &launch_substitution)?;
     modules.set_item("launch.conditions", &launch_conditions)?;
     modules.set_item("launch.event_handlers", &launch_event_handlers)?;
     modules.set_item("launch.launch_description_sources", &launch_sources)?;

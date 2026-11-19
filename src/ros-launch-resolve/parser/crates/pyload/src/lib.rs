@@ -186,7 +186,9 @@ impl std::error::Error for LoadError {}
 /// 13: the loader hands the object its logger (play_launch #0093).
 /// 14: the captures carry the shutdown timeouts and the exit codes that end
 /// the launch (play_launch #0084, #0090).
-const ABI_VERSION: u32 = 14;
+/// 15: the `perform_substitution` op, a launch extension's substitution
+/// (play_launch #0099). A v14 object answers it `unknown op`.
+const ABI_VERSION: u32 = 15;
 
 type SetLoggerFn =
     unsafe extern "C" fn(extern "C" fn(u32, *const std::ffi::c_char, *const std::ffi::c_char), u32);
@@ -497,9 +499,14 @@ impl Loaded {
     }
 
     fn call(&self, op: &str, arg: &str) -> Result<serde_json::Value, String> {
+        self.send(&serde_json::json!({ "op": op, "arg": arg }))
+    }
+
+    /// One request object across `play_launch_py_call`.
+    fn send(&self, req: &serde_json::Value) -> Result<serde_json::Value, String> {
         use std::ffi::CString;
-        let req = serde_json::json!({ "op": op, "arg": arg }).to_string();
-        let req = CString::new(req).map_err(|e| format!("request contains a NUL byte: {e}"))?;
+        let req = CString::new(req.to_string())
+            .map_err(|e| format!("request contains a NUL byte: {e}"))?;
         let raw = unsafe {
             let call: libloading::Symbol<CallFn> = self
                 .pyexec
@@ -556,6 +563,24 @@ impl play_launch_parser::python_backend::PythonBackend for Loaded {
         // did not.
         self.call("eval_expr", expr)
             .map(|v| v["value"].as_str().unwrap_or_default().to_string())
+    }
+
+    /// A launch extension's substitution (ABI 15, play_launch #0099). The
+    /// state crosses as `exec_file`'s does, so the extension performs in the
+    /// caller's context.
+    fn perform_substitution(
+        &self,
+        name: &str,
+        args: &[String],
+        state: play_launch_parser::exchange::ContextState,
+    ) -> Result<String, String> {
+        self.send(&serde_json::json!({
+            "op": "perform_substitution",
+            "arg": name,
+            "args": args,
+            "state": state,
+        }))
+        .map(|v| v["value"].as_str().unwrap_or_default().to_string())
     }
 }
 

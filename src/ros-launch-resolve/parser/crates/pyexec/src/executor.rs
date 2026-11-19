@@ -6,27 +6,11 @@ use play_launch_parser::error::Result;
 use pyo3::prelude::*;
 use std::ffi::CString;
 
-/// Executes Python launch files with mock API
-#[derive(Default)]
-
-pub struct PythonLaunchExecutor;
-
-impl PythonLaunchExecutor {
-    /// Create new executor
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// Execute a Python launch file and capture entities
-    pub fn execute(&self, launch_file_path: &str) -> Result<()> {
-        Python::attach(|py| {
-            log::debug!("Executing Python launch file: {}", launch_file_path);
-
-            // Register PyO3 mock modules in sys.modules
-            crate::api::register_modules(py).map_err(py_err)?;
-
-            // CRITICAL: Aggressively isolate Python environment to prevent real ROS packages from loading
-            let isolation_code = r#"
+/// Keeps the real `launch`, `launch_ros` and `launch_xml` out of the
+/// interpreter, so that the stand-ins [`crate::api::register_modules`] put in
+/// `sys.modules` are the only ones a launch file or a launch extension can
+/// import. Run before each file executes, and by [`ensure_mocks`].
+const ISOLATION_CODE: &str = r#"
 import sys
 import types
 
@@ -61,7 +45,8 @@ if not any(isinstance(f, LaunchModuleBlocker) for f in sys.meta_path):
 # This clears any cached imports from real ROS packages
 # Keep our registered top-level and submodule mocks
 our_mocks = {
-    'launch', 'launch.actions', 'launch.substitutions', 'launch.conditions',
+    'launch', 'launch.actions', 'launch.substitutions', 'launch.substitution',
+    'launch.conditions',
     'launch.event_handlers', 'launch.events', 'launch.events.process',
     'launch.launch_context', 'launch.launch_description_sources',
     'launch.frontend', 'launch.frontend.type_utils', 'launch.utilities',
@@ -100,6 +85,27 @@ _ok, _msg = _verify_mocks()
 if not _ok:
     raise RuntimeError(f"Mock verification failed: {_msg}")
 "#;
+
+/// Executes Python launch files with mock API
+#[derive(Default)]
+
+pub struct PythonLaunchExecutor;
+
+impl PythonLaunchExecutor {
+    /// Create new executor
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Execute a Python launch file and capture entities
+    pub fn execute(&self, launch_file_path: &str) -> Result<()> {
+        Python::attach(|py| {
+            log::debug!("Executing Python launch file: {}", launch_file_path);
+
+            // Register PyO3 mock modules in sys.modules
+            crate::api::register_modules(py).map_err(py_err)?;
+
+            let isolation_code = ISOLATION_CODE;
 
             // IMPORTANT: Run isolation in the GLOBAL context first so sys.modules is clean
             let isolation_cstr = CString::new(isolation_code).expect("isolation code contains NUL");
@@ -196,4 +202,23 @@ if not _ok:
 /// it is visible at each call site, which is not the worst outcome.
 fn py_err(e: pyo3::PyErr) -> play_launch_parser::error::ParseError {
     play_launch_parser::error::ParseError::PythonError(e.to_string())
+}
+
+/// The stand-ins for `launch`, `launch_ros` and `launch_xml`, with the real
+/// packages blocked: what running a `.launch.py` installs, and what a launch
+/// extension's module needs to be imported (#0099). Installed when
+/// `sys.modules` does not hold them; left alone when it does, so a walk in
+/// progress keeps the stand-ins its file imported.
+pub(crate) fn ensure_mocks(py: Python<'_>) -> PyResult<()> {
+    let installed = py
+        .import("sys")?
+        .getattr("modules")?
+        .call_method1("get", ("launch",))?
+        .hasattr("__play_launch_mock__")?;
+    if !installed {
+        crate::api::register_modules(py)?;
+        let isolation = CString::new(ISOLATION_CODE).expect("isolation code contains NUL");
+        py.run(&isolation, None, None)?;
+    }
+    Ok(())
 }

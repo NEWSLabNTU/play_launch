@@ -24,6 +24,13 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0099** -- the Rust parser refused a substitution a launch extension
+defines (`@expose_substitution` under the `launch.frontend.launch_extension`
+entry points, e.g. ceilbot's `$(robot-value ...)`) with `Unknown
+substitution type`, so the launch did not resolve. It is now performed by
+the extension's own class, loaded as `launch` loads it, in the caller's
+context (pyexec C ABI 15). See `archived/0099-*`.
+
 **#0098** -- `play_log` filled disks: `diagnostics.csv` was 88-97% of an
 Autoware run (about 0.5 GB an hour) and no run was ever removed. It now
 records level changes only by default (`diagnostics.record`), a large

@@ -721,6 +721,25 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-11-19**: **A launch extension's substitution is performed**
+  (#0099, pyexec C ABI 15). `$(name …)` that is none of `launch`'s own
+  parses as `Substitution::Call` and is performed through
+  `PythonBackend::perform_substitution`: pyexec loads the
+  `launch.frontend.launch_extension` entry points as stock's
+  `Parser.load_launch_extensions` does and runs the class the extension
+  registered with `@expose_substitution` on the stand-ins
+  (`extension_impl.rs`, `api::launch_extensions`). Three things a later
+  change must keep: the registry is the module
+  `_play_launch_launch_extensions`, outside `launch.*`, because
+  `register_modules` rebuilds the stand-ins for every file while an
+  extension module is imported, and its decorators run, once; an
+  extension performs against stand-ins installed only when absent
+  (`executor::ensure_mocks`, the `__play_launch_mock__` marker), never
+  replaced under a walk in progress; and the arguments are performed in
+  Rust and crossed as text with the exported `ContextState`, so a
+  `perform` reading `context.launch_configurations` sees the caller's.
+  `launch.substitution` (the base class's module) is a stand-in now.
+
 - **2026-11-17**: **`<autoware_node>`, and an unknown tag is an error**
   (#0095). Autoware 2.1.0's launch action (`autoware_agnocast_wrapper`) is
   executed as upstream's `AutowareNode.execute` does
