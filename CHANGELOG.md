@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.41.0 - 2026-11-19
 
 - **Fixed (#0099):** the default parser performs a substitution that a
   launch extension defines, such as ceilbot's `$(robot-value ...)` or any
