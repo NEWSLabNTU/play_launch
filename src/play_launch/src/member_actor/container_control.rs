@@ -146,6 +146,10 @@ pub(super) struct LoadParams {
 /// Completion of a LoadNode service call (sent from spawned task back to actor)
 pub(super) struct LoadCompletion {
     pub composable_name: String,
+    /// Which dispatch this completes (`ComposableSupervisor::load_in_flight`),
+    /// so a call left over from before a container restart cannot release
+    /// the slot of a load dispatched after it.
+    pub dispatch_seq: u64,
     pub result: Result<LoadNodeResponse, LoadError>,
 }
 

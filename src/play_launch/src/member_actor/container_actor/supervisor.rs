@@ -150,6 +150,9 @@ pub(super) struct ComposableNodeEntry {
     /// wake-up of the auto-load pass, and an operator needs to be told once,
     /// not once per composable that is still ahead of it in the queue.
     pub(super) start_delay_announced: bool,
+    /// Position in the launch file among this container's composables, for
+    /// loading them in the order `launch_ros` does (#0101).
+    pub(super) order: usize,
 }
 
 /// Supervises the composable nodes of one container: composable map,
@@ -163,6 +166,23 @@ pub(super) struct ComposableSupervisor {
     pub(super) composable_nodes: HashMap<String, ComposableNodeEntry>,
     /// Queue of pending load requests
     pending_loads: VecDeque<LoadRequest>,
+    /// The LoadNode call in flight, if any: (composable, dispatch sequence).
+    ///
+    /// One at a time, in queue order (#0101). `launch_ros` loads the
+    /// descriptions of a `LoadComposableNodes` one after another, waiting for
+    /// each response, and a container that runs LoadNode on its executor
+    /// (`stock`, `observable`) constructs the node inside that call. Sent all
+    /// at once, a later component could be constructed first; Nav2's
+    /// lifecycle manager, listed after the servers it manages, then blocked a
+    /// single-threaded container's executor waiting for their services, and
+    /// the container never answered the LoadNode that would have created
+    /// them. Such a container serialises the calls anyway, so this costs no
+    /// concurrency there; `isolated` loads over the control socket, not here.
+    load_in_flight: Option<(String, u64)>,
+    /// Sequence of the next LoadNode dispatch.
+    next_dispatch_seq: u64,
+    /// Declaration index the next registered composable takes.
+    next_order: usize,
     /// Channel for load completion notifications (parallel dispatch)
     load_completion_tx: mpsc::UnboundedSender<LoadCompletion>,
     pub(super) load_completion_rx: mpsc::UnboundedReceiver<LoadCompletion>,
@@ -194,6 +214,9 @@ impl ComposableSupervisor {
             state_tx,
             composable_nodes: HashMap::new(),
             pending_loads: VecDeque::new(),
+            load_in_flight: None,
+            next_dispatch_seq: 0,
+            next_order: 0,
             load_completion_tx,
             load_completion_rx,
             current_unload: None,
@@ -225,7 +248,9 @@ impl ComposableSupervisor {
             retry_after: None,
             crash_history: Default::default(),
             start_delay_announced: false,
+            order: self.next_order,
         };
+        self.next_order += 1;
 
         self.composable_nodes.insert(name, entry);
     }
@@ -391,7 +416,13 @@ impl ComposableSupervisor {
     /// number of loads actually in flight is bounded across every container
     /// rather than being every composable in the launch at once.
     pub(super) fn dispatch_pending_loads(&mut self, clients: &ContainerClients) {
-        while let Some(request) = self.pending_loads.pop_front() {
+        if self.load_in_flight.is_some() {
+            return;
+        }
+        if let Some(request) = self.pending_loads.pop_front() {
+            let dispatch_seq = self.next_dispatch_seq;
+            self.next_dispatch_seq += 1;
+            self.load_in_flight = Some((request.composable_name.clone(), dispatch_seq));
             let queue_wait_ms = request.request_time.elapsed().as_millis() as u64;
 
             debug!(
@@ -460,6 +491,7 @@ impl ComposableSupervisor {
                 // issue #0023 is about outcomes that left no trace.
                 if let Err(e) = tx.send(LoadCompletion {
                     composable_name: composable_name.clone(),
+                    dispatch_seq,
                     result,
                 }) {
                     warn!(
@@ -485,6 +517,9 @@ impl ComposableSupervisor {
         completion: LoadCompletion,
         has_event_sub: bool,
     ) {
+        if self.load_in_flight.as_ref().map(|(_, seq)| *seq) == Some(completion.dispatch_seq) {
+            self.load_in_flight = None;
+        }
         let composable_name = &completion.composable_name;
 
         let Some(entry) = self.composable_nodes.get_mut(composable_name) else {
@@ -611,6 +646,9 @@ impl ComposableSupervisor {
             );
         }
         self.pending_loads.clear();
+        // The call in flight belongs to the container that is gone; its
+        // completion, if it comes, no longer holds the slot.
+        self.load_in_flight = None;
     }
 
     /// Handle LoadComposable control event.
@@ -841,6 +879,12 @@ impl ComposableSupervisor {
                 _ => due.push(name.clone()),
             }
         }
+        // In launch-file order (#0101): the map's iteration order is not.
+        due.sort_by_key(|name| {
+            self.composable_nodes
+                .get(name)
+                .map_or(usize::MAX, |e| e.order)
+        });
         (due, held)
     }
 
@@ -1260,6 +1304,24 @@ mod start_delay_tests {
     /// container; the delayed one is held back and NAMED, so the operator is
     /// told rather than left looking at a container that is up and a node that
     /// is not.
+    /// Issue #0101: composables load in launch-file order, as `launch_ros`
+    /// loads a `LoadComposableNodes`'s descriptions. The map's iteration
+    /// order is not that; with a dozen names it differs almost surely.
+    #[tokio::test(start_paused = true)]
+    async fn auto_loads_come_in_launch_file_order() {
+        let mut sup = supervisor();
+        let names: Vec<String> = (0..12)
+            .map(|i| format!("composable:/n{i:02}"))
+            .rev()
+            .collect();
+        for name in &names {
+            add(&mut sup, name, None);
+        }
+        let (due, held) = sup.select_auto_loads(tokio::time::Instant::now());
+        assert!(held.is_empty());
+        assert_eq!(due, names);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn a_timer_holds_one_composable_back_and_not_its_neighbour() {
         let epoch = tokio::time::Instant::now();

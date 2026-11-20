@@ -24,6 +24,14 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0101** -- Nav2 with `use_composition:=True` did not come up: a tuple
+`target_container` (`(namespace, '/', container_name)`) became its own
+repr, a callable `OnProcessStart` `on_start` was dropped without a word
+(and the Python dumper dropped both forms), and a container's composables
+were loaded all at once in hash order, so Nav2's lifecycle manager could
+deadlock a single-threaded container. All three fixed; loads go one at a
+time per container in launch-file order. See `archived/0101-*`.
+
 **#0100** -- under the Rust parser a launch file's own `OpaqueFunction`
 could not import `launch_ros.ros_adapters` (`get_ros_node`, to wait for a
 service), read `context.is_shutdown`, or call `ParameterFile.evaluate`

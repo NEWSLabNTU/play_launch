@@ -1,3 +1,5 @@
+import types
+
 import launch.logging
 from launch.action import Action
 from launch.actions import (
@@ -11,7 +13,7 @@ from launch.actions import (
     UnsetLaunchConfiguration,
 )
 from launch.actions.include_launch_description import IncludeLaunchDescription
-from launch.event_handlers import OnProcessExit
+from launch.event_handlers import OnProcessExit, OnProcessStart
 from launch.events import ExecutionComplete  # noqa
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
@@ -77,6 +79,49 @@ def visit_action_by_class(
             dump.note_process(action, records)
         elif is_a(action, RegisterEventHandler):
             _note_exit_shutdown_handler(action.event_handler, dump, context)
+
+
+def _on_process_start_entities(
+    handler: OnProcessStart, context: LaunchContext
+) -> list[LaunchDescriptionEntity] | None:
+    """What an `OnProcessStart` handler runs as the launch comes up (#0101).
+
+    A running launch executes `on_start` when its target starts, so the dump
+    walks it in place, as the Rust parser does. A list is walked as it is; a
+    callable is called as launch calls it, with a `ProcessStarted`-shaped
+    event (no process yet, so no pid) and the context, and what it returns
+    is walked. Nothing emits a start event during a dump, so without this
+    both forms were dropped.
+    """
+    actions = getattr(handler, "_OnActionEventBase__actions_on_event", None)
+    if actions:
+        return list(actions)
+    on_event = getattr(handler, "_OnActionEventBase__on_event", None)
+    if not callable(on_event):
+        return None
+    target = getattr(handler, "_OnActionEventBase__action_matcher", None)
+    target = target if isinstance(target, Action) else None
+    event = types.SimpleNamespace(
+        action=target,
+        name=getattr(target, "name", None),
+        pid=None,
+        cmd=[],
+        cwd=None,
+        env=None,
+    )
+    try:
+        returned = on_event(event, context)
+    except Exception as e:  # noqa: BLE001 -- reported, as the Rust parser does
+        launch.logging.get_logger("dump_launch").warning(
+            "The on_start function of an OnProcessStart handler raised when called at "
+            f"parse time ({e}); the actions it would return are not part of this launch."
+        )
+        return None
+    if returned is None:
+        return None
+    if isinstance(returned, LaunchDescriptionEntity):
+        return [returned]
+    return list(returned)
 
 
 def _note_how_it_ends(action, context: LaunchContext, records) -> None:
@@ -207,6 +252,9 @@ def _visit_action_by_class(
     # which starts the process during the dump and records nothing (#0066).
     elif is_a(action, ExecuteProcess):
         return visit_bare_execute_process(action, context, dump)
+
+    elif is_a(action, RegisterEventHandler) and isinstance(action.event_handler, OnProcessStart):
+        return _on_process_start_entities(action.event_handler, context)
 
     else:
         return _execute_logging_configurations(action, context, dump)

@@ -6,6 +6,25 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Fixed (#0101):** Nav2 with `use_composition:=True` comes up. A
+  `target_container` given as a tuple of substitutions, as nav2_bringup's
+  `navigation_launch.py` writes `(namespace, '/', container_name)`, is
+  performed and joined; it used to become the tuple's text, and every
+  composable stayed `Blocked(ContainerNotFound)`.
+- **Fixed (#0101):** `OnProcessStart(on_start=<function>)` runs: the
+  function is called with the start event and the launch context, and the
+  actions it returns are part of the launch. The default parser dropped it
+  without a warning, and `--parser python` dropped both the function and
+  the list form.
+- **Changed (#0101):** a container's composables load one at a time, in
+  the order the launch file lists them, as `ros2 launch` loads them. They
+  used to be sent together in no fixed order, so a component that waits
+  for one listed before it (Nav2's lifecycle manager) could be constructed
+  first and block a single-threaded container for good. Containers still
+  load in parallel with each other.
+
 ## 0.41.0 - 2026-11-19
 
 - **Fixed (#0099):** the default parser performs a substitution that a

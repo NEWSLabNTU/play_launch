@@ -421,6 +421,8 @@ impl ContainerActor {
                 Some(completion) = self.supervisor.load_completion_rx.recv() => {
                     let has_event_sub = self.clients.has_event_sub();
                     self.supervisor.handle_load_completion(completion, has_event_sub).await;
+                    // LoadNode calls go one at a time (#0101); start the next.
+                    self.supervisor.dispatch_pending_loads(&self.clients);
                 }
 
                 result = async {

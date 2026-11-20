@@ -409,3 +409,29 @@ fn every_substitution_performs_from_python() {
     expected.sort();
     assert_eq!(fqns(&resolve("env_perform")), expected);
 }
+
+/// Issue #0101: a tuple `target_container` is one substitution, performed
+/// and joined. nav2_bringup's navigation_launch.py passes
+/// `(namespace, '/', container_name)`; the tuple's repr used to become the
+/// container name, so every Nav2 server stayed `Blocked(ContainerNotFound)`.
+/// Stock (`perform_substitutions` over the normalized tuple): `/nav2_container`.
+#[test]
+fn a_tuple_target_container_is_performed() {
+    let _guard = python_test_guard();
+    let json = resolve("target_container_tuple");
+    let loads = json["load_node"].as_array().unwrap();
+    assert_eq!(loads.len(), 1);
+    assert_eq!(loads[0]["target_container_name"], "/nav2_container");
+}
+
+/// Issue #0101: a callable `on_start` is called with the start event and
+/// the context, and what it returns executes, as the list form does. It
+/// used to be dropped without a word.
+#[test]
+fn a_callable_on_start_executes_what_it_returns() {
+    let _guard = python_test_guard();
+    assert_eq!(
+        fqns(&resolve("on_start_callable")),
+        ["/by_fn", "/by_list", "/first"]
+    );
+}

@@ -403,7 +403,7 @@ pub fn create_launch_context(py: Python) -> PyResult<Py<PyAny>> {
 /// This function is called during launch file parsing (one-time cost),
 /// not during node runtime, so performance impact is negligible.
 pub fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-    use pyo3::types::{PyBool, PyList};
+    use pyo3::types::{PyBool, PyList, PyTuple};
     let obj_ref = obj.bind(py);
 
     // Try direct string extraction first (most common case)
@@ -419,10 +419,21 @@ pub fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
         return Ok(if b { "true" } else { "false" }.to_string());
     }
 
-    // Handle lists (concatenate elements recursively)
+    // A list or a tuple of substitutions is one substitution: its elements
+    // performed and joined, as `normalize_to_list_of_substitutions` does.
+    // nav2_bringup passes `target_container=(namespace, '/', container_name)`
+    // (#0101); reading only lists left the tuple's repr as the name.
     if let Ok(list) = obj_ref.cast::<PyList>() {
         let mut result = String::new();
         for item in list.iter() {
+            let item_str = pyobject_to_string(py, &item.into())?;
+            result.push_str(&item_str);
+        }
+        return Ok(result);
+    }
+    if let Ok(tuple) = obj_ref.cast::<PyTuple>() {
+        let mut result = String::new();
+        for item in tuple.iter() {
             let item_str = pyobject_to_string(py, &item.into())?;
             result.push_str(&item_str);
         }

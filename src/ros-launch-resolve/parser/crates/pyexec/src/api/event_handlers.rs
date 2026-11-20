@@ -244,19 +244,88 @@ pub(crate) fn exit_handler(py: Python, handler: &Bound<'_, PyAny>) -> ExitHandle
 
 /// The actions a handler runs as the launch COMES UP, which a real launch
 /// executes and so the walk does too: `OnProcessStart`'s `on_start` and
-/// `OnStateTransition`'s `entities`. A callable `on_start` needs the start
-/// event, which a static walk does not have, so it is skipped. Handlers for
-/// things stopping (`OnProcessExit`, `OnShutdown`) contribute nothing.
+/// `OnStateTransition`'s `entities`. Handlers for things stopping
+/// (`OnProcessExit`, `OnShutdown`) contribute nothing.
+///
+/// A callable `on_start` is CALLED, as launch calls it, with a
+/// `ProcessStarted`-shaped event and the launch context, and what it returns
+/// is walked (#0101). It used to be skipped without a word, so a launch that
+/// loads its composables from such a handler ran with an empty container.
+/// The event carries the target action and its name; there is no process
+/// yet, so `pid` is `None`. A function that raises is reported and skipped.
 pub(crate) fn startup_entities(
     py: Python,
     handler: &Bound<'_, PyAny>,
 ) -> PyResult<Option<Py<PyAny>>> {
-    let entities = if let Ok(h) = handler.cast::<OnProcessStart>() {
-        h.borrow().on_start.as_ref().map(|e| e.clone_ref(py))
-    } else if let Ok(h) = handler.cast::<OnStateTransition>() {
-        h.borrow().entities.as_ref().map(|e| e.clone_ref(py))
-    } else {
-        None
+    if let Ok(h) = handler.cast::<OnProcessStart>() {
+        let (target, on_start) = {
+            let h = h.borrow();
+            (
+                h.target_action.as_ref().map(|t| t.clone_ref(py)),
+                h.on_start.as_ref().map(|e| e.clone_ref(py)),
+            )
+        };
+        let Some(on_start) = on_start else {
+            return Ok(None);
+        };
+        if !on_start.bind(py).is_callable() {
+            return Ok(Some(on_start));
+        }
+        return call_on_start(py, on_start.bind(py), target.as_ref().map(|t| t.bind(py)));
+    }
+    if let Ok(h) = handler.cast::<OnStateTransition>() {
+        let entities = h.borrow().entities.as_ref().map(|e| e.clone_ref(py));
+        if let Some(e) = &entities
+            && e.bind(py).is_callable()
+        {
+            crate::api::utils::warn_user(
+                "An OnStateTransition handler's entities is a function; play_launch does not \
+                 call it, so the actions it would return are not part of this launch.",
+            );
+            return Ok(None);
+        }
+        return Ok(entities);
+    }
+    Ok(None)
+}
+
+/// Call a callable `on_start(event, context)` the way launch's
+/// `OnProcessStart` does, and walk what it returns, as an `OpaqueFunction`'s.
+fn call_on_start(
+    py: Python,
+    f: &Bound<'_, PyAny>,
+    target: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Option<Py<PyAny>>> {
+    let ns = py.import("types")?.getattr("SimpleNamespace")?;
+    let kwargs = pyo3::types::PyDict::new(py);
+    let name = target
+        .and_then(|t| t.getattr("name").ok())
+        .unwrap_or_else(|| py.None().into_bound(py));
+    kwargs.set_item(
+        "action",
+        target.map_or_else(|| py.None().into_bound(py), |t| t.clone()),
+    )?;
+    kwargs.set_item("name", name)?;
+    kwargs.set_item("pid", py.None())?;
+    kwargs.set_item("cmd", pyo3::types::PyList::empty(py))?;
+    kwargs.set_item("cwd", py.None())?;
+    kwargs.set_item("env", py.None())?;
+    let event = ns.call((), Some(&kwargs))?;
+    let context = crate::api::utils::create_launch_context(py)?;
+    // What the function returns is as invisible to launch's include-time
+    // argument check as an `OpaqueFunction`'s, so it runs as opaque too.
+    play_launch_parser::bridge::enter_opaque_function();
+    let result = match f.call1((event, context)) {
+        Ok(r) if r.is_none() => Ok(()),
+        Ok(r) => crate::api::visit::visit_any(py, &r),
+        Err(e) => {
+            crate::api::utils::warn_user(&format!(
+                "The on_start function of an OnProcessStart handler raised when called at \
+                 parse time ({e}); the actions it would return are not part of this launch."
+            ));
+            Ok(())
+        }
     };
-    Ok(entities.filter(|e| !e.bind(py).is_callable()))
+    play_launch_parser::bridge::leave_opaque_function();
+    result.map(|()| None)
 }
