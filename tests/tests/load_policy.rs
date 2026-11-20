@@ -336,3 +336,71 @@ fn test_a_wedged_constructor_is_reported_not_failed() {
         "the wedged constructor must be left exactly as it is"
     );
 }
+
+/// #0103: a LoadNode reply that never comes, from a container that then cannot
+/// answer anything, is bounded by `load_total_budget_secs`.
+///
+/// Under `observable` the constructor runs on the container's executor, so a
+/// 60 s constructor holds LoadNode and ListNodes alike: the call times out, is
+/// handed to the ComponentEvent path ("deferring to ComponentEvent"), and the
+/// event cannot arrive until the constructor returns. Before the fix the
+/// lost-load sweep re-polled ListNodes forever and the launch sat at
+/// "0/1 loaded (1 pending)" with no failure and no startup summary; a stopped
+/// or deadlocked container never returns at all. The budget here is 8 s, well
+/// inside the constructor, so the failure is the bound and not the event.
+#[test]
+fn test_a_lost_reply_from_a_busy_container_fails_at_the_budget() {
+    let env = fixtures::install_env();
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let stdout = tmp.path().join("stdout.log");
+    let config = tmp.path().join("budget.yaml");
+    std::fs::write(
+        &config,
+        "composable_node_loading:\n  load_node_timeout_millis: 2000\n  load_total_budget_secs: 8\n",
+    )
+    .expect("write config");
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(tmp.path());
+    cmd.args([
+        "launch",
+        "--disable-web-ui",
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        "--container-mode",
+        "observable",
+        "--config",
+        config.to_str().unwrap(),
+    ]);
+    cmd.arg(launch_path("slow_construct_60s"));
+    cmd.stdout(Stdio::from(std::fs::File::create(&stdout).unwrap()));
+    cmd.stderr(Stdio::from(
+        std::fs::File::create(tmp.path().join("stderr.log")).unwrap(),
+    ));
+    cmd.env("RUST_LOG", "play_launch=debug");
+    let proc = ManagedProcess::spawn(&mut cmd).expect("spawn play_launch");
+    let run = Run {
+        session: proc.id(),
+        _proc: proc,
+        _tmp: tmp,
+        stdout,
+    };
+
+    assert!(
+        run.wait_for("deferring to ComponentEvent", Duration::from_secs(30)),
+        "the LoadNode call was not deferred to the event path, so this test does \
+         not reach the case it is about:\n{}",
+        run.text()
+    );
+    assert!(
+        run.wait_for("STARTUP_SUMMARY", Duration::from_secs(40)),
+        "the deferred load was never bounded; startup did not end:\n{}",
+        run.text()
+    );
+    let text = run.text();
+    assert!(
+        text.contains("container-busy: unresponsive for 8s"),
+        "the load did not fail with the budget's reason:\n{text}"
+    );
+    run.assert_no_resend();
+}

@@ -582,10 +582,49 @@ impl ComposableSupervisor {
                     self.handle_load_composable(&name, clients, None).await;
                 }
                 VerifyOutcome::Unavailable => {
-                    debug!(
-                        "{}: '{}' stuck Loading, container busy; will re-verify",
-                        container_name, name
+                    // #0103: the budget is spent and the container still
+                    // cannot answer. This is where a LoadNode call that never
+                    // got its reply ends up when it was handed to the
+                    // ComponentEvent path (`ros_client`, "deferring to
+                    // ComponentEvent"): a container that stopped answering
+                    // (deadlocked, stopped, or its replies dropped) never
+                    // sends that event either, and re-verifying here forever
+                    // left the launch at "N pending" with no failure and no
+                    // startup summary. Fail it the way the direct path fails a
+                    // container busy past the budget (`LoadError::Unresponsive`)
+                    // — no resend, since LoadNode is not idempotent.
+                    let error = crate::member_actor::container_control::LoadError::Unresponsive {
+                        budget_secs: self.timings.total_budget.as_secs(),
+                        composable: name.clone(),
+                    }
+                    .to_string();
+                    let Some(entry) = self.composable_nodes.get_mut(&name) else {
+                        continue;
+                    };
+                    if !matches!(entry.state, ComposableState::Loading { .. }) {
+                        continue;
+                    }
+                    entry.state = ComposableState::Failed {
+                        error: error.clone(),
+                    };
+                    entry.load_started_at = None;
+                    warn!(
+                        "{}: '{}' has been Loading for over {}s with no answer from the \
+                         container (no LoadNode reply, no ComponentEvent, ListNodes \
+                         unanswered); failing it: {}",
+                        container_name,
+                        name,
+                        self.timings.total_budget.as_secs(),
+                        error
                     );
+                    emit(
+                        self.state_tx(),
+                        StateEvent::LoadFailed {
+                            name: name.clone(),
+                            error,
+                        },
+                    )
+                    .await;
                 }
             }
         }

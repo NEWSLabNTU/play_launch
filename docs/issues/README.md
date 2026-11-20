@@ -24,6 +24,12 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0103** -- a composable whose LoadNode reply was lost was handed to the
+ComponentEvent path and, when the container then answered nothing,
+re-verified forever: no failure, no startup summary, "N pending" for good.
+It now fails as `container-busy` once `load_total_budget_secs` is spent,
+as the direct path already did. See `archived/0103-*`.
+
 **#0102** -- a composable's parameter file was expanded only when its
 name ended in `.yaml`/`.yml`, so Nav2's `RewrittenYaml` (an extension-less
 temporary file) reached every server as a literal `__param_file` and they

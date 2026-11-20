@@ -8,6 +8,14 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fixed (#0103):** a composable whose LoadNode reply is lost no longer
+  waits forever when its container then stops answering. The reply was
+  handed to the ComponentEvent path, and with no event and no ListNodes
+  answer the load stayed pending for good, with no `LOAD_FAILED` and no
+  `STARTUP_SUMMARY`. It now fails as `container-busy` once
+  `composable_node_loading.load_total_budget_secs` (600 s) is spent, as a
+  load on a stock container already did. No resend: LoadNode is not
+  idempotent.
 - **Fixed (#0102):** a composable node's parameter file is read whatever
   its name. Nav2's `RewrittenYaml` performs to a temporary file with no
   `.yaml` extension, which reached every server as a literal
