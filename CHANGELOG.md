@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.41.1 - 2026-11-20
 
 - **Fixed (#0101):** Nav2 with `use_composition:=True` comes up. A
   `target_container` given as a tuple of substitutions, as nav2_bringup's
