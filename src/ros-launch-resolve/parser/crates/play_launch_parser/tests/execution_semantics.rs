@@ -435,3 +435,39 @@ fn a_callable_on_start_executes_what_it_returns() {
         ["/by_fn", "/by_list", "/first"]
     );
 }
+
+/// Issue #0102: a composable's parameter file is opened whatever its name.
+/// nav2_common's RewrittenYaml performs to a temporary file with no `.yaml`
+/// extension; `LoadComposableNodes` loads it anyway and sends the values
+/// matched to the node, so stock gives `topic_name: wild_map`. The parser
+/// used to expand only `.yaml`/`.yml`, so every Nav2 server got a literal
+/// `__param_file` and ran on its defaults.
+#[test]
+fn a_composable_param_file_without_extension_is_expanded() {
+    let _guard = python_test_guard();
+    let json = resolve("param_file_substitution");
+    let loads = json["load_node"].as_array().unwrap();
+    assert_eq!(loads.len(), 2, "{loads:#?}");
+    for load in loads {
+        let params = load["params"].as_array().unwrap();
+        let pairs: Vec<(String, String)> = params
+            .iter()
+            .map(|p| {
+                (
+                    p[0].as_str().unwrap().to_string(),
+                    p[1].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        assert!(
+            pairs.contains(&("topic_name".into(), "wild_map".into())),
+            "{}: {pairs:?}",
+            load["namespace"]
+        );
+        assert!(
+            !pairs.iter().any(|(k, _)| k == "__param_file"),
+            "{}: {pairs:?}",
+            load["namespace"]
+        );
+    }
+}

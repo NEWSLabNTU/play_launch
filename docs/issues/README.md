@@ -24,6 +24,12 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0102** -- a composable's parameter file was expanded only when its
+name ended in `.yaml`/`.yml`, so Nav2's `RewrittenYaml` (an extension-less
+temporary file) reached every server as a literal `__param_file` and they
+ran on their defaults. Read as YAML whatever its name, as
+`LoadComposableNodes` does. See `archived/0102-*`.
+
 **#0101** -- Nav2 with `use_composition:=True` did not come up: a tuple
 `target_container` (`(namespace, '/', container_name)`) became its own
 repr, a callable `OnProcessStart` `on_start` was dropped without a word

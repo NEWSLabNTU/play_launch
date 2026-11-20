@@ -6,6 +6,14 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Fixed (#0102):** a composable node's parameter file is read whatever
+  its name. Nav2's `RewrittenYaml` performs to a temporary file with no
+  `.yaml` extension, which reached every server as a literal
+  `__param_file` parameter, so Nav2 ran on built-in defaults and its
+  lifecycle manager aborted bringup.
+
 ## 0.41.1 - 2026-11-20
 
 - **Fixed (#0101):** Nav2 with `use_composition:=True` comes up. A

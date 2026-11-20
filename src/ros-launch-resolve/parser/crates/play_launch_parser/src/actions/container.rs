@@ -514,31 +514,25 @@ pub(crate) fn composable_param_file(
             why: "a LoadNode request carries the file's values",
         });
     }
-    if from_resolved.ends_with(".yaml") || from_resolved.ends_with(".yml") {
-        match extract_params_from_yaml(Path::new(from_resolved), context) {
-            Ok(yaml_params) => {
-                log::debug!(
-                    "Loaded {} parameters from {}",
-                    yaml_params.len(),
-                    from_resolved
-                );
-                Ok(yaml_params)
-            }
-            Err(e) => {
-                log::warn!("Failed to load YAML parameter file {from_resolved}: {e}");
-                // Fallback: store as __param_file
-                Ok(vec![(
-                    "__param_file".to_string(),
-                    from_resolved.to_string(),
-                )])
-            }
+    // Opened whatever its name, as `LoadComposableNodes` does: a
+    // substitution can perform to a temporary file with no extension (#0102).
+    match extract_params_from_yaml(Path::new(from_resolved), context) {
+        Ok(yaml_params) => {
+            log::debug!(
+                "Loaded {} parameters from {}",
+                yaml_params.len(),
+                from_resolved
+            );
+            Ok(yaml_params)
         }
-    } else {
-        // Non-YAML file - store as reference
-        Ok(vec![(
-            "__param_file".to_string(),
-            from_resolved.to_string(),
-        )])
+        Err(e) => {
+            log::warn!("Failed to load YAML parameter file {from_resolved}: {e}");
+            // Fallback: store as __param_file
+            Ok(vec![(
+                "__param_file".to_string(),
+                from_resolved.to_string(),
+            )])
+        }
     }
 }
 

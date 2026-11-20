@@ -5,7 +5,7 @@
 //! `get_composable_node_load_request` builds the LoadNode request.
 
 use super::{
-    helpers::{is_yaml_file, load_yaml_params_for_node},
+    helpers::load_yaml_params_for_node,
     node::{
         make_namespace_absolute, parse_parameter_item, prefix_namespace, remappings, ros_namespace,
     },
@@ -148,7 +148,11 @@ impl ComposableNode {
                                  '{fqn}'). ros2 launch fails on it too: a LoadNode \
                                  request carries the file's values"
                             )));
-                        } else if key == "__param_file" && is_yaml_file(&value) {
+                        } else if key == "__param_file" {
+                            // Opened whatever its name: `LoadComposableNodes`
+                            // reads any parameter file as YAML, and
+                            // nav2_common's RewrittenYaml performs to a
+                            // temporary file with no extension (#0102).
                             match load_yaml_params_for_node(&value, &fqn) {
                                 Ok(loaded) => parameters.extend(loaded),
                                 Err(e) => {
