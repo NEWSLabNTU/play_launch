@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.41.2 - 2026-11-21
 
 - **Fixed (#0103):** a composable whose LoadNode reply is lost no longer
   waits forever when its container then stops answering. The reply was
