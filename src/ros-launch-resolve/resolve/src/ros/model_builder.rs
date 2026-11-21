@@ -849,6 +849,17 @@ fn synthesize_tasks(derived: &DerivedSchedPlan) -> BTreeMap<String, TaskDef> {
     tasks
 }
 
+/// Whether `package`/`executable` is one of the component containers
+/// `rclcpp_components` installs, the three a launch file can start as a
+/// plain `Node` and still load composables into.
+fn is_stock_component_container(package: Option<&str>, executable: &str) -> bool {
+    package == Some("rclcpp_components")
+        && matches!(
+            executable,
+            "component_container" | "component_container_mt" | "component_container_isolated"
+        )
+}
+
 /// Map the pipeline outputs into a `SystemModel`.
 ///
 /// `args` is the concrete launch-argument binding; `input_paths` is every
@@ -1205,9 +1216,20 @@ pub fn build_system_model(
                 // `name=None`), distinct from the `name.or(exec_name)` FQN
                 // key above — the spawn path emits `-r __node:=<name>` iff
                 // this is `Some`, matching the record path's conditional
-                // (`af7c524`); a regular `<node>` is never a container.
+                // (`af7c524`).
                 node_name: n.name.clone(),
-                is_container: false,
+                // A plain `Node` that runs a component container IS one:
+                // Nav2's `bringup_launch.py` (Humble) starts `nav2_container`
+                // as `Node(package='rclcpp_components',
+                // executable='component_container_isolated')` and targets it
+                // from `LoadComposableNodes` by name, which `ros2 launch`
+                // serves through that process's LoadNode service. Decided by
+                // what the process RUNS, never by composable references
+                // (see `regular_node_colliding_dangling_composable_target_
+                // is_not_container`). Only a named one: composables find a
+                // container by name.
+                is_container: n.name.is_some()
+                    && is_stock_component_container(n.package.as_deref(), &n.executable),
             },
         );
     }
@@ -3393,6 +3415,71 @@ mod tests {
         assert!(model.structure.nodes["/perception/real_container"].is_container);
         // The composable is not a container.
         assert!(!model.structure.nodes["/perception/some_node"].is_container);
+    }
+
+    /// Nav2's `bringup_launch.py` on Humble starts its container as a plain
+    /// `Node` running `component_container_isolated`. `ros2 launch` loads
+    /// composables into it by name; the model must call it a container, or
+    /// every composable is blocked waiting for a container that never
+    /// registers. Decided by the executable: a named plain node running
+    /// something else stays a node, and so does an unnamed container
+    /// executable.
+    #[test]
+    fn plain_node_running_a_component_container_is_a_container() {
+        let node = |name: Option<&str>, pkg: &str, exec: &str| {
+            serde_json::json!({
+                "executable": exec,
+                "package": pkg,
+                "name": name,
+                "exec_name": exec,
+                "namespace": "/",
+                "params_files": [],
+                "cmd": [],
+                "remaps": []
+            })
+        };
+        let json = serde_json::json!({
+            "node": [
+                node(Some("nav2_container"), "rclcpp_components", "component_container_isolated"),
+                node(Some("mt"), "rclcpp_components", "component_container_mt"),
+                node(Some("other"), "some_pkg", "component_container"),
+                node(None, "rclcpp_components", "component_container"),
+            ],
+            "container": [],
+            "load_node": [{
+                "package": "nav2_amcl",
+                "plugin": "nav2_amcl::AmclNode",
+                "target_container_name": "nav2_container",
+                "node_name": "amcl",
+                "namespace": "/",
+                "remaps": []
+            }],
+            "lifecycle_node": [],
+            "file_data": {},
+            "scopes": [{"id": 0, "ns": "/", "parent": null}]
+        });
+        let dump: LaunchDump = serde_json::from_value(json).expect("valid LaunchDump");
+        let index = ManifestIndex::default();
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+
+        let nodes = &model.structure.nodes;
+        assert!(nodes["/nav2_container"].is_container);
+        assert!(nodes["/mt"].is_container);
+        assert!(
+            !nodes["/other"].is_container,
+            "only rclcpp_components' executables"
+        );
+        let unnamed: Vec<_> = nodes
+            .iter()
+            .filter(|(_, n)| n.node_name.is_none() && n.plugin.is_none())
+            .collect();
+        assert_eq!(unnamed.len(), 1);
+        assert!(
+            !unnamed[0].1.is_container,
+            "an unnamed one cannot be targeted"
+        );
+        assert!(!nodes["/amcl"].is_container);
     }
 
     /// Phase 48 — a scope's model identity is its launch FILE, not its

@@ -1,0 +1,13 @@
+<launch>
+  <!-- A container started as a plain node, as Nav2's bringup_launch.py does on
+       Humble (Node(package='rclcpp_components',
+       executable='component_container_isolated', name='nav2_container')), with
+       composables loaded into it by name. ros2 launch serves the load through
+       that process's LoadNode service; play_launch must treat it as a
+       container (#0104). -->
+  <node pkg="rclcpp_components" exec="component_container_isolated" name="plain_container"/>
+  <load_composable_node target="/plain_container">
+    <composable_node pkg="composition" plugin="composition::Talker" name="talker_a"/>
+    <composable_node pkg="composition" plugin="composition::Listener" name="listener_a"/>
+  </load_composable_node>
+</launch>

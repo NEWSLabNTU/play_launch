@@ -404,3 +404,54 @@ fn test_a_lost_reply_from_a_busy_container_fails_at_the_budget() {
     );
     run.assert_no_resend();
 }
+
+/// #0104: a container started as a plain `<node>` running
+/// `component_container_isolated`, with composables loaded into it by name,
+/// as Nav2's `bringup_launch.py` does on Humble. `ros2 launch` loads them
+/// through that process's LoadNode service. play_launch registered no
+/// container for it, so every composable stayed `Blocked(ContainerNotFound)`
+/// and startup never completed. Checked in every container mode, since each
+/// takes a different path from the model's container bit.
+#[test]
+fn test_composables_load_into_a_container_started_as_a_plain_node() {
+    for mode in ["observable", "isolated", "stock"] {
+        let env = fixtures::install_env();
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let stdout = tmp.path().join("stdout.log");
+        let mut cmd = fixtures::play_launch_cmd(&env);
+        cmd.current_dir(tmp.path());
+        cmd.args([
+            "launch",
+            "--disable-web-ui",
+            "--disable-monitoring",
+            "--disable-diagnostics",
+            "--container-mode",
+            mode,
+        ]);
+        cmd.arg(launch_path("plain_node_container"));
+        cmd.stdout(Stdio::from(std::fs::File::create(&stdout).unwrap()));
+        cmd.stderr(Stdio::from(
+            std::fs::File::create(tmp.path().join("stderr.log")).unwrap(),
+        ));
+        let proc = ManagedProcess::spawn(&mut cmd).expect("spawn play_launch");
+        let run = Run {
+            session: proc.id(),
+            _proc: proc,
+            _tmp: tmp,
+            stdout,
+        };
+        assert!(
+            run.wait_for(
+                "all nodes ready (nodes 0/0, containers 1/1, composable 2/2)",
+                Duration::from_secs(30)
+            ),
+            "{mode}: the composables did not load into the plain-node container:\n{}",
+            run.text()
+        );
+        assert!(
+            !run.text().contains("ContainerNotFound"),
+            "{mode}:\n{}",
+            run.text()
+        );
+    }
+}
