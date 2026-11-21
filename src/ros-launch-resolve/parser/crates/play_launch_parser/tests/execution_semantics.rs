@@ -471,3 +471,49 @@ fn a_composable_param_file_without_extension_is_expanded() {
         );
     }
 }
+
+/// Nav2's `nav2_params.yaml` names its sections without a leading `/` and
+/// nests a costmap's under the costmap's namespace. `LoadComposableNodes`
+/// sends each node only its own section (launch_ros `to_parameters_list`),
+/// so on Humble map_server gets `use_sim_time` and `yaml_filename` and
+/// nothing else. The parser read only `/`-prefixed keys as sections, so it
+/// flattened the whole file onto every composable
+/// (`amcl.ros__parameters.alpha1` on map_server) and map_server failed to
+/// configure: `parameter 'yaml_filename' is not initialized`. Both
+/// frontends, since both had the defect.
+#[test]
+fn a_composable_gets_its_own_section_of_a_nav2_style_param_file() {
+    let _guard = python_test_guard();
+    for case in ["param_file_sections_xml", "param_file_sections_py"] {
+        let json = resolve(case);
+        let loads = json["load_node"].as_array().unwrap();
+        assert_eq!(loads.len(), 2, "{case}: {loads:#?}");
+        for load in loads {
+            let mut keys: Vec<String> = load["params"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p[0].as_str().unwrap().to_string())
+                .collect();
+            keys.sort();
+            let expected: Vec<&str> = match load["node_name"].as_str().unwrap() {
+                "map_server" => vec!["use_sim_time", "yaml_filename"],
+                "local_costmap" => vec!["resolution"],
+                other => panic!("{case}: unexpected composable {other}"),
+            };
+            assert_eq!(keys, expected, "{case}: {}", load["node_name"]);
+        }
+        let map_server = loads
+            .iter()
+            .find(|l| l["node_name"] == "map_server")
+            .unwrap();
+        assert!(
+            map_server["params"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p[0] == "yaml_filename" && p[1] == "map.yaml"),
+            "{case}: {map_server:#?}"
+        );
+    }
+}

@@ -6,6 +6,18 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Fixed (#0104):** a container started as a plain `Node` running one of
+  `rclcpp_components`' container executables is a container. Nav2's
+  composed bringup on Humble starts `nav2_container` that way, and every
+  server stayed blocked on `ContainerNotFound`.
+- **Fixed (#0105):** a composable node gets only its own sections of a
+  parameter file, found as launch_ros finds them: section keys without a
+  leading `/` and sections nested under a namespace count. Nav2's
+  `nav2_params.yaml` reached every server whole, so map_server had no
+  `yaml_filename` and bringup aborted.
+
 ## 0.41.2 - 2026-11-21
 
 - **Fixed (#0103):** a composable whose LoadNode reply is lost no longer

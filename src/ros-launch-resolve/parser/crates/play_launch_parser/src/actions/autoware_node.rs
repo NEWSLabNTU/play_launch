@@ -20,7 +20,8 @@
 use crate::{
     actions::{
         ComposableNodeAction, LoadComposableNodeAction, NodeAction, Parameter,
-        container::composable_param_file, node::ParamSourceSpec,
+        container::{self, composable_param_file},
+        node::ParamSourceSpec,
     },
     error::{ParseError, Result},
     substitution::{LaunchContext, Substitution, parse_substitutions, resolve_substitutions},
@@ -194,7 +195,15 @@ impl AutowareNodeAction {
                 ParamSourceSpec::Inline(p) => parameters.push(p.evaluate(context).map_err(err)?),
                 ParamSourceSpec::File { path, .. } => {
                     let path = resolve_substitutions(path, context).map_err(err)?;
-                    parameters.extend(composable_param_file(&path, context, || label.to_string())?);
+                    let fqn = container::composable_fqn(
+                        self.node.name.as_deref().unwrap_or_default(),
+                        self.node.namespace.as_ref(),
+                        context,
+                    )
+                    .unwrap_or_else(|_| label.to_string());
+                    parameters.extend(composable_param_file(&path, context, &fqn, || {
+                        label.to_string()
+                    })?);
                 }
             }
         }

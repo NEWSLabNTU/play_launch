@@ -24,6 +24,19 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0105** -- a composable given a Nav2-style parameter file received the
+whole file: sections without a leading `/` (`amcl:`) and nested ones
+(`global_costmap: global_costmap:`) were not recognised, and the XML
+frontend selected no node at all. Both frontends now select a node's
+sections as launch_ros's `to_parameters_list` does. See
+`archived/0105-composable-param-file-sections.md`.
+
+**#0104** -- a container started as a plain `Node` running
+`component_container_isolated` (Nav2's Humble bringup) was not a container,
+so every composable was blocked on `ContainerNotFound`. The model now marks
+a named `rclcpp_components` container executable as a container. See
+`archived/0104-plain-node-container.md`.
+
 **#0103** -- a composable whose LoadNode reply was lost was handed to the
 ComponentEvent path and, when the container then answered nothing,
 re-verified forever: no failure, no startup summary, "N pending" for good.

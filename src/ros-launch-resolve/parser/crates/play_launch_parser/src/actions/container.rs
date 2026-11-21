@@ -2,7 +2,7 @@
 
 use crate::{
     error::{ParseError, Result},
-    params::extract_params_from_yaml,
+    params::extract_params_for_node,
     record::{ComposableNodeContainerRecord, LoadNodeRecord},
     substitution::{LaunchContext, Substitution, parse_substitutions, resolve_substitutions},
     xml::{Entity, XmlEntity},
@@ -98,8 +98,25 @@ pub struct ComposableNodeAction {
     pub extra_args: HashMap<String, String>,
 }
 
+/// A composable node's fully qualified name, from its `name` and own
+/// `namespace` in the launch context (#0021: never the container's).
+pub(crate) fn composable_fqn(
+    name: &[Substitution],
+    namespace: Option<&Vec<Substitution>>,
+    context: &LaunchContext,
+) -> Result<String> {
+    let name = resolve_substitutions(name, context)
+        .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+    let ns = resolve_namespace(namespace, context)?;
+    Ok(if ns == "/" || ns.is_empty() {
+        format!("/{name}")
+    } else {
+        format!("{}/{name}", ns.trim_end_matches('/'))
+    })
+}
+
 /// Resolve a namespace value against context, handling absolute/relative logic.
-fn resolve_namespace(
+pub(crate) fn resolve_namespace(
     ns_subs: Option<&Vec<Substitution>>,
     context: &LaunchContext,
 ) -> Result<String> {
@@ -494,8 +511,10 @@ impl ContainerAction {
     }
 }
 
-/// The parameters a `<param from=…>` file contributes to a composable node's
-/// LoadNode request; `node` names the node for the error.
+/// The parameters a `<param from=…>` file contributes to the LoadNode
+/// request of the composable node `node_fqn`: the file's sections that name
+/// it, as launch_ros's `to_parameters_list` selects them
+/// (`params::extract_params_for_node`); `node` names it for the error.
 ///
 /// `LoadComposableNodes` opens every parameter file to build the request, so
 /// a missing one fails the launch (#0089), whatever its extension. Shared by
@@ -503,6 +522,7 @@ impl ContainerAction {
 pub(crate) fn composable_param_file(
     from_resolved: &str,
     context: &LaunchContext,
+    node_fqn: &str,
     node: impl FnOnce() -> String,
 ) -> Result<Vec<(String, String)>> {
     log::debug!("Found param file='{}', checking if YAML", from_resolved);
@@ -516,7 +536,7 @@ pub(crate) fn composable_param_file(
     }
     // Opened whatever its name, as `LoadComposableNodes` does: a
     // substitution can perform to a temporary file with no extension (#0102).
-    match extract_params_from_yaml(Path::new(from_resolved), context) {
+    match extract_params_for_node(Path::new(from_resolved), context, node_fqn) {
         Ok(yaml_params) => {
             log::debug!(
                 "Loaded {} parameters from {}",
@@ -591,10 +611,18 @@ impl ComposableNodeAction {
                         let from_resolved = resolve_substitutions(&from_parsed, context)
                             .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
 
-                        parameters.extend(composable_param_file(&from_resolved, context, || {
+                        let label = || {
                             resolve_substitutions(&name, context)
                                 .unwrap_or_else(|_| name_str.clone())
-                        })?);
+                        };
+                        let fqn = composable_fqn(&name, namespace.as_ref(), context)
+                            .unwrap_or_else(|_| label());
+                        parameters.extend(composable_param_file(
+                            &from_resolved,
+                            context,
+                            &fqn,
+                            label,
+                        )?);
                     } else {
                         // An inline parameter, or nested ones, evaluated the
                         // way `launch_ros` evaluates a node's.

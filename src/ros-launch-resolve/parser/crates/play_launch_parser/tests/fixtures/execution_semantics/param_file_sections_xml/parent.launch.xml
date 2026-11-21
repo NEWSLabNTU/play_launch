@@ -1,0 +1,10 @@
+<launch>
+  <node_container pkg="rclcpp_components" exec="component_container" name="nav2_container" namespace="">
+    <composable_node pkg="nav2_map_server" plugin="nav2_map_server::MapServer" name="map_server">
+      <param from="$(dirname)/params.yaml"/>
+    </composable_node>
+    <composable_node pkg="nav2_costmap_2d" plugin="nav2_costmap_2d::Costmap2DROS" name="local_costmap" namespace="local_costmap">
+      <param from="$(dirname)/params.yaml"/>
+    </composable_node>
+  </node_container>
+</launch>

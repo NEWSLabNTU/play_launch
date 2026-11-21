@@ -16,8 +16,13 @@ use pyo3::PyResult;
 /// (Autoware `default_adapi.param.yaml`: `update_rate` etc. leaking across all
 /// `/adapi/node/*` composables).
 ///
-/// A file with NO node-key sections (a plain flat param mapping) is flattened
-/// whole.
+/// A section is any mapping holding `ros__parameters`, at any depth, with or
+/// without a leading `/` on its keys: Nav2's `nav2_params.yaml` writes
+/// `amcl:` and `global_costmap: global_costmap:`. Reading only `/`-prefixed
+/// keys flattened that whole file onto every Nav2 composable.
+///
+/// A file with NO `ros__parameters` anywhere (a plain flat param mapping) is
+/// flattened whole.
 pub(crate) fn load_yaml_params_for_node(
     path: &str,
     node_fqn: &str,
@@ -37,68 +42,20 @@ pub(crate) fn load_yaml_params_for_node(
         ))
     })?;
 
-    match collect_node_sections(&yaml) {
+    match play_launch_parser::params::sections_for_node(&yaml, node_fqn) {
         Some(sections) => {
-            let fqn_key = node_fqn.trim_start_matches('/');
-            let anchored = format!("/{}", fqn_key);
             let mut merged: Vec<(String, String)> = Vec::new();
-
-            // Pass 1: every section (wildcard or exact) whose key matches the
-            // node FQN, in file order — mirrors the first `for key in ...` loop.
-            for (key, value) in &sections {
-                if is_node_name_matched(&format!("/{}", key), &anchored) {
-                    apply_section(value, &mut merged);
-                }
-            }
-            // Pass 2: the exact-FQN section again, last — mirrors the trailing
-            // `if node_name in normalized: update`, so it wins on collisions.
-            for (key, value) in &sections {
-                if key.as_str() == fqn_key {
-                    apply_section(value, &mut merged);
-                }
+            for value in sections {
+                apply_section(value, &mut merged);
             }
             Ok(merged)
         }
-        // No node-keyed sections — behave like the unfiltered loader.
+        // No `ros__parameters` anywhere — the file applies whole.
         None => {
             let mut params = Vec::new();
             flatten_yaml(&yaml, "", &mut params);
             Ok(params)
         }
-    }
-}
-
-/// Collect the top-level node-name sections (`/**`, `/*`, `/foo/bar`) of a ROS
-/// parameter file as `(key_without_leading_slash, params_value)` in file order,
-/// unwrapping the inner `ros__parameters` mapping. Returns `None` when the file
-/// has no `/`-prefixed section keys (a plain flat param mapping).
-fn collect_node_sections(
-    yaml: &serde_yaml_ng::Value,
-) -> Option<Vec<(String, &serde_yaml_ng::Value)>> {
-    use serde_yaml_ng::Value;
-
-    let Value::Mapping(top_map) = yaml else {
-        return None;
-    };
-    let mut sections = Vec::new();
-    for (k, v) in top_map {
-        if let Value::String(key) = k
-            && (key == "/**" || key.starts_with('/'))
-        {
-            let params_value = if let Value::Mapping(node_map) = v {
-                node_map
-                    .get(Value::String("ros__parameters".to_string()))
-                    .unwrap_or(v)
-            } else {
-                v
-            };
-            sections.push((key.trim_start_matches('/').to_string(), params_value));
-        }
-    }
-    if sections.is_empty() {
-        None
-    } else {
-        Some(sections)
     }
 }
 
@@ -117,18 +74,8 @@ fn apply_section(params_value: &serde_yaml_ng::Value, merged: &mut Vec<(String, 
     }
 }
 
-/// ROS node-name matching used by parameter files, mirroring launch_ros
-/// `is_node_name_matched`: `/*` matches exactly one path token, `/**` matches
-/// zero or more. Both `pattern` and `node_fqn` carry a leading slash.
-pub(crate) fn is_node_name_matched(pattern: &str, node_fqn: &str) -> bool {
-    // Same transform as launch_ros: "/*" -> "(/\w+)"; so "/**" -> "(/\w+)*".
-    let regex_src = format!("^{}$", pattern.replace("/*", "(/\\w+)"));
-    match regex::Regex::new(&regex_src) {
-        Ok(re) => re.is_match(node_fqn),
-        // A pattern with no wildcards is a plain literal; fall back to equality.
-        Err(_) => pattern == node_fqn,
-    }
-}
+#[cfg(test)]
+use play_launch_parser::params::is_node_name_matched;
 
 /// Flatten YAML structure into key-value pairs with dot notation for nested objects
 ///
@@ -277,6 +224,44 @@ mod tests {
         assert_eq!(map.get("update_rate").map(String::as_str), Some("10.0"));
         // Another node's section MUST NOT leak in.
         assert!(!map.contains_key("require_accept_start"));
+    }
+
+    /// Nav2's `nav2_params.yaml` names its sections without a leading `/`,
+    /// and nests a costmap's under the costmap's own namespace. launch_ros
+    /// finds `ros__parameters` at any depth, so map_server gets its own two
+    /// values and nothing of amcl's; before, every composable received the
+    /// whole file as `amcl.ros__parameters.alpha1` and the like.
+    #[test]
+    fn sections_without_a_slash_and_nested_sections_are_selected() {
+        let f = write_tmp(
+            "amcl:\n  ros__parameters:\n    alpha1: 0.2\n\
+             map_server:\n  ros__parameters:\n    use_sim_time: true\n    yaml_filename: m.yaml\n\
+             global_costmap:\n  global_costmap:\n    ros__parameters:\n      resolution: 0.05\n",
+        );
+        let path = f.path().to_str().unwrap();
+
+        let map: std::collections::HashMap<_, _> = load_yaml_params_for_node(path, "map_server")
+            .unwrap()
+            .into_iter()
+            .collect();
+        assert_eq!(map.len(), 2, "{map:?}");
+        assert_eq!(map.get("yaml_filename").map(String::as_str), Some("m.yaml"));
+        assert_eq!(map.get("use_sim_time").map(String::as_str), Some("true"));
+
+        let nested: std::collections::HashMap<_, _> =
+            load_yaml_params_for_node(path, "global_costmap/global_costmap")
+                .unwrap()
+                .into_iter()
+                .collect();
+        assert_eq!(nested.get("resolution").map(String::as_str), Some("0.05"));
+        assert_eq!(nested.len(), 1, "{nested:?}");
+
+        // A node no section names gets nothing from the file.
+        assert!(
+            load_yaml_params_for_node(path, "amcl_other")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

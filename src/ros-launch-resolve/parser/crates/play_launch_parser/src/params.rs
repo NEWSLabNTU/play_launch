@@ -163,6 +163,122 @@ pub fn extract_params_from_yaml(
     Ok(params)
 }
 
+/// The parameters a parameter file gives the node `node_fqn` in a LoadNode
+/// request, substitutions resolved: what `LoadComposableNodes` sends, per
+/// launch_ros `to_parameters_list` (see [`node_param_sections`]).
+pub fn extract_params_for_node(
+    path: &Path,
+    context: &LaunchContext,
+    node_fqn: &str,
+) -> Result<Vec<(String, String)>, ParseError> {
+    let content = fs::read_to_string(path)?;
+    let mut yaml: Value = serde_yaml_ng::from_str(&content)
+        .map_err(|e| ParseError::InvalidSubstitution(format!("YAML parse error: {}", e)))?;
+    resolve_yaml_substitutions(&mut yaml, context)?;
+
+    let mut params: Vec<(String, String)> = Vec::new();
+    let mut upsert = |flat: Vec<(String, String)>| {
+        for (key, value) in flat {
+            if let Some(slot) = params.iter_mut().find(|(k, _)| *k == key) {
+                slot.1 = value;
+            } else {
+                params.push((key, value));
+            }
+        }
+    };
+    match sections_for_node(&yaml, node_fqn) {
+        Some(sections) => {
+            for section in sections {
+                if let Value::Mapping(map) = section {
+                    let mut flat = Vec::new();
+                    flatten_params("", map, &mut flat);
+                    upsert(flat);
+                }
+            }
+        }
+        None => {
+            if let Value::Mapping(map) = &yaml {
+                let mut flat = Vec::new();
+                flatten_params("", map, &mut flat);
+                upsert(flat);
+            }
+        }
+    }
+    Ok(params)
+}
+
+/// The sections of a ROS parameter file, as launch_ros's
+/// `__normalize_parameters_dict` finds them: wherever a `ros__parameters`
+/// key sits, at any depth, named by the keys above it joined with `/`, each
+/// stripped of a leading `/`. A key needs no leading `/` (Nav2 writes
+/// `amcl:` and `global_costmap: global_costmap:`), and the walk leaves a
+/// mapping at the first `ros__parameters` it finds. `None` when the file has
+/// none, which launch_ros reads as one flat mapping.
+pub fn node_param_sections(yaml: &Value) -> Option<Vec<(String, &Value)>> {
+    fn walk<'a>(
+        map: &'a serde_yaml_ng::Mapping,
+        keys: &mut Vec<String>,
+        out: &mut Vec<(String, &'a Value)>,
+    ) {
+        for (k, v) in map {
+            let key = match k {
+                Value::String(s) => s.clone(),
+                other => serde_yaml_ng::to_string(other)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string(),
+            };
+            if key == "ros__parameters" {
+                out.push((keys.join("/"), v));
+                return;
+            }
+            if let Value::Mapping(inner) = v {
+                keys.push(key.trim_start_matches('/').to_string());
+                walk(inner, keys, out);
+                keys.pop();
+            }
+        }
+    }
+    let Value::Mapping(top) = yaml else {
+        return None;
+    };
+    let mut sections = Vec::new();
+    walk(top, &mut Vec::new(), &mut sections);
+    (!sections.is_empty()).then_some(sections)
+}
+
+/// The sections of `yaml` that apply to `node_fqn`, in the order launch_ros
+/// applies them: every section whose name matches, in file order, then the
+/// exact one again so it wins. `None` when the file has no sections (it then
+/// applies whole). `node_fqn` may carry a leading `/`.
+pub fn sections_for_node<'a>(yaml: &'a Value, node_fqn: &str) -> Option<Vec<&'a Value>> {
+    let sections = node_param_sections(yaml)?;
+    let fqn_key = node_fqn.trim_start_matches('/');
+    let anchored = format!("/{fqn_key}");
+    let mut out: Vec<&Value> = sections
+        .iter()
+        .filter(|(key, _)| is_node_name_matched(&format!("/{key}"), &anchored))
+        .map(|(_, v)| *v)
+        .collect();
+    out.extend(
+        sections
+            .iter()
+            .filter(|(key, _)| key == fqn_key)
+            .map(|(_, v)| *v),
+    );
+    Some(out)
+}
+
+/// launch_ros `is_node_name_matched`: `/*` matches one path token, `/**`
+/// zero or more. Both arguments carry a leading `/`.
+pub fn is_node_name_matched(pattern: &str, node_fqn: &str) -> bool {
+    let regex_src = format!("^{}$", pattern.replace("/*", "(/\\w+)"));
+    match regex::Regex::new(&regex_src) {
+        Ok(re) => re.is_match(node_fqn),
+        Err(_) => pattern == node_fqn,
+    }
+}
+
 /// Recursively resolve substitutions in a YAML value
 fn resolve_yaml_substitutions(
     value: &mut Value,
