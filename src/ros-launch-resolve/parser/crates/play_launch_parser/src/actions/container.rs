@@ -42,7 +42,8 @@ pub struct ContainerAction {
     /// A container is a `Node`: its own `<param>`, `<remap>` and `<env>`
     /// reach its process.
     pub parameters: Vec<crate::actions::node::Parameter>,
-    pub param_files: Vec<Vec<Substitution>>,
+    /// Each `<param from=…>` with the `allow_substs` it wrote (#0106).
+    pub param_files: Vec<(Vec<Substitution>, Option<bool>)>,
     pub remappings: Vec<crate::actions::node::Remapping>,
     pub environment: Vec<(String, String)>,
     /// `launch-prefix=…` (#0085): a container is a node. It stays with the
@@ -226,7 +227,13 @@ impl ContainerAction {
                 }
                 "param" => {
                     if let Some(from) = child.optional_attr_str("from")? {
-                        param_files.push(parse_substitutions(&from)?);
+                        param_files.push((
+                            parse_substitutions(&from)?,
+                            child
+                                .optional_attr_str("allow_substs")?
+                                .as_deref()
+                                .and_then(crate::actions::node::parse_opt_bool),
+                        ));
                     } else {
                         parameters.extend(crate::actions::node::Parameter::from_entity(&child)?);
                     }
@@ -292,7 +299,7 @@ impl ContainerAction {
         context: &LaunchContext,
     ) -> Result<(
         Vec<(String, String)>,
-        Vec<String>,
+        Vec<(String, Option<bool>)>,
         Vec<(String, String)>,
         Option<Vec<(String, String)>>,
     )> {
@@ -306,7 +313,7 @@ impl ContainerAction {
         let files = self
             .param_files
             .iter()
-            .map(|f| resolve_substitutions(f, context).map_err(sub_err))
+            .map(|(f, substs)| Ok((resolve_substitutions(f, context).map_err(sub_err)?, *substs)))
             .collect::<Result<Vec<_>>>()?;
         let mut remaps = context.remappings();
         for r in &self.remappings {
@@ -369,13 +376,14 @@ impl ContainerAction {
         let ros_arg_list = ros_arguments.as_deref().unwrap_or(&empty_args);
 
         let (params, files, remaps, env) = self.node_inputs(context)?;
+        let file_paths: Vec<String> = files.iter().map(|(f, _)| f.clone()).collect();
         let cmd = build_ros_command(
             &exec_path,
             Some(name.as_str()),
             ns_ref,
             &gp,
             &params,
-            &files,
+            &file_paths,
             &remaps,
             arg_list,
             ros_arg_list,
@@ -398,9 +406,13 @@ impl ContainerAction {
             params,
             params_files: files
                 .iter()
-                .map(|f| {
-                    crate::params::load_and_resolve_param_file(std::path::Path::new(f), context)
-                        .unwrap_or_else(|_| f.clone())
+                .map(|(f, substs)| {
+                    crate::params::load_and_resolve_param_file_checked(
+                        std::path::Path::new(f),
+                        context,
+                        *substs,
+                    )
+                    .unwrap_or_else(|_| f.clone())
                 })
                 .collect(),
             param_sources: Vec::new(),
@@ -523,6 +535,7 @@ pub(crate) fn composable_param_file(
     from_resolved: &str,
     context: &LaunchContext,
     node_fqn: &str,
+    allow_substs: Option<bool>,
     node: impl FnOnce() -> String,
 ) -> Result<Vec<(String, String)>> {
     log::debug!("Found param file='{}', checking if YAML", from_resolved);
@@ -536,7 +549,7 @@ pub(crate) fn composable_param_file(
     }
     // Opened whatever its name, as `LoadComposableNodes` does: a
     // substitution can perform to a temporary file with no extension (#0102).
-    match extract_params_for_node(Path::new(from_resolved), context, node_fqn) {
+    match extract_params_for_node(Path::new(from_resolved), context, node_fqn, allow_substs) {
         Ok(yaml_params) => {
             log::debug!(
                 "Loaded {} parameters from {}",
@@ -617,10 +630,15 @@ impl ComposableNodeAction {
                         };
                         let fqn = composable_fqn(&name, namespace.as_ref(), context)
                             .unwrap_or_else(|_| label());
+                        let allow_substs = child
+                            .optional_attr_str("allow_substs")?
+                            .as_deref()
+                            .and_then(crate::actions::node::parse_opt_bool);
                         parameters.extend(composable_param_file(
                             &from_resolved,
                             context,
                             &fqn,
+                            allow_substs,
                             label,
                         )?);
                     } else {

@@ -805,7 +805,13 @@ impl LaunchTraverser {
             for item in param_list {
                 if let Some(param_map) = item.as_mapping() {
                     if let Some(from) = yaml_str(param_map, "from") {
-                        param_files.push(parse_substitutions(from)?);
+                        param_files.push((
+                            parse_substitutions(from)?,
+                            param_map
+                                .get(Value::String("allow_substs".to_string()))
+                                .and_then(yaml_scalar_str)
+                                .and_then(crate::actions::node::parse_opt_bool),
+                        ));
                     } else if yaml_str(param_map, "name").is_some() {
                         parameters.extend(yaml_parameters(param_map)?);
                     }

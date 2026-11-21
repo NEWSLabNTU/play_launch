@@ -193,7 +193,7 @@ impl AutowareNodeAction {
         for source in &self.node.param_sources {
             match source {
                 ParamSourceSpec::Inline(p) => parameters.push(p.evaluate(context).map_err(err)?),
-                ParamSourceSpec::File { path, .. } => {
+                ParamSourceSpec::File { path, allow_substs } => {
                     let path = resolve_substitutions(path, context).map_err(err)?;
                     let fqn = container::composable_fqn(
                         self.node.name.as_deref().unwrap_or_default(),
@@ -201,9 +201,13 @@ impl AutowareNodeAction {
                         context,
                     )
                     .unwrap_or_else(|_| label.to_string());
-                    parameters.extend(composable_param_file(&path, context, &fqn, || {
-                        label.to_string()
-                    })?);
+                    parameters.extend(composable_param_file(
+                        &path,
+                        context,
+                        &fqn,
+                        *allow_substs,
+                        || label.to_string(),
+                    )?);
                 }
             }
         }

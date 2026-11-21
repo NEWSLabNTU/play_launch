@@ -7,8 +7,9 @@ use crate::{
 use serde_yaml_ng::Value;
 use std::{fs, path::Path};
 
-/// Load a parameter file and resolve all substitutions in its contents.
-/// Returns the resolved YAML content as a string, preserving comments and formatting.
+/// Load a parameter file and resolve all substitutions in its contents, as
+/// launch does for `ParameterFile(…, allow_substs=True)`. Returns the
+/// resolved YAML content as a string, preserving comments and formatting.
 pub fn load_and_resolve_param_file(
     path: &Path,
     context: &LaunchContext,
@@ -16,21 +17,13 @@ pub fn load_and_resolve_param_file(
     load_param_file_inner(path, context, Some(true))
 }
 
-/// As [`load_and_resolve_param_file`], but reporting the one case where the
-/// result differs from ROS 2 (issue #8).
-///
-/// ROS 2 substitutes inside a param file only when `<param from=…
-/// allow_substs="true"/>` says so; this parser always substitutes. For an
-/// opted-in file that is the same answer, which is why the attribute warning
-/// was removed. For a file that did NOT opt in and contains literal `$(…)`,
-/// ROS 2 would load the text verbatim and this parser expands it — a real
-/// divergence, and until now a silent one.
-///
-/// `allow_substs` is the authored value: `None` means the attribute was
-/// absent or unreadable, and only a definite `Some(false)`/absent-with-
-/// substitutions-present combination is worth a word. The warning fires only
-/// when a substitution was actually performed, so a file with no `$(` — the
-/// overwhelming majority — says nothing.
+/// A parameter file's content as launch gives it to a node (#0106):
+/// substituted only when the `<param from=…>` (or `ParameterFile`) set
+/// `allow_substs` true, else the text as written. launch_ros's
+/// `ParameterFile` defaults to `allow_substs=False`, so a `$(var x)` in a
+/// file that did not opt in reaches the node as that string, and a variable
+/// nobody declared is no error. `allow_substs` is the authored value: `None`
+/// is absent.
 pub fn load_and_resolve_param_file_checked(
     path: &Path,
     context: &LaunchContext,
@@ -46,22 +39,10 @@ fn load_param_file_inner(
 ) -> Result<String, ParseError> {
     let content = fs::read_to_string(path)?;
 
-    // If the file has no substitutions, return raw content (preserves comments/formatting)
-    if !content.contains("$(") {
+    // Raw unless the launch file opted in; a file with no `$(` is raw either
+    // way, comments and formatting kept.
+    if allow_substs != Some(true) || !content.contains("$(") {
         return Ok(content);
-    }
-
-    // Past this point a substitution WILL be performed. ROS 2 would only do
-    // that on an explicit opt-in, so anything else is a divergence the user
-    // should hear about once, naming the file they can go look at.
-    if allow_substs != Some(true) {
-        log::warn!(
-            "{}: contains $(...) and is loaded by a <param from=…> that did \
-             not set allow_substs=\"true\"; real ROS 2 would load that text \
-             verbatim, this parser expands it. Use --parser python if you \
-             need the literal text.",
-            path.display(),
-        );
     }
 
     // Resolve substitutions line by line to preserve comments and formatting
@@ -164,17 +145,21 @@ pub fn extract_params_from_yaml(
 }
 
 /// The parameters a parameter file gives the node `node_fqn` in a LoadNode
-/// request, substitutions resolved: what `LoadComposableNodes` sends, per
-/// launch_ros `to_parameters_list` (see [`node_param_sections`]).
+/// request: what `LoadComposableNodes` sends, per launch_ros
+/// `to_parameters_list` (see [`node_param_sections`]). Substitutions are
+/// resolved only when the file opted in with `allow_substs` (#0106).
 pub fn extract_params_for_node(
     path: &Path,
     context: &LaunchContext,
     node_fqn: &str,
+    allow_substs: Option<bool>,
 ) -> Result<Vec<(String, String)>, ParseError> {
     let content = fs::read_to_string(path)?;
     let mut yaml: Value = serde_yaml_ng::from_str(&content)
         .map_err(|e| ParseError::InvalidSubstitution(format!("YAML parse error: {}", e)))?;
-    resolve_yaml_substitutions(&mut yaml, context)?;
+    if allow_substs == Some(true) {
+        resolve_yaml_substitutions(&mut yaml, context)?;
+    }
 
     let mut params: Vec<(String, String)> = Vec::new();
     let mut upsert = |flat: Vec<(String, String)>| {
@@ -529,35 +514,39 @@ node2:
         assert_eq!(params.len(), 2);
     }
 
-    /// Issue #8: the `allow_substs` opt-in is carried so the parser can
-    /// REPORT a divergence, never to create one.
-    ///
-    /// The tempting "real" fix — honour the flag by not substituting when it
-    /// is absent — would change what every existing launch file resolves to,
-    /// which is why it is not what happened here. This pins that: the same
-    /// file yields the same bytes at every value of the flag.
+    /// #0106: a file is substituted only when the launch file opted in, as
+    /// launch_ros's `ParameterFile` (`allow_substs=False` by default) does.
+    /// Without the opt-in the text is the node's, an undeclared variable
+    /// included; with it, the variable is resolved.
     #[test]
-    fn the_opt_in_changes_what_is_reported_and_never_what_is_produced() {
+    fn a_param_file_is_substituted_only_when_it_opts_in() {
         let mut context = LaunchContext::new();
         context.set_configuration("map".to_string(), "/maps/town".to_string());
 
+        let raw = "/**:\n  ros__parameters:\n    path: $(var map)\n    note: $(var not_declared)\n";
         let mut file = NamedTempFile::new().unwrap();
-        file.write_all(b"/**:\n  ros__parameters:\n    path: $(var map)\n")
-            .unwrap();
+        file.write_all(raw.as_bytes()).unwrap();
         file.flush().unwrap();
 
-        let opted_in =
-            load_and_resolve_param_file_checked(file.path(), &context, Some(true)).unwrap();
-        let opted_out =
-            load_and_resolve_param_file_checked(file.path(), &context, Some(false)).unwrap();
-        let unstated = load_and_resolve_param_file_checked(file.path(), &context, None).unwrap();
+        for flag in [None, Some(false)] {
+            assert_eq!(
+                load_and_resolve_param_file_checked(file.path(), &context, flag).unwrap(),
+                raw,
+                "allow_substs {flag:?}"
+            );
+        }
+        // Opted in, the undeclared variable is launch's error too.
+        assert!(load_and_resolve_param_file_checked(file.path(), &context, Some(true)).is_err());
 
+        let mut ok = NamedTempFile::new().unwrap();
+        ok.write_all(b"/**:\n  ros__parameters:\n    path: $(var map)\n")
+            .unwrap();
+        ok.flush().unwrap();
+        let opted_in =
+            load_and_resolve_param_file_checked(ok.path(), &context, Some(true)).unwrap();
         assert!(opted_in.contains("/maps/town"), "{opted_in}");
-        assert_eq!(opted_in, opted_out);
-        assert_eq!(opted_in, unstated);
-        // And the legacy entry point is still the always-substitute one.
         assert_eq!(
-            load_and_resolve_param_file(file.path(), &context).unwrap(),
+            load_and_resolve_param_file(ok.path(), &context).unwrap(),
             opted_in
         );
     }

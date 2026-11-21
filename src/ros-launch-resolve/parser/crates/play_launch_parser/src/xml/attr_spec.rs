@@ -422,19 +422,12 @@ static SPECS: &[AttrSpec] = &[
         // `value-sep`: `launch_xml`'s `get_attr` splits `value` on it into a
         // list, for every attribute (`<name>-sep`); a parameter is where it
         // matters.
-        supported: &["name", "value", "value-sep", "from", "type"],
-        // ROS 2 accepts `allow_substs` alongside `from=` (`launch_ros`
-        // `Node._parse_nested_parameter_tuples()` reads it via
-        // `param.get_attr('allow_substs', ...)` and threads it into
-        // `ParameterFile.allow_substs`, gating whether `$(...)` patterns
-        // inside the param file are substituted before load). Measured live
-        // in Autoware (`autoware_diffusion_planner`, `autoware_lidar_transfusion`,
-        // and others ship `<param from="..." allow_substs="true"/>`). This
-        // parser always resolves substitutions in loaded YAML param files
-        // (`params.rs::load_and_resolve_param_file()`) regardless of this
-        // flag, so the attribute is accepted but has no effect — warn, don't
-        // reject.
-        known_unsupported: &["allow_substs"],
+        // `allow_substs` with `from=`: `launch_ros` threads it into
+        // `ParameterFile.allow_substs`, which decides whether `$(...)` inside
+        // the file is substituted (default no). Honoured (#0106,
+        // `params.rs::load_and_resolve_param_file_checked`).
+        supported: &["name", "value", "value-sep", "from", "type", "allow_substs"],
+        known_unsupported: &[],
         children: &["param"], // nested param groups
     },
     AttrSpec {
@@ -493,22 +486,9 @@ pub fn spec_for(element: &str) -> Option<&'static AttrSpec> {
 /// already matches ROS 2, so the attribute being "unsupported" changes nothing
 /// observable.
 ///
-/// Issue #8. `<param from="…" allow_substs="true"/>` is the case: ROS 2 uses
-/// the flag to decide whether to substitute `$(...)` inside a loaded param
-/// file, and this parser ALWAYS substitutes
-/// (`params.rs::load_and_resolve_param_file()`). So for `true` the result is
-/// identical and the warning was pure noise — six lines per Autoware launch,
-/// each claiming a value was ignored, which sent readers auditing param files
-/// for damage that had not happened.
-///
-/// `allow_substs="false"` is NOT here, and must keep warning: there ROS 2
-/// would leave `$(...)` unsubstituted and this parser resolves it anyway,
-/// which is a real divergence.
-///
 /// `emulate_tty="false"` and `<node shell="false">` ask for launch's default,
 /// which is what this parser does without being asked.
 const BEHAVIOUR_MATCHES: &[(&str, &str, &str)] = &[
-    ("param", "allow_substs", "true"),
     ("node", "shell", "false"),
     ("lifecycle_node", "shell", "false"),
     ("node_container", "shell", "false"),
@@ -521,17 +501,9 @@ const BEHAVIOUR_MATCHES: &[(&str, &str, &str)] = &[
 /// What actually differs, for known-unsupported attributes where "the value
 /// is ignored" understates the consequence.
 ///
-/// Issue #8's other half: told only that `allow_substs="false"` was ignored,
-/// a reader cannot tell whether that costs them anything. It does — the
-/// literal `$(...)` they asked to keep gets resolved anyway — and that is
-/// worth one sentence at the point of the warning rather than a trip to the
-/// source.
-const DIVERGENCE_NOTES: &[(&str, &str, &str)] = &[(
-    "param",
-    "allow_substs",
-    "this parser always resolves $(...) inside a loaded param file, so the \
-     flag cannot turn substitution off",
-)];
+/// None today: `allow_substs` was the one (issue #8), and it is honoured
+/// since #0106.
+const DIVERGENCE_NOTES: &[(&str, &str, &str)] = &[];
 
 fn divergence_note(element: &str, attr: &str) -> Option<&'static str> {
     DIVERGENCE_NOTES
@@ -781,10 +753,6 @@ mod tests {
     /// attribute no spec lists as `known_unsupported` is dead weight that
     /// nobody would notice — nothing fails, a warning simply never appears
     /// for a case that no longer exists.
-    ///
-    /// The live risk is the reverse direction of issue #8: if `allow_substs`
-    /// is ever implemented for real and dropped from `known_unsupported`,
-    /// this row must go with it.
     #[test]
     fn every_benign_row_names_a_known_unsupported_attribute() {
         for (element, attr, value) in BEHAVIOUR_MATCHES {
@@ -812,41 +780,6 @@ mod tests {
                 "<{element} {attr}=…> is not known_unsupported, so its note is dead",
             );
         }
-    }
-
-    /// The note must hold for EVERY non-benign value, including one the
-    /// parser cannot read here (`$(var …)`). So it states what the parser
-    /// does, never what the author intended — an earlier draft said
-    /// "substitutions you asked to keep literal will be expanded", which is
-    /// a guess about intent when the value is a substitution.
-    #[test]
-    fn a_divergence_note_claims_nothing_about_the_authors_intent() {
-        let note = divergence_note("param", "allow_substs").expect("note exists");
-        assert!(!note.contains("you asked"), "{note}");
-        assert!(note.contains("always resolves"), "{note}");
-    }
-
-    /// Issue #8: the flag's value decides whether anything is lost.
-    ///
-    /// `allow_substs="true"` asks for substitution and this parser always
-    /// substitutes, so the outcome is exactly ROS 2's. `false` asks for the
-    /// literal `$(...)` to survive, which this parser cannot do — a real
-    /// divergence that must keep warning.
-    #[test]
-    fn allow_substs_is_benign_only_when_it_asks_for_what_we_already_do() {
-        assert!(behaviour_matches("param", "allow_substs", Some("true")));
-        assert!(behaviour_matches("param", "allow_substs", Some("True")));
-        assert!(behaviour_matches("param", "allow_substs", Some(" true ")));
-
-        assert!(!behaviour_matches("param", "allow_substs", Some("false")));
-        // A substitution is not known until replay; stay conservative.
-        assert!(!behaviour_matches(
-            "param",
-            "allow_substs",
-            Some("$(var use_substs)")
-        ));
-        // No value in hand is not evidence of a benign one.
-        assert!(!behaviour_matches("param", "allow_substs", None));
     }
 
     /// The table is keyed on the CANONICAL element name — the same mistake

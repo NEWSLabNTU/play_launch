@@ -90,7 +90,7 @@ The parser evaluates conditions during parsing and processes only the selected p
   re-shape it (`'5'`, `'a: b'`, `'a, b'`; #0068).
 - **`<let>` statements**: sequential parse-time resolution — values resolved immediately, stored in record.json
 - **Runtime fallback**: unresolved `$(var ...)` in executable names resolved at replay time (`src/execution/node_cmdline.rs`)
-- **YAML params**: substitutions in YAML files resolved and typed before passing to nodes (`src/params.rs::load_and_resolve_param_file()`)
+- **YAML params**: a `<param from=…>` file is read AS WRITTEN unless it sets `allow_substs="true"` (#0106), as launch_ros's `ParameterFile` (default `allow_substs=False`): a `$(var x)` in a file that did not opt in reaches the node as that string, and an undeclared variable there is no error. Opted in, substitutions are resolved and typed (`src/params.rs::load_and_resolve_param_file_checked()`; composables `extract_params_for_node`)
 - **`$(dirname)` is ABSOLUTE, for every invocation form** (#0034). `launch`
   takes `os.path.abspath` of the launch file's location and only then
   `os.path.dirname` (`IncludeLaunchDescription._get_launch_file_directory()`),

@@ -8,6 +8,11 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fixed (#0106):** a `<param from=…>` file is read as written unless it
+  sets `allow_substs="true"`, as `ros2 launch` reads it. A file holding a
+  `$(var …)` for some other include to fill no longer fails the launch with
+  `Undefined variable`; the node gets the text, as under stock.
+
 - **Fixed (#0104):** a container started as a plain `Node` running one of
   `rclcpp_components`' container executables is a container. Nav2's
   composed bringup on Humble starts `nav2_container` that way, and every

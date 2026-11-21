@@ -17,12 +17,20 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-None.
+**#0107** -- a YAML-frontend composable's `param: [{from: …}]` is dropped:
+`parse_yaml_composable_nodes` reads only inline `name:` entries. See
+`0107-yaml-composable-param-file-dropped.md`.
 
 `just check-issue-index` fails if this section and the per-file `status:`
 frontmatter disagree.
 
 ## Resolved
+
+**#0106** -- a `<param from=…>` file was substituted whether or not it set
+`allow_substs`, so a file holding `$(var x)` for another include to fill
+refused the whole launch (`Undefined variable`). It is read as written
+unless it opts in, as launch_ros's `ParameterFile` does, for nodes,
+containers and composables. See `archived/0106-param-file-substituted-without-opt-in.md`.
 
 **#0105** -- a composable given a Nav2-style parameter file received the
 whole file: sections without a leading `/` (`amcl:`) and nested ones

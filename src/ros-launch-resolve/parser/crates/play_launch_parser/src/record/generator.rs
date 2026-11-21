@@ -3,7 +3,7 @@
 use crate::{
     actions::{ExecutableAction, NodeAction},
     error::GenerationError,
-    params::load_and_resolve_param_file,
+    params::load_and_resolve_param_file_checked,
     record::types::NodeRecord,
     substitution::{LaunchContext, Substitution, resolve_substitutions},
 };
@@ -282,7 +282,19 @@ impl CommandGenerator {
         // - Regular files: Store resolved YAML content
         let mut params_files = Vec::new();
         let mut params_file_paths = Vec::new();
-        for param_file_subs in &node.param_files {
+        // The i-th file of the split list is the i-th file of the ordered
+        // one, which carries the `allow_substs` the launch file wrote (#0106).
+        let file_substs: Vec<Option<bool>> = node
+            .param_sources
+            .iter()
+            .filter_map(|s| match s {
+                crate::actions::node::ParamSourceSpec::File { allow_substs, .. } => {
+                    Some(*allow_substs)
+                }
+                _ => None,
+            })
+            .collect();
+        for (file_index, param_file_subs) in node.param_files.iter().enumerate() {
             let param_file_path = resolve_substitutions(param_file_subs, context)?;
 
             // Check if this is a temp parameter file (created by launch system)
@@ -305,16 +317,18 @@ impl CommandGenerator {
                 // `allow_substs="true"` case launch fails on.
                 continue;
             } else {
-                // Regular file: load and resolve substitutions in YAML content
-                let resolved_contents =
-                    load_and_resolve_param_file(Path::new(&param_file_path), context).map_err(
-                        |e| {
-                            GenerationError::IoError(format!(
-                                "Failed to load and resolve parameter file '{}': {}",
-                                param_file_path, e
-                            ))
-                        },
-                    )?;
+                // Regular file: its content, substituted only on the opt-in.
+                let resolved_contents = load_and_resolve_param_file_checked(
+                    Path::new(&param_file_path),
+                    context,
+                    file_substs.get(file_index).copied().flatten(),
+                )
+                .map_err(|e| {
+                    GenerationError::IoError(format!(
+                        "Failed to load and resolve parameter file '{}': {}",
+                        param_file_path, e
+                    ))
+                })?;
                 params_files.push(resolved_contents);
                 params_file_paths.push(param_file_path);
             }
