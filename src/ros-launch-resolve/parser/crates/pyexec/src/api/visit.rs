@@ -767,6 +767,18 @@ fn execute_entity(py: Python, entity: &Bound<'_, PyAny>) -> PyResult<()> {
     exec_process!(r::ComposableNodeContainer);
     exec!(r::LoadComposableNodes);
 
+    // `EmitEvent(event=ChangeState(...))`: launch asks a lifecycle node to
+    // take a transition. A configure and an activate of one node are what
+    // `lifecycle_autostart: active` drives at spawn (#0108).
+    let emit = py.import("launch.actions")?.getattr("EmitEvent")?;
+    if entity.is_instance(&emit)? {
+        let event = entity.getattr("event")?;
+        if event.hasattr("_play_launch_change_state")? {
+            return r::change_state(py, &event);
+        }
+        return Ok(());
+    }
+
     // An action a package defines itself, subclassing `launch.Action`
     // (`autoware_agnocast_wrapper`'s `AutowareNode`, #0095): `launch` calls
     // its `execute(context)` and runs what it returns, in order, and so does

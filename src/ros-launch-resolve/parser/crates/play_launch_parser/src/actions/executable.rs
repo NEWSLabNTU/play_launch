@@ -182,6 +182,7 @@ impl ExecutableAction {
             on_exit_shutdown: self.on_exit_shutdown,
             lifecycle: None,
             lifecycle_autostart: None,
+            lifecycle_configure_only: None,
             respawn,
             respawn_delay,
             spawn: crate::actions::process::resolve_spawn(

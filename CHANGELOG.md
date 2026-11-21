@@ -8,6 +8,11 @@ allowance heavily.
 
 ## Unreleased
 
+- **Fixed (#0108):** a `.launch.py` that brings its `LifecycleNode` up with
+  `ChangeState` events, as slam_toolbox's launch files do on Jazzy (Nav2's
+  `slam:=True`), parses, and play_launch drives the node to the state the
+  launch asked for: active after a configure and an activate, inactive
+  after a configure alone.
 - **Fixed (#0106):** a `<param from=…>` file is read as written unless it
   sets `allow_substs="true"`, as `ros2 launch` reads it. A file holding a
   `$(var …)` for some other include to fill no longer fails the launch with

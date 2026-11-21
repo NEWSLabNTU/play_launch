@@ -143,6 +143,7 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
         // `play_launch run` starts a plain process: no lifecycle facts.
         lifecycle: None,
         lifecycle_autostart: None,
+        lifecycle_configure_only: None,
         executable: args.executable.clone(),
         package: Some(args.package.clone()),
         name: Some(args.executable.clone()),

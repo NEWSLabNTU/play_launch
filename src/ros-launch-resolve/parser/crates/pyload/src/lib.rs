@@ -188,7 +188,9 @@ impl std::error::Error for LoadError {}
 /// the launch (play_launch #0084, #0090).
 /// 15: the `perform_substitution` op, a launch extension's substitution
 /// (play_launch #0099). A v14 object answers it `unknown op`.
-const ABI_VERSION: u32 = 15;
+/// 16: the captures carry `lifecycle_configure_only`, and `ChangeState`
+/// events reach `lifecycle_autostart` (play_launch #0108).
+const ABI_VERSION: u32 = 16;
 
 type SetLoggerFn =
     unsafe extern "C" fn(extern "C" fn(u32, *const std::ffi::c_char, *const std::ffi::c_char), u32);

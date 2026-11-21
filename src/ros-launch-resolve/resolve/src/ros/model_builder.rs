@@ -1102,8 +1102,20 @@ pub fn build_system_model(
     /// configure then activate. Absent and `false` are both "the launch file
     /// did not ask", which is not "configure only", so neither produces
     /// `Configure` — that value is reachable only from another producer.
-    fn lower_autostart(lifecycle_autostart: Option<bool>) -> Option<model::Autostart> {
-        (lifecycle_autostart == Some(true)).then_some(model::Autostart::Active)
+    /// Active when the launch activates the node (`autostart`, or a
+    /// configure and an activate `ChangeState`); Configure when it only
+    /// configures it (#0108).
+    fn lower_autostart(
+        lifecycle_autostart: Option<bool>,
+        configure_only: Option<bool>,
+    ) -> Option<model::Autostart> {
+        if lifecycle_autostart == Some(true) {
+            Some(model::Autostart::Active)
+        } else if configure_only == Some(true) {
+            Some(model::Autostart::Configure)
+        } else {
+            None
+        }
     }
 
     // Phase 46.2 — lower the LaunchDump record's spawn fields into the
@@ -1162,7 +1174,10 @@ pub fn build_system_model(
                 // executable is managed.
                 lifecycle: n.lifecycle == Some(true)
                     || decl.and_then(|d| d.lifecycle).unwrap_or(false),
-                lifecycle_autostart: lower_autostart(n.lifecycle_autostart),
+                lifecycle_autostart: lower_autostart(
+                    n.lifecycle_autostart,
+                    n.lifecycle_configure_only,
+                ),
                 // GAP-4: global (scope-wide SetParameter) + node-specific,
                 // global first so node-specific overrides on key collision.
                 params: lower_params_merged(n.global_params.as_deref(), &n.params),

@@ -12,6 +12,7 @@ mod push_namespace;
 
 pub use composable_node::ComposableNode;
 pub use container::ComposableNodeContainer;
+pub(crate) use lifecycle_node::change_state;
 pub use lifecycle_node::{LifecycleNode, LifecycleTransition};
 pub use load_composable::LoadComposableNodes;
 pub use node::Node;

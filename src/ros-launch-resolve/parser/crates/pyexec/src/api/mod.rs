@@ -251,10 +251,12 @@ class Action:
     py.run(
         c"
 class EmitEvent:
-    def __init__(self, *, event=None, **kwargs):
+    def __init__(self, *, event=None, condition=None, **kwargs):
         # Kept so a node's on_exit=EmitEvent(event=Shutdown()) -- or a
         # subclass such as SSv2's ShutdownOnce -- reads as 'shut down'.
         self.event = event
+        # An action's condition, which the walk evaluates (#0108).
+        self.condition = condition
     def __repr__(self):
         return 'EmitEvent(...)'
 
@@ -264,9 +266,41 @@ class _ShutdownEvent:
         pass
     def __repr__(self):
         return 'Shutdown()'
+
+class _MatchesAction:
+    # `launch.events.matches_action(action)`: launch's matcher is a lambda
+    # comparing an event's action with `action`. Kept as an object so the
+    # walk can read which action a `ChangeState` names (#0108).
+    def __init__(self, action):
+        self.action = action
+    def __call__(self, action):
+        return action is self.action
+    def __repr__(self):
+        return 'matches_action(...)'
+
+def matches_action(target_action):
+    return _MatchesAction(target_action)
+
+def matches_name(target_name):
+    return lambda action: getattr(action, 'name', None) == target_name
+
+class ChangeState:
+    # `launch_ros.events.lifecycle.ChangeState`: ask a lifecycle node, picked
+    # by `lifecycle_node_matcher`, to take transition `transition_id`.
+    _play_launch_change_state = True
+    def __init__(self, *, lifecycle_node_matcher, transition_id, **kwargs):
+        self.lifecycle_node_matcher = lifecycle_node_matcher
+        self.transition_id = transition_id
+    def __repr__(self):
+        return f'ChangeState(transition_id={self.transition_id!r})'
+
+class StateTransition:
+    def __init__(self, *args, **kwargs):
+        pass
 ",
-        None,
+        // As globals, so `matches_action` finds `_MatchesAction`.
         Some(&locals),
+        None,
     )?;
     let emit_event_class = locals.get_item("EmitEvent")?.unwrap();
     launch_actions.add("EmitEvent", &emit_event_class)?;
@@ -277,6 +311,11 @@ class _ShutdownEvent:
     let launch_events = PyModule::new(py, "launch.events")?;
     let shutdown_event_class = locals.get_item("_ShutdownEvent")?.unwrap();
     launch_events.add("Shutdown", &shutdown_event_class)?;
+    launch_events.add(
+        "matches_action",
+        locals.get_item("matches_action")?.unwrap(),
+    )?;
+    launch_events.add("matches_name", locals.get_item("matches_name")?.unwrap())?;
     // Set __path__ so Python recognizes launch.events as a package (enables submodule imports)
     launch_events.setattr(
         "__path__",
@@ -605,7 +644,27 @@ def get_ros_node(context):
         &launch_ros_utilities
     )?)?;
 
+    // launch_ros.events and launch_ros.events.lifecycle: the ChangeState
+    // event a launch file emits to drive a LifecycleNode (#0108), and
+    // launch_ros.event_handlers, where upstream's OnStateTransition lives.
+    let launch_ros_events = PyModule::new(py, "launch_ros.events")?;
+    launch_ros_events.setattr(
+        "__path__",
+        pyo3::types::PyList::new(py, Vec::<String>::new())?,
+    )?;
+    let launch_ros_events_lifecycle = PyModule::new(py, "launch_ros.events.lifecycle")?;
+    launch_ros_events_lifecycle.add("ChangeState", locals.get_item("ChangeState")?.unwrap())?;
+    launch_ros_events_lifecycle.add(
+        "StateTransition",
+        locals.get_item("StateTransition")?.unwrap(),
+    )?;
+    add_submodule_both_names(&launch_ros_events, &launch_ros_events_lifecycle)?;
+    let launch_ros_event_handlers = PyModule::new(py, "launch_ros.event_handlers")?;
+    launch_ros_event_handlers.add_class::<event_handlers::OnStateTransition>()?;
+
     // Add submodules to parent module as attributes
+    add_submodule_both_names(&launch_ros_mod, &launch_ros_events)?;
+    add_submodule_both_names(&launch_ros_mod, &launch_ros_event_handlers)?;
     add_submodule_both_names(&launch_ros_mod, &launch_ros_actions)?;
     add_submodule_both_names(&launch_ros_mod, &launch_ros_desc)?;
     add_submodule_both_names(&launch_ros_mod, &launch_ros_subs)?;
@@ -650,6 +709,9 @@ def get_ros_node(context):
         "launch_ros.parameter_descriptions",
         "launch_ros.utilities",
         "launch_ros.ros_adapters",
+        "launch_ros.events",
+        "launch_ros.events.lifecycle",
+        "launch_ros.event_handlers",
         "launch_xml",
         "launch_xml.launch_description_sources",
         // Also remove internal modules
@@ -685,6 +747,9 @@ def get_ros_node(context):
     modules.set_item("launch_ros.parameter_descriptions", &launch_ros_param_desc)?;
     modules.set_item("launch_ros.utilities", &launch_ros_utilities)?;
     modules.set_item("launch_ros.ros_adapters", &launch_ros_adapters)?;
+    modules.set_item("launch_ros.events", &launch_ros_events)?;
+    modules.set_item("launch_ros.events.lifecycle", &launch_ros_events_lifecycle)?;
+    modules.set_item("launch_ros.event_handlers", &launch_ros_event_handlers)?;
 
     // Create and register launch.some_substitutions_type submodule
     let launch_some_subs_type = some_substitutions_type::register_module(py)?;

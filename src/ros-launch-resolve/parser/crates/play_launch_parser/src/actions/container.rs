@@ -501,6 +501,7 @@ impl ContainerAction {
             // modelled from its contract, not here.
             lifecycle: None,
             lifecycle_autostart: None,
+            lifecycle_configure_only: None,
             args: arguments,
             cmd,
             env: None,

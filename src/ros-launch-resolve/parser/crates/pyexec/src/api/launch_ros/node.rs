@@ -419,6 +419,7 @@ impl NodeSpec {
             on_exit_shutdown,
             lifecycle: lifecycle.map(|_| true),
             lifecycle_autostart: lifecycle.flatten(),
+            lifecycle_configure_only: None,
             respawn,
             respawn_delay,
             spawn: n.spawn.clone(),

@@ -427,6 +427,8 @@ pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeR
         lifecycle: inst.lifecycle.then_some(true),
         lifecycle_autostart: (inst.lifecycle_autostart == Some(model::Autostart::Active))
             .then_some(true),
+        lifecycle_configure_only: (inst.lifecycle_autostart == Some(model::Autostart::Configure))
+            .then_some(true),
         // The DECLARED name (drives the conditional `__node` remap) —
         // `None` when the launch had `name=None`, NOT the FQN segment.
         name: inst.node_name.clone(),
@@ -517,6 +519,7 @@ impl NodeCommandLine {
             // Not part of the command line: `up` drives transitions itself.
             lifecycle: _,
             lifecycle_autostart: _,
+            lifecycle_configure_only: _,
             params,
             params_files: params_file_contents,
             remaps,

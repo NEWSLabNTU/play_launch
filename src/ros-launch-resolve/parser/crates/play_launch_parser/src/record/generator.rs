@@ -513,6 +513,7 @@ impl CommandGenerator {
             lifecycle_autostart: node
                 .resolve_autostart(context)
                 .map_err(GenerationError::Substitution)?,
+            lifecycle_configure_only: None,
             args,
             cmd,
             env,
@@ -705,6 +706,7 @@ impl CommandGenerator {
             on_exit_shutdown: exec.on_exit_shutdown,
             lifecycle: None,
             lifecycle_autostart: None,
+            lifecycle_configure_only: None,
             // Everything after the program, as the Python dumper records it
             // (`cmd[1:]`): words of `cmd` itself as well as `<arg>` children.
             // Only `<arg>`s were kept, so `cmd="probe.sh label"` recorded no

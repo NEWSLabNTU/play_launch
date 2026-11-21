@@ -18,6 +18,13 @@ pub struct LifecycleNode {
     autostart: Option<Py<PyAny>>,
     #[pyo3(get)]
     condition: Option<Py<PyAny>>,
+    /// The `(namespace, name)` of the capture this action made when it
+    /// executed, so a later `ChangeState` event naming it
+    /// (`matches_action(node)`) can find that capture (#0108).
+    pub(crate) captured: Option<(Option<String>, Option<String>)>,
+    /// Whether the launch emitted this node's configure and its activate
+    /// transition (`ChangeState`, #0108).
+    transitions: (bool, bool),
 }
 
 #[pymethods]
@@ -73,6 +80,8 @@ impl LifecycleNode {
                 process: super::node::ProcessArgs::from_kwargs(_kwargs),
             },
             condition,
+            captured: None,
+            transitions: (false, false),
         }
     }
 
@@ -89,8 +98,10 @@ impl LifecycleNode {
             return Ok(());
         }
         let autostart = Self::resolve_autostart(py, this.borrow().autostart.as_ref())?;
-        spec.capture_with(py, this.borrow().on_exit_shutdown, Some(autostart))
-            .map(|_| ())
+        let on_exit_shutdown = this.borrow().on_exit_shutdown;
+        let n = spec.capture_with(py, on_exit_shutdown, Some(autostart))?;
+        this.borrow_mut().captured = Some((n.namespace, n.name));
+        Ok(())
     }
 
     /// `perform_typed_substitution(context, autostart, bool)`: a Python bool
@@ -188,4 +199,78 @@ impl LifecycleNode {
     pub(crate) fn on_exit_fn(&self, py: Python) -> Option<Py<PyAny>> {
         self.spec.process.on_exit_fn(py)
     }
+}
+
+/// `lifecycle_msgs/msg/Transition` ids.
+const TRANSITION_CONFIGURE: i64 = 1;
+const TRANSITION_ACTIVATE: i64 = 3;
+
+/// Execute `EmitEvent(event=ChangeState(lifecycle_node_matcher=…,
+/// transition_id=…))` (#0108).
+///
+/// slam_toolbox's launch files (Jazzy) start their node as a `LifecycleNode`
+/// and bring it up themselves: a configure event right after it, and an
+/// `OnStateTransition` handler that emits activate once it is inactive. The
+/// walk runs the handler's entities at startup, so both events reach here.
+/// Once a node has both, its capture is `lifecycle_autostart: active`, which
+/// is what play_launch drives after spawn; a configure alone is
+/// `lifecycle_configure_only`, which it drives to inactive. A matcher this walk cannot read
+/// (anything but `matches_action(node)` of a node it captured) is reported,
+/// and the node is left as launched.
+pub(crate) fn change_state(_py: Python, event: &Bound<'_, PyAny>) -> PyResult<()> {
+    let transition: Option<i64> = event.getattr("transition_id")?.extract().ok();
+    let matcher = event.getattr("lifecycle_node_matcher")?;
+    let target = matcher
+        .getattr("action")
+        .ok()
+        .and_then(|a| a.cast_into::<LifecycleNode>().ok());
+    let Some(target) = target else {
+        crate::api::utils::warn_user(
+            "A ChangeState event names its lifecycle node with a matcher play_launch cannot              read (only matches_action(node) is understood), so the transition it asks for is              not driven.",
+        );
+        return Ok(());
+    };
+    let Some(key) = target.borrow().captured.clone() else {
+        crate::api::utils::warn_user(
+            "A ChangeState event names a LifecycleNode that has not been started, so the              transition it asks for is not driven.",
+        );
+        return Ok(());
+    };
+    let (configured, activated) = {
+        let mut t = target.borrow_mut();
+        match transition {
+            Some(TRANSITION_CONFIGURE) => t.transitions.0 = true,
+            Some(TRANSITION_ACTIVATE) => t.transitions.1 = true,
+            _ => {}
+        }
+        t.transitions
+    };
+    if !configured {
+        // An activate alone does nothing in launch either: the node is
+        // unconfigured and refuses it.
+        return Ok(());
+    }
+    let mut found = false;
+    play_launch_parser::bridge::update_captured_nodes(|nodes| {
+        if let Some(n) = nodes
+            .iter_mut()
+            .rev()
+            .find(|n| n.lifecycle == Some(true) && n.namespace == key.0 && n.name == key.1)
+        {
+            if activated {
+                n.lifecycle_autostart = Some(true);
+                n.lifecycle_configure_only = None;
+            } else if n.lifecycle_autostart != Some(true) {
+                n.lifecycle_configure_only = Some(true);
+            }
+            found = true;
+        }
+    });
+    if !found {
+        crate::api::utils::warn_user(&format!(
+            "The lifecycle node {:?} is configured and activated by the launch file, but              its record was already handed on (an include ran in between), so play_launch              does not drive those transitions.",
+            key.1.as_deref().unwrap_or("<unnamed>")
+        ));
+    }
+    Ok(())
 }

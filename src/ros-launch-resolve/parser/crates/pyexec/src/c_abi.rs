@@ -471,7 +471,12 @@ pub extern "C" fn play_launch_py_abi_version() -> u32 {
     // (play_launch #0099). A v14 object answers it `unknown op`, so every XML
     // file using one (`$(robot-value …)`) would fail with a message about the
     // channel instead of the launch file.
-    15
+    //
+    // 16: the captures carry `lifecycle_configure_only`, and a
+    // `ChangeState` event sets `lifecycle_autostart` (play_launch #0108).
+    // Serde-defaulted, so a v15 object reports a node its launch file
+    // configures and activates as one nothing drives.
+    16
 }
 
 #[cfg(test)]
@@ -848,7 +853,7 @@ mod tests {
     /// launch tree that silently resolves to nothing.
     #[test]
     fn the_abi_version_moved_with_the_contract() {
-        assert_eq!(play_launch_py_abi_version(), 15);
+        assert_eq!(play_launch_py_abi_version(), 16);
     }
 
     /// `exec_file` on the old entry point is refused by name, not answered

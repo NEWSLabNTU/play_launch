@@ -556,6 +556,10 @@ pub struct NodeRecord {
     /// only in the record; both mean "no autostart" downstream.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_autostart: Option<bool>,
+    /// `Some(true)` when the launch configures this lifecycle node and does
+    /// not activate it (#0108): `autostart: configure` in the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_configure_only: Option<bool>,
     pub name: Option<String>,
     pub namespace: Option<String>,
     /// `on_exit=Shutdown()` — this node is required, and its exit takes the whole
@@ -736,6 +740,7 @@ mod tests {
             on_exit_shutdown: None,
             lifecycle: None,
             lifecycle_autostart: None,
+            lifecycle_configure_only: None,
             args: None,
             cmd: vec![
                 "/path/to/talker".to_string(),
@@ -775,6 +780,7 @@ mod tests {
             on_exit_shutdown: None,
             lifecycle: None,
             lifecycle_autostart: None,
+            lifecycle_configure_only: None,
             args: None,
             cmd: vec![],
             env: None,

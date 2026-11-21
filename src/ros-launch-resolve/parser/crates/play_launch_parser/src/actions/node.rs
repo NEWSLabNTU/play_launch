@@ -394,6 +394,7 @@ impl NodeAction {
             lifecycle_autostart: self
                 .resolve_autostart(context)
                 .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?,
+            lifecycle_configure_only: None,
             respawn,
             respawn_delay,
             spawn: crate::actions::process::resolve_spawn(

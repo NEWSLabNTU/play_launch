@@ -517,3 +517,43 @@ fn a_composable_gets_its_own_section_of_a_nav2_style_param_file() {
         );
     }
 }
+
+/// #0108: slam_toolbox's launch files (Jazzy) bring their `LifecycleNode` up
+/// themselves, with `EmitEvent(ChangeState(matches_action(node), CONFIGURE))`
+/// and an `OnStateTransition` that emits ACTIVATE. The stand-ins had no
+/// `matches_action`, so the import fell through to the real `launch` and
+/// was blocked, and the whole file failed. A node the launch configures and
+/// activates is `lifecycle_autostart` (what play_launch drives at spawn); one
+/// it only configures is `lifecycle_configure_only`; neither is set when
+/// `autostart:=false` turns the events off.
+#[test]
+fn a_lifecycle_node_the_launch_configures_and_activates_autostarts() {
+    let _guard = python_test_guard();
+    let autostart =
+        |args: HashMap<String, String>| -> HashMap<String, (Option<bool>, Option<bool>)> {
+            let record = parse_launch_file(&case("lifecycle_change_state"), args)
+                .unwrap_or_else(|e| panic!("{e}"));
+            let json = serde_json::to_value(record).unwrap();
+            json["node"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|n| {
+                    (
+                        n["name"].as_str().unwrap().to_string(),
+                        (
+                            n["lifecycle_autostart"].as_bool(),
+                            n["lifecycle_configure_only"].as_bool(),
+                        ),
+                    )
+                })
+                .collect()
+        };
+    // Stock `ros2 launch` on Humble, the same file with lifecycle_talker:
+    // the first node ends `active`, the configure-only one `inactive`.
+    let on = autostart(HashMap::new());
+    assert_eq!(on["slam_toolbox"], (Some(true), None), "{on:?}");
+    assert_eq!(on["configured_only"], (None, Some(true)), "{on:?}");
+    let off = autostart(HashMap::from([("autostart".into(), "false".into())]));
+    assert_eq!(off["slam_toolbox"], (None, None), "{off:?}");
+}

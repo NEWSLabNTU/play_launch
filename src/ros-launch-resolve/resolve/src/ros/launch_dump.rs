@@ -333,6 +333,10 @@ pub struct NodeRecord {
     /// absent both mean "the launch file did not ask".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_autostart: Option<bool>,
+    /// `Some(true)` when the launch configures this lifecycle node and does
+    /// not activate it (#0108): `lifecycle_autostart: configure`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_configure_only: Option<bool>,
     /// Global parameters from SetParameter action (scope-aware)
     #[serde(default)]
     pub global_params: Option<Vec<(String, ParameterValue)>>,

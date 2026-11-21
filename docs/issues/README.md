@@ -26,6 +26,12 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0108** -- a launch file that drives its `LifecycleNode` with
+`EmitEvent(ChangeState(matches_action(node), …))`, as slam_toolbox's do on
+Jazzy, failed at the import. The stand-ins exist now, and a configure plus
+an activate makes the node autostart. See
+`archived/0108-lifecycle-change-state-events.md`.
+
 **#0106** -- a `<param from=…>` file was substituted whether or not it set
 `allow_substs`, so a file holding `$(var x)` for another include to fill
 refused the whole launch (`Undefined variable`). It is read as written

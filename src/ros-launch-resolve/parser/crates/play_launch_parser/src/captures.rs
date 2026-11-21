@@ -57,6 +57,10 @@ pub struct NodeCapture {
     /// A lifecycle node's `autostart`, resolved. `None` when not given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_autostart: Option<bool>,
+    /// `Some(true)` when the launch configures this lifecycle node and does
+    /// not activate it (a `ChangeState` configure event alone, #0108).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_configure_only: Option<bool>,
     /// `respawn=` (`Node`, `ExecuteProcess`; #0070), resolved when the
     /// action executed. `Some(true)` only when it is true: false and unset
     /// are both `None`, as the Python dumper records them.

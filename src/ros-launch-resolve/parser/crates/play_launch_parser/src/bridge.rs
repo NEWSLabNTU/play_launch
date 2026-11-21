@@ -25,6 +25,7 @@ impl NodeCapture {
                 on_exit_shutdown: self.on_exit_shutdown,
                 lifecycle: self.lifecycle,
                 lifecycle_autostart: self.lifecycle_autostart,
+                lifecycle_configure_only: self.lifecycle_configure_only,
                 args: (!self.arguments.is_empty()).then(|| self.arguments.clone()),
                 cmd,
                 env: (!self.env_vars.is_empty()).then(|| self.env_vars.clone()),
@@ -70,6 +71,7 @@ impl NodeCapture {
             on_exit_shutdown: self.on_exit_shutdown,
             lifecycle: self.lifecycle,
             lifecycle_autostart: self.lifecycle_autostart,
+            lifecycle_configure_only: self.lifecycle_configure_only,
             args: if self.arguments.is_empty() {
                 None
             } else {
