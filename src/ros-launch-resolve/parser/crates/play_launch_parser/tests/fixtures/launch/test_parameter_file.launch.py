@@ -7,7 +7,7 @@ wraps parameter file paths with allow_substs option.
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
-from launch.substitutions import LaunchConfiguration, FindPackageShare
+from launch.substitutions import LaunchConfiguration, ThisLaunchFileDir
 from launch_ros.actions import Node
 import launch_ros.parameter_descriptions
 
@@ -34,10 +34,9 @@ def generate_launch_description():
     """Generate launch description with ParameterFile."""
     param_file_arg = DeclareLaunchArgument(
         'param_file',
-        default_value=[
-            FindPackageShare('demo_nodes_cpp'),
-            '/config/params.yaml'
-        ],
+        # A file that exists: with allow_substs=True launch_ros opens it
+        # (ParameterFile.evaluate), and a missing one fails the launch.
+        default_value=[ThisLaunchFileDir(), '/test_parameter_file.params.yaml'],
         description='Parameter file path'
     )
 

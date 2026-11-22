@@ -452,10 +452,15 @@ pub(crate) fn parse_parameter_item(item: &Bound<'_, PyAny>) -> PyResult<Vec<(Str
         .map(|n| n.to_string())
         .unwrap_or_default();
     if type_name.contains("ParameterFile") {
-        if let Ok(path) = item.call_method0("evaluate_path")
-            && let Ok(path) = path.extract::<String>()
-        {
-            parsed.push(("__param_file".to_string(), path));
+        // launch_ros's `Node` takes the file `ParameterFile.evaluate` gives:
+        // with `allow_substs=True`, a copy with its `$(...)` performed in the
+        // walk's context (#0109). Read through `__str__`, the path was the
+        // original and #0106 then read it as written.
+        // A failure (an undeclared `$(var)`, a file that is not there to
+        // open) fails the file, as in launch.
+        if item.hasattr("evaluate")? {
+            let path = item.call_method1("evaluate", (py.None(),))?;
+            parsed.push(("__param_file".to_string(), path.str()?.extract::<String>()?));
         } else if let Ok(s) = item.call_method0("__str__")
             && let Ok(path) = s.extract::<String>()
         {

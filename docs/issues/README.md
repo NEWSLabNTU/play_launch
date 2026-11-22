@@ -26,6 +26,16 @@ frontmatter disagree.
 
 ## Resolved
 
+**#0110** -- a node's command line kept one remap rule per `from`, in hash
+order, so a group's `<set_remap from="/tf" to="/tf"/>` lost to the node's
+own `('/tf', 'tf')`. Every rule is passed in launch_ros's order now. See
+`archived/0110-remaps-collapsed-by-from.md`.
+
+**#0109** -- a `.launch.py` `ParameterFile(…, allow_substs=True)` was read
+as written, so Nav2's servers got `$(var …)` in their parameters. The node
+takes the file `ParameterFile.evaluate` gives. See
+`archived/0109-python-parameter-file-opt-in-ignored.md`.
+
 **#0108** -- a launch file that drives its `LifecycleNode` with
 `EmitEvent(ChangeState(matches_action(node), …))`, as slam_toolbox's do on
 Jazzy, failed at the import. The stand-ins exist now, and a configure plus

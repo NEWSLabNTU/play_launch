@@ -557,3 +557,41 @@ fn a_lifecycle_node_the_launch_configures_and_activates_autostarts() {
     let off = autostart(HashMap::from([("autostart".into(), "false".into())]));
     assert_eq!(off["slam_toolbox"], (None, None), "{off:?}");
 }
+
+/// #0109: a `.launch.py` node's `ParameterFile(…, allow_substs=True)` is
+/// performed in the walk's context, as launch_ros's `Node` does through
+/// `ParameterFile.evaluate`; without the opt-in the file is read as written
+/// (#0106). nav2_bringup hands every server such a file, and the `$(var)`s in
+/// it name `<let>`s of the including XML. The stand-in read the path through
+/// `__str__`, so #0106 read the opted-in file as written too, and Nav2's
+/// controller_server refused `[$(var max_linear), 0.0, …]`.
+#[test]
+fn a_python_parameter_file_that_opts_in_is_substituted() {
+    let _guard = python_test_guard();
+    let record = parse_launch_file(&case("param_file_allow_substs_py"), HashMap::new())
+        .unwrap_or_else(|e| panic!("{e}"));
+    let json = serde_json::to_value(record).unwrap();
+    let file = |name: &str| -> String {
+        let node = json["node"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["name"] == name)
+            .unwrap_or_else(|| panic!("{name}: {json:#}"));
+        node["params_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f.as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(
+        file("opted_in").contains("max_velocity: [0.5, 0.0, 1.0]"),
+        "{json:#}"
+    );
+    assert!(
+        file("as_written").contains("[$(var max_linear), 0.0, $(var max_angular)]"),
+        "{json:#}"
+    );
+}

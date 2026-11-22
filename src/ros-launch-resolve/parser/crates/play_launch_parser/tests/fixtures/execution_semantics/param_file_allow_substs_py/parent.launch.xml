@@ -1,0 +1,13 @@
+<!-- nav2_bringup's shape (#0109): a .launch.py hands its servers
+     ParameterFile(..., allow_substs=True), and the `$(var)`s in the file
+     name configurations the including XML set with <let>. launch performs
+     them; a second node without the opt-in gets the file as written. -->
+<launch>
+  <group>
+    <let name="max_linear" value="0.5"/>
+    <let name="max_angular" value="1.0"/>
+    <include file="$(dirname)/child.launch.py">
+      <arg name="params_file" value="$(dirname)/params.yaml"/>
+    </include>
+  </group>
+</launch>

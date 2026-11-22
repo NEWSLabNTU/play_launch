@@ -6,6 +6,16 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Fixed (#0109):** a `.launch.py` node's `ParameterFile(…,
+  allow_substs=True)` has its `$(…)` performed, as under `ros2 launch`.
+  0.41.3 read it as written, and Nav2's `use_composition:=False` bringup
+  died in controller_server on a params file holding `$(var …)`.
+- **Fixed (#0110):** a node gets every remap rule, in launch_ros's order. A
+  rule repeating an earlier rule's `from` was dropped, so a group's
+  `<set_remap from="/tf" to="/tf"/>` lost to the node's own `/tf:=tf`.
+
 ## 0.41.3 - 2026-11-23
 
 - **Fixed (#0108):** a `.launch.py` that brings its `LifecycleNode` up with

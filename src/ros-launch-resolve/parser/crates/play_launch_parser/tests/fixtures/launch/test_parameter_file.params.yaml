@@ -1,0 +1,3 @@
+param_file_node:
+  ros__parameters:
+    rate: 10.0

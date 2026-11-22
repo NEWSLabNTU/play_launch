@@ -16,7 +16,10 @@ use std::{
 pub struct NodeCommandLine {
     pub command: Vec<String>,
     pub user_args: Vec<String>,
-    pub remaps: HashMap<String, String>,
+    /// `-r` rules in launch_ros's order: `__node`, `__ns`, then the
+    /// context's `SetRemap` rules and the node's own. rcl applies the FIRST
+    /// rule matching a name, so a repeated `from` is kept, not collapsed.
+    pub remaps: Vec<(String, String)>,
     pub params: HashMap<String, String>,
     pub params_files: HashSet<PathBuf>,
     /// Overrides YAML file written from inline params (global + node-specific).
@@ -578,7 +581,7 @@ impl NodeCommandLine {
                 .collect()
         };
 
-        let remaps: HashMap<_, _> = {
+        let remaps: Vec<_> = {
             // Only set __node when the launch file explicitly declares a name.
             // When name is None, omit __node so the node uses its internal default
             // (e.g., LifecycleNodes that expose services under their declared name).
@@ -742,7 +745,7 @@ impl NodeCommandLine {
         Ok(Self {
             command,
             user_args,
-            remaps: HashMap::new(),
+            remaps: Vec::new(),
             params: HashMap::new(),
             params_files: HashSet::new(),
             ordered_params_files: Vec::new(),
@@ -1337,7 +1340,7 @@ mod tests {
         let cmdline = NodeCommandLine {
             command: vec!["cmd".to_string()],
             user_args: vec![],
-            remaps: HashMap::from([("a".to_string(), "b".to_string())]),
+            remaps: vec![("a".to_string(), "b".to_string())],
             params: HashMap::new(),
             params_files: HashSet::new(),
             ordered_params_files: Vec::new(),
@@ -1368,7 +1371,7 @@ mod tests {
         let cmdline = NodeCommandLine {
             command: vec!["cmd".to_string()],
             user_args: vec![],
-            remaps: HashMap::new(),
+            remaps: Vec::new(),
             params: HashMap::new(),
             // Legacy fields populated on purpose: the ordered list must win.
             params_files: HashSet::from([PathBuf::from("/legacy/should-not-appear.yaml")]),
@@ -1413,7 +1416,7 @@ mod tests {
         let cmdline = NodeCommandLine {
             command: vec!["cmd".to_string()],
             user_args: vec![],
-            remaps: HashMap::new(),
+            remaps: Vec::new(),
             params: HashMap::new(),
             params_files: HashSet::from([PathBuf::from("/p/a.yaml")]),
             ordered_params_files: Vec::new(),
@@ -1446,7 +1449,7 @@ mod tests {
         let cmdline = NodeCommandLine {
             command: vec![],
             user_args: vec![],
-            remaps: HashMap::new(),
+            remaps: Vec::new(),
             params: HashMap::new(),
             params_files: HashSet::new(),
             ordered_params_files: Vec::new(),
@@ -1594,7 +1597,7 @@ mod tests {
         let cmdline = NodeCommandLine {
             command: vec!["cmd".to_string()],
             user_args: vec![],
-            remaps: HashMap::new(),
+            remaps: Vec::new(),
             params: HashMap::from([
                 ("normal_param".to_string(), "1.0".to_string()),
                 (
@@ -1633,7 +1636,7 @@ mod tests {
         let cmdline = NodeCommandLine {
             command: vec!["cmd".to_string()],
             user_args: vec![],
-            remaps: HashMap::new(),
+            remaps: Vec::new(),
             params: HashMap::from([
                 ("has_value".to_string(), "true".to_string()),
                 ("empty_value".to_string(), "".to_string()),
@@ -1746,7 +1749,7 @@ mod tests {
         let cmdline = NodeCommandLine {
             command: vec!["cmd".to_string()],
             user_args: vec![],
-            remaps: HashMap::new(),
+            remaps: Vec::new(),
             params: HashMap::new(),
             params_files: HashSet::from([PathBuf::from("/tmp/0.yaml")]),
             ordered_params_files: Vec::new(),
@@ -2129,6 +2132,54 @@ mod tests {
         );
     }
 
+    /// #0110: every remap rule reaches the command line in launch_ros's
+    /// order, a repeated `from` included. rcl applies the first rule that
+    /// matches, so a group's `<set_remap from="/tf" to="/tf"/>` must stay
+    /// ahead of the node's own `('/tf', 'tf')`. A map kept one rule per
+    /// `from` (the node's) in hash order.
+    #[test]
+    fn every_remap_reaches_the_command_line_in_order() {
+        let remap = |from: &str, to: &str| model::Remap {
+            from: from.to_string(),
+            to: to.to_string(),
+        };
+        let inst = model::NodeInstance {
+            pkg: Some("demo_nodes_cpp".to_string()),
+            exec: Some("talker".to_string()),
+            node_name: Some("slam_toolbox".to_string()),
+            remaps: vec![
+                remap("a:battery", "/vehicle/battery"),
+                remap("/tf", "/tf"),
+                remap("/tf_static", "/tf_static"),
+                remap("/tf", "tf"),
+                remap("/tf_static", "tf_static"),
+            ],
+            ..Default::default()
+        };
+        let record = node_record_from_instance("/planning/slam_toolbox", &inst);
+        let cmdline =
+            NodeCommandLine::from_node_record(&record, Path::new("/nonexistent"), &HashMap::new())
+                .unwrap();
+        let rules: Vec<_> = cmdline
+            .to_cmdline(false)
+            .windows(2)
+            .filter(|w| w[0] == "-r")
+            .map(|w| w[1].clone())
+            .collect();
+        assert_eq!(
+            rules,
+            [
+                "__node:=slam_toolbox",
+                "__ns:=/planning",
+                "a:battery:=/vehicle/battery",
+                "/tf:=/tf",
+                "/tf_static:=/tf_static",
+                "/tf:=tf",
+                "/tf_static:=tf_static",
+            ]
+        );
+    }
+
     /// #0085/#0087: a model process's `launch_prefix` goes in front of argv
     /// (split as `shlex.split` splits it), its `env_unset` and `cwd` reach the
     /// command; the cmdline file shows the prefix.
@@ -2286,7 +2337,7 @@ mod tests {
         NodeCommandLine {
             command: vec![program.to_string()],
             user_args: vec![],
-            remaps: HashMap::new(),
+            remaps: Vec::new(),
             params: HashMap::new(),
             params_files: HashSet::new(),
             ordered_params_files: Vec::new(),
