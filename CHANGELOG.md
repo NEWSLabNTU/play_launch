@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.41.3 - 2026-11-23
 
 - **Fixed (#0108):** a `.launch.py` that brings its `LifecycleNode` up with
   `ChangeState` events, as slam_toolbox's launch files do on Jazzy (Nav2's
@@ -17,7 +17,6 @@ allowance heavily.
   sets `allow_substs="true"`, as `ros2 launch` reads it. A file holding a
   `$(var …)` for some other include to fill no longer fails the launch with
   `Undefined variable`; the node gets the text, as under stock.
-
 - **Fixed (#0104):** a container started as a plain `Node` running one of
   `rclcpp_components`' container executables is a container. Nav2's
   composed bringup on Humble starts `nav2_container` that way, and every
