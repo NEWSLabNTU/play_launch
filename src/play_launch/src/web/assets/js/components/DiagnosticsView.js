@@ -1,13 +1,10 @@
 // DiagnosticsView component — sortable, filterable diagnostics table.
 
-import { h } from '../vendor/preact.module.js';
 import { useState, useEffect, useCallback, useMemo } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { html } from '../html.js';
 import { diagnostics, currentView } from '../store.js';
 import { usePoll, pageVisible } from '../hooks.js';
 import { clickable } from '../a11y.js';
-
-const html = htm.bind(h);
 
 const LEVEL_PRIORITY = {
     'OK': 0, 'Ok': 0,

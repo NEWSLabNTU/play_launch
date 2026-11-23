@@ -1,14 +1,12 @@
 // Launch Tree View — displays the launch file include tree with nodes.
 
-import { h } from '../vendor/preact.module.js';
 import { useState, useEffect, useCallback } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { html } from '../html.js';
 import {
     launchTree, launchTreeExpanded, launchTreeSelection,
     nodes, getStatusString, getNodeByKey, memberFqn } from '../store.js';
 import { clickable } from '../a11y.js';
-
-const html = htm.bind(h);
+import { StderrIcon } from './StderrIcon.js';
 
 /** Toggle expand/collapse of a scope. */
 function toggleExpand(scopeId, e) {
@@ -123,36 +121,9 @@ function getSubtreeActivity(scopeId, scopeChildren, scopeNodes) {
     return hasWarm ? 'warm' : null;
 }
 
-/** Activity icon for a node — same pattern as NodeCard's StderrIcon. */
+/** Activity icon for a node: the node card's. */
 function ActivityIcon({ nodeName }) {
-    const [, setTick] = useState(0);
-    const node = getNodeByKey(nodeName);
-    const mtime = node?.stderr_last_modified;
-    const size = node?.stderr_size || 0;
-
-    useEffect(() => {
-        if (!mtime || size === 0) return;
-        const elapsed = Math.floor(Date.now() / 1000) - mtime;
-        if (elapsed >= 60) return;
-        const nextBoundary = elapsed < 10 ? 10 : 60;
-        const delay = (nextBoundary - elapsed) * 1000 + 200;
-        const timer = setTimeout(() => setTick(t => t + 1), delay);
-        return () => clearTimeout(timer);
-    }, [mtime, size]);
-
-    if (!mtime || size === 0) return null;
-    const elapsed = Math.floor(Date.now() / 1000) - mtime;
-    if (elapsed >= 60) return null;
-
-    const statusStr = node ? getStatusString(node.status) : 'unknown';
-    const isActive = statusStr === 'running' || statusStr === 'loaded';
-
-    let cls = 'stderr-icon';
-    if (elapsed < 10 && isActive) cls += ' hot jumping';
-    else if (elapsed < 10) cls += ' hot';
-    else cls += ' warm';
-
-    return html`<span class=${cls}>${'\uD83D\uDCCB'}</span>`;
+    return html`<${StderrIcon} node=${getNodeByKey(nodeName)} />`;
 }
 
 /** Activity icon for a scope — propagates from subtree nodes. */

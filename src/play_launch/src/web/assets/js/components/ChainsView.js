@@ -7,13 +7,10 @@
 // pair. With nothing picked, the longest triggered chains and their sinks'
 // ages.
 
-import { h } from '../vendor/preact.module.js';
 import { useState, useMemo } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { html } from '../html.js';
 import { usePoll } from '../hooks.js';
 import { clickable } from '../a11y.js';
-
-const html = htm.bind(h);
 
 const INTERCEPTION_OFF =
     'No chains: interception is off for this run (start with --interception on)';

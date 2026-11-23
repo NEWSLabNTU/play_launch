@@ -1,14 +1,11 @@
 // NodeList component — renders the grouped, sorted, filtered node list.
 
-import { h } from '../vendor/preact.module.js';
 import { useState, useMemo, useCallback } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { html } from '../html.js';
 import { nodeList, selectedNode, nodePanelOpen, activeTab, getStatusString, statusFacet } from '../store.js';
 import { NodeCard } from './NodeCard.js';
 import { clickable } from '../a11y.js';
 import { postAction } from './Toasts.js';
-
-const html = htm.bind(h);
 
 /** Status priority for sorting. */
 function statusPriority(node) {

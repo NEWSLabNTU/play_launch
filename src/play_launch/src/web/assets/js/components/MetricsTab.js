@@ -1,11 +1,8 @@
 // MetricsTab component — live per-node sparkline charts (Phase 26).
 
-import { h } from '../vendor/preact.module.js';
 import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { html } from '../html.js';
 import { nodes } from '../store.js';
-
-const html = htm.bind(h);
 
 // --- Ring buffer ---
 

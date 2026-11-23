@@ -44,6 +44,12 @@ allowance heavily.
   no longer flashes on load. Launch-tree borders and hover states draw
   (their colours were never defined). On a phone the header stays one row
   and the node panel's close button is no longer hidden under it.
+- **Changed (#0111, phase 105 W6):** the web UI keeps up with a node
+  logging hundreds of lines a second: the log tab takes the lines of one
+  frame in one update and skips laying out the lines off screen, and keeps
+  a crashed process's last lines instead of clearing them. Member state
+  changes are applied once per frame. The graph is laid out in a Web
+  Worker, so a large graph no longer freezes the page.
 - **Development (phase 105 W2):** ESLint now covers every web UI file and
   fails on any finding; `just check` fails when the TypeScript bindings
   differ from the Rust types; the health, entities, chains, startup, graph

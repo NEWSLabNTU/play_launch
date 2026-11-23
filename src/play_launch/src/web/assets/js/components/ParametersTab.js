@@ -1,12 +1,9 @@
 // ParametersTab component — displays and edits ROS 2 node parameters (Phase 24).
 
-import { h } from '../vendor/preact.module.js';
 import { useState, useEffect, useCallback, useRef, useMemo } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { html } from '../html.js';
 import { nodes, parameterVersion, getStatusString } from '../store.js';
 import { clickable } from '../a11y.js';
-
-const html = htm.bind(h);
 
 /** Short abbreviations for type badges. */
 const TYPE_ABBREV = {

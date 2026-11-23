@@ -223,7 +223,6 @@ pub fn create_router(
     Router::new()
         // Static files
         .route("/", get(index_handler))
-        .route("/static/*path", get(static_handler))
         .route("/assets/*path", get(static_handler))
         // API endpoints
         .route("/api/nodes", get(handlers::list_nodes))

@@ -1,6 +1,6 @@
 # Phase 105: Web UI hardening and modernization
 
-**Status:** In progress (2026-11-23).
+**Status:** Done (2026-11-23), with the exceptions each wave names.
 **Fixes:** issue #0111.
 **Prior work:** phase 20 (Preact + htm + SSE), phases 50 and 53 (issue
 #0006, the 2026-07 audit in `docs/audit/architecture-2026-07.md`).
@@ -179,6 +179,17 @@ compare.
 
 ### W6 - Scale
 
+**Done (2026-11-23), unmeasured.** The log tab applies the lines that
+arrived since the last frame in one update, parses each line once, keys it
+by a sequence number, and marks lines `content-visibility: auto`; its two
+copies of the stream code are one, and it reconnects only when a new
+process appears (a crash's last lines stay). State events are applied once
+per frame with one copy of the member map. ELK lays out in a module worker
+(`js/elk-worker.js`, the vendored bundle constructed with no `document`,
+which installs ELK's own handler); checked in Chrome, with a do-nothing
+worker as the control. No frame-time numbers were taken: there is no
+Autoware-scale browser run in the suite.
+
 - Log tab: batch appends per animation frame, stable keys, a ring buffer
   instead of a copy per line; virtualize the list.
 - State events update one entry without cloning the whole `nodes` map on
@@ -186,6 +197,20 @@ compare.
 - ELK layout in a Web Worker (`workerUrl`).
 
 ### W7 - Cleanup
+
+**Done (2026-11-23), except the vendored-library bumps.** One `html`
+(`js/html.js`) instead of 21 `htm.bind` copies; `useEscape` and
+`useNodeDetails` replace three and two copies; the card and launch-tree
+activity icons are one `StderrIcon`, which also fixes the card's copy
+calling a hook after an early return (the hook count changed when a node
+first wrote to stderr). `escapeHtml` and the 409 comment went in W2 and
+W3, the `/static/*path` route now. `restart-all` stays: an API beside
+`start-all` and `stop-all`, whatever the UI calls.
+
+Not bumped: Preact 10.25.4 (11.2.0 is current), signals 1.3.1 / core 1.8.0
+(2.11.4 / 1.14.5) and elkjs 0.10.0 (0.12.1) are behind, and Preact and
+signals are major versions with breaking changes. With no browser test in
+the suite, a bump is a change nothing would check; it waits for one.
 
 Delete `escapeHtml`, the `/static/*path` route, the unused restart-all
 route, the stale 409 comment; merge the duplicated Escape handlers,

@@ -1,11 +1,8 @@
 // PanelResizer component — drag to resize right panel.
 
-import { h } from '../vendor/preact.module.js';
 import { useRef, useCallback, useEffect, useState } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { html } from '../html.js';
 import { nodePanelOpen, graphPanelOpen, launchTreeSelection, currentView } from '../store.js';
-
-const html = htm.bind(h);
 
 export function PanelResizer() {
     const isResizing = useRef(false);

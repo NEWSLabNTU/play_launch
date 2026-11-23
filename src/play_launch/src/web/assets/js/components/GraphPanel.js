@@ -6,9 +6,8 @@
 // - type 'namespace' → namespace members list with statuses
 // - type 'edge' → topic list with types and endpoints
 
-import { h } from '../vendor/preact.module.js';
-import { useState, useEffect, useCallback, useMemo } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { useState, useCallback, useMemo } from '../vendor/hooks.module.js';
+import { html } from '../html.js';
 import {
     graphSelectedElement, graphPanelOpen, nodes, graphSnapshot,
     getStatusString,
@@ -30,8 +29,7 @@ import { TopicsTab } from './TopicsTab.js';
 import { ParametersTab } from './ParametersTab.js';
 import { LogTab } from './LogTab.js';
 import { clickable } from '../a11y.js';
-
-const html = htm.bind(h);
+import { useEscape } from '../hooks.js';
 
 // ─── Node detail view ─────────────────────────────────────────────────────
 
@@ -492,16 +490,10 @@ export function GraphPanel() {
     const isOpen = graphPanelOpen.value;
 
     // Escape closes the panel
-    useEffect(() => {
-        const onKey = (e) => {
-            if (e.key === 'Escape' && graphPanelOpen.value) {
-                graphSelectedElement.value = null;
-                graphPanelOpen.value = false;
-            }
-        };
-        document.addEventListener('keydown', onKey);
-        return () => document.removeEventListener('keydown', onKey);
-    }, []);
+    useEscape(() => graphPanelOpen.value, () => {
+        graphSelectedElement.value = null;
+        graphPanelOpen.value = false;
+    });
 
     if (!isOpen) return null;
 

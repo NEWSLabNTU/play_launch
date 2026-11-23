@@ -3,7 +3,21 @@
 import ELK from '../vendor/elk.bundled.esm.js';
 import { resolvePostLayoutOverlaps } from './graph-containment.js';
 
-const elk = new ELK();
+/** ELK in a Web Worker (`elk-worker.js`), so laying out a large graph does
+ *  not freeze the page (phase 105 W6); on the main thread, as before, where
+ *  a module worker cannot start. */
+function makeElk() {
+    if (typeof Worker === 'function') {
+        try {
+            const url = new URL('../elk-worker.js', import.meta.url);
+            return new ELK({ workerFactory: () => new Worker(url, { type: 'module' }) });
+        } catch (e) {
+            console.warn('[GraphView] layout worker unavailable, laying out on the page:', e);
+        }
+    }
+    return new ELK();
+}
+const elk = makeElk();
 
 /**
  * Convert visible Cytoscape nodes/edges to ELK hierarchical format.

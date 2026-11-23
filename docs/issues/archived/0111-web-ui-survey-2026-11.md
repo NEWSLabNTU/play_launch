@@ -1,7 +1,7 @@
 ---
 id: 111
 title: "Web UI: mutations open to any page, stale header figures, lint skips components"
-status: open
+status: resolved
 type: defect
 severity: high
 ---
@@ -67,3 +67,12 @@ Paths are relative to `src/play_launch/src/web/`. Severity / effort.
     no check that the generated bindings are current.
 
 No XSS found: htm escapes interpolated text, log lines included.
+
+## Resolution (phase 105, 2026-11-23)
+
+W1-W7 fixed every item above, each wave's tests failing on the code before
+it (`tests/tests/web_origin_guard.rs`, `tests/tests/web_stream.rs`) or
+checked in headless Chrome against a live launch. Left, by choice and
+recorded in the phase: moving the remaining colour literals to tokens, and
+the Preact / signals / elkjs bumps, both waiting for a browser test in the
+suite.

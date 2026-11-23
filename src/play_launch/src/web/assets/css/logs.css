@@ -76,6 +76,11 @@
     white-space: pre-wrap;
     word-break: break-all;
     padding: 2px 0;
+
+    /* The browser skips laying out lines off screen (phase 105 W6): the tab
+     * holds up to 5000 of them. */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 20px;
 }
 
 .log-line:hover {

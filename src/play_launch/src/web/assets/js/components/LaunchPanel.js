@@ -2,9 +2,8 @@
 // Shows scope info (with tabs) when a scope is selected,
 // or node details (with tabs) when a node is selected.
 
-import { h } from '../vendor/preact.module.js';
-import { useState, useEffect, useCallback } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { useState, useCallback } from '../vendor/hooks.module.js';
+import { html } from '../html.js';
 import {
     launchTree, launchTreeSelection, getStatusString, getNodeByKey, memberFqn } from '../store.js';
 import { InfoTab } from './InfoTab.js';
@@ -13,8 +12,7 @@ import { ParametersTab } from './ParametersTab.js';
 import { TopicsTab } from './TopicsTab.js';
 import { MetricsTab } from './MetricsTab.js';
 import { clickable } from '../a11y.js';
-
-const html = htm.bind(h);
+import { useEscape, useNodeDetails } from '../hooks.js';
 
 // ── Scope tabs ──
 
@@ -195,27 +193,7 @@ function ScopeDetail({ scopeId }) {
 // ── Node detail ──
 
 function NodeDetail({ name, tab, setTab }) {
-    const [nodeData, setNodeData] = useState(null);
-
-    useEffect(() => {
-        if (!name) { setNodeData(null); return; }
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-        fetch('/api/nodes/' + encodeURIComponent(name), { signal: controller.signal })
-            .then(res => {
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                return res.json();
-            })
-            .then(data => setNodeData(data))
-            .catch(err => {
-                if (err.name !== 'AbortError') {
-                    console.warn('[launch-panel] fetch failed for', name, err);
-                }
-                setNodeData(null);
-            })
-            .finally(() => clearTimeout(timeout));
-        return () => { controller.abort(); clearTimeout(timeout); };
-    }, [name]);
+    const nodeData = useNodeDetails(name);
 
     // Use store node as fallback for live data
     const storeNode = getNodeByKey(name);
@@ -274,15 +252,7 @@ export function LaunchPanel() {
         launchTreeSelection.value = null;
     }, []);
 
-    useEffect(() => {
-        const onKey = (e) => {
-            if (e.key === 'Escape' && launchTreeSelection.value) {
-                launchTreeSelection.value = null;
-            }
-        };
-        document.addEventListener('keydown', onKey);
-        return () => document.removeEventListener('keydown', onKey);
-    }, []);
+    useEscape(() => !!launchTreeSelection.value, () => { launchTreeSelection.value = null; });
 
     if (!sel) return null;
 

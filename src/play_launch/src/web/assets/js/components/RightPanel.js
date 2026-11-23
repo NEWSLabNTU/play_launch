@@ -1,54 +1,24 @@
 // RightPanel component — node detail panel with info/stdout/stderr tabs.
 
-import { h } from '../vendor/preact.module.js';
-import { useState, useEffect, useCallback } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { useCallback } from '../vendor/hooks.module.js';
+import { html } from '../html.js';
 import { selectedNode, nodePanelOpen, activeTab, nodes, getStatusString } from '../store.js';
 import { InfoTab } from './InfoTab.js';
 import { LogTab } from './LogTab.js';
 import { ParametersTab } from './ParametersTab.js';
 import { TopicsTab } from './TopicsTab.js';
 import { MetricsTab } from './MetricsTab.js';
-
-const html = htm.bind(h);
+import { useEscape, useNodeDetails } from '../hooks.js';
 
 export function RightPanel() {
     const name = selectedNode.value;
     const isOpen = nodePanelOpen.value;
     const tab = activeTab.value;
-    const [nodeData, setNodeData] = useState(null);
-
-    // Fetch full node details when selected node changes
-    useEffect(() => {
-        if (!name) {
-            setNodeData(null);
-            return;
-        }
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-        fetch('/api/nodes/' + encodeURIComponent(name), { signal: controller.signal })
-            .then(res => res.json())
-            .then(data => setNodeData(data))
-            .catch(err => {
-                if (err.name !== 'AbortError') {
-                    console.warn('[panel] Failed to fetch node details:', err);
-                }
-                setNodeData(null);
-            })
-            .finally(() => clearTimeout(timeout));
-        return () => { controller.abort(); clearTimeout(timeout); };
-    }, [name]);
+    // Full node details when the selected node changes
+    const nodeData = useNodeDetails(name);
 
     // Close on Escape
-    useEffect(() => {
-        const onKey = (e) => {
-            if (e.key === 'Escape' && nodePanelOpen.value) {
-                nodePanelOpen.value = false;
-            }
-        };
-        document.addEventListener('keydown', onKey);
-        return () => document.removeEventListener('keydown', onKey);
-    }, []);
+    useEscape(() => nodePanelOpen.value, () => { nodePanelOpen.value = false; });
 
     const close = useCallback(() => {
         nodePanelOpen.value = false;

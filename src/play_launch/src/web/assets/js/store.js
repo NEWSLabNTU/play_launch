@@ -246,22 +246,9 @@ export function applyActivity(rows) {
     if (map) nodes.value = map;
 }
 
-export function applyStateEvent(event) {
-    // Actors are named by canonical member id (phase-50), so event.name IS
-    // the store key.
-    const name = event.name;
-    if (!name) return;
-
-    const map = new Map(nodes.value);
-    const node = map.get(name);
-    if (!node) {
-        // Unknown member — refetch instead of silently dropping the event
-        // (store.js:174 antipattern from the 2026-07 audit).
-        debounceFetchNodes();
-        return;
-    }
-
-    // Clone to trigger signal update
+/** One event applied to one member: the updated member, or null when the
+ *  event changes nothing on it. */
+function reduceNode(node, event) {
     const updated = { ...node };
 
     switch (event.type) {
@@ -324,21 +311,66 @@ export function applyStateEvent(event) {
             };
             break;
 
-        case 'parameter_changed': {
-            // Phase 24: bump parameter version so ParametersTab re-fetches
-            const pmap = new Map(parameterVersion.value);
-            pmap.set(name, (pmap.get(name) || 0) + 1);
-            parameterVersion.value = pmap;
-            return; // no node status update needed
-        }
-
         default:
-            return; // unknown event type — ignore
+            return null; // unknown event type — ignore
+    }
+    return updated;
+}
+
+/** State events waiting for the next frame, in arrival order. */
+let pendingEvents = [];
+let flushScheduled = false;
+
+/** Apply the queued events with one copy of the map (phase 105 W6). A
+ *  startup burst delivers hundreds of events a second, and copying the
+ *  whole map for each one was O(members) per event. */
+function flushStateEvents() {
+    flushScheduled = false;
+    const events = pendingEvents;
+    pendingEvents = [];
+    let map = null;
+    let unknown = false;
+    for (const event of events) {
+        const current = (map || nodes.value).get(event.name);
+        if (!current) {
+            unknown = true;
+            continue;
+        }
+        const updated = reduceNode(current, event);
+        if (!updated) continue;
+        if (!map) map = new Map(nodes.value);
+        map.set(event.name, updated);
+    }
+    if (map) nodes.value = map;
+    // Unknown member — refetch instead of silently dropping the event
+    // (store.js:174 antipattern from the 2026-07 audit).
+    if (unknown) debounceFetchNodes();
+}
+
+/** Queue a state event from the global stream; applied at the next frame
+ *  (or within 100 ms in a hidden tab, which has no frames). */
+export function applyStateEvent(event) {
+    // Actors are named by canonical member id (phase-50), so event.name IS
+    // the store key.
+    const name = event.name;
+    if (!name) return;
+
+    if (event.type === 'parameter_changed') {
+        // Phase 24: bump parameter version so ParametersTab re-fetches
+        const pmap = new Map(parameterVersion.value);
+        pmap.set(name, (pmap.get(name) || 0) + 1);
+        parameterVersion.value = pmap;
+        return; // no node status update needed
     }
 
-    map.set(name, updated);
-    nodes.value = map;
-
+    pendingEvents.push(event);
+    if (flushScheduled) return;
+    flushScheduled = true;
+    if (typeof document !== 'undefined' && !document.hidden && typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(flushStateEvents);
+    } else {
+        setTimeout(flushStateEvents, 100);
+    }
 }
 
 /** Fetch full node list from the API and update the store. */

@@ -17,10 +17,6 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0111** -- web UI: body-less POSTs open to any web page, stale header
-figures, ESLint skipping `components/`, and 13 smaller defects. Plan:
-phase 105. See `0111-web-ui-survey-2026-11.md`.
-
 **#0107** -- a YAML-frontend composable's `param: [{from: …}]` is dropped:
 `parse_yaml_composable_nodes` reads only inline `name:` entries. See
 `0107-yaml-composable-param-file-dropped.md`.
@@ -29,6 +25,10 @@ phase 105. See `0111-web-ui-survey-2026-11.md`.
 frontmatter disagree.
 
 ## Resolved
+
+**#0111** -- web UI: body-less POSTs any web page could send, header
+figures that froze, ESLint skipping `components/`, and 13 smaller defects.
+Fixed by phase 105 (W1-W7). See `archived/0111-web-ui-survey-2026-11.md`.
 
 **#0110** -- a node's command line kept one remap rule per `from`, in hash
 order, so a group's `<set_remap from="/tf" to="/tf"/>` lost to the node's

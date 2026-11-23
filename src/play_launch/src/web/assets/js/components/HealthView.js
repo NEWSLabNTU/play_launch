@@ -5,9 +5,8 @@
 // (`/api/health/stream`); a plain fetch of `/api/health` paints first and is
 // the only place a 404/409 status (and its error text) is visible.
 
-import { h } from '../vendor/preact.module.js';
 import { useState, useEffect, useMemo } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { html } from '../html.js';
 import {
     currentView, selectedNode, nodePanelOpen, activeTab, graphSelectedElement,
     nodes, getNodeByKey, memberFqn, applyHealthResponse,
@@ -15,8 +14,6 @@ import {
 } from '../store.js';
 import { useSnapshotStream, usePoll } from '../hooks.js';
 import { clickable } from '../a11y.js';
-
-const html = htm.bind(h);
 
 const UNAVAILABLE = 'Health is not available for this run.';
 

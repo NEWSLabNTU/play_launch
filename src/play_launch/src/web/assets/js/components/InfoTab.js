@@ -1,9 +1,6 @@
 // InfoTab component — JSON viewer for node details.
 
-import { h } from '../vendor/preact.module.js';
-import htm from '../vendor/htm.module.js';
-
-const html = htm.bind(h);
+import { html } from '../html.js';
 
 function shouldInclude(key, value) {
     return value !== null && value !== undefined;

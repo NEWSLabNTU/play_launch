@@ -1,11 +1,18 @@
 // LogTab component — SSE log stream viewer for stdout/stderr.
+//
+// Built for a flood (phase 105 W6): a node logging hundreds of lines a
+// second is what the Health page's `log_flood` reports, and exactly when
+// someone opens this tab. Lines arriving between two frames are applied in
+// one update; each line is parsed once, when it arrives, and keeps its key
+// (a sequence number), so dropping the oldest lines does not re-render the
+// rest; and `content-visibility: auto` on each line lets the browser skip
+// laying out the lines off screen. It used to copy the whole buffer (up to
+// 5000 lines) for every message, key rows by index, and re-parse every
+// line on every render.
 
-import { h } from '../vendor/preact.module.js';
 import { useState, useEffect, useRef, useCallback, useMemo } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { html } from '../html.js';
 import { nodes } from '../store.js';
-
-const html = htm.bind(h);
 
 const MAX_LINES = 5000;
 
@@ -32,6 +39,11 @@ function levelClass(level) {
     return level.toLowerCase();
 }
 
+/**
+ * One received line, parsed once.
+ * @typedef {{key: number, text: string, match: RegExpExecArray|null}} Line
+ */
+
 /** Render a formatted (colored) ROS log line. */
 function FormattedLogLine({ match }) {
     const [, level, ts, logger, msg] = match;
@@ -49,37 +61,43 @@ function FormattedLogLine({ match }) {
 }
 
 /** Filter lines by level and render. Non-ROS lines inherit the preceding
- *  ROS line's level for filtering purposes (default DEBUG before any ROS line). */
+ *  ROS line's level for filtering purposes (default DEBUG before any ROS line).
+ *  @param {Line[]} lines */
 function filterAndRender(lines, rawMode, levelFilter) {
     // Raw mode: no parsing, no filtering
     if (rawMode) {
-        return lines.map((line, i) => html`<div class="log-line" key=${i}>${line}</div>`);
+        return lines.map((l) => html`<div class="log-line" key=${l.key}>${l.text}</div>`);
     }
 
     const minPriority = LEVEL_PRIORITY[levelFilter] || 0;
     const result = [];
     let lastLevel = 'DEBUG';
 
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const m = ROS_LOG_RE.exec(line);
-
-        if (m) {
-            lastLevel = m[1];
+    for (const l of lines) {
+        if (l.match) {
+            lastLevel = l.match[1];
             if ((LEVEL_PRIORITY[lastLevel] || 0) >= minPriority) {
-                result.push(html`<${FormattedLogLine} key=${i} match=${m} />`);
+                result.push(html`<${FormattedLogLine} key=${l.key} match=${l.match} />`);
             }
-        } else {
+        } else if ((LEVEL_PRIORITY[lastLevel] || 0) >= minPriority) {
             // Non-ROS line — inherit lastLevel for filtering
-            if ((LEVEL_PRIORITY[lastLevel] || 0) >= minPriority) {
-                result.push(html`<div class="log-line" key=${i}>${line}</div>`);
-            }
+            result.push(html`<div class="log-line" key=${l.key}>${l.text}</div>`);
         }
     }
     return result;
 }
 
+/** Run `fn` at the next frame, or soon when the tab is hidden (no frames). */
+function nextFrame(fn) {
+    if (typeof document !== 'undefined' && document.hidden) {
+        return { cancel: clearTimeout.bind(null, setTimeout(fn, 250)) };
+    }
+    const id = requestAnimationFrame(fn);
+    return { cancel: () => cancelAnimationFrame(id) };
+}
+
 export function LogTab({ nodeName, logType, containerName }) {
+    /** @type {[Line[], (v: any) => void]} */
     const [lines, setLines] = useState([]);
     const [status, setStatus] = useState('Not connected');
     const [connected, setConnected] = useState(false);
@@ -88,105 +106,66 @@ export function LogTab({ nodeName, logType, containerName }) {
     const [following, setFollowing] = useState(true);
     const viewerRef = useRef(null);
     const autoScrollRef = useRef(true);
-    const esRef = useRef(null);
-    const pidRef = useRef(null);
 
     // Determine which node's log to stream (composable nodes use container)
     const targetNode = containerName || nodeName;
 
-    // Track PID changes from the store to detect restarts
-    const currentNode = nodes.value.get(nodeName);
-    const currentPid = currentNode?.pid;
-
-    // Connect/reconnect SSE
+    // A restart is a new process with a new file: reconnect when a new PID
+    // appears. Not when the PID goes away: a stopped or crashed process's
+    // last lines are the ones to read.
+    const currentPid = nodes.value.get(nodeName)?.pid;
+    const lastPid = useRef(currentPid);
+    const [epoch, setEpoch] = useState(0);
     useEffect(() => {
-        if (!targetNode) return;
-
-        // Close old connection
-        if (esRef.current) {
-            esRef.current.close();
-            esRef.current = null;
+        if (currentPid != null && lastPid.current != null && currentPid !== lastPid.current) {
+            setEpoch((n) => n + 1);
         }
+        if (currentPid != null) lastPid.current = currentPid;
+    }, [currentPid]);
+
+    useEffect(() => {
+        if (!targetNode) return undefined;
 
         setLines([]);
-        setStatus('Connecting...');
+        setStatus(epoch > 0 ? 'Reconnecting (PID changed)...' : 'Connecting...');
         setConnected(false);
 
-        const url = '/api/nodes/' + encodeURIComponent(targetNode) + '/logs/' + logType;
-        const es = new EventSource(url);
-        esRef.current = es;
+        let seq = 0;
+        /** @type {Line[]} */
+        let pending = [];
+        let scheduled = null;
 
-        es.onopen = () => {
-            if (esRef.current === es) {
-                setStatus('Connected - streaming');
-                setConnected(true);
-            }
-        };
-
-        es.onmessage = (e) => {
-            if (esRef.current !== es) return;
-            setLines(prev => {
-                const next = [...prev, e.data];
-                if (next.length > MAX_LINES) next.splice(0, next.length - MAX_LINES);
-                return next;
+        const flush = () => {
+            scheduled = null;
+            const batch = pending;
+            pending = [];
+            setLines((prev) => {
+                const next = prev.concat(batch);
+                return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next;
             });
         };
 
-        es.onerror = () => {
-            if (esRef.current === es) {
-                setStatus('Connection lost - retrying...');
-                setConnected(false);
-            }
+        const url = '/api/nodes/' + encodeURIComponent(targetNode) + '/logs/' + logType;
+        const es = new EventSource(url);
+        es.onopen = () => {
+            setStatus('Connected - streaming');
+            setConnected(true);
         };
-
-        // Track PID at connection time
-        pidRef.current = currentPid;
+        es.onmessage = (e) => {
+            pending.push({ key: seq++, text: e.data, match: ROS_LOG_RE.exec(e.data) });
+            if (pending.length > MAX_LINES) pending.splice(0, pending.length - MAX_LINES);
+            if (!scheduled) scheduled = nextFrame(flush);
+        };
+        es.onerror = () => {
+            setStatus('Connection lost - retrying...');
+            setConnected(false);
+        };
 
         return () => {
             es.close();
-            if (esRef.current === es) esRef.current = null;
+            if (scheduled) scheduled.cancel();
         };
-    }, [targetNode, logType]);
-
-    // Detect PID changes (restart) — reconnect log stream
-    useEffect(() => {
-        if (currentPid && pidRef.current && currentPid !== pidRef.current) {
-            pidRef.current = currentPid;
-            // Force reconnect by closing and re-creating
-            if (esRef.current) {
-                esRef.current.close();
-                esRef.current = null;
-            }
-            setLines([]);
-            setStatus('Reconnecting (PID changed)...');
-            setConnected(false);
-
-            const url = '/api/nodes/' + encodeURIComponent(targetNode) + '/logs/' + logType;
-            const es = new EventSource(url);
-            esRef.current = es;
-
-            es.onopen = () => {
-                if (esRef.current === es) {
-                    setStatus('Connected - streaming');
-                    setConnected(true);
-                }
-            };
-            es.onmessage = (e) => {
-                if (esRef.current !== es) return;
-                setLines(prev => {
-                    const next = [...prev, e.data];
-                    if (next.length > MAX_LINES) next.splice(0, next.length - MAX_LINES);
-                    return next;
-                });
-            };
-            es.onerror = () => {
-                if (esRef.current === es) {
-                    setStatus('Connection lost - retrying...');
-                    setConnected(false);
-                }
-            };
-        }
-    }, [currentPid, targetNode, logType]);
+    }, [targetNode, logType, epoch]);
 
     // Auto-scroll
     useEffect(() => {
@@ -216,6 +195,8 @@ export function LogTab({ nodeName, logType, containerName }) {
         }
     }, []);
 
+    const rendered = useMemo(() => filterAndRender(lines, rawMode, levelFilter), [lines, rawMode, levelFilter]);
+
     return html`
         ${containerName && html`
             <div class="log-reminder">
@@ -223,7 +204,7 @@ export function LogTab({ nodeName, logType, containerName }) {
             </div>
         `}
         <div class="log-viewer" ref=${viewerRef} onScroll=${onScroll}>
-            ${useMemo(() => filterAndRender(lines, rawMode, levelFilter), [lines, rawMode, levelFilter])}
+            ${rendered}
         </div>
         <div class="log-controls">
             <span class="log-status ${connected ? 'connected' : ''}">${status}</span>
@@ -239,7 +220,7 @@ export function LogTab({ nodeName, logType, containerName }) {
                     </select>
                 `}
                 <button onClick=${clearLog}>Clear</button>
-                <button class=${following ? 'active' : ''} onClick=${scrollToBottom}>${'\u2193'} Bottom</button>
+                <button class=${following ? 'active' : ''} onClick=${scrollToBottom}>${'↓'} Bottom</button>
             </div>
         </div>
     `;

@@ -6,14 +6,11 @@
 // is client-side over the rows received, so a header click never waits for
 // the next tick.
 
-import { h } from '../vendor/preact.module.js';
 import { useState, useCallback, useMemo } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { html } from '../html.js';
 import { selectedNode, nodePanelOpen, activeTab, nodes, getNodeByKey, memberFqn, entitiesFilterRequest } from '../store.js';
 import { useSnapshotStream } from '../hooks.js';
 import { clickable } from '../a11y.js';
-
-const html = htm.bind(h);
 
 const INTERCEPTION_OFF =
     'No live traffic: interception is off for this run (start with --interception on)';

@@ -2,12 +2,9 @@
 // A failed action used to open a blocking alert(), and a failed bulk start
 // or stop said nothing at all, since it never looked at the answer.
 
-import { h } from '../vendor/preact.module.js';
-import htm from '../vendor/htm.module.js';
+import { html } from '../html.js';
 import { signal } from '../vendor/signals.module.js';
 import { clickable } from '../a11y.js';
-
-const html = htm.bind(h);
 
 /** @type {{ value: {id: number, text: string, kind: string}[] }} */
 export const toasts = signal([]);

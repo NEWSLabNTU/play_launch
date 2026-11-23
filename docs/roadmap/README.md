@@ -351,7 +351,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     (#0042), P2 `links:`, P3 `measure` proposals, P4 `check --against`
     transport; P5 (a runtime link monitor) not adopted.
     [phase-97-links.md](./phase-97-links.md).
-  - **Phase 105** - in progress (2026-11-23): web UI hardening and
+  - **Phase 105** - done (W1-W7, 2026-11-23; colour literals and library bumps left): web UI hardening and
     modernization (#0111). Mutations only from our own page, gates that
     lint every file and check bindings, a header that stays current, one
     multiplexed stream with shared hooks, CSS tokens, routing,

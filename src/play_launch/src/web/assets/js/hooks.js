@@ -156,3 +156,49 @@ export function useSnapshotStream(url, streamUrl, opts = {}) {
     }, [url, streamUrl, visible]);
     return state;
 }
+
+/**
+ * Call `onEscape` when Escape is pressed anywhere and `isOpen()` says the
+ * caller is showing. The three side panels each carried a copy.
+ * @param {() => boolean} isOpen
+ * @param {() => void} onEscape
+ */
+export function useEscape(isOpen, onEscape) {
+    useEffect(() => {
+        const onKey = (e) => {
+            if (e.key === 'Escape' && isOpen()) onEscape();
+        };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, []);
+}
+
+/**
+ * The full `/api/nodes/<name>` details of a member, fetched when `name`
+ * changes (5 s limit), or null. The node panel and the launch panel each
+ * carried a copy.
+ * @param {string|null} name
+ */
+export function useNodeDetails(name) {
+    const [data, setData] = useState(null);
+    useEffect(() => {
+        if (!name) { setData(null); return undefined; }
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        fetch('/api/nodes/' + encodeURIComponent(name), { signal: controller.signal })
+            .then((res) => {
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return res.json();
+            })
+            .then((d) => setData(d))
+            .catch((err) => {
+                if (err.name !== 'AbortError') {
+                    console.warn('[panel] Failed to fetch node details for', name, err);
+                }
+                setData(null);
+            })
+            .finally(() => clearTimeout(timeout));
+        return () => { controller.abort(); clearTimeout(timeout); };
+    }, [name]);
+    return data;
+}

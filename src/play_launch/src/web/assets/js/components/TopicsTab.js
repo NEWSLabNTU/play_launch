@@ -1,12 +1,9 @@
 // TopicsTab component — shows topics/services for the selected node (Phase 25).
 
-import { h } from '../vendor/preact.module.js';
 import { useState, useCallback, useMemo, useEffect } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { html } from '../html.js';
 import { nodes, getStatusString, selectedNode, nodePanelOpen, graphPanelOpen, graphSnapshot, graphViewers, currentView, launchTreeSelection } from '../store.js';
 import { clickable } from '../a11y.js';
-
-const html = htm.bind(h);
 
 // Infrastructure topic/service prefixes — hidden by default
 const INFRA_PREFIXES = [

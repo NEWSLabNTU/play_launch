@@ -1,7 +1,7 @@
 // play_launch web UI — Preact app entry point.
 
-import { h, render } from './vendor/preact.module.js';
-import htm from './vendor/htm.module.js';
+import { render } from './vendor/preact.module.js';
+import { html } from './html.js';
 import * as store from './store.js';
 import './sse.js'; // side-effect: connects SSE, populates store
 import './router.js'; // side-effect: the page and selection in the URL hash
@@ -19,8 +19,6 @@ import { HealthView } from './components/HealthView.js';
 import { ChainsView } from './components/ChainsView.js';
 import { clickable } from './a11y.js';
 import { Toasts } from './components/Toasts.js';
-
-const html = htm.bind(h);
 
 // Initialize theme
 const savedTheme = localStorage.getItem('theme') ||

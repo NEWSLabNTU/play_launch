@@ -6,9 +6,8 @@
 // Supports drill-down, focus mode, edge visibility toggle, semantic zoom,
 // jump-to-node, tooltips.
 
-import { h } from '../vendor/preact.module.js';
 import { useState, useEffect, useRef, useCallback, useMemo } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { html } from '../html.js';
 import cytoscape from '../vendor/cytoscape.esm.min.js';
 import expandCollapse from '../vendor/cytoscape-expand-collapse.js';
 import {
@@ -25,8 +24,6 @@ import {
     getSiblingExpandedNs, getNodeDimensions, constrainPosition,
     cascadePush, pushOverlappingSiblings,
 } from './graph-containment.js';
-
-const html = htm.bind(h);
 
 // Register extensions once
 let _registered = false;

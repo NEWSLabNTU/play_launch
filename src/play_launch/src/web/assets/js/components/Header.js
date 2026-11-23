@@ -1,12 +1,9 @@
 // Header component — nav tabs, health badges, diagnostic badges, theme toggle.
 
-import { h } from '../vendor/preact.module.js';
 import { useCallback } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { html } from '../html.js';
 import { currentView, theme, healthSummary, diagnosticCounts, eventRecording, systemMetrics, graphSelectedElement, statusFacet, nodeList, getStatusString, healthIssueCounts } from '../store.js';
 import { clickable } from '../a11y.js';
-
-const html = htm.bind(h);
 
 function HealthBar() {
     const hs = healthSummary.value;

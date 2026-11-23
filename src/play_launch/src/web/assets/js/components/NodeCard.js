@@ -1,13 +1,11 @@
 // NodeCard component — renders a single node in the node list.
 
-import { h } from '../vendor/preact.module.js';
 import { useState, useCallback, useEffect } from '../vendor/hooks.module.js';
-import htm from '../vendor/htm.module.js';
+import { html } from '../html.js';
 import { selectedNode, fetchNodes, getStatusString, nodeTopicCounts } from '../store.js';
 import { clickable } from '../a11y.js';
 import { postAction as postAndReport } from './Toasts.js';
-
-const html = htm.bind(h);
+import { StderrIcon } from './StderrIcon.js';
 
 /** Get CSS class for the node card based on status. */
 function getStatusClass(status) {
@@ -81,80 +79,6 @@ function RosName({ namespace, nodeName, onFilterNamespace }) {
     }
 
     return html`<span class="node-ros-name">${segments}</span>`;
-}
-
-/** Stderr activity icon with tooltip.
- *
- * Lifecycle: hot+jumping (<10s, active) → hot (<10s, inactive) → warm (10–60s) → hidden (≥60s).
- * A timer forces re-renders at each transition boundary so the icon animates correctly.
- */
-function StderrIcon({ node }) {
-    const [showTooltip, setShowTooltip] = useState(false);
-    const [tooltipPos, setTooltipPos] = useState({ top: 0, left: 0 });
-    const [, setTick] = useState(0);
-
-    const mtime = node.stderr_last_modified;
-    const size = node.stderr_size || 0;
-
-    // Schedule re-render at the next state transition boundary
-    useEffect(() => {
-        if (!mtime || size === 0) { return; }
-        const elapsed = Math.floor(Date.now() / 1000) - mtime;
-        if (elapsed >= 60) { return; }
-
-        // Next transition: <10s → 10s boundary, 10–60s → 60s boundary
-        const nextBoundary = elapsed < 10 ? 10 : 60;
-        const delay = (nextBoundary - elapsed) * 1000 + 200; // +200ms margin
-        const timer = setTimeout(() => setTick(t => t + 1), delay);
-        return () => clearTimeout(timer);
-    }, [mtime, size]);
-
-    if (!mtime || size === 0) { return null; }
-
-    const now = Math.floor(Date.now() / 1000);
-    const elapsed = now - mtime;
-    if (elapsed >= 60) { return null; }
-
-    const statusStr = getStatusString(node.status);
-    const isActive = statusStr === 'running' || statusStr === 'loaded';
-
-    let iconClass = 'stderr-icon';
-    if (elapsed < 10 && isActive) {
-        iconClass += ' hot jumping';
-    } else if (elapsed < 10) {
-        iconClass += ' hot';
-    } else {
-        iconClass += ' warm';
-    }
-
-    const onMouseEnter = useCallback((e) => {
-        const rect = e.target.getBoundingClientRect();
-        let top = rect.bottom + 8;
-        let left = rect.left;
-        if (left + 400 > window.innerWidth) { left = window.innerWidth - 410; }
-        if (top + 200 > window.innerHeight) { top = rect.top - 208; }
-        setTooltipPos({ top, left });
-        setShowTooltip(true);
-    }, []);
-
-    const onMouseLeave = useCallback(() => setShowTooltip(false), []);
-
-    const preview = node.stderr_preview;
-
-    return html`
-        <span class=${iconClass} title="Hover to see recent stderr"
-            onMouseEnter=${onMouseEnter} onMouseLeave=${onMouseLeave}>
-            ${'📋'}
-        </span>
-        ${showTooltip && preview && preview.length > 0 && html`
-            <div class="stderr-tooltip" style=${{ position: 'fixed', top: tooltipPos.top + 'px', left: tooltipPos.left + 'px', zIndex: 10000 }}>
-                <div class="stderr-tooltip-header">Recent stderr:</div>
-                <div class="stderr-tooltip-content">
-                    ${preview.map(line => html`<div class="stderr-tooltip-line">${line}</div>`)}
-                </div>
-            </div>
-        `}
-    `;
 }
 
 /** Convert a boolean to a BoolParam path segment ("true" | "false").
