@@ -95,6 +95,40 @@ impl MemberHandle {
         }
     }
 
+    /// Members whose stderr changed since `last` (modification time or
+    /// size), with their new stamps and preview, for the web UI's activity
+    /// (phase 105 W4). `last` is updated in place. One `stat` per member;
+    /// the preview is read only for those that changed.
+    pub async fn stderr_activity(
+        &self,
+        last: &mut HashMap<String, (Option<u64>, u64)>,
+    ) -> Vec<(String, Option<u64>, u64, Option<Vec<String>>)> {
+        let metadata_guard = self.metadata.read().await;
+        let mut changed = Vec::new();
+        for meta in metadata_guard.values() {
+            if meta.id.is_empty() {
+                continue;
+            }
+            let stamp = std::fs::metadata(meta.output_dir.join("err"))
+                .map(|m| {
+                    let modified = m
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs());
+                    (modified, m.len())
+                })
+                .unwrap_or((None, 0));
+            if last.get(&meta.id) == Some(&stamp) {
+                continue;
+            }
+            last.insert(meta.id.clone(), stamp);
+            let (modified, size, preview) = super::summary::stderr_info(&meta.output_dir);
+            changed.push((meta.id.clone(), modified, size, preview));
+        }
+        changed
+    }
+
     /// Get list of all members with current state
     pub async fn list_members(&self) -> Vec<MemberSummary> {
         let metadata_guard = self.metadata.read().await;

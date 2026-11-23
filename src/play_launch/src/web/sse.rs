@@ -326,6 +326,8 @@ struct HeaderFigures {
     issue_counts: Option<String>,
     diagnostic_counts: Option<String>,
     recording: Option<String>,
+    /// Each member's stderr `(modified, size)` as last sent.
+    activity: std::collections::HashMap<String, (Option<u64>, u64)>,
 }
 
 impl HeaderFigures {
@@ -369,6 +371,31 @@ impl HeaderFigures {
             &mut self.recording,
             serde_json::to_string(&recording),
         );
+
+        // Only the members whose stderr moved: on connect every one, then
+        // the few that log. Was a 3 s poll of /api/nodes, and only while
+        // the node list was sorted by activity.
+        let activity = state
+            .member_handle
+            .stderr_activity(&mut self.activity)
+            .await;
+        if !activity.is_empty() {
+            let rows: Vec<_> = activity
+                .into_iter()
+                .map(|(id, modified, size, preview)| {
+                    serde_json::json!({
+                        "id": id,
+                        "stderr_last_modified": modified,
+                        "stderr_size": size,
+                        "stderr_preview": preview,
+                    })
+                })
+                .collect();
+            match serde_json::to_string(&rows) {
+                Ok(json) => out.push(Event::default().event("activity").data(json)),
+                Err(e) => error!("Failed to serialize the header's activity: {e}"),
+            }
+        }
         out
     }
 }
@@ -387,6 +414,9 @@ impl HeaderFigures {
 /// - `diagnostic_counts`: was only known while the Diagnostics page was
 ///   open.
 /// - `recording`: the events.jsonl switch. Was a 5 s poll.
+/// - `activity`: `[{id, stderr_last_modified, stderr_size,
+///   stderr_preview}]` for the members whose stderr changed (all on
+///   connect). Was a 3 s poll of `/api/nodes` under the activity sort.
 /// - `metrics`: the system metrics, which used to need a second
 ///   EventSource (`/api/metrics/system`, kept for other clients).
 ///
@@ -624,7 +654,8 @@ const DIAGNOSTICS_TICK: Duration = Duration::from_secs(1);
 ///
 /// - the registry's change notification, which fires the instant a diagnostic
 ///   changes level. This is the latency that matters.
-/// - a 1 Hz tick, because staleness is evaluated when the table is read. A
+/// - a 1 Hz tick, because staleness is evaluated when the table is read
+///   (sent only when the table read differs from the one last sent). A
 ///   publisher going silent produces no notification by construction — silence
 ///   is the signal — so without the tick a stale diagnostic would keep reading
 ///   OK until something unrelated changed.
@@ -636,6 +667,11 @@ pub async fn stream_diagnostics(State(state): State<Arc<WebState>>) -> Response 
 
     let stream = async_stream::stream! {
         let mut tick = tokio::time::interval(DIAGNOSTICS_TICK);
+        // The table as last sent: a tick that finds it unchanged sends
+        // nothing (phase 105 W4). It used to re-send the whole table every
+        // second whether or not anything had moved; the keep-alive covers
+        // a quiet stream.
+        let mut last: Option<String> = None;
 
         loop {
             let json = {
@@ -647,7 +683,11 @@ pub async fn stream_diagnostics(State(state): State<Arc<WebState>>) -> Response 
                 serde_json::to_string(&payload)
             };
             match json {
-                Ok(json) => yield Ok::<_, Infallible>(Event::default().data(json)),
+                Ok(json) if last.as_deref() != Some(json.as_str()) => {
+                    yield Ok::<_, Infallible>(Event::default().data(&json));
+                    last = Some(json);
+                }
+                Ok(_) => {}
                 Err(e) => error!("Failed to serialize diagnostics snapshot: {}", e),
             }
 

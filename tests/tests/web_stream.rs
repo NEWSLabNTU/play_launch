@@ -109,6 +109,7 @@ fn the_global_stream_carries_the_header_and_follows_a_stop() {
         "issue_counts",
         "diagnostic_counts",
         "recording",
+        "activity",
         "metrics",
     ] {
         assert!(
@@ -133,4 +134,65 @@ fn the_global_stream_carries_the_header_and_follows_a_stop() {
     );
     // Sent on change, not every tick: two values, two events.
     assert_eq!(running.len(), 2, "a summary per change only: {running:?}");
+}
+
+#[test]
+fn a_quiet_diagnostics_stream_sends_its_table_once() {
+    let env = fixtures::install_env();
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/pure_nodes.launch.xml");
+    let work_dir = tempfile::TempDir::new().unwrap();
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    let port = fixtures::web_port(&cmd);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--web-addr",
+        &format!("127.0.0.1:{port}"),
+        "--disable-monitoring",
+        launch.to_str().unwrap(),
+    ]);
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let _proc = ManagedProcess::spawn(&mut cmd).expect("spawn play_launch");
+    let base = format!("http://127.0.0.1:{port}");
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let out = Command::new("curl")
+            .args([
+                "-s",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                "--max-time",
+                "2",
+                &format!("{base}/api/diagnostics/counts"),
+            ])
+            .output()
+            .unwrap();
+        if String::from_utf8_lossy(&out.stdout) == "200" {
+            break;
+        }
+        assert!(Instant::now() < deadline, "web UI never answered");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    // Nothing in this launch publishes /diagnostics, so the table never
+    // changes: one table, then keep-alives. It used to be re-sent every
+    // second.
+    let out = Command::new("curl")
+        .args([
+            "-sN",
+            "--max-time",
+            "5",
+            &format!("{base}/api/diagnostics/stream"),
+        ])
+        .output()
+        .unwrap();
+    let tables = parse_sse(&String::from_utf8_lossy(&out.stdout))
+        .into_iter()
+        .filter(|(_, d)| d != "keep-alive")
+        .count();
+    assert_eq!(tables, 1, "an unchanged table must be sent once");
 }

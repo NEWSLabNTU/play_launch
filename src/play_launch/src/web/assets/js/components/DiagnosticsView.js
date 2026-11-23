@@ -4,6 +4,7 @@ import { h } from '../vendor/preact.module.js';
 import { useState, useEffect, useCallback, useMemo } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import { diagnostics, currentView } from '../store.js';
+import { usePoll, pageVisible } from '../hooks.js';
 
 const html = htm.bind(h);
 
@@ -130,8 +131,10 @@ export function DiagnosticsView() {
     // after the system raised it. The server pushes on every level change and
     // once a second otherwise — the tick is what surfaces a publisher that has
     // gone silent, since silence raises no change event.
+    // Not while the tab is hidden (phase 105 W4).
+    const visible = pageVisible.value;
     useEffect(() => {
-        if (view !== 'diagnostics') return;
+        if (view !== 'diagnostics' || !visible) return;
 
         const es = new EventSource('/api/diagnostics/stream');
 
@@ -149,26 +152,13 @@ export function DiagnosticsView() {
         es.onerror = () => console.debug('[diagnostics] stream interrupted, reconnecting');
 
         return () => es.close();
-    }, [view]);
+    }, [view, visible]);
 
     // Level history for the strips. Polled at 2 s rather than streamed: it
     // changes only when a level changes, the stream already fires then, and a
     // second SSE channel for a few hundred transitions would be more moving
     // parts than the thing is worth.
-    const [history, setHistory] = useState({});
-    useEffect(() => {
-        if (view !== 'diagnostics') return;
-        let live = true;
-        const pull = async () => {
-            try {
-                const r = await fetch('/api/diagnostics/history');
-                if (live && r.ok) setHistory(await r.json());
-            } catch (err) { /* transient; the next tick retries */ }
-        };
-        pull();
-        const id = setInterval(pull, 2000);
-        return () => { live = false; clearInterval(id); };
-    }, [view]);
+    const history = usePoll(view === 'diagnostics' ? '/api/diagnostics/history' : null, 2000).data || {};
 
     const toggleSort = useCallback((col) => {
         setSortCol(prev => {

@@ -106,6 +106,23 @@ no other request), which fails on the previous stream.
 
 ### W4 - One stream, shared hooks
 
+**Done (2026-11-23).** `js/hooks.js` has `usePoll` and `useSnapshotStream`,
+both paused while the tab is hidden (`pageVisible`) and fetching at once
+when it shows again; Entities, Health (snapshot, startup, DDS report),
+Chains and Diagnostics use them, and the copied probe-then-stream code is
+gone. The graph refresh pauses while hidden too. Each member's stderr
+activity rides the global stream (`activity`: the members whose stderr
+moved, with time, size and preview, one `stat` per member per second), so
+the node list's 3 s poll is gone and the cards' previews are current. The
+diagnostics stream sends its table only when it changed. The stderr stream
+stopped being always-on in W2. A tab now holds the global stream, at most
+one page stream, and the log or metrics stream of an open node panel: three
+at most, under the browser's six per origin with two tabs open.
+
+Not done, by choice: page snapshots multiplexed onto the global stream.
+With the above, a tab needs at most three connections, and folding the
+Entities or Health snapshots in would send them to every page.
+
 - One multiplexed SSE connection with named events (`state`, `metrics`,
   `health_counts`, `diagnostics_counts`, and page topics subscribed by
   query) replaces the two global streams; pages that need a large snapshot

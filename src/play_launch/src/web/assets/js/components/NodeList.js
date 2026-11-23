@@ -1,9 +1,9 @@
 // NodeList component — renders the grouped, sorted, filtered node list.
 
 import { h } from '../vendor/preact.module.js';
-import { useState, useMemo, useCallback, useEffect } from '../vendor/hooks.module.js';
+import { useState, useMemo, useCallback } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { nodeList, selectedNode, nodePanelOpen, activeTab, getStatusString, fetchNodes, statusFacet } from '../store.js';
+import { nodeList, selectedNode, nodePanelOpen, activeTab, getStatusString, statusFacet } from '../store.js';
 import { NodeCard } from './NodeCard.js';
 
 const html = htm.bind(h);
@@ -120,12 +120,8 @@ export function NodeList() {
     const facet = statusFacet.value;
     const setFacet = useCallback((f) => { statusFacet.value = f; }, []);
 
-    // Poll node data periodically when sorting by activity so timestamps stay fresh.
-    useEffect(() => {
-        if (sortBy !== 'activity') return;
-        const id = setInterval(fetchNodes, 3000);
-        return () => clearInterval(id);
-    }, [sortBy]);
+    // Activity times arrive on the global stream (`activity`); this used to
+    // poll /api/nodes every 3 s, from a hidden list too.
 
     const allNodes = nodeList.value;
 

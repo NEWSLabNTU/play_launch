@@ -7,9 +7,10 @@
 // the next tick.
 
 import { h } from '../vendor/preact.module.js';
-import { useState, useEffect, useCallback, useMemo } from '../vendor/hooks.module.js';
+import { useState, useCallback, useMemo } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import { selectedNode, nodePanelOpen, activeTab, nodes, getNodeByKey, memberFqn, entitiesFilterRequest } from '../store.js';
+import { useSnapshotStream } from '../hooks.js';
 
 const html = htm.bind(h);
 
@@ -261,10 +262,6 @@ export function EntitiesView() {
         entitiesFilterRequest.value = null;
     }
 
-    /** @type {[import('../types').EntitySnapshot|null, (v: any) => void]} */
-    const [snap, setSnap] = useState(null);
-    const [offMsg, setOffMsg] = useState(null);      // interception off / 409 text
-    const [disconnected, setDisconnected] = useState(false);
     const [selectedRow, setSelectedRow] = useState(null);
 
     const [sortCol, setSortCol] = usePref('sortCol');
@@ -276,74 +273,14 @@ export function EntitiesView() {
     const [topOnly, setTopOnly] = usePref('topOnly');
     const [groupByTopic, setGroupByTopic] = usePref('groupByTopic');
 
-    // Stream while mounted; reconnect when "Top rows only" changes.
-    useEffect(() => {
-        const q = topOnly ? '' : '?all=1';
-        let live = true;
-        let es = null;
-        let retry = null;
-        let gotData = false;
-
-        const accept = (data) => {
-            gotData = true;
-            setSnap(data);
-            setOffMsg(null);
-            setDisconnected(false);
-        };
-
-        const open = () => {
-            if (!live) return;
-            es = new EventSource('/api/entities/stream' + q);
-            es.onmessage = (e) => {
-                if (e.data === 'keep-alive') return;
-                try { accept(JSON.parse(e.data)); } catch (err) {
-                    console.error('[entities] bad snapshot:', err);
-                }
-            };
-            es.onerror = () => {
-                setDisconnected(true);
-                // A non-200 answer (404/409) closes the source for good
-                // instead of retrying; re-probe so a recovered server, or
-                // one that turns out to have interception off, is reported.
-                if (es && es.readyState === EventSource.CLOSED) {
-                    es.close();
-                    es = null;
-                    retry = setTimeout(probe, 3000);
-                }
-            };
-        };
-
-        // One plain fetch first: it paints before the first tick, and it is
-        // the only place a status code (and a 409's error text) is visible.
-        const probe = async () => {
-            if (!live) return;
-            try {
-                const r = await fetch('/api/entities' + q);
-                if (!live) return;
-                if (r.status === 404) {
-                    if (!gotData) setOffMsg(INTERCEPTION_OFF);
-                    return;
-                }
-                if (r.status === 409) {
-                    let msg = INTERCEPTION_OFF;
-                    try { const j = await r.json(); if (j && j.error) msg = j.error; } catch (_) { /* keep default */ }
-                    if (!gotData) setOffMsg(msg);
-                    return;
-                }
-                if (r.ok) accept(await r.json());
-            } catch (_) {
-                setDisconnected(true);
-            }
-            open();
-        };
-
-        probe();
-        return () => {
-            live = false;
-            if (retry) clearTimeout(retry);
-            if (es) es.close();
-        };
-    }, [topOnly]);
+    // Stream while mounted and visible; reconnect when "Top rows only"
+    // changes.
+    const q = topOnly ? '' : '?all=1';
+    const stream = useSnapshotStream('/api/entities' + q, '/api/entities/stream' + q);
+    /** @type {import('../types').EntitySnapshot|null} */
+    const snap = stream.data;
+    const offMsg = stream.off ? (stream.offText || INTERCEPTION_OFF) : null;
+    const disconnected = stream.disconnected;
 
     const toggleSort = useCallback((col) => {
         if (prefs.sortCol === col) {

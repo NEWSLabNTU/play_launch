@@ -2,6 +2,7 @@
 // Single source of truth using Preact signals.
 
 import { signal, computed, effect } from './vendor/signals.module.js';
+import { pageVisible } from './hooks.js';
 
 // --- Node state ---
 
@@ -222,6 +223,29 @@ export function loadNodes(nodeArray) {
  *
  * @param {import('./types').StateEvent} event
  */
+/**
+ * Apply an `activity` event from the global stream: the members whose
+ * stderr changed, with their new time, size and preview. One map copy for
+ * the whole batch.
+ * @param {{id: string, stderr_last_modified: number|null, stderr_size: number, stderr_preview: string[]|null}[]} rows
+ */
+export function applyActivity(rows) {
+    if (!Array.isArray(rows) || rows.length === 0) return;
+    let map = null;
+    for (const row of rows) {
+        const node = (map || nodes.value).get(row.id);
+        if (!node) continue;
+        if (!map) map = new Map(nodes.value);
+        map.set(row.id, {
+            ...node,
+            stderr_last_modified: row.stderr_last_modified,
+            stderr_size: row.stderr_size,
+            stderr_preview: row.stderr_preview,
+        });
+    }
+    if (map) nodes.value = map;
+}
+
 export function applyStateEvent(event) {
     // Actors are named by canonical member id (phase-50), so event.name IS
     // the store key.
@@ -374,7 +398,9 @@ export const graphViewers = signal(0);
 export const graphWanted = computed(() =>
     currentView.value === 'graph' || currentView.value === 'nodes' || graphViewers.value > 0);
 effect(() => {
-    if (graphWanted.value) {
+    // Not while the tab is hidden; becoming visible fetches at once.
+    const wanted = graphWanted.value && pageVisible.value;
+    if (wanted) {
         if (_graphTimer === null) {
             fetchGraph();
             _graphTimer = setInterval(fetchGraph, GRAPH_REFRESH_MS);

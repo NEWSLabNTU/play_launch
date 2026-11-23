@@ -29,6 +29,12 @@ allowance heavily.
   and diagnostics badges, the event-recording state and the system metrics
   now arrive on the one global stream, sent when they change; the header
   polls nothing, and a tab holds one global connection instead of two.
+- **Changed (#0111, phase 105 W4):** the web UI stops polling and
+  streaming while its tab is hidden, and fetches at once when shown again.
+  Node activity and the cards' stderr previews arrive on the global stream
+  (the node list polled every 3 s under the activity sort, from a hidden
+  list too). The diagnostics stream sends its table only when it changed,
+  where it re-sent it every second.
 - **Development (phase 105 W2):** ESLint now covers every web UI file and
   fails on any finding; `just check` fails when the TypeScript bindings
   differ from the Rust types; the health, entities, chains, startup, graph

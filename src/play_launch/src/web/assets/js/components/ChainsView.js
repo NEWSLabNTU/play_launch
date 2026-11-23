@@ -8,8 +8,9 @@
 // ages.
 
 import { h } from '../vendor/preact.module.js';
-import { useState, useEffect, useMemo } from '../vendor/hooks.module.js';
+import { useState, useMemo } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
+import { usePoll } from '../hooks.js';
 
 const html = htm.bind(h);
 
@@ -30,29 +31,6 @@ function fmtMs(ms) {
 
 function pct(x) {
     return x == null ? '—' : Math.round(x * 100) + '%';
-}
-
-/** Poll a JSON endpoint every `ms` while mounted. A 409 means interception
- * is off for this run, which is a state, not an error. */
-function usePoll(url, ms) {
-    const [state, setState] = useState({ data: null, off: false, error: null });
-    useEffect(() => {
-        if (!url) { setState({ data: null, off: false, error: null }); return undefined; }
-        let alive = true;
-        const load = () => fetch(url)
-            .then(async r => {
-                if (!alive) return;
-                if (r.status === 409) { setState({ data: null, off: true, error: null }); return; }
-                if (!r.ok) { setState(s => ({ ...s, error: 'HTTP ' + r.status })); return; }
-                const data = await r.json();
-                if (alive) setState({ data, off: false, error: null });
-            })
-            .catch(e => { if (alive) setState(s => ({ ...s, error: String(e) })); });
-        load();
-        const id = setInterval(load, ms);
-        return () => { alive = false; clearInterval(id); };
-    }, [url, ms]);
-    return state;
 }
 
 function KindBadge({ kind }) {

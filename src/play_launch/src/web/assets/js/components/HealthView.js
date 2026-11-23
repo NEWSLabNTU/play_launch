@@ -10,9 +10,10 @@ import { useState, useEffect, useMemo } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import {
     currentView, selectedNode, nodePanelOpen, activeTab, graphSelectedElement,
-    nodes, getNodeByKey, memberFqn, healthIssueCounts, applyHealthResponse,
+    nodes, getNodeByKey, memberFqn, applyHealthResponse,
     entitiesFilterRequest,
 } from '../store.js';
+import { useSnapshotStream, usePoll } from '../hooks.js';
 
 const html = htm.bind(h);
 
@@ -94,28 +95,13 @@ function followLink(link) {
 
 /** Poll `/api/startup` every 2 s until startup completes, then every 30 s. */
 function useStartupTimeline() {
-    /** @type {[import('../types').StartupTimeline|null, (v: any) => void]} */
-    const [t, setT] = useState(null);
+    const [done, setDone] = useState(false);
+    /** @type {{data: import('../types').StartupTimeline|null}} */
+    const { data } = usePoll('/api/startup', done ? 30000 : 2000);
     useEffect(() => {
-        let live = true;
-        let timer = null;
-        const poll = async () => {
-            let done = false;
-            try {
-                const r = await fetch('/api/startup');
-                if (r.ok) {
-                    const body = await r.json();
-                    if (!live) return;
-                    setT(body);
-                    done = body.complete_ms != null;
-                }
-            } catch (_) { /* retried below */ }
-            if (live) timer = setTimeout(poll, done ? 30000 : 2000);
-        };
-        poll();
-        return () => { live = false; if (timer) clearTimeout(timer); };
-    }, []);
-    return t;
+        if (data && data.complete_ms != null) setDone(true);
+    }, [data]);
+    return data;
 }
 
 const KIND_TAG = { node: 'node', executable: 'exec', container: 'cont', composable: 'comp' };
@@ -513,19 +499,10 @@ function Host({ host }) {
  * (phase 89 D4). Fetched when opened, not with every snapshot. */
 function DdsReport() {
     const [open, setOpen] = useState(false);
-    const [text, setText] = useState(null);
     const [copied, setCopied] = useState(false);
-    useEffect(() => {
-        if (!open) return undefined;
-        let alive = true;
-        const load = () => fetch('/api/health/dds_report')
-            .then(r => (r.ok ? r.text() : null))
-            .then(t => { if (alive && t != null) setText(t); })
-            .catch(() => {});
-        load();
-        const id = setInterval(load, 10000);
-        return () => { alive = false; clearInterval(id); };
-    }, [open]);
+    const { data: text } = usePoll(open ? '/api/health/dds_report' : null, 10000, {
+        parse: (r) => r.text(),
+    });
     const copy = () => {
         if (!text || !navigator.clipboard) return;
         navigator.clipboard.writeText(text).then(() => {
@@ -591,10 +568,6 @@ function SelfCost({ cost }) {
 // --- view -----------------------------------------------------------------
 
 export function HealthView() {
-    /** @type {[import('../types').HealthSnapshot|null, (v: any) => void]} */
-    const [snap, setSnap] = useState(null);
-    const [offMsg, setOffMsg] = useState(null);
-    const [disconnected, setDisconnected] = useState(false);
     // Server clock minus client clock, so "since" is measured on the
     // server's timeline and a skewed browser clock does not distort it.
     const [skew, setSkew] = useState(0);
@@ -606,76 +579,16 @@ export function HealthView() {
         return () => clearInterval(id);
     }, []);
 
-    useEffect(() => {
-        let live = true;
-        let es = null;
-        let retry = null;
-        let gotData = false;
-
-        const accept = (data) => {
-            gotData = true;
-            setSnap(data);
+    const stream = useSnapshotStream('/api/health/issues', '/api/health/issues/stream', {
+        onData: (data) => {
             if (typeof data.t_ms === 'number') setSkew(data.t_ms - Date.now());
-            setOffMsg(null);
-            setDisconnected(false);
             applyHealthResponse(data); // keep the tab badge in step
-        };
-
-        const open = () => {
-            if (!live) return;
-            es = new EventSource('/api/health/issues/stream');
-            es.onmessage = (e) => {
-                if (e.data === 'keep-alive') return;
-                try { accept(JSON.parse(e.data)); } catch (err) {
-                    console.error('[health] bad snapshot:', err);
-                }
-            };
-            es.onerror = () => {
-                setDisconnected(true);
-                // A non-200 answer closes the source for good; re-probe.
-                if (es && es.readyState === EventSource.CLOSED) {
-                    es.close();
-                    es = null;
-                    retry = setTimeout(probe, 3000);
-                }
-            };
-        };
-
-        const probe = async () => {
-            if (!live) return;
-            try {
-                const r = await fetch('/api/health/issues');
-                if (!live) return;
-                if (r.status === 404 || r.status === 409) {
-                    let msg = null;
-                    try { const j = await r.json(); if (j && j.error) msg = j.error; } catch (_) { /* no body */ }
-                    if (!gotData) setOffMsg({ text: msg });
-                    healthIssueCounts.value = null;
-                    return;
-                }
-                if (r.ok) {
-                    const data = await r.json();
-                    // An older server answers /api/health with the member
-                    // summary, which has no issue list.
-                    if (!Array.isArray(data.open)) {
-                        if (!gotData) setOffMsg({ text: null });
-                        return;
-                    }
-                    accept(data);
-                }
-            } catch (_) {
-                setDisconnected(true);
-            }
-            open();
-        };
-
-        probe();
-        return () => {
-            live = false;
-            if (retry) clearTimeout(retry);
-            if (es) es.close();
-        };
-    }, []);
+        },
+    });
+    /** @type {import('../types').HealthSnapshot|null} */
+    const snap = stream.data;
+    const offMsg = stream.off ? { text: stream.offText } : null;
+    const disconnected = stream.disconnected;
 
     const openIssues = useMemo(() => {
         const list = (snap && snap.open) ? snap.open.slice() : [];

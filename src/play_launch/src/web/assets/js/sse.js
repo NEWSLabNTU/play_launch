@@ -4,12 +4,12 @@
 //
 // One connection carries everything global (phase 105 W3): unnamed events
 // are StateEvents, and named events carry the header's figures (`summary`,
-// `issue_counts`, `diagnostic_counts`, `recording`) and the system
-// `metrics`, each sent on connect and when it changes. The metrics used to
+// `issue_counts`, `diagnostic_counts`, `recording`), each member's stderr
+// `activity`, and the system `metrics`, each sent on connect and when it changes. The metrics used to
 // need a second EventSource, and the rest were polled or fetched once.
 
 import {
-    applyStateEvent, fetchNodes, fetchGraph, graphWanted, fetchLaunchTree, connected,
+    applyStateEvent, applyActivity, fetchNodes, fetchGraph, graphWanted, fetchLaunchTree, connected,
     systemMetrics, healthSummary, healthIssueCounts, diagnosticCounts, eventRecording,
 } from './store.js';
 
@@ -20,6 +20,7 @@ const NAMED = {
     diagnostic_counts: (v) => { diagnosticCounts.value = v; },
     recording: (v) => { eventRecording.value = v; },
     metrics: (v) => { systemMetrics.value = v; },
+    activity: (v) => applyActivity(v),
 };
 
 /** How long to wait without any SSE message before declaring disconnect (ms). */
