@@ -26,6 +26,10 @@ name = "web_origin_guard"
 path = "tests/web_origin_guard.rs"
 
 [[test]]
+name = "web_stream"
+path = "tests/web_stream.rs"
+
+[[test]]
 name = "autoware"
 path = "tests/autoware.rs"
 

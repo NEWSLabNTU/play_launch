@@ -1,8 +1,26 @@
 // SSE connection manager for play_launch web UI.
 // Connects to /api/state/updates and applies events to the store.
 // Side-effect module — import to activate.
+//
+// One connection carries everything global (phase 105 W3): unnamed events
+// are StateEvents, and named events carry the header's figures (`summary`,
+// `issue_counts`, `diagnostic_counts`, `recording`) and the system
+// `metrics`, each sent on connect and when it changes. The metrics used to
+// need a second EventSource, and the rest were polled or fetched once.
 
-import { applyStateEvent, fetchNodes, fetchHealth, fetchGraph, graphWanted, fetchLaunchTree, connected, systemMetrics } from './store.js';
+import {
+    applyStateEvent, fetchNodes, fetchGraph, graphWanted, fetchLaunchTree, connected,
+    systemMetrics, healthSummary, healthIssueCounts, diagnosticCounts, eventRecording,
+} from './store.js';
+
+/** Named events on the global stream, and the signal each one sets. */
+const NAMED = {
+    summary: (v) => { healthSummary.value = v; },
+    issue_counts: (v) => { healthIssueCounts.value = v; },
+    diagnostic_counts: (v) => { diagnosticCounts.value = v; },
+    recording: (v) => { eventRecording.value = v; },
+    metrics: (v) => { systemMetrics.value = v; },
+};
 
 /** How long to wait without any SSE message before declaring disconnect (ms). */
 const KEEPALIVE_TIMEOUT_MS = 8000;
@@ -51,9 +69,9 @@ function connect() {
         console.debug('[sse] Connected to /api/state/updates');
         connected.value = true;
         resetKeepAlive();
-        // Full resync on every (re)connect to cover missed events
+        // Full resync on every (re)connect to cover missed events. The
+        // header's figures arrive on the stream itself.
         fetchNodes();
-        fetchHealth();
         if (graphWanted.value) fetchGraph();
     };
 
@@ -71,9 +89,19 @@ function connect() {
     eventSource.addEventListener('refresh', () => {
         console.warn('[sse] Server sent refresh (lagged) — re-syncing state');
         fetchNodes();
-        fetchHealth();
         if (graphWanted.value) fetchGraph();
     });
+
+    for (const [name, apply] of Object.entries(NAMED)) {
+        eventSource.addEventListener(name, (e) => {
+            resetKeepAlive();
+            try {
+                apply(JSON.parse(e.data));
+            } catch (err) {
+                console.warn(`[sse] Failed to parse ${name}:`, err, e.data);
+            }
+        });
+    }
 
     eventSource.onerror = () => {
         console.debug('[sse] Connection error');
@@ -88,8 +116,7 @@ function startReconnectLoop() {
     reconnectTimer = setInterval(async () => {
         try {
             const resp = await fetch('/api/health', { signal: AbortSignal.timeout(3000) });
-            // Any HTTP answer means the server is up: /api/health may
-            // legitimately answer 409 when the run has no issue tracker.
+            // Any HTTP answer means the server is up.
             if (resp.status > 0) {
                 console.debug('[sse] Server is back — reconnecting');
                 connect(); // clears the interval
@@ -100,47 +127,7 @@ function startReconnectLoop() {
     }, RECONNECT_INTERVAL_MS);
 }
 
-// --- System metrics SSE (Phase 26) ---
-
-let metricsSource = null;
-let metricsReconnectTimer = null;
-
-function connectMetrics() {
-    if (metricsSource) {
-        metricsSource.close();
-        metricsSource = null;
-    }
-    clearInterval(metricsReconnectTimer);
-    metricsReconnectTimer = null;
-
-    metricsSource = new EventSource('/api/metrics/system');
-
-    metricsSource.onmessage = (e) => {
-        if (e.data === 'keep-alive') return;
-        try {
-            systemMetrics.value = JSON.parse(e.data);
-        } catch (err) {
-            console.warn('[sse] Failed to parse metrics:', err);
-        }
-    };
-
-    metricsSource.onerror = () => {
-        if (metricsSource) {
-            metricsSource.close();
-            metricsSource = null;
-        }
-        // Reconnect after delay
-        if (!metricsReconnectTimer) {
-            metricsReconnectTimer = setInterval(() => {
-                connectMetrics();
-            }, RECONNECT_INTERVAL_MS);
-        }
-    };
-}
-
 // Initial load
 fetchNodes();
-fetchHealth();
 fetchLaunchTree();
 connect();
-connectMetrics();

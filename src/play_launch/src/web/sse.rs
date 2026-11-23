@@ -313,13 +313,86 @@ fn read_last_n_lines(path: &PathBuf, n: usize) -> eyre::Result<Vec<String>> {
     Ok(lines[start..].to_vec())
 }
 
-/// Stream state updates for all nodes (SSE)
+/// How often the stream re-reads the header's figures and sends those that
+/// changed.
+const HEADER_TICK: Duration = Duration::from_secs(1);
+
+/// The header's figures, each sent as a named event when it changes (and
+/// once on connect). Each is kept as the JSON last sent, so "changed" is
+/// "serializes differently".
+#[derive(Default)]
+struct HeaderFigures {
+    summary: Option<String>,
+    issue_counts: Option<String>,
+    diagnostic_counts: Option<String>,
+    recording: Option<String>,
+}
+
+impl HeaderFigures {
+    /// The named events whose value differs from the last one sent.
+    async fn changed(&mut self, state: &WebState) -> Vec<Event> {
+        let summary = state.member_handle.get_health_summary().await;
+        // `null` when this run has no issue tracker: the badge hides.
+        let issue_counts = state.health.as_ref().map(|rx| rx.borrow().counts.clone());
+        let diagnostic_counts = state.diagnostic_registry.get_counts();
+        let recording = super::handlers::event_recording_state(state);
+
+        let mut out = Vec::new();
+        let mut emit =
+            |name: &'static str, last: &mut Option<String>, json: serde_json::Result<String>| {
+                match json {
+                    Ok(json) if last.as_deref() != Some(json.as_str()) => {
+                        out.push(Event::default().event(name).data(&json));
+                        *last = Some(json);
+                    }
+                    Ok(_) => {}
+                    Err(e) => error!("Failed to serialize the header's {name}: {e}"),
+                }
+            };
+        emit(
+            "summary",
+            &mut self.summary,
+            serde_json::to_string(&summary),
+        );
+        emit(
+            "issue_counts",
+            &mut self.issue_counts,
+            serde_json::to_string(&issue_counts),
+        );
+        emit(
+            "diagnostic_counts",
+            &mut self.diagnostic_counts,
+            serde_json::to_string(&diagnostic_counts),
+        );
+        emit(
+            "recording",
+            &mut self.recording,
+            serde_json::to_string(&recording),
+        );
+        out
+    }
+}
+
+/// The web UI's one global stream (phase 105 W3).
 ///
-/// This endpoint provides real-time state updates for all nodes via Server-Sent Events.
-/// Each SSE message contains a JSON-serialized StateEvent.
+/// Unnamed events are `StateEvent`s, as before. Named events carry what the
+/// header shows on every page, so nothing there polls and no figure waits
+/// for a page to be opened:
 ///
-/// If the client falls behind by more than the broadcast buffer capacity,
-/// a `refresh` event is sent so the client can re-sync via `/api/nodes`.
+/// - `summary`: the member counts (`HealthSummary`). It used to be fetched
+///   only on connect and after a card action, so "N/M nodes" froze through
+///   startup and crashes.
+/// - `issue_counts`: open Health issues by severity, or `null` when the run
+///   has no issue tracker. Was a 5 s poll of the whole health snapshot.
+/// - `diagnostic_counts`: was only known while the Diagnostics page was
+///   open.
+/// - `recording`: the events.jsonl switch. Was a 5 s poll.
+/// - `metrics`: the system metrics, which used to need a second
+///   EventSource (`/api/metrics/system`, kept for other clients).
+///
+/// The figures are re-read every [`HEADER_TICK`] and sent when they change,
+/// and all of them once on connect, so a reconnect needs no other fetch for
+/// the header.
 pub async fn stream_state_updates(State(state): State<Arc<WebState>>) -> Response {
     if state.state_broadcaster.subscriber_count() >= MAX_SSE_SUBSCRIBERS {
         warn!(
@@ -332,14 +405,18 @@ pub async fn stream_state_updates(State(state): State<Arc<WebState>>) -> Respons
     debug!("New SSE client connected for state updates");
 
     let mut rx = state.state_broadcaster.subscribe();
+    let mut metrics_rx = state.metrics_broadcaster.as_ref().map(|b| b.subscribe());
 
-    // Create the event stream with periodic heartbeat data events.
-    // We send heartbeats as `data: keep-alive` (not SSE comments) because
+    // Heartbeats are `data: keep-alive` (not SSE comments) because
     // JavaScript's EventSource.onmessage only fires for data events.
     let stream = async_stream::stream! {
         let mut heartbeat = tokio::time::interval(SSE_KEEPALIVE_INTERVAL);
         // First tick fires immediately — skip it since the client just connected.
         heartbeat.tick().await;
+        // First tick fires immediately: the figures go out on connect.
+        let mut header_tick = tokio::time::interval(HEADER_TICK);
+        header_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut figures = HeaderFigures::default();
 
         loop {
             tokio::select! {
@@ -364,6 +441,29 @@ pub async fn stream_state_updates(State(state): State<Arc<WebState>>) -> Respons
                             );
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                snap = async {
+                    match metrics_rx.as_mut() {
+                        Some(r) => r.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    match snap {
+                        Ok(snap) => match serde_json::to_string(&snap) {
+                            Ok(json) => {
+                                yield Ok::<_, Infallible>(Event::default().event("metrics").data(json));
+                            }
+                            Err(e) => error!("Failed to serialize SystemStatsSnapshot: {}", e),
+                        },
+                        // Snapshots: the next one is the latest anyway.
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => metrics_rx = None,
+                    }
+                }
+                _ = header_tick.tick() => {
+                    for event in figures.changed(&state).await {
+                        yield Ok::<_, Infallible>(event);
                     }
                 }
                 _ = heartbeat.tick() => {

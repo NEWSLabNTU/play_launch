@@ -22,6 +22,13 @@ allowance heavily.
   never showed: they counted levels spelled `OK`/`WARNING`/... while the
   server sends `Ok`/`Warning`/.... The stderr log stream no longer stays
   open while another tab of the node panel is shown.
+- **Fixed (#0111, phase 105 W3):** the web UI header stays current. Its
+  node, container and composable counts were fetched once per connection,
+  so they froze while nodes stopped or crashed; its diagnostics badges were
+  known only after visiting the Diagnostics page. The counts, the issue
+  and diagnostics badges, the event-recording state and the system metrics
+  now arrive on the one global stream, sent when they change; the header
+  polls nothing, and a tab holds one global connection instead of two.
 - **Development (phase 105 W2):** ESLint now covers every web UI file and
   fails on any finding; `just check` fails when the TypeScript bindings
   differ from the Rust types; the health, entities, chains, startup, graph

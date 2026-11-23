@@ -1,9 +1,9 @@
 // Header component — nav tabs, health badges, diagnostic badges, theme toggle.
 
 import { h } from '../vendor/preact.module.js';
-import { useCallback, useEffect, useState } from '../vendor/hooks.module.js';
+import { useCallback } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { currentView, theme, healthSummary, diagnostics, systemMetrics, graphSelectedElement, statusFacet, nodeList, getStatusString, healthIssueCounts, applyHealthResponse } from '../store.js';
+import { currentView, theme, healthSummary, diagnosticCounts, eventRecording, systemMetrics, graphSelectedElement, statusFacet, nodeList, getStatusString, healthIssueCounts } from '../store.js';
 
 const html = htm.bind(h);
 
@@ -38,21 +38,13 @@ function HealthBar() {
 }
 
 function DiagnosticBadges() {
-    const diags = diagnostics.value;
-    if (!diags || diags.length === 0) return null;
-
-    let ok = 0, warning = 0, error = 0, stale = 0;
-    for (const d of diags) {
-        switch (d.level) {
-            // The level as serde writes it (`DiagnosticLevel`): these
-            // compared against 'OK'/'WARNING'/... and never matched, so
-            // the badges never showed (#0111; found by typing the payload).
-            case 'Ok': ok++; break;
-            case 'Warning': warning++; break;
-            case 'Error': error++; break;
-            case 'Stale': stale++; break;
-        }
-    }
+    // Counted by the server and sent on the global stream, so they are
+    // current on every page. They used to be counted here from the full list
+    // only the Diagnostics page fetched, against level names the payload
+    // does not use, and never showed (#0111).
+    const c = diagnosticCounts.value;
+    if (!c) return null;
+    const { ok, warning, error, stale } = c;
 
     const total = ok + warning + error + stale;
     if (total === 0) return null;
@@ -106,18 +98,7 @@ function MetricsBadges() {
  * per message. Hidden on a run that has no messages to record.
  */
 function EventRecordToggle() {
-    const [rec, setRec] = useState(null);
-
-    useEffect(() => {
-        let alive = true;
-        const load = () => fetch('/api/interception/events')
-            .then(r => r.ok ? r.json() : null)
-            .then(s => { if (alive && s) setRec(s); })
-            .catch(() => {});
-        load();
-        const id = setInterval(load, 5000);
-        return () => { alive = false; clearInterval(id); };
-    }, []);
+    const rec = eventRecording.value;
 
     const toggle = useCallback(() => {
         if (!rec) return;
@@ -126,9 +107,11 @@ function EventRecordToggle() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ enabled: !rec.recording }),
         })
-            .then(r => r.ok ? r.json() : null)
-            .then(s => { if (s) setRec(s); })
-            .catch(() => {});
+            .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+            // The stream sends the new state within a second; take the
+            // answer now so the button does not lag the click.
+            .then(s => { if (s) eventRecording.value = s; })
+            .catch(e => console.warn('[header] record toggle failed:', e));
     }, [rec]);
 
     if (!rec || !rec.available) return null;
@@ -146,29 +129,10 @@ function EventRecordToggle() {
 
 /**
  * Count of open health issues on the Health tab: red if any error, amber if
- * only warnings, hidden otherwise. Polls /api/health/issues every 5 s so the count
- * is current on every page; the Health page also feeds the same signal from
- * its stream while open.
+ * only warnings, hidden otherwise. Fed by the global stream on every page;
+ * the Health page also feeds the same signal from its stream while open.
  */
 function HealthTabBadge() {
-    useEffect(() => {
-        let alive = true;
-        const load = () => fetch('/api/health/issues')
-            .then(r => {
-                if (!r.ok) {
-                    // 404/409: no issue tracker on this run, so no badge.
-                    if (alive && (r.status === 404 || r.status === 409)) healthIssueCounts.value = null;
-                    return null;
-                }
-                return r.json();
-            })
-            .then(d => { if (alive && d) applyHealthResponse(d); })
-            .catch(() => {});
-        load();
-        const id = setInterval(load, 5000);
-        return () => { alive = false; clearInterval(id); };
-    }, []);
-
     const c = healthIssueCounts.value;
     if (!c) return null;
     const n = (c.error || 0) + (c.warning || 0);

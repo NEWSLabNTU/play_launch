@@ -777,7 +777,7 @@ pub async fn get_entities(
 
 // ===== events.jsonl recording =====
 
-fn event_recording_state(state: &WebState) -> serde_json::Value {
+pub(super) fn event_recording_state(state: &WebState) -> serde_json::Value {
     match &state.events_switch {
         Some(sw) => json!({
             "available": sw.available(),

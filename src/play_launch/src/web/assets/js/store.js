@@ -38,8 +38,17 @@ export const systemMetrics = signal(null);
 
 // --- Diagnostics ---
 
-/** @type {{ value: import('./types').DiagnosticStatus[] }} */
+/** @type {{ value: import('./types').DiagnosticStatus[] }} The full list,
+ *  while the Diagnostics page streams it. */
 export const diagnostics = signal([]);
+
+/** @type {{ value: import('./types').DiagnosticCounts|null }} Diagnostics by
+ *  level, from the global stream (`diagnostic_counts`), on every page. */
+export const diagnosticCounts = signal(null);
+
+/** The events.jsonl switch from the global stream (`recording`):
+ *  `{available, recording, records}`, or null before the first event. */
+export const eventRecording = signal(null);
 
 // --- Health summary ---
 
@@ -55,14 +64,13 @@ export const healthSummary = signal(/** @type {any} */ ({
 
 // --- Health issues (the Health page) ---
 
-/** Open-issue counts for the Health tab badge: {error, warning, info}, or
- *  null when the server has no issue tracker for this run. Kept current by a
- *  5 s poll in the Header and by the Health page's own stream while open. */
+/** @type {{ value: import('./types').Counts|null }} Open-issue counts for
+ *  the Health tab badge, or null when the server has no issue tracker for
+ *  this run. Kept current by the global stream (`issue_counts`) and by the
+ *  Health page's own stream while open. */
 export const healthIssueCounts = signal(null);
 
-/** Apply a health response: the issue snapshot from /api/health/issues
- *  (sets the badge counts) or the member summary from /api/health (sets the
- *  header strip). Either shape is accepted, so one helper serves both. */
+/** Take the issue counts from a Health snapshot. */
 export function applyHealthResponse(data) {
     if (!data || typeof data !== 'object') return;
     if (data.counts && typeof data.counts === 'object') {
@@ -71,11 +79,6 @@ export function applyHealthResponse(data) {
             warning: data.counts.warning || 0,
             info: data.counts.info || 0,
         };
-    }
-    if (typeof data.nodes_running === 'number') {
-        healthSummary.value = data;
-    } else if (data.summary && typeof data.summary.nodes_running === 'number') {
-        healthSummary.value = data.summary;
     }
 }
 
@@ -323,17 +326,6 @@ export async function fetchNodes() {
         loadNodes(data);
     } catch (e) {
         console.warn('[store] Failed to fetch nodes:', e);
-    }
-}
-
-/** Fetch health summary from the API and update the store. */
-export async function fetchHealth() {
-    try {
-        const resp = await fetch('/api/health');
-        if (!resp.ok) return;
-        applyHealthResponse(await resp.json());
-    } catch (e) {
-        console.warn('[store] Failed to fetch health:', e);
     }
 }
 

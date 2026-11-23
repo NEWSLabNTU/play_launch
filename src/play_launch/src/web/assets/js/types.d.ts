@@ -24,3 +24,5 @@ export type { ChainPath } from '../../../../bindings/ChainPath';
 export type { GraphSnapshot } from '../../../../bindings/GraphSnapshot';
 export type { DiagnosticStatus } from '../../../../bindings/DiagnosticStatus';
 export type { LevelHistory } from '../../../../bindings/LevelHistory';
+export type { Counts } from '../../../../bindings/Counts';
+export type { DiagnosticCounts } from '../../../../bindings/DiagnosticCounts';

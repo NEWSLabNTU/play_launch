@@ -84,6 +84,16 @@ files it touches.
 
 ### W3 - The header tells the truth
 
+**Done (2026-11-23).** `/api/state/updates` carries named events beside
+the `StateEvent`s: `summary`, `issue_counts`, `diagnostic_counts`,
+`recording` (each re-read every second and sent when it serializes
+differently, and all on connect) and `metrics` (the system metrics, which
+had a second EventSource). The header polls nothing; `fetchHealth`, the
+dead `data.summary` branch and the client's metrics connection are gone, so
+a tab holds one global connection where it held two plus two polls. Test:
+`tests/tests/web_stream.rs` (stop a node; the stream's summary follows with
+no other request), which fails on the previous stream.
+
 - `healthSummary` is written only on SSE connect, `refresh` and after a
   card action; state events never touch it, and the `data.summary` branch
   in `store.js` is dead (the snapshot has no such field). The node count

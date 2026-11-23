@@ -3,7 +3,7 @@
 import { h } from '../vendor/preact.module.js';
 import { useState, useCallback, useEffect } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { selectedNode, fetchNodes, fetchHealth, getStatusString, nodeTopicCounts } from '../store.js';
+import { selectedNode, fetchNodes, getStatusString, nodeTopicCounts } from '../store.js';
 
 const html = htm.bind(h);
 
@@ -175,7 +175,7 @@ async function postAction(url) {
         alert('Action failed: ' + err.message);
     }
     // SSE will update store, but also do a full fetch for completeness
-    setTimeout(() => { fetchNodes(); fetchHealth(); }, 500);
+    setTimeout(() => { fetchNodes(); }, 500);
 }
 
 /** Process node action button (Start or Stop, mutually exclusive). */
