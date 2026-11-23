@@ -20,7 +20,7 @@ const CHANNEL_CAPACITY: usize = 32;
 /// so the frontend's view of this payload was unchecked.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct SystemStatsSnapshot {
     pub cpu_percent: f64,
     pub cpu_count: usize,

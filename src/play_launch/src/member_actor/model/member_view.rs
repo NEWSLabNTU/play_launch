@@ -143,7 +143,7 @@ pub const RECENT_EXIT_WINDOW_MS: u64 = 5 * 60 * 1000;
 /// Health summary statistics for all members
 #[derive(Debug, Clone, Default, Serialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct HealthSummary {
     // Process-level counts
     pub processes_running: usize,

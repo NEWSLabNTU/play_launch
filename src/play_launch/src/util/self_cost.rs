@@ -202,7 +202,7 @@ pub fn read() -> Reading {
 /// CPU shares over the interval between two readings, as % of one core.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct Usage {
     pub cpu_percent: f64,
     pub rss_bytes: u64,

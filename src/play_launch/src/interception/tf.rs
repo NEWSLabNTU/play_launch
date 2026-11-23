@@ -115,7 +115,7 @@ impl TfBook {
 /// One edge as one publisher sends it.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct TfEdgeView {
     pub parent: String,
     pub child: String,
@@ -136,7 +136,7 @@ pub struct TfEdgeView {
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct TfSnapshot {
     pub edges: Vec<TfEdgeView>,
 }

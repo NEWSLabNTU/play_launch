@@ -296,7 +296,7 @@ fn state_word(s: &MemberState) -> &'static str {
 /// One member's startup, in ms since play_launch started.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct StartupRow {
     pub id: String,
     pub name: String,
@@ -328,7 +328,7 @@ pub struct StartupRow {
 
 #[derive(Debug, Clone, Default, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct StartupTimeline {
     pub now_ms: u64,
     /// When the run reached startup complete.

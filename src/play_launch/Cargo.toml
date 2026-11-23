@@ -79,6 +79,13 @@ yaml-rust2 = "0.11.0"
 [build-dependencies]
 pkg-config = "0.3"
 
+[features]
+# Write the TypeScript bindings (`src/play_launch/bindings/`) when the ts-rs
+# export tests run. Off by default: an ordinary `cargo test` used to rewrite
+# them, without `TS_RS_LARGE_INT=number`, as `bigint`. Only `just
+# generate-bindings` and `just check-bindings` turn it on.
+bindings = []
+
 [dev-dependencies]
 tempfile = "3.8"
 # `test-util` is the paused clock: `execution::start_delay`'s waits are

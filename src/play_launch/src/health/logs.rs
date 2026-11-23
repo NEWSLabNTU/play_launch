@@ -45,7 +45,7 @@ pub const NEW_ERROR_OPEN_MS: u64 = 120_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 #[serde(rename_all = "lowercase")]
 pub enum Level {
     Plain,
@@ -141,7 +141,7 @@ pub fn signature(message: &str) -> String {
 
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct SignatureView {
     pub level: Level,
     pub count: u64,
@@ -230,7 +230,7 @@ struct FileState {
 /// One member's log activity, as the Health page shows it.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct MemberLogView {
     pub member: String,
     pub name: String,

@@ -53,7 +53,7 @@ pub fn probe_delay() -> Duration {
 /// A launched value, typed the way YAML 1.1 types it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 #[serde(untagged)]
 pub enum Expected {
     Bool(bool),
@@ -234,7 +234,7 @@ pub fn expected_params(node: &NodeInstance, fqn: &str) -> BTreeMap<String, Expec
 /// One node's probe.
 #[derive(Debug, Clone, Default, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct NodeParams {
     pub fqn: String,
     pub member: String,
@@ -250,7 +250,7 @@ pub struct NodeParams {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct Drift {
     pub name: String,
     pub launched: Expected,
@@ -298,7 +298,7 @@ pub fn compare(
 /// The probe's result across the run.
 #[derive(Debug, Clone, Default, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct ParamsReport {
     /// Unix ms of the probe.
     pub probed_ms: u64,

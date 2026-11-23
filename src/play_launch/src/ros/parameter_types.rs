@@ -10,7 +10,7 @@ use ts_rs::TS;
 /// Integer range constraint from ParameterDescriptor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct IntegerRange {
     pub from: i64,
     pub to: i64,
@@ -20,7 +20,7 @@ pub struct IntegerRange {
 /// Floating-point range constraint from ParameterDescriptor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct FloatRange {
     pub from: f64,
     pub to: f64,
@@ -35,7 +35,7 @@ pub struct FloatRange {
 ///   `{ "type": "NotSet" }`
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 #[serde(tag = "type", content = "value")]
 pub enum ParamValue {
     Bool(bool),
@@ -53,7 +53,7 @@ pub enum ParamValue {
 /// Full parameter entry for the web UI.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct ParamEntry {
     pub name: String,
     pub value: ParamValue,
@@ -72,7 +72,7 @@ pub struct ParamEntry {
 /// Result of a set operation.
 #[derive(Debug, Serialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct SetParamResult {
     pub successful: bool,
     pub reason: String,
@@ -81,7 +81,7 @@ pub struct SetParamResult {
 /// A single parameter update for SSE events.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct ParamUpdate {
     pub param_name: String,
     pub value: ParamValue,

@@ -46,7 +46,7 @@ const STORM_SYMPTOMS: [&str; 6] = [
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct DiscoveryView {
     pub rmw: String,
     pub domain_id: u32,

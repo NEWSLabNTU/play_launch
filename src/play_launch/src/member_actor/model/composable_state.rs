@@ -15,7 +15,7 @@ use ts_rs::TS;
 /// Reason why a composable node is blocked
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 #[serde(rename_all = "snake_case")]
 #[allow(clippy::enum_variant_names)] // "Container" prefix is meaningful and clear
 pub enum BlockReason {

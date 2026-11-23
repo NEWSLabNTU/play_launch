@@ -1488,7 +1488,7 @@ generate-bindings:
     source install/setup.bash
     echo "Generating TypeScript bindings..."
     # JSON carries every integer as a number; ts-rs would say `bigint`.
-    (cd src/play_launch && TS_RS_LARGE_INT=number cargo test -- export_bindings)
+    (cd src/play_launch && TS_RS_LARGE_INT=number cargo test --features bindings -- export_bindings)
     echo "Generated $(ls src/play_launch/bindings/*.ts | wc -l) type files in src/play_launch/bindings/"
 
 # Fail when the committed TypeScript bindings (src/play_launch/bindings/)
@@ -1501,7 +1501,7 @@ check-bindings:
     set -e
     source /opt/ros/{{ros_distro}}/setup.bash
     source install/setup.bash
-    (cd src/play_launch && TS_RS_LARGE_INT=number cargo test --lib -- export_bindings >/dev/null)
+    (cd src/play_launch && TS_RS_LARGE_INT=number cargo test --lib --features bindings -- export_bindings >/dev/null)
     # Against the index, not HEAD, so staged bindings pass before the commit:
     # what matters is that the regenerated files are the ones to be
     # committed.

@@ -15,7 +15,7 @@ use ts_rs::TS;
 /// Node status for regular nodes and containers (process-based)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 #[serde(rename_all = "lowercase")]
 pub enum NodeStatus {
     /// Node is currently running
@@ -31,7 +31,7 @@ pub enum NodeStatus {
 /// Reason why a composable node is blocked
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 #[serde(rename_all = "snake_case")]
 #[allow(clippy::enum_variant_names)]
 pub enum ComposableBlockReason {
@@ -51,7 +51,7 @@ pub enum ComposableBlockReason {
 /// Status for composable nodes (loaded into containers)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 #[serde(rename_all = "lowercase", tag = "status", content = "reason")]
 pub enum ComposableNodeStatus {
     /// Successfully loaded into container
@@ -76,7 +76,7 @@ pub enum ComposableNodeStatus {
 /// Unified status for all node types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 #[serde(tag = "type", content = "value")]
 pub enum UnifiedStatus {
     /// Process-based status (regular nodes and containers)
@@ -88,7 +88,7 @@ pub enum UnifiedStatus {
 /// Type of node in the registry
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 #[serde(rename_all = "snake_case")]
 pub enum NodeType {
     /// Regular ROS node
@@ -102,7 +102,7 @@ pub enum NodeType {
 /// Summary information about a node (for web UI listings)
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct NodeSummary {
     /// Canonical collision-proof member id (`kind:/ns/name[#N]`, phase-50).
     /// THE key for API routes and frontend maps; `name` is display-only.
@@ -268,7 +268,7 @@ impl NodeSummary {
 /// Detailed information about a node (for API responses)
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 #[allow(dead_code)]
 pub struct NodeDetails {
     #[serde(flatten)]
@@ -291,7 +291,7 @@ pub struct SetParamRequest {
 /// Axum deserializes the path segment automatically; ts-rs generates `"true" | "false"`.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 #[serde(rename_all = "lowercase")]
 pub enum BoolParam {
     True,

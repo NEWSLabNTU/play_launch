@@ -58,7 +58,7 @@ pub enum ControlEvent {
 /// - Coordination between actors
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StateEvent {
     /// Process started successfully

@@ -17,7 +17,7 @@ const CHANGE_CHANNEL_CAPACITY: usize = 16;
 /// Diagnostic level matching ROS2 diagnostic_msgs/DiagnosticStatus
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 #[repr(u8)]
 pub enum DiagnosticLevel {
     Ok = 0,
@@ -65,7 +65,7 @@ impl DiagnosticLevel {
 /// A single diagnostic status message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct DiagnosticStatus {
     pub hardware_id: String,
     pub name: String,
@@ -86,7 +86,7 @@ impl DiagnosticStatus {
 /// Diagnostic counts by level
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct DiagnosticCounts {
     pub ok: usize,
     pub warning: usize,
@@ -119,7 +119,7 @@ pub const LEVEL_HISTORY_CAPACITY: usize = 256;
 /// One level change, and when it happened.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct LevelTransition {
     pub level: DiagnosticLevel,
     #[serde(with = "humantime_serde")]
@@ -130,7 +130,7 @@ pub struct LevelTransition {
 /// A diagnostic's level history, with what fell off the end.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct LevelHistory {
     pub transitions: Vec<LevelTransition>,
     /// Transitions dropped because the buffer was full. Non-zero means the

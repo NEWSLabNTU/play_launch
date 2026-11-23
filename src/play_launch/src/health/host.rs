@@ -44,7 +44,7 @@ const SWAP_WARN_PAGES_PER_S: f64 = 100.0;
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export))]
+#[cfg_attr(all(test, feature = "bindings"), ts(export))]
 pub struct HostFacts {
     /// `RMW_IMPLEMENTATION` as set, or `None`.
     pub rmw_env: Option<String>,
