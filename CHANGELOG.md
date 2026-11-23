@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.41.4 - 2026-11-23
 
 - **Fixed (#0109):** a `.launch.py` node's `ParameterFile(…,
   allow_substs=True)` has its `$(…)` performed, as under `ros2 launch`.
