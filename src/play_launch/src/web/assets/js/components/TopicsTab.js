@@ -4,6 +4,7 @@ import { h } from '../vendor/preact.module.js';
 import { useState, useCallback, useMemo, useEffect } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import { nodes, getStatusString, selectedNode, nodePanelOpen, graphPanelOpen, graphSnapshot, graphViewers, currentView, launchTreeSelection } from '../store.js';
+import { clickable } from '../a11y.js';
 
 const html = htm.bind(h);
 
@@ -88,7 +89,7 @@ function TopicRow({ entry, direction }) {
 
     return html`
         <div class="topic-row">
-            <div class="topic-row-header" onClick=${() => setExpanded(!expanded)}>
+            <div class="topic-row-header" ...${clickable(() => setExpanded(!expanded))}>
                 <span class="topic-expand">${expanded ? '\u25BC' : '\u25B6'}</span>
                 <span class="topic-name" title=${entry.name}>${entry.name}</span>
                 <span class="topic-type">${entry.msg_type}</span>
@@ -139,7 +140,7 @@ function ServiceRow({ entry }) {
 /** Collapsible section header. Optional dot class for direction color. */
 function SectionHeader({ title, count, collapsed, onToggle, dotClass }) {
     return html`
-        <div class="topics-section-header" onClick=${onToggle}>
+        <div class="topics-section-header" ...${clickable(onToggle)}>
             <span class="topics-section-arrow">${collapsed ? '\u25B6' : '\u25BC'}</span>
             ${dotClass && html`<span class="endpoint-dot ${dotClass}"></span>`}
             <span class="topics-section-title">${title}</span>

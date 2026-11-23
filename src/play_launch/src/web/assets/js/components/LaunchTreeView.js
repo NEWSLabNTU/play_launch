@@ -6,6 +6,7 @@ import htm from '../vendor/htm.module.js';
 import {
     launchTree, launchTreeExpanded, launchTreeSelection,
     nodes, getStatusString, getNodeByKey, memberFqn } from '../store.js';
+import { clickable } from '../a11y.js';
 
 const html = htm.bind(h);
 
@@ -260,9 +261,9 @@ function ScopeRow({ scope, scopes, depth, isExpanded, hasChildren, scopeId, scop
     return html`
         <div class="lt-row lt-scope ${isGroup ? 'lt-scope-group' : ''} ${isSelected ? 'lt-selected' : ''} ${healthClass}"
              style=${{ paddingLeft: `${depth * 20 + 8}px` }}
-             onClick=${handleSelect}
+             ...${clickable(handleSelect)}
              onDblClick=${handleDblClick}>
-            <span class="lt-toggle" onClick=${handleToggle}>
+            <span class="lt-toggle" ...${clickable(handleToggle)}>
                 ${hasChildren ? (isExpanded ? '\u25BC' : '\u25B6') : '\u00A0'}
             </span>
             ${isGroup ? html`
@@ -276,9 +277,9 @@ function ScopeRow({ scope, scopes, depth, isExpanded, hasChildren, scopeId, scop
                 scopeChildren=${scopeChildren} scopeNodes=${scopeNodes} />
             ${hasChildScopes && html`
                 <span class="lt-subtree-btns">
-                    <span class="lt-subtree-btn" onClick=${handleExpandSubtree}
+                    <span class="lt-subtree-btn" ...${clickable(handleExpandSubtree)}
                           title="Expand all subtrees">${'\u229E'}</span>
-                    <span class="lt-subtree-btn" onClick=${handleCollapseSubtree}
+                    <span class="lt-subtree-btn" ...${clickable(handleCollapseSubtree)}
                           title="Collapse all subtrees">${'\u229F'}</span>
                 </span>
             `}
@@ -324,7 +325,7 @@ function NodeRow({ name, depth }) {
     return html`
         <div class="lt-row lt-node lt-node-${status} ${typeClass} ${isSelected ? 'lt-selected' : ''}"
              style=${{ paddingLeft: `${depth * 20 + 28}px` }}
-             onClick=${handleClick}>
+             ...${clickable(handleClick)}>
             <span class="lt-dot ${typeClass} lt-status-${status}"></span>
             <span class="lt-node-name">${shortName}</span>
             ${containerRef && html`

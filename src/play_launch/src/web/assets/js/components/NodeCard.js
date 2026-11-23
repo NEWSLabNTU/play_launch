@@ -4,6 +4,8 @@ import { h } from '../vendor/preact.module.js';
 import { useState, useCallback, useEffect } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import { selectedNode, fetchNodes, getStatusString, nodeTopicCounts } from '../store.js';
+import { clickable } from '../a11y.js';
+import { postAction as postAndReport } from './Toasts.js';
 
 const html = htm.bind(h);
 
@@ -73,7 +75,7 @@ function RosName({ namespace, nodeName, onFilterNamespace }) {
             segments.push(html`<span class="ns-leaf">${parts[i]}</span>`);
         } else {
             segments.push(html`<span class="ns-segment"
-                onClick=${(e) => { e.stopPropagation(); onFilterNamespace(nsPath); }}
+                ...${clickable((e) => { e.stopPropagation(); onFilterNamespace(nsPath); })}
             >${parts[i]}</span>`);
         }
     }
@@ -163,17 +165,9 @@ function toBoolParam(value) {
     return value ? 'true' : 'false';
 }
 
-/** POST action helper — fires action and refreshes store. */
+/** POST a member action, report a failure, and refresh the store. */
 async function postAction(url) {
-    try {
-        const res = await fetch(url, { method: 'POST' });
-        if (!res.ok) {
-            const text = await res.text();
-            throw new Error(text);
-        }
-    } catch (err) {
-        alert('Action failed: ' + err.message);
-    }
+    await postAndReport(url, 'Action');
     // SSE will update store, but also do a full fetch for completeness
     setTimeout(() => { fetchNodes(); }, 500);
 }

@@ -1,9 +1,18 @@
 // graph-styles.js — Cytoscape stylesheet definition.
 
+/** A theme token's current value (theme.css), or `fallback` when unset. */
+function token(name, fallback) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+}
+
 export function getCyStyle(isDark) {
-    const bg = isDark ? '#1a1d23' : '#ffffff';
-    const textMuted = isDark ? '#8a8d91' : '#6c757d';
-    const borderColor = isDark ? '#3a3d45' : '#dee2e6';
+    // The colours the rest of the page uses come from theme.css, so the
+    // graph follows a palette change there (phase 105 W5: they were
+    // repeated here). The graph's own colours stay below.
+    const bg = token('--bg-primary', isDark ? '#1a1d23' : '#ffffff');
+    const textMuted = token('--text-secondary', isDark ? '#8a8d91' : '#6c757d');
+    const borderColor = token('--border-color', isDark ? '#3a3d45' : '#dee2e6');
     const nsBorder = isDark ? '#556677' : '#a0b4c8';
     const edgeColor = isDark ? '#6b7280' : '#9ca3af';
     const danglingEdge = isDark ? '#fbbf24' : '#d97706';

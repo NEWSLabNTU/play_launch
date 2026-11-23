@@ -11,6 +11,7 @@ import { h } from '../vendor/preact.module.js';
 import { useState, useMemo } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import { usePoll } from '../hooks.js';
+import { clickable } from '../a11y.js';
 
 const html = htm.bind(h);
 
@@ -209,7 +210,7 @@ export function ChainsView() {
                                 const a = ages.get(sink);
                                 return html`
                                     <tr class="ent-row chain-pick" key=${i} title="Show the paths from source to sink"
-                                        onClick=${() => pick(c.topics[0], sink)}>
+                                        ...${clickable(() => pick(c.topics[0], sink), null)}>
                                         <td class="chain-topics">${c.topics.join(' → ')}</td>
                                         <td class="ent-num">${c.nodes.length}</td>
                                         <td class="ent-num">${fmtMs(c.p50_ms)}</td>
@@ -233,7 +234,7 @@ export function ChainsView() {
                     <tbody>
                         ${shownAges.map(a => html`
                             <tr class="ent-row chain-pick" key=${a.topic} title="Show the paths from the source to this topic"
-                                onClick=${() => pick(a.source, a.topic)}>
+                                ...${clickable(() => pick(a.source, a.topic), null)}>
                                 <td class="ent-topic">${a.topic}</td>
                                 <td class="ent-topic">${a.source} <span class="ent-sub">${pct(a.source_share)}</span></td>
                                 <td class="ent-num">${fmtMs(a.p50_ms)}</td>

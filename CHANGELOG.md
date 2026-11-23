@@ -35,6 +35,15 @@ allowance heavily.
   (the node list polled every 3 s under the activity sort, from a hidden
   list too). The diagnostics stream sends its table only when it changed,
   where it re-sent it every second.
+- **Changed (#0111, phase 105 W5):** the web UI keeps its page and the
+  selected node in the URL (`#/nodes/<member>`), so a reload stays and a
+  link opens it; every clickable row, header and badge works from the
+  keyboard, with a visible focus outline, and the panel divider moves with
+  the arrow keys; a failed action shows a message instead of a blocking
+  dialog, and a failed Start all or Stop all is reported at all. The theme
+  no longer flashes on load. Launch-tree borders and hover states draw
+  (their colours were never defined). On a phone the header stays one row
+  and the node panel's close button is no longer hidden under it.
 - **Development (phase 105 W2):** ESLint now covers every web UI file and
   fails on any finding; `just check` fails when the TypeScript bindings
   differ from the Rust types; the health, entities, chains, startup, graph

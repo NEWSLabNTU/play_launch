@@ -4,6 +4,7 @@ import { h, render } from './vendor/preact.module.js';
 import htm from './vendor/htm.module.js';
 import * as store from './store.js';
 import './sse.js'; // side-effect: connects SSE, populates store
+import './router.js'; // side-effect: the page and selection in the URL hash
 import { Header } from './components/Header.js';
 import { NodeList } from './components/NodeList.js';
 import { RightPanel } from './components/RightPanel.js';
@@ -16,6 +17,8 @@ import { LaunchPanel } from './components/LaunchPanel.js';
 import { EntitiesView } from './components/EntitiesView.js';
 import { HealthView } from './components/HealthView.js';
 import { ChainsView } from './components/ChainsView.js';
+import { clickable } from './a11y.js';
+import { Toasts } from './components/Toasts.js';
 
 const html = htm.bind(h);
 
@@ -60,10 +63,10 @@ function FailureBanner() {
     const more = failed.length > 4 ? ` +${failed.length - 4} more` : '';
     return html`
         <div class="failure-banner" title="Show failed members"
-            onClick=${() => {
+            ...${clickable(() => {
                 store.statusFacet.value = 'failed';
                 store.currentView.value = 'nodes';
-            }}>
+            })}>
             <span class="failure-banner-icon">${'⚠'}</span>
             <span>${failed.length} member${failed.length > 1 ? 's' : ''} failed: ${shown}${more}</span>
         </div>
@@ -125,6 +128,7 @@ function App() {
             ` : null}
         </div>
         <${ConnectionOverlay} />
+        <${Toasts} />
     `;
 }
 

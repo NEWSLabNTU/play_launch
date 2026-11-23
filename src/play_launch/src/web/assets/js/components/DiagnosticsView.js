@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from '../vendor/hooks.modul
 import htm from '../vendor/htm.module.js';
 import { diagnostics, currentView } from '../store.js';
 import { usePoll, pageVisible } from '../hooks.js';
+import { clickable } from '../a11y.js';
 
 const html = htm.bind(h);
 
@@ -225,13 +226,13 @@ export function DiagnosticsView() {
             <table class="diagnostics-table">
                 <thead>
                     <tr>
-                        <th class=${sortClass('hardware_id')} onClick=${() => toggleSort('hardware_id')}>Hardware ID</th>
-                        <th class=${sortClass('name')} onClick=${() => toggleSort('name')}>Name</th>
-                        <th class=${sortClass('level')} onClick=${() => toggleSort('level')}>Level</th>
+                        <th class=${sortClass('hardware_id')} ...${clickable(() => toggleSort('hardware_id'), null)}>Hardware ID</th>
+                        <th class=${sortClass('name')} ...${clickable(() => toggleSort('name'), null)}>Name</th>
+                        <th class=${sortClass('level')} ...${clickable(() => toggleSort('level'), null)}>Level</th>
                         <th title="Level over time — was it flapping, or did it fail once">History</th>
                         <th>Message</th>
                         <th>Values</th>
-                        <th class=${sortClass('timestamp')} onClick=${() => toggleSort('timestamp')}>Last Seen</th>
+                        <th class=${sortClass('timestamp')} ...${clickable(() => toggleSort('timestamp'), null)}>Last Seen</th>
                     </tr>
                 </thead>
                 <tbody>

@@ -14,6 +14,7 @@ import {
     entitiesFilterRequest,
 } from '../store.js';
 import { useSnapshotStream, usePoll } from '../hooks.js';
+import { clickable } from '../a11y.js';
 
 const html = htm.bind(h);
 
@@ -176,7 +177,7 @@ function StartupTimeline() {
 
     return html`
         <section class="hl-section">
-            <h3 class="hl-heading hl-toggle" onClick=${() => setOpen(!open)}>
+            <h3 class="hl-heading hl-toggle" ...${clickable(() => setOpen(!open))}>
                 <span class="hl-caret">${open ? '▾' : '▸'}</span>
                 Startup${' '}
                 <span class="hl-muted hl-heading-count">
@@ -300,7 +301,7 @@ function Logs({ logs }) {
                         const top = (l.signatures || [])[0];
                         const expanded = open === l.member;
                         return html`
-                            <tr class="hl-row" key=${l.member} onClick=${() => setOpen(expanded ? null : l.member)}>
+                            <tr class="hl-row" key=${l.member} ...${clickable(() => setOpen(expanded ? null : l.member), null)}>
                                 <td class="hl-subject">${l.name}</td>
                                 <td class="hl-num">${(l.lines_per_s || 0).toFixed(1)}</td>
                                 <td class="hl-num">${fmtBytes(l.bytes_per_s || 0)}/s${l.unread_bytes > 0 ? html` <span class="hl-muted" title="bytes counted but not read: arriving faster than the watcher reads">(${fmtBytes(l.unread_bytes)} unread)</span>` : ''}</td>
@@ -512,7 +513,7 @@ function DdsReport() {
     };
     return html`
         <section class="hl-section">
-            <h3 class="hl-heading hl-toggle" onClick=${() => setOpen(!open)}>
+            <h3 class="hl-heading hl-toggle" ...${clickable(() => setOpen(!open))}>
                 ${open ? '▾' : '▸'} DDS report
                 <span class="hl-muted"> — the facts a DDS question needs, to paste; also dds_report.txt in the log directory</span>
             </h3>
@@ -654,7 +655,7 @@ export function HealthView() {
 
             ${closed.length > 0 && html`
                 <section class="hl-section">
-                    <h3 class="hl-heading hl-toggle" onClick=${() => setResolvedOpen(!showResolved)}>
+                    <h3 class="hl-heading hl-toggle" ...${clickable(() => setResolvedOpen(!showResolved))}>
                         <span class="hl-caret">${showResolved ? '▾' : '▸'}</span>
                         Recently resolved <span class="hl-muted hl-heading-count">(${closed.length})</span>
                     </h3>

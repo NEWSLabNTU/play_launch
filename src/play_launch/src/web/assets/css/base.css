@@ -110,19 +110,46 @@ button:hover:not(:disabled) {
     opacity: 0.7;
 }
 
+/* Narrow screens. The header stays one row: its badge groups wrapped it
+ * to a quarter of a phone's height and covered the panel's title and close
+ * button (phase 105 W5). The tabs scroll sideways instead. */
 @media (max-width: 768px) {
-    .left-panel.with-sidebar {
-        width: 100%;
+    header {
+        flex-wrap: nowrap;
+        overflow-x: auto;
     }
 
-    .right-panel.open {
+    .header-controls .badge-group {
+        display: none;
+    }
+
+    .nav-tabs {
+        flex-wrap: nowrap;
+        margin-left: 8px;
+    }
+
+    .nav-tab {
+        padding: 6px 10px;
+        white-space: nowrap;
+    }
+
+    .left-panel.with-sidebar {
+        display: none;
+    }
+
+    /* `body` for specificity: panels.css loads later and sets the width. */
+    body .right-panel.open {
         position: fixed;
-        top: 0;
+        top: 50px;
         left: 0;
         right: 0;
         bottom: 0;
         width: 100%;
         z-index: 1000;
+    }
+
+    .panel-resizer {
+        display: none;
     }
 }
 
@@ -141,3 +168,33 @@ button:hover:not(:disabled) {
 .failure-banner:hover { background: #b91c1c; }
 
 .failure-banner-icon { font-size: 15px; }
+
+/* Toasts (phase 105 W5) */
+.toasts {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 10001;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: min(480px, calc(100vw - 32px));
+}
+
+.toast {
+    padding: 8px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    box-shadow: 0 2px 8px var(--shadow);
+    font-size: 0.8rem;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+}
+
+.toast-error {
+    background: var(--failed-bg);
+    border-color: var(--failed-border);
+    color: var(--failed-text);
+}

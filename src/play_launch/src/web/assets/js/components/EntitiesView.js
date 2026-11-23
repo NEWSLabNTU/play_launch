@@ -11,6 +11,7 @@ import { useState, useCallback, useMemo } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import { selectedNode, nodePanelOpen, activeTab, nodes, getNodeByKey, memberFqn, entitiesFilterRequest } from '../store.js';
 import { useSnapshotStream } from '../hooks.js';
+import { clickable } from '../a11y.js';
 
 const html = htm.bind(h);
 
@@ -217,7 +218,7 @@ function EntityRow({ row, selected, onSelect }) {
     const silent = hasFlag(row, 'silent');
     return html`
         <tr class=${'ent-row' + (selected ? ' ent-row-selected' : '') + (silent ? ' ent-row-silent' : '')}
-            onClick=${() => onSelect(row)}>
+            ...${clickable(() => onSelect(row), null)}>
             <td><span class=${'ent-dir ent-dir-' + row.direction}>${row.direction}</span></td>
             <td class="ent-topic" title=${row.msg_type || ''}>${row.topic || '?'}</td>
             <td class="ent-node" title=${row.member || ''}>${row.node || row.member}</td>
@@ -349,7 +350,7 @@ export function EntitiesView() {
     const t = snap && snap.totals;
     const sortClass = (col) => sortCol !== col ? 'sortable' : (sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc');
     const th = (col, label, cls = '', title = '') => html`
-        <th class=${sortClass(col) + (cls ? ' ' + cls : '')} title=${title} onClick=${() => toggleSort(col)}>${label}</th>
+        <th class=${sortClass(col) + (cls ? ' ' + cls : '')} title=${title} ...${clickable(() => toggleSort(col), null)}>${label}</th>
     `;
 
     const renderRow = (r) => html`<${EntityRow} key=${r.id} row=${r} selected=${selectedRow === r.id} onSelect=${onSelect} />`;

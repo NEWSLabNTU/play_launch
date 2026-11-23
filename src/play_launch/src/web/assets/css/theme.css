@@ -1,4 +1,20 @@
-/* Theme variables */
+/* Theme variables.
+ *
+ * Light is the default on :root, so the page is styled before any script
+ * runs (an inline script in index.html sets data-theme before first paint).
+ * Every variable a stylesheet or component reads is defined here, in both
+ * themes; phase 105 W5 found --border and --hover-bg read and never
+ * defined, so launch-tree borders and hover states never drew. */
+
+/* Not theme-dependent. */
+:root {
+    --font-mono: ui-monospace, 'SFMono-Regular', 'Consolas', 'Liberation Mono', monospace;
+
+    /* The node panel's width; PanelResizer sets it from the saved value. */
+    --right-panel-width: 60%;
+}
+
+:root,
 :root[data-theme="light"] {
     --bg-primary: #ffffff;
     --bg-secondary: #f8f9fa;
@@ -41,6 +57,16 @@
     --btn-success: #198754;
     --btn-danger: #dc3545;
     --btn-secondary: #6c757d;
+
+    /* Shared roles, named for what they do. */
+    --border: var(--border-color);
+    --accent: var(--btn-primary);
+    --hover-bg: rgba(0, 0, 0, 0.04);
+    --selected-bg: rgba(13, 110, 253, 0.12);
+    --surface-2: var(--bg-tertiary);
+    --text-3: var(--text-muted);
+    --running-border-rgb: 15, 81, 50;
+    --focus-ring: #0d6efd;
 }
 
 :root[data-theme="dark"] {
@@ -85,4 +111,20 @@
     --btn-success: #22c55e;
     --btn-danger: #ef4444;
     --btn-secondary: #6b7280;
+
+    --border: var(--border-color);
+    --accent: var(--btn-primary);
+    --hover-bg: rgba(255, 255, 255, 0.06);
+    --selected-bg: rgba(59, 130, 246, 0.2);
+    --surface-2: var(--bg-tertiary);
+    --text-3: var(--text-muted);
+    --running-border-rgb: 74, 222, 128;
+    --focus-ring: #60a5fa;
+}
+
+/* One visible focus style for everything reachable by keyboard (phase 105
+ * W5): there was one focus rule in all the CSS. */
+:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
 }

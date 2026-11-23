@@ -5,6 +5,8 @@ import { useState, useMemo, useCallback } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import { nodeList, selectedNode, nodePanelOpen, activeTab, getStatusString, statusFacet } from '../store.js';
 import { NodeCard } from './NodeCard.js';
+import { clickable } from '../a11y.js';
+import { postAction } from './Toasts.js';
 
 const html = htm.bind(h);
 
@@ -304,12 +306,12 @@ export function NodeList() {
                     <div key=${'ns:' + entry.nsHeader} class="ns-group-header"
                         style=${{ marginLeft: (entry.depth || 0) * 16 + 'px' }}
                         title=${entry.nsHeader}
-                        onClick=${() => {
+                        ...${clickable(() => {
                             const next = new Set(collapsedNs);
                             if (next.has(entry.nsHeader)) next.delete(entry.nsHeader);
                             else next.add(entry.nsHeader);
                             setCollapsedNs(next);
-                        }}>
+                        })}>
                         <span class="ns-group-arrow">${collapsedNs.has(entry.nsHeader) ? '▸' : '▾'}</span>
                         <span class="ns-group-name">${entry.seg ? '/' + entry.seg : entry.nsHeader}</span>
                         <span class="ns-group-count">${entry.count}</span>
@@ -326,22 +328,17 @@ export function NodeList() {
 }
 
 function BulkOperations() {
+    // A confirm() stays for these two: they act on every member at once,
+    // and the browser's own dialog is the one confirmation every user and
+    // screen reader already knows.
     const startAll = useCallback(async () => {
         if (!confirm('Start all nodes?')) return;
-        try {
-            await fetch('/api/nodes/start-all', { method: 'POST' });
-        } catch (err) {
-            alert('Failed to start all nodes: ' + err.message);
-        }
+        await postAction('/api/nodes/start-all', 'Start all');
     }, []);
 
     const stopAll = useCallback(async () => {
         if (!confirm('Stop all nodes?')) return;
-        try {
-            await fetch('/api/nodes/stop-all', { method: 'POST' });
-        } catch (err) {
-            alert('Failed to stop all nodes: ' + err.message);
-        }
+        await postAction('/api/nodes/stop-all', 'Stop all');
     }, []);
 
     return html`

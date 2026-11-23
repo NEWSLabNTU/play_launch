@@ -4,6 +4,7 @@ import { h } from '../vendor/preact.module.js';
 import { useState, useEffect, useCallback, useRef, useMemo } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import { nodes, parameterVersion, getStatusString } from '../store.js';
+import { clickable } from '../a11y.js';
 
 const html = htm.bind(h);
 
@@ -101,7 +102,7 @@ function ParamInput({ entry, onSubmit }) {
     // Click to edit for other types
     if (!editing) {
         return html`<span class="param-value-text param-editable"
-            onClick=${() => { setEditing(true); setTimeout(() => inputRef.current?.focus(), 0); }}
+            ...${clickable(() => { setEditing(true); setTimeout(() => inputRef.current?.focus(), 0); })}
         >${formatValue(entry.value)}</span>`;
     }
 

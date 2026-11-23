@@ -1,7 +1,7 @@
 // PanelResizer component — drag to resize right panel.
 
 import { h } from '../vendor/preact.module.js';
-import { useRef, useCallback, useEffect } from '../vendor/hooks.module.js';
+import { useRef, useCallback, useEffect, useState } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import { nodePanelOpen, graphPanelOpen, launchTreeSelection, currentView } from '../store.js';
 
@@ -10,18 +10,27 @@ const html = htm.bind(h);
 export function PanelResizer() {
     const isResizing = useRef(false);
     const resizerRef = useRef(null);
+    const [width, setWidthState] = useState(60);
 
     const setWidth = useCallback((pct) => {
-        pct = Math.max(30, Math.min(80, pct));
+        pct = Math.round(Math.max(30, Math.min(80, pct)));
         document.documentElement.style.setProperty('--right-panel-width', pct + '%');
-        localStorage.setItem('rightPanelWidth', pct);
+        setWidthState(pct);
+        try { localStorage.setItem('rightPanelWidth', String(pct)); } catch (_) { /* storage blocked */ }
     }, []);
 
     // Initialize width from localStorage
     useEffect(() => {
-        const saved = parseInt(localStorage.getItem('rightPanelWidth')) || 60;
+        let saved = 60;
+        try { saved = parseInt(localStorage.getItem('rightPanelWidth') || '', 10) || 60; } catch (_) { /* storage blocked */ }
         setWidth(saved);
     }, [setWidth]);
+
+    // Arrow keys move the divider by 5% (phase 105 W5: it was mouse-only).
+    const onKeyDown = useCallback((e) => {
+        if (e.key === 'ArrowLeft') { e.preventDefault(); setWidth(width + 5); }
+        if (e.key === 'ArrowRight') { e.preventDefault(); setWidth(width - 5); }
+    }, [width, setWidth]);
 
     const onMouseDown = useCallback((e) => {
         isResizing.current = true;
@@ -63,6 +72,9 @@ export function PanelResizer() {
 
     return html`
         <div class="panel-resizer ${isOpen ? 'visible' : ''}"
-            ref=${resizerRef} onMouseDown=${onMouseDown} />
+            ref=${resizerRef} onMouseDown=${onMouseDown} onKeyDown=${onKeyDown}
+            role="separator" aria-orientation="vertical" aria-label="Resize the side panel"
+            aria-valuenow=${width} aria-valuemin="30" aria-valuemax="80"
+            tabIndex=${isOpen ? 0 : -1} />
     `;
 }

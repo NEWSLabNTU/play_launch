@@ -12,6 +12,7 @@ import { LogTab } from './LogTab.js';
 import { ParametersTab } from './ParametersTab.js';
 import { TopicsTab } from './TopicsTab.js';
 import { MetricsTab } from './MetricsTab.js';
+import { clickable } from '../a11y.js';
 
 const html = htm.bind(h);
 
@@ -102,7 +103,7 @@ function ScopeInfoTab({ scope, scopes, nodeScopes }) {
                             const status = node ? getStatusString(node.status) : 'unknown';
                             return html`
                                 <div class="lp-entity" key=${name}
-                                     onClick=${() => { launchTreeSelection.value = { type: 'node', name }; }}>
+                                     ...${clickable(() => { launchTreeSelection.value = { type: 'node', name }; })}>
                                     <span class="lt-status-dot lt-status-${status}"></span>
                                     <span>${name}</span>
                                 </div>
@@ -122,7 +123,7 @@ function ScopeInfoTab({ scope, scopes, nodeScopes }) {
                                 : '<group>';
                             return html`
                                 <div class="lp-include" key=${cs.id}
-                                     onClick=${() => { launchTreeSelection.value = { type: 'scope', id: cs.id }; }}>
+                                     ...${clickable(() => { launchTreeSelection.value = { type: 'scope', id: cs.id }; })}>
                                     <span>${csLabel}</span>
                                     ${cs.ns !== '/' && html`<span class="lp-ns"> ${cs.ns}</span>`}
                                 </div>

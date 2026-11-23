@@ -234,18 +234,4 @@
     cursor: pointer;
 }
 
-@media (max-width: 768px) {
-    .left-panel.with-sidebar {
-        width: 100%;
-    }
-
-    .right-panel.open {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        width: 100%;
-        z-index: 1000;
-    }
-}
+/* The narrow-screen layout of the panels is in base.css. */

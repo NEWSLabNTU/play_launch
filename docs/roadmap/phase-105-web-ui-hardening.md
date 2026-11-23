@@ -141,6 +141,28 @@ Entities or Health snapshots in would send them to every page.
 
 ### W5 - Correct and accessible
 
+**Done (2026-11-23), except moving colour literals to tokens.** Checked in
+headless Chrome against a live launch:
+- every variable read is defined, in both themes, and light is the `:root`
+  default; an inline script sets the theme before first paint;
+- `js/router.js`: `#/<view>[/<member>]`, a page change pushes history, a
+  deep link opens the node's panel;
+- `js/a11y.js` `clickable()` on all 35 clickable non-buttons (tab stop,
+  Enter and Space, a role except on table rows and headers), one
+  `:focus-visible` style, and the panel divider takes arrow keys;
+- `Toasts.js`: a failed action is a toast instead of an `alert()`, and the
+  bulk start and stop check the answer; `confirm()` stays for those two;
+- under 768 px the header is one row and the panel takes the whole width.
+  This found the narrow layout written three times (base, panels, logs),
+  the last copy setting `top: 0`, so the header had always covered the
+  panel's close button on a phone.
+- The graph styles read the shared colours from the tokens.
+
+Not done: moving the remaining colour literals (about 130 in nodes, panels
+and launch-tree CSS, most with a dark override beside them) to tokens. It
+changes nothing a user sees, and is left for a pass with screenshots to
+compare.
+
 - Define `--border` and `--hover-bg` (undefined, no fallback: launch-tree
   borders and hover never draw) and the other undefined tokens; move
   hardcoded colours to tokens; the graph styles take the palette from CSS

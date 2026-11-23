@@ -4,6 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>play_launch - Web UI</title>
+    <script>
+        // The theme before first paint: app.js applies it again, but only
+        // after the module graph loads, which showed a flash of the other
+        // theme on every load.
+        try {
+            var t = localStorage.getItem('theme') ||
+                (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-theme', t);
+        } catch (e) { /* storage blocked: light, the :root default */ }
+    </script>
     <!-- CSS Modules -->
     <link rel="stylesheet" href="/assets/css/theme.css">
     <link rel="stylesheet" href="/assets/css/base.css">

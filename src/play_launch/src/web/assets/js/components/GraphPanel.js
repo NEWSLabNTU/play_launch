@@ -29,6 +29,7 @@ function graphNsAction(nsId, action) {
 import { TopicsTab } from './TopicsTab.js';
 import { ParametersTab } from './ParametersTab.js';
 import { LogTab } from './LogTab.js';
+import { clickable } from '../a11y.js';
 
 const html = htm.bind(h);
 
@@ -269,7 +270,7 @@ function GraphNsDetail({ data }) {
                     <div class="graph-panel-section-title">Sub-namespaces</div>
                     ${childNamespaces.map(sub => html`
                         <div key=${sub.fullNs} class="graph-panel-ns-row"
-                            onClick=${() => handleNsClick(sub.fullNs)}>
+                            ...${clickable(() => handleNsClick(sub.fullNs))}>
                             <span class="graph-panel-ns-label">${sub.label}/</span>
                         </div>
                     `)}
@@ -281,7 +282,7 @@ function GraphNsDetail({ data }) {
                     ? html`<div class="graph-panel-empty">No direct child nodes</div>`
                     : childNodes.map(n => html`
                         <div key=${n.fqn} class="graph-panel-node-row"
-                            onClick=${() => handleNodeClick(n.fqn)}>
+                            ...${clickable(() => handleNodeClick(n.fqn))}>
                             <span class="graph-panel-node-name">${n.shortName}</span>
                             <span class="state-badge ${n.status}">${n.status}</span>
                         </div>
@@ -419,7 +420,7 @@ function EndpointRow({ endpoint }) {
     return html`
         <div class="graph-panel-node-row" style=${{ flexDirection: 'column', alignItems: 'stretch' }}>
             <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', cursor: hasInner ? 'pointer' : 'default' }}
-                onClick=${() => hasInner && setExpanded(!expanded)}>
+                ...${clickable(() => hasInner && setExpanded(!expanded))}>
                 ${hasInner && html`<span class="topic-expand">${expanded ? '\u25BC' : '\u25B6'}</span>`}
                 <span class="graph-panel-node-name" style=${{ flex: 1 }}>${endpoint.label}</span>
                 ${endpoint.isNs && html`<span class="graph-panel-count">namespace</span>`}
@@ -444,7 +445,7 @@ function EdgeTopicRow({ topic }) {
 
     return html`
         <div class="topic-row">
-            <div class="topic-row-header" onClick=${() => setExpanded(!expanded)}>
+            <div class="topic-row-header" ...${clickable(() => setExpanded(!expanded))}>
                 <span class="topic-expand">${expanded ? '\u25BC' : '\u25B6'}</span>
                 <span class="topic-name" title=${topic.name}>${topic.name}</span>
                 <span class="topic-type">${topic.msg_type}</span>
