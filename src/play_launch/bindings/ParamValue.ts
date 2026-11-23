@@ -8,4 +8,4 @@
  *   `{ "type": "Bool", "value": true }`
  *   `{ "type": "NotSet" }`
  */
-export type ParamValue = { "type": "Bool", "value": boolean } | { "type": "Integer", "value": bigint } | { "type": "Double", "value": number } | { "type": "String", "value": string } | { "type": "BoolArray", "value": Array<boolean> } | { "type": "IntegerArray", "value": Array<bigint> } | { "type": "DoubleArray", "value": Array<number> } | { "type": "StringArray", "value": Array<string> } | { "type": "ByteArray", "value": Array<number> } | { "type": "NotSet" };
+export type ParamValue = { "type": "Bool", "value": boolean } | { "type": "Integer", "value": number } | { "type": "Double", "value": number } | { "type": "String", "value": string } | { "type": "BoolArray", "value": Array<boolean> } | { "type": "IntegerArray", "value": Array<number> } | { "type": "DoubleArray", "value": Array<number> } | { "type": "StringArray", "value": Array<string> } | { "type": "ByteArray", "value": Array<number> } | { "type": "NotSet" };

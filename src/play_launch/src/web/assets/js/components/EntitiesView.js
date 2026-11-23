@@ -261,6 +261,7 @@ export function EntitiesView() {
         entitiesFilterRequest.value = null;
     }
 
+    /** @type {[import('../types').EntitySnapshot|null, (v: any) => void]} */
     const [snap, setSnap] = useState(null);
     const [offMsg, setOffMsg] = useState(null);      // interception off / 409 text
     const [disconnected, setDisconnected] = useState(false);

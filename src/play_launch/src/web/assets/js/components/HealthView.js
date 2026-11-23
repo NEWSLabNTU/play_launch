@@ -94,6 +94,7 @@ function followLink(link) {
 
 /** Poll `/api/startup` every 2 s until startup completes, then every 30 s. */
 function useStartupTimeline() {
+    /** @type {[import('../types').StartupTimeline|null, (v: any) => void]} */
     const [t, setT] = useState(null);
     useEffect(() => {
         let live = true;
@@ -590,6 +591,7 @@ function SelfCost({ cost }) {
 // --- view -----------------------------------------------------------------
 
 export function HealthView() {
+    /** @type {[import('../types').HealthSnapshot|null, (v: any) => void]} */
     const [snap, setSnap] = useState(null);
     const [offMsg, setOffMsg] = useState(null);
     const [disconnected, setDisconnected] = useState(false);

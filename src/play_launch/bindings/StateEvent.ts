@@ -34,11 +34,11 @@ signal: number | null,
 /**
  * When it exited, Unix ms.
  */
-at_ms: bigint, 
+at_ms: number, 
 /**
  * How long it had been running, when known.
  */
-uptime_ms: bigint | null, 
+uptime_ms: number | null, 
 /**
  * Whether the kernel's OOM killer ended it: from the member's cgroup
  * `memory.events` `oom_kill` counter, read at spawn and at exit.

@@ -44,10 +44,13 @@ function DiagnosticBadges() {
     let ok = 0, warning = 0, error = 0, stale = 0;
     for (const d of diags) {
         switch (d.level) {
-            case 'OK': ok++; break;
-            case 'WARNING': warning++; break;
-            case 'ERROR': error++; break;
-            case 'STALE': stale++; break;
+            // The level as serde writes it (`DiagnosticLevel`): these
+            // compared against 'OK'/'WARNING'/... and never matched, so
+            // the badges never showed (#0111; found by typing the payload).
+            case 'Ok': ok++; break;
+            case 'Warning': warning++; break;
+            case 'Error': error++; break;
+            case 'Stale': stale++; break;
         }
     }
 

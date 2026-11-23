@@ -31,6 +31,8 @@ use super::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Direction {
     Pub,
@@ -113,6 +115,8 @@ pub struct StartupMark {
 
 /// One row of `endpoint_stats.json`.
 #[derive(Debug, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub(crate) struct EndpointRow {
     /// FQN of the node that created the endpoint; absent when rcl could not
     /// name it (or the announcement was lost to ring overflow).
@@ -160,6 +164,8 @@ pub(crate) struct EndpointRow {
 
 /// A latency histogram reduced to what a reader looks at.
 #[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub(crate) struct LatencySummary {
     pub p50_ms: Option<f64>,
     pub p95_ms: Option<f64>,

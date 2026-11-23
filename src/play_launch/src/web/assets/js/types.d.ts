@@ -14,3 +14,13 @@ export type { NodeType } from '../../../../bindings/NodeType';
 export type { StateEvent } from '../../../../bindings/StateEvent';
 export type { SystemStatsSnapshot } from '../../../../bindings/SystemStatsSnapshot';
 export type { UnifiedStatus } from '../../../../bindings/UnifiedStatus';
+
+// Phase 105 W2: the payloads added after phase 20.
+export type { HealthSnapshot } from '../../../../bindings/HealthSnapshot';
+export type { StartupTimeline } from '../../../../bindings/StartupTimeline';
+export type { EntitySnapshot } from '../../../../bindings/EntitySnapshot';
+export type { ChainSnapshot } from '../../../../bindings/ChainSnapshot';
+export type { ChainPath } from '../../../../bindings/ChainPath';
+export type { GraphSnapshot } from '../../../../bindings/GraphSnapshot';
+export type { DiagnosticStatus } from '../../../../bindings/DiagnosticStatus';
+export type { LevelHistory } from '../../../../bindings/LevelHistory';

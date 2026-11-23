@@ -3,4 +3,4 @@
 /**
  * Integer range constraint from ParameterDescriptor.
  */
-export type IntegerRange = { from: bigint, to: bigint, step: bigint, };
+export type IntegerRange = { from: number, to: number, step: number, };

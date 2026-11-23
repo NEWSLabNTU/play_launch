@@ -234,6 +234,8 @@ pub(crate) fn incompatibilities(publ: &Qos, sub: &Qos) -> Vec<(&'static str, Str
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub(crate) struct QosView {
     pub reliability: &'static str,
     pub durability: &'static str,
@@ -245,6 +247,8 @@ pub(crate) struct QosView {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub(crate) struct Flag {
     /// `incompatible`, `advisory`, `silent`, `stale` or `confirmed`.
     pub kind: &'static str,
@@ -253,6 +257,8 @@ pub(crate) struct Flag {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub(crate) struct LiveRow {
     pub id: String,
     pub node: Option<String>,
@@ -275,6 +281,8 @@ pub(crate) struct LiveRow {
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub(crate) struct Totals {
     pub pubs: usize,
     pub subs: usize,
@@ -288,6 +296,8 @@ pub(crate) struct Totals {
 
 /// One second's picture of every live endpoint, busiest first.
 #[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct EntitySnapshot {
     pub(crate) t_ms: u64,
     pub(crate) window_s: u64,
@@ -321,6 +331,8 @@ pub struct EntitySnapshot {
 
 /// `/clock` as the Health page judges it.
 #[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct ClockStatus {
     /// The last value, seconds.
     pub value_s: f64,

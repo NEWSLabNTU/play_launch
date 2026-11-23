@@ -115,7 +115,7 @@ export function RightPanel() {
                     ${tab === 'stdout' && html`<${LogTab} nodeName=${name} logType="stdout" containerName=${containerName} />`}
                 </div>
                 <div class="tab-content" style=${{ display: tab === 'stderr' ? 'flex' : 'none' }}>
-                    ${(tab === 'stderr' || true) && html`<${LogTab} nodeName=${name} logType="stderr" containerName=${containerName} />`}
+                    ${tab === 'stderr' && html`<${LogTab} nodeName=${name} logType="stderr" containerName=${containerName} />`}
                 </div>
             </div>
         </div>

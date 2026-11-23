@@ -521,6 +521,8 @@ impl ChainBook {
 
 /// One triggered edge: `node` took a stamp on `from` and published it on `to`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct TriggeredEdge {
     pub from: String,
     pub node: String,
@@ -544,6 +546,8 @@ pub struct TriggeredEdge {
 /// thread whose latest take was on `from`. The data flowed; the trigger is
 /// unknown, and a node with several inputs shows one edge per input.
 #[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct SampledEdge {
     pub from: String,
     pub node: String,
@@ -563,6 +567,8 @@ pub struct SampledEdge {
 /// How old the data behind a topic's publishes is: publish time minus the
 /// origin propagated along triggered and sampled hops.
 #[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct TopicAge {
     pub topic: String,
     pub samples: u64,
@@ -581,6 +587,8 @@ pub struct TopicAge {
 
 /// A chain of topics joined by triggered edges, source first.
 #[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct Chain {
     pub topics: Vec<String>,
     /// The node of each hop; one fewer than `topics`.
@@ -607,8 +615,11 @@ impl Serialize for ChainsFormat {
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct ChainSnapshot {
     /// [`CHAINS_FORMAT`].
+    #[cfg_attr(test, ts(type = "number"))]
     pub version: ChainsFormat,
     /// Triggered edges.
     pub edges: Vec<TriggeredEdge>,
@@ -623,6 +634,8 @@ pub struct ChainSnapshot {
 
 /// One hop of a path between two topics.
 #[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct Hop {
     pub from: String,
     pub node: String,
@@ -639,6 +652,8 @@ pub struct Hop {
 
 /// A path of hops from a source topic to a sink topic.
 #[derive(Debug, Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct ChainPath {
     pub hops: Vec<Hop>,
     /// Sums of the hops' medians and 99th percentiles. The second bounds the

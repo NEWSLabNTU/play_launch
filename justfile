@@ -1269,6 +1269,8 @@ check:
 
     step "Web UI (html/css/js lint + TypeScript)" just check-web-ui
 
+    step "Web UI TypeScript bindings match the Rust types" just check-bindings
+
     step "layer-2 isolation" just check-layer2-isolation
 
     step "Contract field census (nothing new went unread)" just check-field-census
@@ -1485,8 +1487,33 @@ generate-bindings:
     source /opt/ros/{{ros_distro}}/setup.bash
     source install/setup.bash
     echo "Generating TypeScript bindings..."
-    (cd src/play_launch && cargo test -- export_bindings)
+    # JSON carries every integer as a number; ts-rs would say `bigint`.
+    (cd src/play_launch && TS_RS_LARGE_INT=number cargo test -- export_bindings)
     echo "Generated $(ls src/play_launch/bindings/*.ts | wc -l) type files in src/play_launch/bindings/"
+
+# Fail when the committed TypeScript bindings (src/play_launch/bindings/)
+# differ from what the Rust types generate (phase 105 W2). The web UI's
+# typecheck reads those files, so a stale one checks the JS against a
+# payload the server no longer sends. Regenerates in place: on a failure the
+# diff is the fix, to review and commit.
+check-bindings:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/{{ros_distro}}/setup.bash
+    source install/setup.bash
+    (cd src/play_launch && TS_RS_LARGE_INT=number cargo test --lib -- export_bindings >/dev/null)
+    # Against the index, not HEAD, so staged bindings pass before the commit:
+    # what matters is that the regenerated files are the ones to be
+    # committed.
+    changed=$( (git diff --name-only -- src/play_launch/bindings;
+                git ls-files --others --exclude-standard -- src/play_launch/bindings) )
+    if [ -n "$changed" ]; then
+        echo "TypeScript bindings are stale; regenerated, review and commit:"
+        echo "$changed"
+        git --no-pager diff --stat -- src/play_launch/bindings
+        exit 1
+    fi
+    echo "bindings match the Rust types ($(ls src/play_launch/bindings/*.ts | wc -l) files)"
 
 # Check Web UI (HTML, CSS, JavaScript, TypeScript types)
 check-web-ui:

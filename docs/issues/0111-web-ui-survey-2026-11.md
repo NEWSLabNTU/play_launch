@@ -26,7 +26,10 @@ Paths are relative to `src/play_launch/src/web/`. Severity / effort.
    since the health snapshot has no `summary` field. The live `failed`
    badge beside it (`Header.js` 18) disagrees.
 3. **Header diagnostics badges (high / S)** read `diagnostics`, which only
-   `DiagnosticsView.js` 142 writes, while that page is open.
+   `DiagnosticsView.js` 142 writes, while that page is open. And they
+   compared levels against `'OK'`/`'WARNING'`/... where the payload says
+   `'Ok'`/`'Warning'`/..., so they never showed at all (found in phase 105
+   W2 by typing the payload; fixed there).
 4. **ESLint skips `components/` (med / S).** `scripts/lint-inline-js.js`
    16 reads the directory non-recursively. `tsconfig.json` has
    `strict: false`.

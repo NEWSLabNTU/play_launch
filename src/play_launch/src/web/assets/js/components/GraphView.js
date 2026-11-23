@@ -58,13 +58,6 @@ function nsSelectionData(target, extra) {
 
 // ─── Focus mode ──────────────────────────────────────────────────────────
 
-function enterFocusMode(cy, node) {
-    const hood = node.neighborhood().add(node).union(node.neighborhood().parents());
-    cy.elements().addClass('faded');
-    hood.removeClass('faded');
-    node.connectedEdges().removeClass('faded');
-}
-
 function exitFocusMode(cy) {
     cy.elements().removeClass('faded');
 }
@@ -600,7 +593,7 @@ export function GraphView() {
                         { x: bb.x2 - 2, y: bb.y2 - 2 },
                     ];
                     for (let i = 0; i < 4; i++) {
-                        let spacer = cy.getElementById(spacerIds[i]);
+                        const spacer = cy.getElementById(spacerIds[i]);
                         if (!spacer || spacer.length === 0) {
                             cy.add({
                                 group: 'nodes',
@@ -628,7 +621,7 @@ export function GraphView() {
                         const mx = (rx - pan.x) / zoom;
                         const my = (ry - pan.y) / zoom;
 
-                        const { nsId, edge, spacerIds, startBB } = resizeState;
+                        const { edge, spacerIds, startBB } = resizeState;
                         const tl = cy.getElementById(spacerIds[0]);
                         const tr = cy.getElementById(spacerIds[1]);
                         const bl = cy.getElementById(spacerIds[2]);
@@ -956,7 +949,7 @@ export function GraphView() {
             }
 
             const cy = cyRef.current;
-            let ele = cy.getElementById(targetId);
+            const ele = cy.getElementById(targetId);
 
             // If not found, expand ancestor namespaces to reveal it.
             if (!ele || ele.length === 0) {

@@ -1,9 +1,9 @@
 // MetricsTab component — live per-node sparkline charts (Phase 26).
 
 import { h } from '../vendor/preact.module.js';
-import { useState, useEffect, useRef, useCallback } from '../vendor/hooks.module.js';
+import { useState, useEffect, useRef } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { nodes, getStatusString } from '../store.js';
+import { nodes } from '../store.js';
 
 const html = htm.bind(h);
 
@@ -118,7 +118,7 @@ function drawChart(canvas, values, timestamps, color, opts, formatFn, windowMs) 
     if (plotW < 10 || plotH < 10) return;
 
     // --- Y range ---
-    let min = opts.min != null ? opts.min : 0;
+    const min = opts.min != null ? opts.min : 0;
     let max = (values.length > 0) ? Math.max(...values) : 1;
     if (opts.max != null) max = Math.max(max, opts.max);
     if (max <= min) max = min + 1;
@@ -161,7 +161,7 @@ function drawChart(canvas, values, timestamps, color, opts, formatFn, windowMs) 
     // Choose a round interval in seconds
     const rawInterval = windowSec / maxLabels;
     const niceIntervals = [10, 15, 20, 30, 60, 120, 300];
-    let interval = niceIntervals.find(n => n >= rawInterval) || windowSec;
+    const interval = niceIntervals.find(n => n >= rawInterval) || windowSec;
 
     for (let sec = 0; sec <= windowSec; sec += interval) {
         const x = plotR - (sec / windowSec) * plotW;
@@ -301,10 +301,11 @@ function TimeRangeSelector({ value, onChange }) {
 // --- Main MetricsTab ---
 
 export function MetricsTab({ nodeName }) {
-    const [colMap, setColMap] = useState(null);
+    const [, setColMap] = useState(null);
     const [buffers, setBuffers] = useState(null);
     const [textMetrics, setTextMetrics] = useState({});
-    const [tick, setTick] = useState(0);
+    // Bumped to re-render when a buffer changes in place.
+    const [, setTick] = useState(0);
     const [showChart, setShowChart] = useState(true);
     const [rangeSec, setRangeSec] = useState(120); // default 2 min
     const esRef = useRef(null);

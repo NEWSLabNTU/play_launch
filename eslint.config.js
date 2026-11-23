@@ -1,5 +1,4 @@
 // ESLint flat config for the web UI's JavaScript (scripts/lint-inline-js.js).
-// The rules are the old .eslintrc.json's, unchanged.
 const js = require('@eslint/js');
 const globals = require('globals');
 
@@ -11,18 +10,24 @@ module.exports = [
             sourceType: 'module',
             globals: { ...globals.browser, ...globals.es2021 },
         },
+        // Every rule is an error (phase 105 W2): a warning nothing fails on
+        // is a finding nobody reads, and components/ had gathered 526 of
+        // them unseen. `curly` is off: a one-line guard (`if (!x) return;`)
+        // is this code's style, and 410 of the 526 were that.
         rules: {
-            'no-unused-vars': 'warn',
-            'no-undef': 'warn',
+            'no-unused-vars': ['error', { argsIgnorePattern: '^_', caughtErrors: 'none' }],
+            'no-undef': 'error',
             'no-console': 'off',
             'semi': ['error', 'always'],
-            'quotes': ['warn', 'single', { avoidEscape: true, allowTemplateLiterals: true }],
+            'quotes': ['error', 'single', { avoidEscape: true, allowTemplateLiterals: true }],
             'indent': 'off',
-            'no-var': 'warn',
-            'prefer-const': 'warn',
-            'no-multiple-empty-lines': ['warn', { max: 1 }],
-            'eqeqeq': ['warn', 'always'],
-            'curly': ['warn', 'all'],
+            'no-var': 'error',
+            'prefer-const': 'error',
+            'no-multiple-empty-lines': ['error', { max: 1 }],
+            // `x == null` is the one deliberate loose comparison: null or
+            // undefined.
+            'eqeqeq': ['error', 'always', { null: 'ignore' }],
+            'curly': 'off',
         },
     },
 ];

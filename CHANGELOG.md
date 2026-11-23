@@ -18,6 +18,14 @@ allowance heavily.
   the browser keeps it in a cookie. A server bound to `0.0.0.0` or `[::]`
   without one warns that any host can control the launch. `[::]:PORT` is
   now accepted by `--web-addr`.
+- **Fixed (#0111, phase 105 W2):** the web UI header's diagnostics badges
+  never showed: they counted levels spelled `OK`/`WARNING`/... while the
+  server sends `Ok`/`Warning`/.... The stderr log stream no longer stays
+  open while another tab of the node panel is shown.
+- **Development (phase 105 W2):** ESLint now covers every web UI file and
+  fails on any finding; `just check` fails when the TypeScript bindings
+  differ from the Rust types; the health, entities, chains, startup, graph
+  and diagnostics payloads are typed.
 
 ## 0.41.4 - 2026-11-23
 

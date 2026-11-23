@@ -4,7 +4,6 @@ export function getCyStyle(isDark) {
     const bg = isDark ? '#1a1d23' : '#ffffff';
     const textMuted = isDark ? '#8a8d91' : '#6c757d';
     const borderColor = isDark ? '#3a3d45' : '#dee2e6';
-    const nsBg = isDark ? '#1e2128' : '#f1f3f5';
     const nsBorder = isDark ? '#556677' : '#a0b4c8';
     const edgeColor = isDark ? '#6b7280' : '#9ca3af';
     const danglingEdge = isDark ? '#fbbf24' : '#d97706';

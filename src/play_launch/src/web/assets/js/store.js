@@ -38,6 +38,7 @@ export const systemMetrics = signal(null);
 
 // --- Diagnostics ---
 
+/** @type {{ value: import('./types').DiagnosticStatus[] }} */
 export const diagnostics = signal([]);
 
 // --- Health summary ---
@@ -95,14 +96,13 @@ export const launchTreeExpanded = signal(new Set([0]));
 
 // --- Graph state (Phase 25) ---
 
-/** @type {{ value: object|null }} Full graph snapshot from GET /api/graph */
+/** @type {{ value: import('./types').GraphSnapshot|null }} Full graph snapshot from GET /api/graph */
 export const graphSnapshot = signal(null);
 
 /** Currently focused graph element, or null.
  *  Shape: { type: 'node'|'namespace'|'edge', id: string, data: object }
  */
 export const graphSelectedElement = signal(null);
-
 
 // --- Computed values ---
 
@@ -140,7 +140,6 @@ export const nodeTopicCounts = computed(() => {
             }
         }
     }
-
 
     return counts;
 });

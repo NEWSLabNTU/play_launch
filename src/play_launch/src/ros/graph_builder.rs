@@ -14,6 +14,8 @@ use std::collections::HashMap;
 
 /// Full graph snapshot — all topics and services visible to the ROS node.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct GraphSnapshot {
     pub topics: Vec<TopicGraph>,
     pub services: Vec<ServiceGraph>,
@@ -21,6 +23,8 @@ pub struct GraphSnapshot {
 
 /// Per-topic graph entry.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct TopicGraph {
     pub name: String,
     pub msg_type: String,
@@ -32,6 +36,8 @@ pub struct TopicGraph {
 
 /// A node endpoint (publisher or subscriber) on a topic.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct EndpointNode {
     /// Fully-qualified ROS node name (e.g. "/ns/node_name").
     pub fqn: String,
@@ -43,6 +49,8 @@ pub struct EndpointNode {
 
 /// Human-readable QoS summary — all fields are strings for easy JSON display.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct QosSummary {
     pub reliability: String,
     pub durability: String,
@@ -54,6 +62,8 @@ pub struct QosSummary {
 
 /// Per-service graph entry.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct ServiceGraph {
     pub name: String,
     pub srv_type: String,
@@ -63,6 +73,8 @@ pub struct ServiceGraph {
 
 /// Topics and services for a single node.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct NodeTopics {
     pub publishers: Vec<NodeTopicEntry>,
     pub subscribers: Vec<NodeTopicEntry>,
@@ -72,6 +84,8 @@ pub struct NodeTopics {
 
 /// A topic entry from a single node's perspective.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct NodeTopicEntry {
     pub name: String,
     pub msg_type: String,
@@ -83,6 +97,8 @@ pub struct NodeTopicEntry {
 
 /// A service entry from a single node's perspective.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct NodeServiceEntry {
     pub name: String,
     pub srv_type: String,

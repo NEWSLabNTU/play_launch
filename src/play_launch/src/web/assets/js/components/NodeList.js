@@ -2,7 +2,6 @@
 
 import { h } from '../vendor/preact.module.js';
 import { useState, useMemo, useCallback, useEffect } from '../vendor/hooks.module.js';
-import { useSignal } from '../vendor/signals.module.js';
 import htm from '../vendor/htm.module.js';
 import { nodeList, selectedNode, nodePanelOpen, activeTab, getStatusString, fetchNodes, statusFacet } from '../store.js';
 import { NodeCard } from './NodeCard.js';

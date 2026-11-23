@@ -61,6 +61,18 @@ also read every GET.
 
 ### W2 - The gates see the code
 
+**Done (2026-11-23), except `strict`.** ESLint walks every file under
+`js/` and fails on any finding; 526 surfaced, 410 of them `curly` (turned
+off: a one-line guard is this code's style) and 76 deliberate `== null`
+(allowed). `just check-bindings` regenerates the bindings and fails on a
+difference (checked both ways). The health, startup, entities, chains,
+graph and diagnostics payloads are typed (19 to 71 binding files, large
+integers as `number`, which is what JSON carries), and typing them found a
+defect at once: the header's diagnostics badges compared levels against
+`'OK'`/`'WARNING'`/... while the payload says `'Ok'`/`'Warning'`/..., so
+they never showed. `strict` per file is left to each later wave, for the
+files it touches.
+
 - `scripts/lint-inline-js.js` reads `js/` non-recursively, so ESLint never
   sees `components/` (~6k lines). Walk recursively; fix what it finds.
 - `generate-bindings` exists but nothing checks the committed TypeScript

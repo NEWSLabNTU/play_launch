@@ -201,7 +201,7 @@ export function DiagnosticsView() {
 
         // Sort
         data.sort((a, b) => {
-            let cmp = 0;
+            let cmp;
             if (sortCol === 'level') {
                 cmp = (LEVEL_PRIORITY[a.level] ?? 0) - (LEVEL_PRIORITY[b.level] ?? 0);
                 if (cmp === 0) cmp = a.name.localeCompare(b.name);

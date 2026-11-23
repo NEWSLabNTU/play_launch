@@ -58,6 +58,8 @@ pub const SELF_COST_LIMIT_PERCENT: f64 = 10.0;
 pub const SELF_COST_WINDOW: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     Info,
@@ -66,6 +68,8 @@ pub enum Severity {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct Subject {
     /// `endpoint`, `topic`, `node`, `member` or `process`.
     pub kind: &'static str,
@@ -73,6 +77,8 @@ pub struct Subject {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct Link {
     /// The web UI view holding the evidence.
     pub view: &'static str,
@@ -93,6 +99,8 @@ pub struct Condition {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct Issue {
     pub key: String,
     pub kind: &'static str,
@@ -109,6 +117,8 @@ pub struct Issue {
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct Counts {
     pub error: usize,
     pub warning: usize,
@@ -118,6 +128,8 @@ pub struct Counts {
 /// What the page shows: open issues, recently closed ones, and
 /// play_launch's own cost.
 #[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct HealthSnapshot {
     pub t_ms: u64,
     pub counts: Counts,

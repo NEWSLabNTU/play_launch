@@ -208,13 +208,8 @@ export function snapPortsToBorder(cy) {
         const y1 = bb.y1 - pad;
         const y2 = bb.y2 + pad;
 
-        // Determine which port side based on edge direction:
-        // outports should be on the right/bottom, inports on the left/top
-        const isOutport = port.id().startsWith('outport:');
-
         // Find the connected edge to determine direction preference
         const edges = port.connectedEdges();
-        let prefersRight = isOutport;  // outports generally face right (toward target)
 
         // Check if there's a connected non-port node to determine which side
         /** @type {number|null} */

@@ -3,4 +3,4 @@
 /**
  * One process exit, as the Health page and the node panel show it.
  */
-export type ExitRecord = { at_ms: bigint, code: number | null, signal: number | null, uptime_ms: bigint | null, oom_killed: boolean | null, };
+export type ExitRecord = { at_ms: number, code: number | null, signal: number | null, uptime_ms: number | null, oom_killed: boolean | null, };

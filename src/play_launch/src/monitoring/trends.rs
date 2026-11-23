@@ -54,6 +54,8 @@ impl TrendConfig {
 
 /// A least-squares line through `(seconds, value)` points.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct Fit {
     /// Change per minute.
     pub per_min: f64,
@@ -111,6 +113,8 @@ struct MemberTrend {
 
 /// One member's resources and trends, as the Health page shows them.
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct MemberResources {
     /// The member's log directory name.
     pub name: String,
@@ -133,6 +137,8 @@ pub struct MemberResources {
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export))]
 pub struct ResourceSnapshot {
     pub window_s: u64,
     /// Busiest growth first.

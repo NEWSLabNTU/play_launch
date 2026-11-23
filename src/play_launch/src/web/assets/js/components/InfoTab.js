@@ -5,12 +5,6 @@ import htm from '../vendor/htm.module.js';
 
 const html = htm.bind(h);
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = String(text);
-    return div.innerHTML;
-}
-
 function shouldInclude(key, value) {
     return value !== null && value !== undefined;
 }

@@ -10,9 +10,12 @@ async function main() {
     const fix = process.argv.includes('--fix');
 
     try {
-        // Get all .js files in the js directory
-        const jsFiles = fs.readdirSync(JS_DIR)
+        // Every .js file under js/, components/ included, but not the
+        // vendored libraries. This read js/ alone until phase 105 W2, so
+        // ESLint never saw components/ (~6k lines).
+        const jsFiles = fs.readdirSync(JS_DIR, { recursive: true })
             .filter(file => file.endsWith('.js'))
+            .filter(file => !file.split(path.sep).includes('vendor'))
             .map(file => path.join(JS_DIR, file));
 
         if (jsFiles.length === 0) {
@@ -41,7 +44,8 @@ async function main() {
         }
 
         // Exit with error code if there are errors
-        const hasErrors = results.some(result => result.errorCount > 0);
+        // A warning fails too: a finding nothing fails on goes unread.
+        const hasErrors = results.some(result => result.errorCount > 0 || result.warningCount > 0);
         if (hasErrors) {
             process.exit(1);
         }
