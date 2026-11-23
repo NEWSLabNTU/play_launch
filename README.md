@@ -161,8 +161,15 @@ play_launch launch <package> <launch_file> --monitor-interval-ms 500
 Change address or port (default: `127.0.0.1:8080`):
 
 ```bash
-play_launch launch <package> <launch_file> --web-addr 0.0.0.0:8080
+play_launch launch <package> <launch_file> --web-addr 0.0.0.0:8080 --web-token "$(openssl rand -hex 16)"
 ```
+
+The UI can stop and start nodes, so on an address other hosts can reach,
+give it a token (`--web-token`, or `$PLAY_LAUNCH_WEB_TOKEN`) and open it
+once as `http://<host>:8080/?token=<token>`; the browser keeps it in a
+cookie from then on. Without a token, anyone who can reach the port can
+control the launch. On any address, the UI accepts changes only from its
+own page, so another website open in the same browser cannot send them.
 
 ### Configuration File
 
@@ -319,7 +326,7 @@ play_launch launch <pkg> <file> --enable web-ui --enable diagnostics
 
 # Adjust settings
 play_launch launch <pkg> <file> --monitor-interval-ms 500
-play_launch launch <pkg> <file> --web-addr 0.0.0.0:8080
+play_launch launch <pkg> <file> --web-addr 0.0.0.0:8080 --web-token <token>
 play_launch launch <pkg> <file> --config config.yaml
 
 # Logging

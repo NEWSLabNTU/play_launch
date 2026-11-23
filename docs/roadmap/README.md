@@ -351,6 +351,12 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     (#0042), P2 `links:`, P3 `measure` proposals, P4 `check --against`
     transport; P5 (a runtime link monitor) not adopted.
     [phase-97-links.md](./phase-97-links.md).
+  - **Phase 105** - in progress (2026-11-23): web UI hardening and
+    modernization (#0111). Mutations only from our own page, gates that
+    lint every file and check bindings, a header that stays current, one
+    multiplexed stream with shared hooks, CSS tokens, routing,
+    accessibility, log-tab scale, cleanup.
+    [phase-105-web-ui-hardening.md](./phase-105-web-ui-hardening.md).
   - **Phase 104** - S1-S3 done (rlm v0.3.15-v0.3.27, play_launch 0.32.0-0.36.0), S4 planned (2026-11-13): the contract grammar revision, in
     stages: removals (overdue aliases, `links.monitor`, `tolerance`, a
     deprecation registry), two meanings settled, one release of

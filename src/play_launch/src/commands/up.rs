@@ -1588,6 +1588,7 @@ pub(crate) async fn play(
 
         // Parse web address
         let (addr, port) = common.parse_web_addr()?;
+        let web_token = common.web_token();
 
         // Create state event broadcaster for SSE clients
         let state_broadcaster = std::sync::Arc::new(web::StateEventBroadcaster::new());
@@ -1638,7 +1639,7 @@ pub(crate) async fn play(
 
         // Spawn web server
         let web_server_task = tokio::spawn(async move {
-            if let Err(e) = web::run_server(web_state, &addr, port, web_shutdown).await {
+            if let Err(e) = web::run_server(web_state, &addr, port, web_token, web_shutdown).await {
                 error!("Web server error: {}", e);
             }
             Ok(())

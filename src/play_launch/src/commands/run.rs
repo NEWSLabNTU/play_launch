@@ -680,6 +680,7 @@ async fn run_direct(
 
         // Parse web address
         let (addr, port) = common.parse_web_addr()?;
+        let web_token = common.web_token();
 
         // Log web UI URL before spawning (addr will be moved)
         info!("Web UI available at http://{}:{}", addr, port);
@@ -697,7 +698,7 @@ async fn run_direct(
 
         // Spawn web server task
         let web_server_task = tokio::spawn(async move {
-            if let Err(e) = web::run_server(web_state, &addr, port, web_shutdown).await {
+            if let Err(e) = web::run_server(web_state, &addr, port, web_token, web_shutdown).await {
                 error!("Web server error: {}", e);
             }
             Ok(())

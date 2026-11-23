@@ -22,6 +22,10 @@ name = "simple_workspace"
 path = "tests/simple_workspace.rs"
 
 [[test]]
+name = "web_origin_guard"
+path = "tests/web_origin_guard.rs"
+
+[[test]]
 name = "autoware"
 path = "tests/autoware.rs"
 

@@ -23,6 +23,7 @@ use tracing::{info, warn};
 mod broadcaster;
 mod handlers;
 mod metrics_broadcaster;
+mod origin_guard;
 mod sse;
 pub mod web_types;
 
@@ -171,13 +172,26 @@ async fn static_handler(axum::extract::Path(path): axum::extract::Path<String>) 
 }
 
 /// Create the web server router
-pub fn create_router(state: Arc<WebState>, bind_addr: &str, port: u16) -> Router {
+pub fn create_router(
+    state: Arc<WebState>,
+    bind_addr: &str,
+    port: u16,
+    token: Option<String>,
+) -> Router {
+    // Who may change anything: our own page only (phase 105 W1). CORS below
+    // decides only who may READ an answer, which does not stop a cross-site
+    // POST from acting.
+    let bind_ip: std::net::IpAddr = bind_addr
+        .parse()
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    let policy = Arc::new(origin_guard::OriginPolicy::new(bind_ip, port).with_token(token));
+
     // CORS policy based on bind address:
-    // - 0.0.0.0: intentionally network-exposed → allow any origin
-    //   (user explicitly opts in via --web-addr 0.0.0.0:PORT)
+    // - unspecified (0.0.0.0, ::): intentionally network-exposed → allow any
+    //   origin (user explicitly opts in via --web-addr 0.0.0.0:PORT)
     // - 127.0.0.1: localhost only → restrict to localhost origins
     // - specific IP: restrict to that IP + localhost
-    let cors = if bind_addr == "0.0.0.0" {
+    let cors = if policy.exposed() {
         CorsLayer::new()
             .allow_origin(Any)
             .allow_methods(Any)
@@ -288,6 +302,9 @@ pub fn create_router(state: Arc<WebState>, bind_addr: &str, port: u16) -> Router
         .route("/api/metrics/system", get(sse::stream_system_metrics))
         .route("/api/metrics/node/:name", get(sse::stream_node_metrics))
         .layer(cors)
+        .layer(axum::middleware::from_fn(move |req, next| {
+            origin_guard::guard(policy.clone(), req, next)
+        }))
         .layer(tower_http::compression::CompressionLayer::new().gzip(true))
         .with_state(state)
 }
@@ -297,9 +314,11 @@ pub async fn run_server(
     state: Arc<WebState>,
     bind_addr: &str,
     port: u16,
+    token: Option<String>,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> eyre::Result<()> {
-    let app = create_router(state, bind_addr, port);
+    let has_token = token.as_deref().is_some_and(|t| !t.is_empty());
+    let app = create_router(state, bind_addr, port, token);
 
     // Parse bind address
     let ip: std::net::IpAddr = bind_addr
@@ -307,8 +326,13 @@ pub async fn run_server(
         .map_err(|e| eyre::eyre!("Invalid bind address '{}': {}", bind_addr, e))?;
     let addr = SocketAddr::new(ip, port);
 
-    if bind_addr == "0.0.0.0" {
-        warn!("Web UI is exposed to network (0.0.0.0) - ensure this is intentional!");
+    if ip.is_unspecified() && !has_token {
+        warn!(
+            "Web UI is exposed to network ({bind_addr}) with no token: any host that can \
+             reach it can stop and start nodes. Set --web-token or $PLAY_LAUNCH_WEB_TOKEN."
+        );
+    } else if ip.is_unspecified() {
+        info!("Web UI is exposed to network ({bind_addr}); every request needs the token");
     }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

@@ -6,6 +6,19 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+- **Security (#0111, phase 105 W1):** the web UI accepts a change (start,
+  stop, restart, load, unload, the bulk actions) only from its own page.
+  Any web page open in the same browser could send those requests before,
+  since a body-less `POST` needs no CORS permission. A request whose `Host`
+  is not this server (DNS rebinding) is refused when the UI is bound to a
+  specific address. New `--web-token` (or `$PLAY_LAUNCH_WEB_TOKEN`)
+  requires a token on every request; open the UI once with `?token=` and
+  the browser keeps it in a cookie. A server bound to `0.0.0.0` or `[::]`
+  without one warns that any host can control the launch. `[::]:PORT` is
+  now accepted by `--web-addr`.
+
 ## 0.41.4 - 2026-11-23
 
 - **Fixed (#0109):** a `.launch.py` node's `ParameterFile(…,

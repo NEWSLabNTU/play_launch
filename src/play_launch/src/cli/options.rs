@@ -964,6 +964,13 @@ pub struct WebOptions {
     /// Use 0.0.0.0:8080 to expose to network (insecure, use with caution).
     #[arg(long, value_name = "IP:PORT", default_value = "127.0.0.1:8080")]
     pub web_addr: String,
+
+    /// Require this token on every web UI request (default:
+    /// $PLAY_LAUNCH_WEB_TOKEN, else none). Open the UI once as
+    /// http://HOST:PORT/?token=TOKEN; the page then keeps it in a cookie.
+    /// Use it whenever the UI is reachable from other hosts.
+    #[arg(long, value_name = "TOKEN")]
+    pub web_token: Option<String>,
 }
 
 /// Contract / runtime-enforcement options
@@ -1156,6 +1163,7 @@ impl Default for WebOptions {
     fn default() -> Self {
         Self {
             web_addr: "127.0.0.1:8080".to_string(),
+            web_token: None,
         }
     }
 }
@@ -1215,7 +1223,18 @@ impl CommonOptions {
         !self.features.disable_web_ui && !self.features.disable_all
     }
 
-    /// Parse web address into (IP, port) tuple
+    /// The web UI token: `--web-token`, else `$PLAY_LAUNCH_WEB_TOKEN`; an
+    /// empty value is none.
+    pub fn web_token(&self) -> Option<String> {
+        self.web
+            .web_token
+            .clone()
+            .or_else(|| std::env::var("PLAY_LAUNCH_WEB_TOKEN").ok())
+            .filter(|t| !t.is_empty())
+    }
+
+    /// Parse web address into (IP, port) tuple. An IPv6 address may be
+    /// written in brackets (`[::]:8080`), which are removed.
     pub fn parse_web_addr(&self) -> eyre::Result<(String, u16)> {
         let parts: Vec<&str> = self.web.web_addr.rsplitn(2, ':').collect();
         if parts.len() != 2 {
@@ -1226,7 +1245,11 @@ impl CommonOptions {
         }
 
         let port_str = parts[0];
-        let ip = parts[1].to_string();
+        let ip = parts[1]
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+            .unwrap_or(parts[1])
+            .to_string();
 
         let port: u16 = port_str.parse().map_err(|_| {
             eyre::eyre!(
