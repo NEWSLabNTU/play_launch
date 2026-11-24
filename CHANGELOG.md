@@ -47,6 +47,16 @@ allowance heavily.
   and checked against the selection; an include whose nodes come out
   different is written one level down. The Launch page's **Export…** writes
   into the run's log directory and offers a zip.
+- **Phase 106 follow-ups.** `export --form include` writes the global
+  parameters, remaps and environment in effect at each kept include in
+  front of it, so an include that reads them (Autoware's map component and
+  its vehicle parameters) stays an `<include>` instead of being opened.
+  `export --form command` takes one composable node: a script that starts
+  its container when the selection keeps it and loads the node with
+  `ros2 component load`. Each `selection.jsonl` line carries `before`, the
+  CPU and memory of what was running just before the step, and the run
+  ends with an `end` line. The node panel's Info tab has **Restart with
+  prefix** (`POST /api/nodes/:id/restart-with`), the web UI's `--prefix`.
 - **New (phase 106 W3): bounded runs and a per-run launch prefix.**
   `--run-for <duration>` ends a launch after a time; `--fail-on
   health:<kind>[:<glob>]`, `--fail-on contract` and `--fail-on exit:<glob>`

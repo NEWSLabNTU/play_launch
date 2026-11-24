@@ -694,6 +694,42 @@ impl Writer<'_> {
             if !ns.is_empty() && ns != "/" {
                 let _ = writeln!(out, "    <push-ros-namespace namespace=\"{}\"/>", esc(ns));
             }
+            // What the include saw from before it: an included file sees
+            // the global parameters, remaps and environment, not only its
+            // arguments. The group scopes them to this include.
+            if let Some(ctx) = &entry.entry_context {
+                for (name, value) in &ctx.global_params {
+                    let _ = writeln!(
+                        out,
+                        "    <set_parameter name=\"{}\" value=\"{}\"/>",
+                        esc(name),
+                        esc(value)
+                    );
+                }
+                for (from, to) in &ctx.remaps {
+                    let _ = writeln!(
+                        out,
+                        "    <set_remap from=\"{}\" to=\"{}\"/>",
+                        esc(from),
+                        esc(to)
+                    );
+                }
+                for (name, value) in &ctx.env {
+                    match value {
+                        Some(v) => {
+                            let _ = writeln!(
+                                out,
+                                "    <set_env name=\"{}\" value=\"{}\"/>",
+                                esc(name),
+                                esc(v)
+                            );
+                        }
+                        None => {
+                            let _ = writeln!(out, "    <unset_env name=\"{}\"/>", esc(name));
+                        }
+                    }
+                }
+            }
             let _ = writeln!(out, "    <include file=\"{}\">", esc(&file_attr));
             let mut args: Vec<(&String, &String)> = entry.args.iter().collect();
             args.sort();
@@ -810,36 +846,63 @@ async fn verify(
     Ok(out)
 }
 
-/// The command form: one node's command line and its parameter files.
+/// The command form: one node's command line and its parameter files, or
+/// for one composable, its container's command and a `ros2 component load`.
 fn export_command(
     model: &SystemModel,
     kept: &[String],
     out_dir: &Path,
     name: &str,
 ) -> Result<ExportReport> {
-    let plain: Vec<&String> = kept
-        .iter()
-        .filter(|k| model.structure.nodes[*k].plugin.is_none())
-        .collect();
-    let key = match plain.as_slice() {
-        [one] if kept.len() == 1 || model.structure.nodes[*one].is_container => *one,
-        _ => bail!(
+    let refuse = || {
+        eyre::eyre!(
             "the command form writes one node's command; the selection keeps {} member(s) \
-             ({}), select exactly one plain node or container",
+             ({}), select exactly one plain node, container or composable",
             kept.len(),
             kept.iter().take(5).cloned().collect::<Vec<_>>().join(", ")
-        ),
+        )
     };
+    let composables: Vec<&String> = kept
+        .iter()
+        .filter(|k| model.structure.nodes[*k].plugin.is_some())
+        .collect();
+    if let [comp] = composables.as_slice() {
+        let container = model.structure.nodes[*comp].container.clone();
+        let others: Vec<&String> = kept.iter().filter(|k| k != comp).collect();
+        let with_container = match others.as_slice() {
+            [] => false,
+            [c] if Some(c.as_str()) == container.as_deref() => true,
+            _ => return Err(refuse()),
+        };
+        return export_composable_command(model, comp, with_container, out_dir, name);
+    }
+    if !composables.is_empty() {
+        return Err(refuse());
+    }
+    let key = match kept {
+        [one] => one,
+        _ => return Err(refuse()),
+    };
+    let (prelude, cmd) = run_line(model, key, out_dir)?;
+    let file = out_dir.join(format!("{name}.sh"));
+    let mut text = String::from("#!/bin/sh\n# Exported by play_launch: one node's command line.\n");
+    text.push_str(&prelude);
+    text.push_str(&cmd);
+    text.push('\n');
+    write_script(&file, &text)?;
+    Ok(ExportReport {
+        file,
+        run: vec![cmd],
+        ..Default::default()
+    })
+}
+
+/// A plain node's or container's command line: shell lines to run before it
+/// (`cd`, `unset`) and the command itself.
+fn run_line(model: &SystemModel, key: &str, out_dir: &Path) -> Result<(String, String)> {
     let inst = &model.structure.nodes[key];
     if inst.pkg.is_none() {
-        let cmd = inst.raw_cmd.join(" ");
-        let file = out_dir.join(format!("{name}.sh"));
-        std::fs::write(&file, format!("#!/bin/sh\n{cmd}\n"))?;
-        return Ok(ExportReport {
-            file,
-            run: vec![cmd],
-            ..Default::default()
-        });
+        return Ok((String::new(), inst.raw_cmd.join(" ")));
     }
     let params_dir = out_dir.join("params");
     let mut w = Writer {
@@ -895,21 +958,123 @@ fn export_command(
     }
     words.extend(inst.ros_args.iter().cloned());
     let cmd: Vec<String> = words.iter().map(|w| shell_quote(w)).collect();
-    let cmd = cmd.join(" ");
-    let file = out_dir.join(format!("{name}.sh"));
-    let mut text = String::from("#!/bin/sh\n# Exported by play_launch: one node's command line.\n");
+    let mut prelude = String::new();
     if let Some(d) = &inst.cwd {
-        let _ = writeln!(text, "cd {}", shell_quote(d));
+        let _ = writeln!(prelude, "cd {}", shell_quote(d));
     }
     if !inst.env_unset.is_empty() {
-        let _ = writeln!(text, "unset {}", inst.env_unset.join(" "));
+        let _ = writeln!(prelude, "unset {}", inst.env_unset.join(" "));
     }
-    text.push_str(&cmd);
-    text.push('\n');
-    std::fs::write(&file, text)?;
+    Ok((prelude, cmd.join(" ")))
+}
+
+/// Write an exported shell script, executable.
+fn write_script(file: &Path, text: &str) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(file, text).wrap_err_with(|| format!("writing {}", file.display()))?;
+    std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755))?;
+    Ok(())
+}
+
+/// A parameter value as the YAML text `ros2 component load -p` reads back
+/// as the same value.
+fn param_text(v: &ParamValue) -> String {
+    match v {
+        ParamValue::StrList(l) => format!("[{}]", l.join(", ")),
+        other => serde_yaml_ng::to_string(&yaml_value(other))
+            .map(|s| s.trim_end().to_string())
+            .unwrap_or_else(|_| other.to_bake_string()),
+    }
+}
+
+/// One composable: `ros2 component load` with its name, namespace, every
+/// resolved parameter, remaps and extra arguments; when its container is in
+/// the selection, the script starts it first and waits for its load
+/// service, else it loads into a container already running.
+fn export_composable_command(
+    model: &SystemModel,
+    key: &str,
+    with_container: bool,
+    out_dir: &Path,
+    name: &str,
+) -> Result<ExportReport> {
+    let inst = &model.structure.nodes[key];
+    let container = inst
+        .container
+        .clone()
+        .ok_or_else(|| eyre::eyre!("{key} names no container"))?;
+    let node_name = inst
+        .node_name
+        .clone()
+        .unwrap_or_else(|| key.rsplit('/').next().unwrap_or(key).to_string());
+    let mut words: Vec<String> = vec![
+        "ros2".into(),
+        "component".into(),
+        "load".into(),
+        "--no-daemon".into(),
+        container.clone(),
+        inst.pkg.clone().unwrap_or_default(),
+        inst.plugin.clone().unwrap_or_default(),
+        "-n".into(),
+        node_name
+            .rsplit('/')
+            .next()
+            .unwrap_or(&node_name)
+            .to_string(),
+    ];
+    let ns = namespace_of(key);
+    if ns != "/" {
+        words.push("--node-namespace".into());
+        words.push(ns.to_string());
+    }
+    for (k, v) in inst.resolved_params(key) {
+        words.push("-p".into());
+        words.push(format!("{k}:={}", param_text(&v)));
+    }
+    for r in &inst.remaps {
+        words.push("-r".into());
+        words.push(format!("{}:={}", r.from, r.to));
+    }
+    for (k, v) in &inst.extra_args {
+        words.push("-e".into());
+        words.push(format!("{k}:={v}"));
+    }
+    let load: Vec<String> = words.iter().map(|w| shell_quote(w)).collect();
+    let load = load.join(" ");
+
+    let mut text = String::from(
+        "#!/bin/sh\n# Exported by play_launch: one composable node, loaded with \
+         `ros2 component load`.\n",
+    );
+    let mut run = Vec::new();
+    if with_container {
+        let (prelude, cmd) = run_line(model, &container, out_dir)?;
+        text.push_str(&prelude);
+        let _ = writeln!(text, "{cmd} &");
+        text.push_str("CONTAINER=$!\n");
+        text.push_str("trap 'kill -INT $CONTAINER 2>/dev/null; wait $CONTAINER' EXIT INT TERM\n");
+        // `ros2 component load` refuses, loading nothing, until it finds
+        // the container; a service listing would need its own discovery
+        // wait, and reads empty for seconds after the node is listed.
+        let _ = writeln!(
+            text,
+            "until {load}; do\n  kill -0 $CONTAINER 2>/dev/null || exit 1\n  sleep 1\ndone"
+        );
+        text.push_str("wait $CONTAINER\n");
+    } else {
+        let _ = writeln!(text, "# Loads into {container}, which must be running.");
+        let _ = writeln!(text, "{load}");
+    }
+    let file = out_dir.join(format!("{name}.sh"));
+    write_script(&file, &text)?;
+    run.push(if with_container {
+        file.display().to_string()
+    } else {
+        load
+    });
     Ok(ExportReport {
         file,
-        run: vec![cmd],
+        run,
         ..Default::default()
     })
 }

@@ -262,6 +262,10 @@ pub fn create_router(
         .route("/api/nodes/:name/topics", get(handlers::get_node_topics))
         .route("/api/graph", get(handlers::get_graph))
         .route("/api/launch-tree", get(handlers::get_launch_tree))
+        .route(
+            "/api/nodes/:name/restart-with",
+            post(selection::restart_with),
+        )
         .route("/api/selection", get(selection::get_selection))
         .route("/api/selection/check", post(selection::check))
         .route("/api/selection/apply", post(selection::apply))

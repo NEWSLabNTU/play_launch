@@ -1,6 +1,7 @@
 # Phase 106: Running and exporting part of a launch tree
 
-**Status:** Done (2026-11-24), with the gaps W4 and W5 name.
+**Status:** Done (2026-11-24). The gaps W4 and W5 named are closed, except
+starting a member a Reload adds.
 **Design:** `docs/design/launch-selection.md` (selecting, running, the web
 UI's switches) and `docs/design/launch-extraction.md` (exporting a launch
 file). Requested by the amr 175 session (2026-11-21) as `--scope
@@ -89,10 +90,13 @@ again. Reload hands a changed member a new spawn context
 (`ControlEvent::ReplaceContext`, `ReplaceComposable`) that the next Apply
 restarts it with; a member a Reload adds cannot be started without
 restarting the launch, since actors are built once. Runtime enforcement
-shares the set of topics whose publishers are off (`AbsentTopics`). Not
-done: the step record's per-step CPU and memory totals (U10); a
-restart-with-prefix control on the node page (`--prefix` covers the CLI).
-Tests `tests/tests/launch_switches.rs`.
+shares the set of topics whose publishers are off (`AbsentTopics`). Each
+step line carries `before`, the resource monitor's totals for what was
+running just before it, and a run that took steps ends with an `end` line.
+`POST /api/nodes/:id/restart-with {prefix}` and the Info tab's **Restart
+with prefix** restart one member under a prefix through the same
+`ReplaceContext` path; a composable's goes on its container, refused under
+`isolated`. Tests `tests/tests/launch_switches.rs`.
 
 - switches on includes and nodes, pending edits, the pending summary;
 - `GET /api/selection`, `POST /api/selection/check`,
@@ -105,15 +109,16 @@ Tests `tests/tests/launch_switches.rs`.
 ### W5 - Export
 
 **Done (2026-11-24).** `ros_launch_resolve::verbs::export`,
-`commands/export.rs`. The include form cannot yet recreate global
-parameters, remaps or environment in effect at an include point (the model
-records them per node, not per scope), so an include that depends on them
-fails verification and is written one level down: on Autoware's planning
-simulator, `tier4_planning_component` stays one `<include>` and
-`tier4_map_component` is opened down to its nodes, which miss the vehicle
-parameters set elsewhere. The command form refuses a composable. Tests
+`commands/export.rs`. The parser records the global parameters, remaps
+and environment in effect at each include (`ScopeEntry.entry_context`),
+and the include form writes them in front of the `<include>`: on Autoware's
+planning simulator, `tier4_planning_component` and `tier4_map_component`
+both stay one `<include>`. (Before, the map component was opened down to
+its nodes, which missed the vehicle parameters set elsewhere.) The command
+form takes one composable: a script that starts its container when kept
+and loads it with `ros2 component load`. Tests
 `tests/tests/launch_export.rs`, including stock `ros2 launch --print` on
-each export.
+each export and the composable script run to a loaded node.
 
 - `play_launch export` with the command, self-contained and include-based
   forms; the header; `--again`; top-level arguments passed through;

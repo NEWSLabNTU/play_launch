@@ -125,6 +125,8 @@ pub struct MemberResources {
     /// Processes: the member's own and its descendants (an `isolated`
     /// container's composables are each one).
     pub processes: u32,
+    /// CPU over the last tick, percent of one core.
+    pub cpu_percent: f64,
     /// RSS fitted over the window, bytes per minute.
     pub rss_trend: Option<Fit>,
     pub fd_trend: Option<Fit>,
@@ -160,6 +162,8 @@ pub struct Sample {
     pub threads: u32,
     pub fds: u32,
     pub processes: u32,
+    /// CPU over the last tick, percent of one core.
+    pub cpu_percent: f64,
 }
 
 impl TrendBook {
@@ -217,6 +221,7 @@ impl TrendBook {
             threads: sample.threads,
             fds: sample.fds,
             processes: sample.processes,
+            cpu_percent: sample.cpu_percent,
             rss_trend: fit(&rss),
             fd_trend: fit(&fds),
             ..Default::default()
@@ -308,6 +313,7 @@ mod tests {
                 threads: 3,
                 fds: 10,
                 processes: 1,
+                cpu_percent: 0.0,
             };
             b.observe(dir, s, None, now);
         }

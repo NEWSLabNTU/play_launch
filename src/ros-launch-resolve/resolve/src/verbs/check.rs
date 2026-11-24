@@ -1946,6 +1946,7 @@ mod install_prefix_tests {
             .enumerate()
             .map(|(id, pkg)| ScopeEntry {
                 config_span: Default::default(),
+                entry_context: None,
                 id,
                 origin: Some(ScopeOrigin {
                     pkg: pkg.map(String::from),

@@ -214,6 +214,15 @@ fn switches_start_and_stop_parts_live_and_fresh() {
         })
         .collect();
     assert_eq!(kinds, ["apply_live", "apply_live", "apply_fresh"]);
+    // Each carries the resources in use before it (null here: this run has
+    // monitoring off).
+    assert!(
+        steps.lines().all(
+            |l| serde_json::from_str::<Value>(l).unwrap()["before"].is_null()
+                && l.contains("\"before\"")
+        ),
+        "{steps}"
+    );
 
     // Switching a container off under a composable that stays on is refused.
     let r = ui.post(
@@ -338,4 +347,52 @@ fn reload_marks_a_changed_node_and_apply_restarts_it_with_the_new_resolution() {
         serde_json::json!(["node:/sel/listener_b"]),
         "{sel}"
     );
+}
+
+#[test]
+fn restart_with_runs_a_node_under_a_prefix() {
+    let work = tempfile::TempDir::new().unwrap();
+    let (ui, _proc) = start(&fixture("selection.launch.xml"), &[], work.path());
+    ui.wait_for("listener_a running", |m| {
+        state(m, "node:/sel/listener_a") == (&false, "running")
+    });
+
+    let r = ui.post(
+        "/api/nodes/node:%2Fsel%2Flistener_a/restart-with",
+        r#"{"prefix":"nice -n 7"}"#,
+    );
+    assert_eq!(r["restarted"], "node:/sel/listener_a", "{r}");
+    let dir = work.path().join("play_log/latest/node/listener_a");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let cmdline = std::fs::read_to_string(dir.join("cmdline")).unwrap_or_default();
+        if dir.join("pid.1").exists() && cmdline.starts_with("nice -n 7 ") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "not restarted under the prefix: {cmdline}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    // A composable shares its container's process: the prefix goes there.
+    let r = ui.post(
+        "/api/nodes/composable:%2Fsel%2Ftalker_a/restart-with",
+        r#"{"prefix":"nice -n 3"}"#,
+    );
+    assert_eq!(r["restarted"], "container:/sel/sel_container", "{r}");
+
+    // An empty prefix goes back to the launch file's own.
+    let r = ui.post("/api/nodes/node:%2Fsel%2Flistener_a/restart-with", "{}");
+    assert!(r["prefix"].is_null(), "{r}");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let cmdline = std::fs::read_to_string(dir.join("cmdline")).unwrap_or_default();
+        if dir.join("pid.2").exists() && !cmdline.starts_with("nice") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "prefix not cleared: {cmdline}");
+        std::thread::sleep(Duration::from_millis(200));
+    }
 }

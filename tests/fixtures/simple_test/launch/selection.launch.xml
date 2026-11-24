@@ -2,9 +2,13 @@
 <launch>
   <!-- Phase 106: running part of a launch tree. A file included twice that
        differs by an argument, composables loaded from an include into a
-       container declared here, and a plain include. -->
+       container declared here, and a plain include. The global parameter
+       and environment set before the parts reach them, so an exported
+       include of a part must recreate them. -->
   <node_container pkg="rclcpp_components" exec="component_container" name="sel_container" namespace="/sel"/>
   <include file="$(dirname)/pure_nodes.launch.xml"/>
+  <set_parameter name="sel_level" value="2"/>
+  <set_env name="SEL_ENV" value="on"/>
   <include file="$(dirname)/selection_part.launch.xml">
     <arg name="part" value="a"/>
   </include>

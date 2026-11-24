@@ -100,6 +100,15 @@ fn include_form_keeps_includes_and_starts_exactly_the_selection() {
     // it needs, declared in the parent file, is written flat.
     assert!(xml.contains("selection_part.launch.xml\">"), "{xml}");
     assert!(xml.contains(r#"<arg name="part" value="a"/>"#), "{xml}");
+    // What the include saw from before it is recreated in front of it.
+    assert!(
+        xml.contains(r#"<set_parameter name="sel_level" value="2"/>"#),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<set_env name="SEL_ENV" value="on"/>"#),
+        "{xml}"
+    );
     assert!(xml.contains(r#"name="sel_container""#), "{xml}");
     assert!(!xml.contains("pure_nodes"), "{xml}");
     assert_eq!(
@@ -201,6 +210,112 @@ fn command_form_writes_one_node_and_refuses_several() {
             &fixture(),
             "--only",
             "pure_nodes.launch.xml",
+            "--form",
+            "command",
+            "-o",
+            "cmd",
+        ],
+        tmp.path(),
+    );
+    assert!(!ok && text.contains("select exactly one"), "{text}");
+}
+
+#[test]
+fn command_form_loads_one_composable_into_its_container() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    // Without its container: a load into one already running.
+    let (ok, text) = play_launch(
+        &[
+            "export",
+            &fixture(),
+            "--only",
+            "/sel/talker_a",
+            "--no-deps",
+            "--form",
+            "command",
+            "-o",
+            "cmd",
+            "--name",
+            "load_only",
+        ],
+        tmp.path(),
+    );
+    assert!(ok, "{text}");
+    assert!(
+        text.contains(
+            "ros2 component load --no-daemon /sel/sel_container composition composition::Talker \
+             -n talker_a --node-namespace /sel -p sel_level:=2"
+        ),
+        "{text}"
+    );
+    let script = std::fs::read_to_string(tmp.path().join("cmd/load_only.sh")).unwrap();
+    assert!(!script.contains("component_container"), "{script}");
+
+    // With it (the closure keeps it): the script starts the container,
+    // loads the composable and stays up.
+    let (ok, text) = play_launch(
+        &[
+            "export",
+            &fixture(),
+            "--only",
+            "/sel/talker_a",
+            "--form",
+            "command",
+            "-o",
+            "cmd",
+            "--name",
+            "with_container",
+        ],
+        tmp.path(),
+    );
+    assert!(ok, "{text}");
+    let file = tmp.path().join("cmd/with_container.sh");
+    let script = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        script.contains("ros2 run rclcpp_components component_container"),
+        "{script}"
+    );
+
+    let mut env = fixtures::install_env();
+    env.insert(
+        "ROS_DOMAIN_ID".into(),
+        fixtures::next_domain_id().to_string(),
+    );
+    let mut cmd = Command::new(&file);
+    cmd.envs(&env)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let _proc = play_launch_tests::process::ManagedProcess::spawn(&mut cmd).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let out = Command::new("ros2")
+            .envs(&env)
+            .args(["node", "list", "--no-daemon"])
+            .output()
+            .unwrap();
+        if String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .any(|l| l == "/sel/talker_a")
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "talker_a never loaded: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    // Two composables are refused.
+    let (ok, text) = play_launch(
+        &[
+            "export",
+            &fixture(),
+            "--only",
+            "/sel/talker_a",
+            "--only",
+            "/sel/talker_b",
             "--form",
             "command",
             "-o",

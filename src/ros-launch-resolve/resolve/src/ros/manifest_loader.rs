@@ -8174,6 +8174,7 @@ mod tests {
     fn scope(id: usize, pkg: &str, file: &str, ns: &str, parent: Option<usize>) -> ScopeEntry {
         ScopeEntry {
             config_span: Default::default(),
+            entry_context: None,
             id,
             origin: Some(ScopeOrigin {
                 pkg: Some(pkg.to_string()),
@@ -8318,6 +8319,7 @@ mod tests {
             // Group scope (no origin)
             ScopeEntry {
                 config_span: Default::default(),
+                entry_context: None,
                 id: 1,
                 origin: None,
                 ns: "/system".to_string(),
@@ -8422,6 +8424,7 @@ mod tests {
             // Group scope wrapping the system namespace
             ScopeEntry {
                 config_span: Default::default(),
+                entry_context: None,
                 id: 1,
                 origin: None,
                 ns: "/system".to_string(),
@@ -8438,6 +8441,7 @@ mod tests {
             // Another group scope
             ScopeEntry {
                 config_span: Default::default(),
+                entry_context: None,
                 id: 3,
                 origin: None,
                 ns: "/perception".to_string(),
@@ -8475,6 +8479,7 @@ mod tests {
             scope(0, "manifest_simple", "manifest.launch.xml", "/", None),
             ScopeEntry {
                 config_span: Default::default(),
+                entry_context: None,
                 id: 1,
                 origin: None,
                 ns: "/".to_string(),
@@ -8484,6 +8489,7 @@ mod tests {
             scope(2, "nonexistent", "tier1.launch.xml", "/", Some(1)),
             ScopeEntry {
                 config_span: Default::default(),
+                entry_context: None,
                 id: 3,
                 origin: None,
                 ns: "/planning".to_string(),
@@ -8493,6 +8499,7 @@ mod tests {
             scope(4, "nonexistent", "tier2.launch.xml", "/planning", Some(3)),
             ScopeEntry {
                 config_span: Default::default(),
+                entry_context: None,
                 id: 5,
                 origin: None,
                 ns: "/planning/scenario".to_string(),
@@ -8508,6 +8515,7 @@ mod tests {
             ),
             ScopeEntry {
                 config_span: Default::default(),
+                entry_context: None,
                 id: 7,
                 origin: None,
                 ns: "/planning/scenario/lane".to_string(),
@@ -8523,6 +8531,7 @@ mod tests {
             ),
             ScopeEntry {
                 config_span: Default::default(),
+                entry_context: None,
                 id: 9,
                 origin: None,
                 ns: "/planning/scenario/lane/motion".to_string(),
@@ -8749,6 +8758,7 @@ mod tests {
             // `vehicle_cmd_gate` inside `control.launch.xml`'s own file scope.
             ScopeEntry {
                 config_span: Default::default(),
+                entry_context: None,
                 id: 1,
                 origin: None,
                 ns: "/perception/inner".to_string(),
@@ -10354,6 +10364,7 @@ mod tests {
     ) -> ScopeEntry {
         ScopeEntry {
             config_span: Default::default(),
+            entry_context: None,
             id,
             origin: Some(ScopeOrigin {
                 pkg: pkg.map(String::from),
@@ -10711,6 +10722,7 @@ event_chains:
             let manifest = parse_manifest_str(yaml).expect("parses");
             let scope = ScopeEntry {
                 config_span: Default::default(),
+                entry_context: None,
                 id: 0,
                 origin: None,
                 ns: "/perception".to_string(),

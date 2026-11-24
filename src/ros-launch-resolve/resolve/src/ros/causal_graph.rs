@@ -914,6 +914,7 @@ event_chains:
             variables: HashMap::new(),
             scopes: vec![ScopeEntry {
                 config_span: Default::default(),
+                entry_context: None,
                 id: 0,
                 origin: Some(ScopeOrigin {
                     pkg: Some("synthetic_pkg".to_string()),

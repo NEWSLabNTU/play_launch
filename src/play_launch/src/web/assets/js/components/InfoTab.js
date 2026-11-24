@@ -1,6 +1,48 @@
 // InfoTab component — JSON viewer for node details.
 
 import { html } from '../html.js';
+import { useState } from '../vendor/hooks.module.js';
+import { notify } from './Toasts.js';
+
+/**
+ * Restart the member under a launch prefix (`gdb -ex run --args`,
+ * `valgrind`, `nice -n 5`): POST /api/nodes/:id/restart-with. Empty
+ * restarts it with the launch file's own prefix. A composable's prefix
+ * goes on its container.
+ */
+function RestartWith({ id }) {
+    const [prefix, setPrefix] = useState('');
+    const [busy, setBusy] = useState(false);
+    if (!id) return null;
+    const run = async () => {
+        setBusy(true);
+        try {
+            const r = await fetch('/api/nodes/' + encodeURIComponent(id) + '/restart-with', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prefix }),
+            });
+            const body = await r.json().catch(() => ({}));
+            if (!r.ok || body.error) {
+                notify(`Restart failed: ${body.error || 'HTTP ' + r.status}`, 'error');
+            } else {
+                notify(body.prefix
+                    ? `Restarting ${body.restarted} under \`${body.prefix}\``
+                    : `Restarting ${body.restarted} with its launch file's prefix`, 'info');
+            }
+        } finally {
+            setBusy(false);
+        }
+    };
+    return html`
+        <form class="restart-with" onSubmit=${(e) => { e.preventDefault(); run(); }}>
+            <input type="text" value=${prefix} placeholder="gdb -ex run --args"
+                aria-label="Launch prefix"
+                title="Words put in front of the command; empty restarts with the launch file's own"
+                onInput=${(e) => setPrefix(e.target.value)} />
+            <button type="submit" disabled=${busy}>Restart with prefix</button>
+        </form>`;
+}
 
 function shouldInclude(key, value) {
     return value !== null && value !== undefined;
@@ -43,7 +85,7 @@ function JsonValue({ val, depth }) {
     return html`<span class="json-value">${String(val)}</span>`;
 }
 
-export function InfoTab({ nodeData }) {
+export function InfoTab({ id, nodeData }) {
     if (!nodeData) {
         return html`<div class="content-details">
             <div class="no-nodes">Click "View" on a node to see information</div>
@@ -54,6 +96,7 @@ export function InfoTab({ nodeData }) {
 
     return html`
         <div class="content-details">
+            <${RestartWith} id=${id} />
             <div class="json-viewer">
                 ${entries.map(([key, value]) => {
                     if (value !== null && typeof value === 'object' && !Array.isArray(value)) {

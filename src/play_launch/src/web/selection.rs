@@ -113,9 +113,19 @@ pub struct SelectionState {
     pub busy: Mutex<()>,
     /// Topics every publisher of which is off, shared with the rule engine.
     pub absent_topics: crate::runtime_enforcement::AbsentTopics,
+    /// The resource monitor's latest snapshot, for each step's totals;
+    /// absent with monitoring off.
+    pub resources: Option<ResourceWatch>,
+    /// `--container-mode isolated`: a composable is its own process, which
+    /// cannot take a prefix.
+    pub isolated: bool,
 }
 
+pub type ResourceWatch =
+    tokio::sync::watch::Receiver<Arc<crate::monitoring::trends::ResourceSnapshot>>;
+
 impl SelectionState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         model: Arc<SystemModel>,
         members: &[(String, String)],
@@ -123,6 +133,8 @@ impl SelectionState {
         source: Option<Arc<LaunchSource>>,
         replace: Option<ReplaceFn>,
         absent_topics: crate::runtime_enforcement::AbsentTopics,
+        resources: Option<ResourceWatch>,
+        isolated: bool,
     ) -> Self {
         let key_of: HashMap<String, String> = members.iter().cloned().collect();
         let id_of = members
@@ -141,10 +153,38 @@ impl SelectionState {
             step_log: log_dir.join("selection.jsonl"),
             busy: Mutex::new(()),
             absent_topics,
+            resources,
+            isolated,
         }
     }
 
-    fn append_step(&self, line: serde_json::Value) {
+    /// What the members that run use together, from the monitor's latest
+    /// tick: `null` with monitoring off or before its first tick.
+    fn resource_totals(&self) -> serde_json::Value {
+        let Some(rx) = &self.resources else {
+            return serde_json::Value::Null;
+        };
+        let snap = rx.borrow().clone();
+        let live: Vec<_> = snap.members.iter().filter(|m| m.pid != 0).collect();
+        if live.is_empty() {
+            return serde_json::Value::Null;
+        }
+        let rss: u64 = live.iter().map(|m| m.rss_bytes).sum();
+        let cpu: f64 = live.iter().map(|m| m.cpu_percent).sum();
+        json!({
+            "members": live.len(),
+            "processes": live.iter().map(|m| m.processes).sum::<u32>(),
+            "rss_mb": (rss as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0,
+            "cpu_percent": (cpu * 10.0).round() / 10.0,
+        })
+    }
+
+    /// The step's line, with `before`: the resources in use just before it,
+    /// which is what the previous step left running.
+    fn append_step(&self, mut line: serde_json::Value) {
+        if let Some(obj) = line.as_object_mut() {
+            obj.insert("before".into(), self.resource_totals());
+        }
         let write = || -> std::io::Result<()> {
             let mut f = std::fs::OpenOptions::new()
                 .create(true)
@@ -154,6 +194,14 @@ impl SelectionState {
         };
         if let Err(e) = write() {
             tracing::warn!("could not append to {}: {e}", self.step_log.display());
+        }
+    }
+
+    /// At the end of a run that took steps: one `end` line with what the
+    /// last step left running.
+    pub fn record_end(&self) {
+        if self.step_log.exists() {
+            self.append_step(json!({ "t_ms": now_ms(), "step": "end" }));
         }
     }
 }
@@ -955,4 +1003,122 @@ mod zip_tests {
             String::from_utf8_lossy(&out.stdout)
         );
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RestartWithBody {
+    /// Words put in front of the member's command (`gdb -ex run --args`,
+    /// `valgrind`, `perf record -g --`); empty or absent restarts it with
+    /// the launch file's own prefix.
+    #[serde(default)]
+    pub prefix: Option<String>,
+}
+
+/// `POST /api/nodes/:id/restart-with`: restart one member under a prefix,
+/// the web UI's form of `--prefix`. A composable shares its container's
+/// process, so the prefix goes on the container (refused under `isolated`).
+/// The prefix stays with the member until the next restart-with or a fresh
+/// Apply; a plain Restart keeps it.
+pub async fn restart_with(
+    State(web): State<Arc<WebState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<RestartWithBody>,
+) -> Response {
+    let sel = match state_of(&web) {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    let Some(replace) = &sel.replace else {
+        return error(
+            StatusCode::CONFLICT,
+            "this run cannot respawn a member with a new command",
+        );
+    };
+    let Some(key) = sel.key_of.get(&id).cloned() else {
+        return error(StatusCode::BAD_REQUEST, format!("unknown member `{id}`"));
+    };
+    let Ok(_busy) = sel.busy.try_lock() else {
+        return error(
+            StatusCode::CONFLICT,
+            "another Apply or Reload is in progress",
+        );
+    };
+    let mut model: SystemModel = (**sel.model.read().await).clone();
+    let prefix = body
+        .prefix
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(str::to_string);
+    let target = match &prefix {
+        Some(p) => {
+            let selector: selection::Selector = match format!("node:{key}").parse() {
+                Ok(s) => s,
+                Err(e) => return error(StatusCode::BAD_REQUEST, e),
+            };
+            match crate::commands::run_control::apply_prefixes(
+                &mut model,
+                &[(selector, p.clone())],
+                sel.isolated,
+            ) {
+                Ok(applied) => match applied.into_iter().next() {
+                    Some((target, _)) => target,
+                    None => {
+                        return error(
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            format!("`{key}` matched nothing to prefix"),
+                        );
+                    }
+                },
+                Err(e) => return error(StatusCode::UNPROCESSABLE_ENTITY, format!("{e:#}")),
+            }
+        }
+        // Back to the launch file's own prefix, on whichever process the
+        // member's own runs in.
+        None => match model
+            .structure
+            .nodes
+            .get(&key)
+            .and_then(|n| n.container.clone())
+        {
+            Some(container) if !sel.isolated => container,
+            _ => key.clone(),
+        },
+    };
+    let Some(target_id) = sel.id_of.get(&target).cloned() else {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("`{target}` is not a member of this run"),
+        );
+    };
+    let h = &web.member_handle;
+    let members = h.list_members().await;
+    if by_id(&members, &target_id).is_some_and(|m| m.excluded) {
+        return error(
+            StatusCode::CONFLICT,
+            format!("`{target_id}` is switched off; switch it on first"),
+        );
+    }
+    let keys: BTreeSet<String> = [target.clone()].into_iter().collect();
+    for (to, ev) in replace(&model, &sel.id_of, &keys) {
+        send(h, &to, ev).await;
+    }
+    if let Err(e) = h.restart_member(&target_id).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"));
+    }
+    tracing::info!(
+        "[Web UI] restarting `{target_id}` under {}",
+        prefix.as_deref().map_or_else(
+            || "its launch file's prefix".to_string(),
+            |p| format!("`{p}`")
+        )
+    );
+    sel.append_step(json!({
+        "t_ms": now_ms(),
+        "step": "restart_with",
+        "member": id,
+        "restarted": target_id,
+        "prefix": prefix,
+    }));
+    Json(json!({ "restarted": target_id, "prefix": prefix })).into_response()
 }

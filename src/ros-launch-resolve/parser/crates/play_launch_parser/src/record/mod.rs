@@ -8,7 +8,8 @@ pub use generator::{
     resolve_exec_path,
 };
 pub use types::{
-    ComposableNodeContainerRecord, ConfigEvent, ConfigEventKind, DroppedAction, ExitCodes,
-    LoadNodeRecord, NodeRecord, ParamOrigin, ProcessSpawn, RecordJson, ScopeEntry, ScopeOrigin,
-    ScopeTable, absolute_path, all_exit_codes, canonicalize_path, extract_package_from_path,
+    ComposableNodeContainerRecord, ConfigEvent, ConfigEventKind, DroppedAction, EntryContext,
+    ExitCodes, LoadNodeRecord, NodeRecord, ParamOrigin, ProcessSpawn, RecordJson, ScopeEntry,
+    ScopeOrigin, ScopeTable, absolute_path, all_exit_codes, canonicalize_path,
+    extract_package_from_path,
 };

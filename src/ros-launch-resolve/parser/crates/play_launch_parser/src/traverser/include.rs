@@ -51,6 +51,19 @@ impl IncludeArgs<'_> {
 }
 
 impl LaunchTraverser {
+    /// What an include sees where it is included (phase 106 export): the
+    /// global parameters, remaps and environment in effect.
+    fn entry_context(&self) -> crate::record::EntryContext {
+        let mut env: Vec<(String, Option<String>)> =
+            self.context.environment_overlay().into_iter().collect();
+        env.sort();
+        crate::record::EntryContext {
+            global_params: self.context.global_parameters().into_iter().collect(),
+            remaps: self.context.remappings(),
+            env,
+        }
+    }
+
     pub(crate) fn process_include(&mut self, include: &IncludeAction) -> Result<()> {
         // `IncludeLaunchDescription.execute` resolves the file BEFORE it sets
         // any argument.
@@ -197,6 +210,9 @@ impl LaunchTraverser {
                 self.context.configurations(),
                 Some(self.current_scope_id),
             );
+            let entry_context = self.entry_context();
+            self.scope_table
+                .set_entry_context(child_scope_id, entry_context);
             let prev_scope_id = std::mem::replace(&mut self.current_scope_id, child_scope_id);
             let mark = self.delay_mark();
             self.include_chain.push(canonical_path);
@@ -292,6 +308,9 @@ impl LaunchTraverser {
             self.context.configurations(),
             Some(self.current_scope_id),
         );
+        let entry_context = self.entry_context();
+        self.scope_table
+            .set_entry_context(child_scope_id, entry_context);
         let prev_scope_id = std::mem::replace(&mut self.current_scope_id, child_scope_id);
         let prev_file = self.context.current_file().cloned();
         let mark = self.delay_mark();

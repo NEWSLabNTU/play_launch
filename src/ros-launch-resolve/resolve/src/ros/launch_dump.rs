@@ -24,6 +24,23 @@ pub struct ScopeOrigin {
     pub path: Option<String>,
 }
 
+/// What an include saw where it was included (phase 106): the global
+/// parameters, global remaps and environment sets/unsets in effect. An
+/// exported `<include>` recreates them in front of the file, since an
+/// included file sees all of it and not only its arguments. The nodes carry
+/// the same facts each, but cannot say which of them came from before the
+/// include and which from inside it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct EntryContext {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub global_params: Vec<(String, String)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remaps: Vec<(String, String)>,
+    /// `(name, Some(value))` a set, `(name, None)` an unset; sorted by name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env: Vec<(String, Option<String>)>,
+}
+
 /// A scope in the launch tree (from parser Phase 30).
 /// File scopes have `origin: Some(...)`, group scopes have `origin: None`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -42,6 +59,11 @@ pub struct ScopeEntry {
     /// from older records.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_span: Option<(usize, usize)>,
+    /// Phase 106: the global parameters, remaps and environment in effect
+    /// where this file was included. File scopes only; absent from the
+    /// Python dumper.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_context: Option<EntryContext>,
 }
 
 impl ScopeEntry {

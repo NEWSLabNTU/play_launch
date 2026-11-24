@@ -15,6 +15,10 @@ name: string, pid: number, rss_bytes: number, threads: number, fds: number,
  */
 processes: number, 
 /**
+ * CPU over the last tick, percent of one core.
+ */
+cpu_percent: number, 
+/**
  * RSS fitted over the window, bytes per minute.
  */
 rss_trend: Fit | null, fd_trend: Fit | null, 

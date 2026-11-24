@@ -584,6 +584,7 @@ pub async fn run_monitoring_task(
                                         threads: metrics.num_threads,
                                         fds: metrics.num_fds,
                                         processes: metrics.num_processes,
+                                        cpu_percent: metrics.cpu_percent,
                                     },
                                     group.as_deref(),
                                     std::time::Instant::now(),

@@ -87,6 +87,23 @@ fn lexical_normalize(path: &Path) -> std::path::PathBuf {
     out
 }
 
+/// What an include saw where it was included (phase 106): the global
+/// parameters, global remaps and environment sets/unsets in effect. An
+/// exported `<include>` recreates them in front of the file, since an
+/// included file sees all of it and not only its arguments. The nodes carry
+/// the same facts each, but cannot say which of them came from before the
+/// include and which from inside it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct EntryContext {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub global_params: Vec<(String, String)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remaps: Vec<(String, String)>,
+    /// `(name, Some(value))` a set, `(name, None)` an unset; sorted by name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env: Vec<(String, Option<String>)>,
+}
+
 /// A scope in the launch tree.
 /// File scopes have `origin: Some(...)` — one per launch file invocation.
 /// Group scopes have `origin: None` — one per `<group>` that modifies
@@ -109,6 +126,11 @@ pub struct ScopeEntry {
     /// `<let>`s, and the files it included (phase 94).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_span: Option<(usize, usize)>,
+    /// Phase 106: the global parameters, remaps and environment in effect
+    /// where this file was included. File scopes only; absent from the
+    /// Python dumper.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_context: Option<EntryContext>,
 }
 
 impl ScopeEntry {
@@ -176,6 +198,7 @@ impl ScopeTable {
             args,
             parent,
             config_span: None,
+            entry_context: None,
         });
         id
     }
@@ -190,8 +213,16 @@ impl ScopeTable {
             args: HashMap::new(),
             parent,
             config_span: None,
+            entry_context: None,
         });
         id
+    }
+
+    /// Record what an include saw where it was included (phase 106).
+    pub fn set_entry_context(&mut self, id: usize, context: EntryContext) {
+        if let Some(entry) = self.entries.get_mut(id) {
+            entry.entry_context = Some(context);
+        }
     }
 
     /// Record the configuration events a file scope's run covered.

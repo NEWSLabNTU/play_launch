@@ -1,9 +1,9 @@
 # Extracting a launch file from a launch tree
 
-**Status:** implemented 2026-11-24 (phase 106 W5). Two gaps remain: the
-include form does not recreate global parameters, remaps and environment at
-an include point (4.2), so such an include is written one level down; and
-the command form refuses a composable node. Split from
+**Status:** implemented 2026-11-24 (phase 106 W5). The include form
+recreates the global parameters, remaps and environment in effect at an
+include point (4.2), and the command form takes a composable node (6.1).
+Split from
 `launch-selection.md`, where it was the "generated launch file". Selecting
 what to run and writing a launch file for it are separate features: this one
 writes a file and runs nothing. It is also how a selection is made permanent:
@@ -130,9 +130,9 @@ generated `<include>` has to recreate:
 | the arguments the include passed | `ScopeInfo.args`, resolved | `<arg name=… value=…/>` |
 | the namespace | `ScopeInfo.ns` | `<group><push-ros-namespace namespace=…/>` around it |
 | launch configurations set by ancestors and earlier siblings, not passed as arguments | the dump's configuration log, through each scope's `config_span` (phase 94); not in the model | `<let>` before the include, for each name the file reads |
-| global parameters (`<set_parameter>`) | per node, not per scope | `<set_parameter>` before the include |
-| global remaps (`<set_remap>`) | per node, not per scope | `<set_remap>` before the include |
-| environment (`<set_env>`, `<unset_env>`) | per node (`env`, `env_unset`), not per scope | `<set_env>`/`<unset_env>` in the group |
+| global parameters (`<set_parameter>`) | per node; per scope in the dump (`entry_context`) | `<set_parameter>` before the include |
+| global remaps (`<set_remap>`) | per node; per scope in the dump (`entry_context`) | `<set_remap>` before the include |
+| environment (`<set_env>`, `<unset_env>`) | per node (`env`, `env_unset`); per scope in the dump (`entry_context`) | `<set_env>`/`<unset_env>` in the group |
 
 Two consequences:
 - the include-based form needs the in-memory dump, so it is extracted from a
@@ -140,7 +140,13 @@ Two consequences:
   model gains a per-scope context record;
 - global parameters, remaps and environment have to be recorded per scope,
   as they are in effect at the include point, rather than reconstructed from
-  the nodes inside, which may have changed them themselves.
+  the nodes inside, which may have changed them themselves. The Rust
+  parser records them on each include's scope (`ScopeEntry.entry_context`,
+  taken where the file is included); the Python dumper does not, so an
+  include it resolved that depends on them is still written one level
+  down. On Autoware's planning simulator, `tier4_map_component` and
+  `tier4_planning_component` both stay one `<include>`, each preceded by
+  the vehicle parameters set before it.
 
 **Top-level arguments are passed through** (decided 2026-11-24). The
 generated file declares each argument of the original command as its own
@@ -194,7 +200,12 @@ self-contained form, `<dir>/params/<member>.yaml`), and prints:
 - the includes it had to open (5), with the first difference for each.
 
 The command form prints one node's command line and writes its parameter
-file; it takes exactly one node.
+file; it takes exactly one plain node or container. For one composable it
+writes a script that loads it with `ros2 component load` (name, namespace,
+each resolved parameter as `-p`, remaps, extra arguments as `-e`). When the
+selection keeps its container (the closure does unless `--no-deps`), the
+script starts the container first and retries the load until the container
+answers; with `--no-deps`, it loads into a container already running.
 
 ### 6.2 The header
 

@@ -174,6 +174,7 @@ fn test_scope_serialization_roundtrip() {
         args: HashMap::new(),
         parent: None,
         config_span: None,
+        entry_context: None,
     });
 
     let json = record.to_json().unwrap();

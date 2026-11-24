@@ -466,6 +466,12 @@ Each Apply and each Reload appends one line to
   issues open during it, whether each issue's subject had a cut input, and
   CPU and memory totals of the kept set over the step.
 
+As built, each line carries `before`: members, processes, RSS and CPU of
+everything running at the resource monitor's latest tick, taken just
+before the step acts, so it is what the previous step left running (`null`
+with monitoring off). A run that took steps ends with an `end` line holding
+the same for the last one. A Restart with… adds a `restart_with` line.
+
 That is the evidence for a fault search, and the on/off cost comparison of
 U10 falls out of two adjacent lines.
 

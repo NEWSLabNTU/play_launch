@@ -182,6 +182,19 @@
     flex: 1;
 }
 
+/* Info tab: restart under a launch prefix (phase 106). */
+.restart-with {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.restart-with input {
+    flex: 1;
+    min-width: 0;
+    font-family: monospace;
+}
+
 /* ===== Parameters Tab (Phase 24) ===== */
 
 .param-container {

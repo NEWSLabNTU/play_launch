@@ -90,6 +90,7 @@ def dump_yaml(value) -> str:
         result = result[:-3].rstrip()
     return result
 
+
 def param_value_to_str(value) -> str:
     """Render a parameter value for the spawned node.
 

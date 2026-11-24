@@ -552,6 +552,7 @@ pub(crate) async fn play(
     let (trends_tx, trends_rx) = tokio::sync::watch::channel(std::sync::Arc::new(
         crate::monitoring::trends::ResourceSnapshot::default(),
     ));
+    let resources_rx = common.is_monitoring_enabled().then(|| trends_rx.clone());
     let (startup_tx, startup_rx) = tokio::sync::watch::channel(std::sync::Arc::new(
         crate::health::startup::StartupTimeline::default(),
     ));
@@ -1678,6 +1679,7 @@ pub(crate) async fn play(
     };
 
     // Setup web UI if requested (direct StateEvent streaming)
+    let mut selection_for_end: Option<std::sync::Arc<crate::web::selection::SelectionState>> = None;
     let (runner_task, web_ui_task, param_events_task) = if common.is_web_ui_enabled() {
         debug!("Setting up web UI with direct StateEvent streaming...");
 
@@ -1711,6 +1713,20 @@ pub(crate) async fn play(
         // coordinator used, and the mismatch would be silent.
         let node_scope_map = node_scopes_by_member_id(&member_handle, &fqn_scope_map).await;
 
+        let selection = std::sync::Arc::new(
+            selection_state(
+                &member_handle,
+                system_model.clone(),
+                &log_dir,
+                launch_source.clone(),
+                container_mode,
+                absent_topics.clone(),
+                resources_rx.clone(),
+            )
+            .await,
+        );
+        selection_for_end = Some(selection.clone());
+
         let web_state = std::sync::Arc::new(
             web::WebState::new(
                 member_handle.clone(),
@@ -1726,17 +1742,7 @@ pub(crate) async fn play(
             .with_health(Some(health_rx.clone()))
             .with_startup(Some(startup_rx.clone()))
             .with_scope_paths(contract_view.scope_paths.clone())
-            .with_selection(std::sync::Arc::new(
-                selection_state(
-                    &member_handle,
-                    system_model.clone(),
-                    &log_dir,
-                    launch_source.clone(),
-                    container_mode,
-                    absent_topics.clone(),
-                )
-                .await,
-            )),
+            .with_selection(selection.clone()),
         );
         let web_shutdown = shutdown_signal.clone();
 
@@ -2230,6 +2236,11 @@ pub(crate) async fn play(
     signal_handler::wait_for_completion_windows(ctx, background_tasks, task_names, &cleanup_guard)
         .await;
 
+    // Phase 106: a run that took switch steps ends its step record.
+    if let Some(sel) = &selection_for_end {
+        sel.record_end();
+    }
+
     // Phase 38.10: all actors have completed (and with them, every ActorConfig
     // holding a SchedHelper clone). Drop our own clone so the owner task sees
     // the mpsc channel close and shuts the RT helper down gracefully; bound
@@ -2367,6 +2378,7 @@ async fn selection_state(
     launch_source: Option<std::sync::Arc<crate::web::selection::LaunchSource>>,
     container_mode: cli::options::ContainerMode,
     absent_topics: crate::runtime_enforcement::AbsentTopics,
+    resources: Option<crate::web::selection::ResourceWatch>,
 ) -> crate::web::selection::SelectionState {
     let members = member_handle.member_model_keys().await;
     let node_log_dir = log_dir.join("node");
@@ -2393,6 +2405,8 @@ async fn selection_state(
         launch_source,
         Some(replace),
         absent_topics,
+        resources,
+        container_mode == cli::options::ContainerMode::Isolated,
     )
 }
 
@@ -2542,6 +2556,7 @@ fn launch_tree_from_model(
         .iter()
         .map(|(key, info)| ScopeEntry {
             config_span: Default::default(),
+            entry_context: None,
             id: ids[key.as_str()],
             origin: Some(ScopeOrigin {
                 pkg: info.package.clone(),

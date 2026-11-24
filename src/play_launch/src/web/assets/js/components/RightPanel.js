@@ -70,7 +70,7 @@ export function RightPanel() {
             </div>
             <div class="right-panel-content">
                 <div class="tab-content" style=${{ display: tab === 'info' ? 'flex' : 'none' }}>
-                    <${InfoTab} nodeData=${nodeData || storeNode} />
+                    <${InfoTab} id=${name} nodeData=${nodeData || storeNode} />
                 </div>
                 <div class="tab-content" style=${{ display: tab === 'params' ? 'flex' : 'none' }}>
                     ${tab === 'params' && html`<${ParametersTab} nodeName=${name} />`}
