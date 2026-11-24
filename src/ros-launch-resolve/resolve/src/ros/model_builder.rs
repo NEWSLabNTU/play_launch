@@ -162,6 +162,16 @@ fn scope_keys(dump: &LaunchDump) -> BTreeMap<usize, String> {
     keys
 }
 
+/// Model scope key -> the dump's scope id, for the file scopes (phase 106
+/// export: an `<include>` needs the dump entry's path, arguments and
+/// namespace).
+pub fn scope_keys_by_key(dump: &LaunchDump) -> std::collections::HashMap<String, usize> {
+    scope_keys(dump)
+        .into_iter()
+        .map(|(id, k)| (k, id))
+        .collect()
+}
+
 /// Walk the scope parent chain from `scope_id` and return the first scope
 /// that has a loaded manifest containing a node declaration named `name`.
 fn find_node_decl<'a>(

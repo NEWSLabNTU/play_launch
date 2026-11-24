@@ -23,6 +23,30 @@ allowance heavily.
   about a lifecycle manager, `/clock` or TF cut away; `run_info.json`
   records the selection. `resolve … --only … --explain` prints the marked
   tree without running anything.
+- **New (phase 106 W4): on/off switches on the web UI's Launch page.** Each
+  include and node gets a switch; switching edits a pending set, and the
+  page shows what Apply would start and stop, the containers kept for
+  their composables, the inputs cut and the warnings before anything
+  happens. **Apply live** changes only what changed; **Apply fresh**
+  restarts every kept member, so state left in kept nodes cannot hide a
+  fault. **Copy command** gives the launch command with `--only`/`--exclude`
+  for what is on. **Reload** re-reads the launch files and marks the nodes
+  whose resolution changed; the next Apply restarts them with it. Each step
+  is recorded in `selection.jsonl` in the run's log directory. A topic whose
+  publishers are all switched off is not judged silent by runtime
+  enforcement. Excluded members read "excluded" on the Health page's
+  startup timeline and are not probed for parameters.
+- **New (phase 106 W5): `play_launch export`.** Writes part of a launch
+  tree as a launch file: `--form include` (the default) keeps an
+  `<include>` of the original file wherever a whole include is selected, so
+  it follows later edits inside it; `--form self-contained` writes every
+  node flat with its parameter files, a snapshot; `--form command` writes
+  one node's command line. Takes what `launch` takes plus `-o <dir>`; also
+  `--model` for a recorded run's model, and `--again <file>` to regenerate
+  from the command in the file's header. The written file is resolved again
+  and checked against the selection; an include whose nodes come out
+  different is written one level down. The Launch page's **Export…** writes
+  into the run's log directory and offers a zip.
 - **New (phase 106 W3): bounded runs and a per-run launch prefix.**
   `--run-for <duration>` ends a launch after a time; `--fail-on
   health:<kind>[:<glob>]`, `--fail-on contract` and `--fail-on exit:<glob>`

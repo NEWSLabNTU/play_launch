@@ -150,6 +150,22 @@ pub enum Command {
         play_launch resolve demo_pkg pipeline.launch.xml -o - | less")]
     Resolve(ResolveArgs),
 
+    /// Write part of a launch tree as a launch file (phase 106). Takes what
+    /// `launch` takes, plus the form and a directory; the result runs with
+    /// `play_launch launch` or stock `ros2 launch`. `include` writes
+    /// `<include>`s of the original files wherever a whole include is
+    /// selected, so it follows later edits inside them; `self-contained`
+    /// writes every node flat, a snapshot; `command` writes one node's
+    /// command line. The written file is resolved again and checked against
+    /// the selection.
+    #[command(after_help = "Examples:\n  \
+        play_launch export autoware_launch autoware.launch.xml map_path:=/maps/x \\\n      \
+            --only tier4_sensing_component.launch.xml -o sensing/\n  \
+        play_launch export my_pkg bringup.launch.py --exclude /rviz2 --form self-contained -o frozen/\n  \
+        play_launch export my_pkg bringup.launch.py --only /lidar/driver --form command -o driver/\n  \
+        play_launch export --again sensing/tier4_sensing_component_export.launch.xml")]
+    Export(ExportArgs),
+
     /// Dump launch execution without spawning — emits the SystemModel
     /// (the only dump artifact; Phase 47.B2 retired `record.json`)
     #[command(after_help = "Examples:\n  \
@@ -733,6 +749,66 @@ pub struct RunControlOptions {
     /// prefix goes on its container.
     #[arg(long, value_name = "SELECTOR=COMMAND")]
     pub prefix: Vec<String>,
+}
+
+/// `play_launch export` (phase 106 W5).
+#[derive(Args)]
+pub struct ExportArgs {
+    /// Package name or path to launch file (omit with --model or --again)
+    pub package_or_path: Option<String>,
+
+    /// Launch file name (if package_or_path is a package name)
+    pub launch_file: Option<String>,
+
+    /// Launch arguments in KEY:=VALUE format
+    pub launch_arguments: Vec<String>,
+
+    #[command(flatten)]
+    pub selection: SelectionOptions,
+
+    /// What to write.
+    #[arg(long, value_enum, default_value = "include")]
+    pub form: ExportForm,
+
+    /// The directory to write into (created when absent).
+    #[arg(long, short = 'o', default_value = ".")]
+    pub out: PathBuf,
+
+    /// The file's name, without `.launch.xml` (default: from the first
+    /// `--only`).
+    #[arg(long)]
+    pub name: Option<String>,
+
+    /// Export from a saved SystemModel (a recorded run's
+    /// `system_model.yaml`) instead of a launch file; self-contained and
+    /// command forms only.
+    #[arg(long, value_name = "PATH")]
+    pub model: Option<PathBuf>,
+
+    /// Regenerate an exported file from the command in its header, after
+    /// the original launch files changed.
+    #[arg(long, value_name = "FILE")]
+    pub again: Option<PathBuf>,
+
+    /// Parser backend (see `launch --parser`).
+    #[arg(long, value_enum, default_value = "rust")]
+    pub parser: ParserBackend,
+
+    /// Overlay root for user-supplied contracts (see `check --contracts`).
+    #[arg(long, value_name = "PATH")]
+    pub contracts: Option<PathBuf>,
+
+    /// Disable the provider-sidecar channel (see `check`).
+    #[arg(long)]
+    pub no_provider_contracts: bool,
+}
+
+/// `export --form`.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExportForm {
+    Include,
+    SelfContained,
+    Command,
 }
 
 /// What a launch starts with (`--start`).

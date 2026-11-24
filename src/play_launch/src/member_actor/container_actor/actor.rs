@@ -127,6 +127,17 @@ impl ContainerActor {
         }
     }
 
+    /// Phase 106 Reload: spawn from the new resolution from now on; the
+    /// container keeps its own log directory and cgroup.
+    pub(super) fn take_context(&mut self, replacement: &crate::member_actor::events::Replacement) {
+        if let Some(mut context) = replacement.take() {
+            context.output_dir = self.context.output_dir.clone();
+            context.cgroup = self.context.cgroup.take();
+            self.context = context;
+            tracing::info!("{}: took the reloaded launch's resolution", self.name);
+        }
+    }
+
     /// Get a receiver for container state (for composable nodes)
     pub fn container_state_rx(&self) -> watch::Receiver<ContainerState> {
         self.container_state_tx.subscribe()
@@ -409,6 +420,12 @@ impl ContainerActor {
                         }
                         ControlEvent::ToggleComposableAutoLoad { name, enabled } => {
                             self.supervisor.handle_toggle_composable_auto_load(&name, enabled).await;
+                        }
+                        ControlEvent::ReplaceContext(replacement) => {
+                            self.take_context(&replacement);
+                        }
+                        ControlEvent::ReplaceComposable { name, metadata } => {
+                            self.supervisor.replace_composable_metadata(&name, *metadata);
                         }
                         _ => {
                             warn!("{}: Unhandled control event: {:?}", self.name, event);

@@ -1027,6 +1027,31 @@ impl ComposableSupervisor {
     }
 
     /// Handle ToggleComposableAutoLoad control event.
+    /// Phase 106 Reload: load this composable with new metadata from now on.
+    /// Its auto-load, log directory and scheduling stay as they were.
+    pub(super) fn replace_composable_metadata(
+        &mut self,
+        name: &str,
+        mut metadata: ComposableNodeMetadata,
+    ) {
+        match self.composable_nodes.get_mut(name) {
+            Some(entry) => {
+                metadata.auto_load = entry.metadata.auto_load;
+                metadata.output_dir = entry.metadata.output_dir.clone();
+                metadata.sched = entry.metadata.sched.clone();
+                entry.metadata = metadata;
+                debug!(
+                    "{}: '{}' took the reloaded launch's resolution",
+                    self.container_name, name
+                );
+            }
+            None => warn!(
+                "{}: cannot replace '{}': composable node not found",
+                self.container_name, name
+            ),
+        }
+    }
+
     pub(super) async fn handle_toggle_composable_auto_load(&mut self, name: &str, enabled: bool) {
         debug!(
             "{}: Handling ToggleComposableAutoLoad for '{}' (enabled: {})",

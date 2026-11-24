@@ -28,6 +28,7 @@ fn logs_to_stderr(command: &Command) -> bool {
     matches!(
         command,
         Command::Resolve(_)
+            | Command::Export(_)
             | Command::Dump(_)
             | Command::Check(_)
             | Command::Migrate(_)
@@ -215,6 +216,9 @@ fn dispatch(opts: &Options) -> eyre::Result<()> {
         }
         play_launch::cli::options::Command::Resolve(args) => {
             play_launch::commands::handle_resolve(args)?;
+        }
+        play_launch::cli::options::Command::Export(args) => {
+            play_launch::commands::handle_export(args)?;
         }
         play_launch::cli::options::Command::Dump(args) => {
             play_launch::commands::handle_dump(args)?;

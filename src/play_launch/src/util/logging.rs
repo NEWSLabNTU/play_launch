@@ -34,6 +34,7 @@ fn get_verbose_flag(opts: &Options) -> bool {
         // honouring `--verbose` there and nowhere else in the group would be
         // an inconsistency, not a feature.
         crate::cli::options::Command::Resolve(_) => false,
+        crate::cli::options::Command::Export(_) => false,
         crate::cli::options::Command::Dump(_) => false,
         crate::cli::options::Command::Check(_) => false,
         crate::cli::options::Command::Migrate(_) => false,

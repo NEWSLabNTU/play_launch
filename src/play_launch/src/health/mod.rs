@@ -1065,7 +1065,8 @@ pub async fn run_health_task(inputs: HealthInputs) {
                 // the timeout and learns nothing.
                 let known: std::collections::HashSet<&str> = list
                     .iter()
-                    .filter(|m| m.ros_name_known && !m.is_container)
+                    // An Excluded member is not running by choice (phase 106).
+                    .filter(|m| m.ros_name_known && !m.is_container && !m.excluded)
                     .map(|m| m.id.as_str())
                     .collect();
                 let fqns: HashMap<String, String> = handle

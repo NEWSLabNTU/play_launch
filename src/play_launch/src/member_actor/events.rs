@@ -48,6 +48,39 @@ pub enum ControlEvent {
     Load,
     /// Unload a composable node (composable node actors only)
     Unload,
+    /// Phase 106: the member's resolution changed at a Reload; spawn from
+    /// this context from now on (regular nodes and containers). The output
+    /// directory and cgroup stay the member's own.
+    ReplaceContext(Replacement),
+    /// Phase 106: a composable's resolution changed at a Reload; load it
+    /// with this metadata from now on (container actors only).
+    ReplaceComposable {
+        name: String,
+        metadata: Box<crate::member_actor::container_actor::ComposableNodeMetadata>,
+    },
+}
+
+/// A spawn context handed to an actor once (phase 106 Reload). Shared so the
+/// event stays `Clone`; the actor takes it.
+#[derive(Clone)]
+pub struct Replacement(
+    std::sync::Arc<std::sync::Mutex<Option<crate::execution::context::NodeContext>>>,
+);
+
+impl Replacement {
+    pub fn new(context: crate::execution::context::NodeContext) -> Self {
+        Replacement(std::sync::Arc::new(std::sync::Mutex::new(Some(context))))
+    }
+
+    pub fn take(&self) -> Option<crate::execution::context::NodeContext> {
+        self.0.lock().ok().and_then(|mut c| c.take())
+    }
+}
+
+impl std::fmt::Debug for Replacement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Replacement")
+    }
 }
 
 /// State events emitted by actors

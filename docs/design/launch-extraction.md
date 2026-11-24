@@ -1,6 +1,9 @@
 # Extracting a launch file from a launch tree
 
-**Status:** decided 2026-11-24, implemented as phase 106 W5. Split from
+**Status:** implemented 2026-11-24 (phase 106 W5). Two gaps remain: the
+include form does not recreate global parameters, remaps and environment at
+an include point (4.2), so such an include is written one level down; and
+the command form refuses a composable node. Split from
 `launch-selection.md`, where it was the "generated launch file". Selecting
 what to run and writing a launch file for it are separate features: this one
 writes a file and runs nothing. It is also how a selection is made permanent:

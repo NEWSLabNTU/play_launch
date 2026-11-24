@@ -109,6 +109,21 @@ pub fn handle_launch(cmd_args: &LaunchCommandArgs) -> Result<()> {
             return Ok(());
         }
 
+        // Phase 106: the Launch page's Reload and Export re-resolve the same
+        // launch file with the same arguments.
+        let source = std::sync::Arc::new(crate::web::selection::LaunchSource {
+            package_or_path: args.package_or_path.clone(),
+            launch_file: launch_file.clone(),
+            launch_arguments: launch_arguments.clone(),
+            parser: args.parser.into(),
+            contracts: args.common.contract_opts.contracts.clone(),
+            no_provider_contracts: args.common.contract_opts.no_provider_contracts,
+            sched: args.common.sched_opts.sched.clone(),
+            target: args.common.sched_opts.target.clone(),
+            isolated: args.common.containers.container_mode
+                == crate::cli::options::ContainerMode::Isolated,
+        });
+
         info!("Step 3/3: Replaying launch execution...");
         super::up::play(
             dump,
@@ -116,6 +131,7 @@ pub fn handle_launch(cmd_args: &LaunchCommandArgs) -> Result<()> {
             &args.common,
             selection,
             run_control,
+            Some(source),
         )
         .await
     })

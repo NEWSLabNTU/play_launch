@@ -1,12 +1,156 @@
 // Launch Tree View — displays the launch file include tree with nodes.
 
-import { useState, useEffect, useCallback } from '../vendor/hooks.module.js';
+import { useState, useEffect, useCallback, useRef } from '../vendor/hooks.module.js';
 import { html } from '../html.js';
 import {
     launchTree, launchTreeExpanded, launchTreeSelection,
     nodes, getStatusString, getNodeByKey, memberFqn } from '../store.js';
 import { clickable } from '../a11y.js';
 import { StderrIcon } from './StderrIcon.js';
+import {
+    pending, pendingReport, pendingCount, selectionInfo, effectiveOn, setSwitches,
+    applyPending, discardPending, fetchSelection, reloadTree, copyCommand,
+    exportOpen, exportResult, exportSelection,
+} from '../selection.js';
+
+/**
+ * Export what is on as a launch file (phase 106 W5). The server writes it
+ * into this run's log directory and says how to run it; the zip is for
+ * another machine.
+ */
+function ExportPanel() {
+    const formRef = useRef(null);
+    const nameRef = useRef(null);
+    if (!exportOpen.value) return null;
+    const r = exportResult.value;
+    const run = () => exportSelection(formRef.current.value, nameRef.current.value.trim());
+    return html`
+        <div class="lt-pending lt-export" role="region" aria-label="Export">
+            <div class="lt-pending-head">
+                <strong>Export what is on:</strong>
+                <select ref=${formRef} class="lt-export-form" aria-label="Form">
+                    <option value="include">include (follows edits to the included files)</option>
+                    <option value="self-contained">self-contained (a snapshot)</option>
+                    <option value="command">command (one node)</option>
+                </select>
+                <input ref=${nameRef} class="lt-export-name" placeholder="name (letters, digits, _ -)"
+                    aria-label="Name" />
+                <span class="lt-pending-btns">
+                    <button class="lt-btn lt-btn-primary" disabled=${!!(r && r.busy)} onClick=${run}>Export</button>
+                    <button class="lt-btn" onClick=${() => { exportOpen.value = false; exportResult.value = null; }}>Close</button>
+                </span>
+            </div>
+            ${r && r.busy && html`<div class="lt-pending-list">Resolving and checking the export…</div>`}
+            ${r && r.error && html`<div class="lt-pending-error">${r.error}</div>`}
+            ${r && r.file && html`
+                <div class="lt-pending-list"><span class="lt-pending-label">Written on the host:</span>
+                    <span class="lt-pending-item">${r.file}</span>
+                    <a class="lt-btn" href=${r.zip} download>Download zip</a></div>
+                <div class="lt-pending-list"><span class="lt-pending-label">Run it with:</span></div>
+                ${r.run.map((c) => html`<pre class="lt-export-cmd">${c}</pre>`)}
+                ${r.opened.length > 0 && html`<ul class="lt-pending-warnings">${r.opened.map((o) =>
+                    html`<li>written one level down (the include alone did not match): ${o}</li>`)}</ul>`}
+                ${r.lost.length > 0 && html`<ul class="lt-pending-warnings">${r.lost.map((l) =>
+                    html`<li>not expressible in XML, noted in a comment: ${l}</li>`)}</ul>`}
+                ${r.differences.length > 0 && html`<ul class="lt-pending-warnings">${r.differences.map((d) =>
+                    html`<li>does not reproduce the selection exactly: ${d}</li>`)}</ul>`}
+            `}
+        </div>
+    `;
+}
+
+/**
+ * For a file included more than once, the argument that tells this
+ * inclusion apart (`part=a`), as `resolve --explain` labels it; else null.
+ */
+function repeatLabel(scope, scopes) {
+    if (!scope.origin) return null;
+    const same = scopes.filter((s) => s.origin && s.origin.file === scope.origin.file
+        && s.origin.pkg === scope.origin.pkg);
+    if (same.length < 2) return null;
+    const parent = scope.parent != null ? scopes[scope.parent] : null;
+    const keys = Object.keys(scope.args || {}).filter((k) => same.every(
+        (o) => o === scope || (o.args || {})[k] !== scope.args[k]));
+    // Prefer an argument the include passed (it differs from the parent's).
+    keys.sort((a, b) => {
+        const pa = parent && (parent.args || {})[a] === scope.args[a] ? 1 : 0;
+        const pb = parent && (parent.args || {})[b] === scope.args[b] ? 1 : 0;
+        return pa - pb || a.length - b.length || a.localeCompare(b);
+    });
+    return keys.length ? `${keys[0]}=${scope.args[keys[0]]}` : null;
+}
+
+/** Every member id in a scope's subtree. */
+function subtreeMembers(scopeId, scopeChildren, scopeNodes) {
+    const out = [...(scopeNodes.get(scopeId) || [])];
+    for (const c of scopeChildren.get(scopeId) || []) {
+        out.push(...subtreeMembers(c, scopeChildren, scopeNodes));
+    }
+    return out;
+}
+
+/**
+ * The on/off switch of a node or a whole include (phase 106). An include's
+ * switch shows `on`, `off` or `partly` over its subtree; a click turns the
+ * whole subtree on unless all of it already is.
+ */
+function Switch({ ids, label }) {
+    pending.value; // re-render on edits
+    if (ids.length === 0) return null;
+    const on = ids.filter((id) => effectiveOn(id)).length;
+    const state = on === 0 ? 'off' : on === ids.length ? 'on' : 'partly';
+    const edited = ids.some((id) => pending.value.has(id));
+    const toggle = (e) => {
+        e.stopPropagation();
+        setSwitches(ids, state !== 'on');
+    };
+    return html`
+        <span class="lt-switch lt-switch-${state} ${edited ? 'lt-switch-pending' : ''}"
+              role="switch" aria-checked=${state === 'on' ? 'true' : state === 'off' ? 'false' : 'mixed'}
+              aria-label=${`${label}: ${state}${edited ? ' (pending)' : ''}`}
+              title=${state === 'on' ? 'On: click to switch off' : 'Off or partly on: click to switch on'}
+              ...${clickable(toggle)}></span>
+    `;
+}
+
+/** The pending change, its evaluation, and Apply/Discard. */
+function PendingBar() {
+    const n = pendingCount.value;
+    if (n === 0) return null;
+    const r = pendingReport.value;
+    return html`
+        <div class="lt-pending" role="region" aria-label="Pending change">
+            <div class="lt-pending-head">
+                <strong>Pending:</strong>
+                ${r && !r.error
+                    ? html`<span>start ${r.start.length}, stop ${r.stop.length}${
+                        r.restart.length ? `, restart ${r.restart.length}` : ''}</span>`
+                    : html`<span>${n} switch(es) edited</span>`}
+                <span class="lt-pending-btns">
+                    <button class="lt-btn lt-btn-primary" disabled=${!!(r && r.error)}
+                        title="Start and stop only what changed"
+                        onClick=${() => applyPending('live')}>Apply live</button>
+                    <button class="lt-btn" disabled=${!!(r && r.error)}
+                        title="Stop everything that runs, then start the new set from nothing"
+                        onClick=${() => applyPending('fresh')}>Apply fresh</button>
+                    <button class="lt-btn" onClick=${discardPending}>Discard</button>
+                </span>
+            </div>
+            ${r && r.error && html`<div class="lt-pending-error">${r.error}</div>`}
+            ${r && !r.error && r.added.length > 0 && html`
+                <div class="lt-pending-list"><span class="lt-pending-label">Kept for their composables:</span>
+                    ${r.added.map((a) => html`<span class="lt-pending-item">${memberFqn(a.container)} (${a.needed_by})</span>`)}
+                </div>`}
+            ${r && !r.error && r.cut_inputs.length > 0 && html`
+                <div class="lt-pending-list"><span class="lt-pending-label">Inputs cut:</span>
+                    ${r.cut_inputs.map((c) => html`<span class="lt-pending-item"
+                        title=${'published only by ' + c.publishers.join(', ')}>${c.topic} (${c.subscribers})</span>`)}
+                </div>`}
+            ${r && !r.error && r.warnings.length > 0 && html`
+                <ul class="lt-pending-warnings">${r.warnings.map((w) => html`<li>${w}</li>`)}</ul>`}
+        </div>
+    `;
+}
 
 /** Toggle expand/collapse of a scope. */
 function toggleExpand(scopeId, e) {
@@ -234,6 +378,8 @@ function ScopeRow({ scope, scopes, depth, isExpanded, hasChildren, scopeId, scop
              style=${{ paddingLeft: `${depth * 20 + 8}px` }}
              ...${clickable(handleSelect)}
              onDblClick=${handleDblClick}>
+            <${Switch} ids=${subtreeMembers(scopeId, scopeChildren, scopeNodes)}
+                label=${file || 'group'} />
             <span class="lt-toggle" ...${clickable(handleToggle)}>
                 ${hasChildren ? (isExpanded ? '\u25BC' : '\u25B6') : '\u00A0'}
             </span>
@@ -242,6 +388,7 @@ function ScopeRow({ scope, scopes, depth, isExpanded, hasChildren, scopeId, scop
             ` : html`
                 <span class="lt-pkg">${pkg}</span>
                 <span class="lt-file">${file}</span>
+                ${repeatLabel(scope, scopes) && html`<span class="lt-badge">${repeatLabel(scope, scopes)}</span>`}
             `}
             ${!isGroup && scope.ns !== '/' && html`<span class="lt-ns">${scope.ns}</span>`}
             <${ScopeActivityIcon} scopeId=${scopeId}
@@ -293,16 +440,22 @@ function NodeRow({ name, depth }) {
         ? storeNode?.target_container || storeNode?.container_name
         : null;
 
+    const excluded = !!storeNode?.excluded;
+    const changed = (selectionInfo.value?.changed || []).includes(name);
     return html`
-        <div class="lt-row lt-node lt-node-${status} ${typeClass} ${isSelected ? 'lt-selected' : ''}"
-             style=${{ paddingLeft: `${depth * 20 + 28}px` }}
+        <div class="lt-row lt-node lt-node-${status} ${typeClass} ${isSelected ? 'lt-selected' : ''} ${excluded ? 'lt-excluded' : ''}"
+             style=${{ paddingLeft: `${depth * 20 + 8}px` }}
              ...${clickable(handleClick)}>
+            <${Switch} ids=${[name]} label=${fqn} />
+            <span class="lt-toggle">${'\u00A0'}</span>
             <span class="lt-dot ${typeClass} lt-status-${status}"></span>
             <span class="lt-node-name">${shortName}</span>
             ${containerRef && html`
                 <span class="lt-container-ref">${'\u2192'} ${containerRef}</span>
             `}
             <span class="lt-node-fqn">${fqn}</span>
+            ${excluded && html`<span class="lt-badge lt-badge-excluded" title="Not started in this run; switch it on to start it">Excluded</span>`}
+            ${changed && html`<span class="lt-badge lt-badge-changed" title="Its resolution changed at the last Reload; Apply restarts it">changed</span>`}
             <${ActivityIcon} nodeName=${name} />
         </div>
     `;
@@ -374,6 +527,8 @@ export function LaunchTreeView() {
 
     const roots = scopes.filter(s => s.parent === null || s.parent === undefined);
 
+    useEffect(() => { fetchSelection(); }, []);
+
     // Expand all on first load
     useEffect(() => {
         if (scopes.length > 0 && launchTreeExpanded.value.size <= 1) {
@@ -389,8 +544,18 @@ export function LaunchTreeView() {
                 <div class="lt-actions">
                     <button class="lt-btn" onClick=${() => expandAll(scopes)}>Expand All</button>
                     <button class="lt-btn" onClick=${collapseAll}>Collapse All</button>
+                    <button class="lt-btn" onClick=${copyCommand}
+                        title="Copy the launch command, with --only/--exclude for what is on now">Copy command</button>
+                    ${selectionInfo.value?.export && html`
+                        <button class="lt-btn" onClick=${() => { exportOpen.value = !exportOpen.value; }}
+                            title="Write what is on as a launch file, to run later or elsewhere">Export…</button>`}
+                    ${selectionInfo.value?.reload && html`
+                        <button class="lt-btn" onClick=${reloadTree}
+                            title="Re-read the launch files with the same arguments; changed nodes are restarted by the next Apply">Reload</button>`}
                 </div>
             </div>
+            <${PendingBar} />
+            <${ExportPanel} />
             <div class="lt-tree">
                 ${roots.map(root => html`
                     <${ScopeTree}

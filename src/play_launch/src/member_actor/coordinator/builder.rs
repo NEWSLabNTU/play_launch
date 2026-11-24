@@ -105,6 +105,7 @@ impl MemberCoordinatorBuilder {
                 .or(context.record.exec_name.clone()),
             ros_name_known: context.record.name.is_some() && context.record.package.is_some(),
             auto_load: None, // Not applicable for regular nodes
+            model_key: context.model_fqn.clone(),
         };
 
         self.regular_nodes.push(RegularNodeDefinition {
@@ -144,6 +145,7 @@ impl MemberCoordinatorBuilder {
             node_name: context.record.name.clone(),
             ros_name_known: context.record.name.is_some(),
             auto_load: None, // Not applicable for containers
+            model_key: context.model_fqn.clone(),
         };
 
         self.containers.push(ContainerDefinition {
@@ -189,6 +191,7 @@ impl MemberCoordinatorBuilder {
             node_name: Some(context.record.node_name.clone()),
             ros_name_known: true,
             auto_load: Some(auto_load),
+            model_key: context.model_fqn.clone(),
         };
 
         self.composable_nodes.push(ComposableNodeDefinition {
@@ -423,61 +426,13 @@ impl MemberCoordinatorBuilder {
             if let Some(container_member_name) = container_member_name {
                 // Get mutable reference to container actor
                 if let Some(container_actor) = container_actors.get_mut(&container_member_name) {
-                    // Convert parameters and extra_args
-                    let parameters =
-                        match crate::ros::parameter_conversion::convert_parameters_to_ros(
-                            &def.context.record.params,
-                        ) {
-                            Ok(params) => params,
-                            Err(e) => {
-                                warn!(
-                                    "Failed to convert parameters for composable node '{}': {:#}",
-                                    def.name, e
-                                );
-                                Vec::new()
-                            }
-                        };
-
-                    let extra_args =
-                        match crate::ros::parameter_conversion::convert_parameters_to_ros(
-                            &def.context
-                                .record
-                                .extra_args
-                                .iter()
-                                .map(|(k, v)| (k.clone(), v.clone()))
-                                .collect::<Vec<_>>(),
-                        ) {
-                            Ok(args) => args,
-                            Err(e) => {
-                                warn!(
-                                    "Failed to convert extra_args for composable node '{}': {:#}",
-                                    def.name, e
-                                );
-                                Vec::new()
-                            }
-                        };
-
-                    // Convert ComposableNodeContext to ComposableNodeMetadata
-                    let node_metadata =
-                        crate::member_actor::container_actor::ComposableNodeMetadata {
-                            package: def.context.record.package.clone(),
-                            plugin: def.context.record.plugin.clone(),
-                            node_name: def.context.record.node_name.clone(),
-                            namespace: def.context.record.namespace.clone(),
-                            remap_rules: def
-                                .context
-                                .record
-                                .remaps
-                                .iter()
-                                .map(|(src, tgt)| format!("{}:={}", src, tgt))
-                                .collect(),
-                            parameters,
-                            extra_args,
-                            auto_load: def.auto_load,
-                            output_dir: def.context.output_dir.clone(),
-                            sched: def.sched.clone(),
-                            start_after: def.start_after,
-                        };
+                    let node_metadata = composable_metadata(
+                        &def.context,
+                        &def.name,
+                        def.auto_load,
+                        def.sched.clone(),
+                        def.start_after,
+                    );
 
                     // Add composable node to container (keyed by canonical id;
                     // the actor's shared_state/StateEvent writes use this key)
@@ -679,5 +634,67 @@ impl MemberCoordinatorBuilder {
 impl Default for MemberCoordinatorBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The container's metadata for one composable, from its context (phase 106:
+/// shared by the build and by Reload, which hands a changed composable new
+/// metadata).
+pub(crate) fn composable_metadata(
+    context: &crate::execution::context::ComposableNodeContext,
+    name: &str,
+    auto_load: bool,
+    sched: Option<crate::execution::sched_apply::AppliedTask>,
+    start_after: Option<tokio::time::Instant>,
+) -> crate::member_actor::container_actor::ComposableNodeMetadata {
+    // Convert parameters and extra_args
+    let parameters =
+        match crate::ros::parameter_conversion::convert_parameters_to_ros(&context.record.params) {
+            Ok(params) => params,
+            Err(e) => {
+                warn!(
+                    "Failed to convert parameters for composable node '{}': {:#}",
+                    name, e
+                );
+                Vec::new()
+            }
+        };
+
+    let extra_args = match crate::ros::parameter_conversion::convert_parameters_to_ros(
+        &context
+            .record
+            .extra_args
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<Vec<_>>(),
+    ) {
+        Ok(args) => args,
+        Err(e) => {
+            warn!(
+                "Failed to convert extra_args for composable node '{}': {:#}",
+                name, e
+            );
+            Vec::new()
+        }
+    };
+
+    // Convert ComposableNodeContext to ComposableNodeMetadata
+    crate::member_actor::container_actor::ComposableNodeMetadata {
+        package: context.record.package.clone(),
+        plugin: context.record.plugin.clone(),
+        node_name: context.record.node_name.clone(),
+        namespace: context.record.namespace.clone(),
+        remap_rules: context
+            .record
+            .remaps
+            .iter()
+            .map(|(src, tgt)| format!("{}:={}", src, tgt))
+            .collect(),
+        parameters,
+        extra_args,
+        auto_load,
+        output_dir: context.output_dir.clone(),
+        sched,
+        start_after,
     }
 }

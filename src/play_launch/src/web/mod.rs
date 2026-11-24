@@ -24,6 +24,7 @@ mod broadcaster;
 mod handlers;
 mod metrics_broadcaster;
 mod origin_guard;
+pub mod selection;
 mod sse;
 pub mod web_types;
 
@@ -66,6 +67,8 @@ pub struct WebState {
     pub startup: Option<tokio::sync::watch::Receiver<Arc<crate::health::startup::StartupTimeline>>>,
     /// Scope paths the contract declares, for the chain view's budget line.
     pub scope_paths: Vec<crate::runtime_enforcement::view::ScopePathView>,
+    /// Phase 106: the Launch tree's switches. `None` for a run with no tree.
+    pub selection: Option<Arc<selection::SelectionState>>,
 }
 
 impl WebState {
@@ -93,7 +96,14 @@ impl WebState {
             health: None,
             startup: None,
             scope_paths: Vec::new(),
+            selection: None,
         }
+    }
+
+    /// Hand over the Launch tree's switches (phase 106).
+    pub fn with_selection(mut self, selection: Arc<selection::SelectionState>) -> Self {
+        self.selection = Some(selection);
+        self
     }
 
     /// Hand over the contract's scope paths (their budgets).
@@ -252,6 +262,12 @@ pub fn create_router(
         .route("/api/nodes/:name/topics", get(handlers::get_node_topics))
         .route("/api/graph", get(handlers::get_graph))
         .route("/api/launch-tree", get(handlers::get_launch_tree))
+        .route("/api/selection", get(selection::get_selection))
+        .route("/api/selection/check", post(selection::check))
+        .route("/api/selection/apply", post(selection::apply))
+        .route("/api/selection/reload", post(selection::reload))
+        .route("/api/selection/export", post(selection::export))
+        .route("/api/selection/export/:file", get(selection::export_zip))
         .route("/api/health/issues", get(handlers::get_health))
         .route("/api/health/dds_report", get(handlers::get_dds_report))
         .route("/api/startup", get(handlers::get_startup))

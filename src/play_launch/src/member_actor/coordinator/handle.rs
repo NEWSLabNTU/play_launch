@@ -79,6 +79,16 @@ impl MemberHandle {
         }
     }
 
+    /// `(member id, model key)` for every member the model names (phase 106).
+    pub async fn member_model_keys(&self) -> Vec<(String, String)> {
+        self.metadata
+            .read()
+            .await
+            .iter()
+            .filter_map(|(id, m)| m.model_key.clone().map(|k| (id.clone(), k)))
+            .collect()
+    }
+
     /// Every Excluded member's id.
     pub fn excluded_members(&self) -> Vec<String> {
         let mut v: Vec<String> = self.excluded.iter().map(|e| e.key().clone()).collect();

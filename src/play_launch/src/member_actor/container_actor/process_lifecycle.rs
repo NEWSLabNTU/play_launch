@@ -588,6 +588,14 @@ impl ContainerActor {
                         self.supervisor.handle_toggle_composable_auto_load(&name, enabled).await;
                         Ok(true)
                     }
+                    ControlEvent::ReplaceContext(replacement) => {
+                        self.take_context(&replacement);
+                        Ok(true)
+                    }
+                    ControlEvent::ReplaceComposable { name, metadata } => {
+                        self.supervisor.replace_composable_metadata(&name, *metadata);
+                        Ok(true)
+                    }
                     _ => {
                         warn!("{}: Unhandled control event in Stopped state: {:?}", self.name, event);
                         Ok(true)

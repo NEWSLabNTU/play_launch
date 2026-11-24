@@ -210,6 +210,10 @@ pub enum LifecycleState {
 }
 
 /// The runtime rule engine. One per `play_launch` invocation.
+/// Topics whose publishers the launch's selection switched off (phase 106),
+/// shared between the web UI's Apply and the rule engine.
+pub type AbsentTopics = Arc<std::sync::RwLock<std::collections::HashSet<String>>>;
+
 pub struct RuleEngine {
     view: Arc<ContractView>,
     /// Phase 73 — live fault detection and reaction, one per hazard.
@@ -272,6 +276,10 @@ pub struct RuleEngine {
     /// Phase 106 W3: the first error-severity finding in any mode, for
     /// `--fail-on contract`.
     first_error: Arc<Mutex<Option<String>>>,
+    /// Phase 106: topics every publisher of which is Excluded. Their silence
+    /// is the selection's doing, so it detects no hazard and holds no level
+    /// to account ("not in this run").
+    absent_topics: AbsentTopics,
     /// Tracked once per `rule_id+fqn` to suppress repeated identical
     /// violations from spamming the log.
     seen: HashMap<(String, String), u64>,
@@ -367,6 +375,7 @@ impl RuleEngine {
             strict_threshold: Severity::Error,
             first_strict_violation: Arc::new(Mutex::new(None)),
             first_error: Arc::new(Mutex::new(None)),
+            absent_topics: AbsentTopics::default(),
             seen: HashMap::new(),
             topic_name_chunks: HashMap::new(),
             discovered_names: HashMap::new(),
@@ -417,6 +426,19 @@ impl RuleEngine {
     /// strict mode (`"<rule_id> on <fqn>"`), `None` until one has.
     pub fn first_strict_violation_handle(&self) -> Arc<Mutex<Option<String>>> {
         Arc::clone(&self.first_strict_violation)
+    }
+
+    /// Share the set of topics the selection silenced (phase 106).
+    pub fn with_absent_topics(mut self, topics: AbsentTopics) -> Self {
+        self.absent_topics = topics;
+        self
+    }
+
+    fn not_in_run(&self, topic: &str) -> bool {
+        self.absent_topics
+            .read()
+            .map(|t| t.contains(topic))
+            .unwrap_or(false)
     }
 
     /// The first error-severity finding, whatever the mode (phase 106 W3).
@@ -1712,7 +1734,7 @@ impl RuleEngine {
                 continue;
             }
             for topic in m.commands.keys() {
-                if self.view.silence_handled.contains(topic) {
+                if self.view.silence_handled.contains(topic) || self.not_in_run(topic) {
                     continue;
                 }
                 let last = self
@@ -1778,6 +1800,18 @@ impl RuleEngine {
                 continue;
             }
             for guard in &watch.guards {
+                if self
+                    .absent_topics
+                    .read()
+                    .map(|t| t.contains(guard))
+                    .unwrap_or(false)
+                {
+                    // Switched off on purpose: forget its cadence, so it is
+                    // judged afresh when it comes back.
+                    rt.last_pub.remove(guard);
+                    rt.gaps.remove(guard);
+                    continue;
+                }
                 let Some(&last) = rt.last_pub.get(guard) else {
                     continue;
                 };

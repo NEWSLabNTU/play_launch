@@ -31,6 +31,7 @@ pub mod capture;
 pub mod check;
 pub mod contract;
 pub mod dump;
+pub mod export;
 pub mod migrate;
 pub mod plot;
 pub mod resolve;

@@ -6,6 +6,7 @@
 //! - [`runner`]: MemberRunner — waits for actor completion and processes state events
 
 mod builder;
+pub(crate) use builder::composable_metadata;
 mod handle;
 mod runner;
 mod state_reducer;
@@ -50,6 +51,9 @@ pub struct MemberMetadata {
     /// its executable-derived key (#0017), which the graph does not know.
     pub ros_name_known: bool,
     pub auto_load: Option<bool>, // For composable nodes: auto-load when container starts
+    /// Phase 106: the member's key in the SystemModel's `structure.nodes`,
+    /// which the selection code speaks in. `None` for `run`'s one node.
+    pub model_key: Option<String>,
 }
 
 /// Bytes from the end of a file `read_last_n_lines` looks at: enough for the

@@ -219,7 +219,7 @@ function StartupTimeline() {
                                 ${r.failed_ms != null && html`<span class="st-fail" title=${'failed at ' + fmtMs(r.failed_ms) + (r.error ? ': ' + r.error : '')}
                                     style=${{ left: pct(r.failed_ms) + '%' }}>✕</span>`}
                             </div>
-                            <div class="st-when">${r.ready_ms != null ? fmtMs(r.ready_ms) : (r.failed_ms != null ? 'failed' : 'waiting')}</div>
+                            <div class="st-when">${r.ready_ms != null ? fmtMs(r.ready_ms) : (r.failed_ms != null ? 'failed' : (r.state === 'excluded' ? 'excluded' : 'waiting'))}</div>
                         </div>
                     `)}
                 </div>

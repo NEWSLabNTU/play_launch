@@ -595,12 +595,31 @@ impl RegularNodeActor {
                 Ok(true) // Continue to spawn
             }
 
+            ControlEvent::ReplaceContext(replacement) => {
+                // Phase 106 Reload: the next spawn uses the new resolution;
+                // the member keeps its own log directory and cgroup.
+                if let Some(mut context) = replacement.take() {
+                    context.output_dir = self.context.output_dir.clone();
+                    context.cgroup = self.context.cgroup.take();
+                    self.context = context;
+                    info!("[{}] took the reloaded launch's resolution", self.name);
+                }
+                Ok(true)
+            }
+
             ControlEvent::ToggleRespawn(enabled) => {
                 info!("[{}] Toggling respawn: {}", self.name, enabled);
                 self.config.respawn_enabled = enabled;
                 Ok(true) // Continue
             }
 
+            ControlEvent::ReplaceComposable { .. } => {
+                warn!(
+                    "[{}] ReplaceComposable not supported for regular nodes",
+                    self.name
+                );
+                Ok(true)
+            }
             ControlEvent::LoadComposable { .. } => {
                 warn!(
                     "[{}] LoadComposable not supported for regular nodes",

@@ -68,4 +68,9 @@ last_exit?: ExitRecord | null,
 /**
  * Exits in the last five minutes.
  */
-recent_exits: number, };
+recent_exits: number, 
+/**
+ * Phase 106: Excluded by the launch's selection or switched off on the
+ * Launch page; shown greyed out, startable.
+ */
+excluded: boolean, };

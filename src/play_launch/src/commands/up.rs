@@ -169,6 +169,7 @@ pub fn handle_up(args: &cli::options::UpArgs) -> eyre::Result<()> {
             &args.common,
             selection,
             run_control,
+            None,
         ),
     )
 }
@@ -187,6 +188,7 @@ pub(crate) async fn play(
     common: &cli::options::CommonOptions,
     selection_spec: ros_launch_resolve::selection::SelectionSpec,
     run_control: super::run_control::RunControl,
+    launch_source: Option<std::sync::Arc<crate::web::selection::LaunchSource>>,
 ) -> eyre::Result<()> {
     debug!("=== Starting play() function ===");
 
@@ -227,6 +229,11 @@ pub(crate) async fn play(
             warn!("selection: {w}");
         }
     }
+    // Phase 106: topics whose publishers are all switched off, shared by the
+    // rule engine and the web UI's Apply.
+    let absent_topics: crate::runtime_enforcement::AbsentTopics = std::sync::Arc::new(
+        std::sync::RwLock::new(selection.absent_topics.iter().cloned().collect()),
+    );
     // Phase 106 W3: `--prefix` replaces matched nodes' launch prefix for this
     // run, in the model every spawn path reads.
     let system_model = if run_control.prefixes.is_empty() {
@@ -1718,7 +1725,18 @@ pub(crate) async fn play(
             .with_entities(entities_rx.clone())
             .with_health(Some(health_rx.clone()))
             .with_startup(Some(startup_rx.clone()))
-            .with_scope_paths(contract_view.scope_paths.clone()),
+            .with_scope_paths(contract_view.scope_paths.clone())
+            .with_selection(std::sync::Arc::new(
+                selection_state(
+                    &member_handle,
+                    system_model.clone(),
+                    &log_dir,
+                    launch_source.clone(),
+                    container_mode,
+                    absent_topics.clone(),
+                )
+                .await,
+            )),
         );
         let web_shutdown = shutdown_signal.clone();
 
@@ -1888,6 +1906,7 @@ pub(crate) async fn play(
                     common.contract_opts.enforce_rules,
                     &log_dir,
                 )
+                .with_absent_topics(absent_topics.clone())
                 .with_strict_threshold(match common.contract_opts.strict_on {
                     crate::cli::options::StrictOn::Warning => {
                         crate::runtime_enforcement::Severity::Warning
@@ -2339,6 +2358,114 @@ fn effective_container_mode(
 /// The scope tables are keyed by fully-qualified node name; the web UI, the
 /// member registry and every `/api/nodes/:id` path are keyed by canonical
 /// member id (`kind:/ns/name[#N]`). This is the one join between them.
+/// The web UI's switches (phase 106): the map between member ids and model
+/// keys, Reload, and how a reloaded member gets its new spawn context.
+async fn selection_state(
+    member_handle: &crate::member_actor::MemberHandle,
+    model: std::sync::Arc<ros_launch_manifest_model::SystemModel>,
+    log_dir: &std::path::Path,
+    launch_source: Option<std::sync::Arc<crate::web::selection::LaunchSource>>,
+    container_mode: cli::options::ContainerMode,
+    absent_topics: crate::runtime_enforcement::AbsentTopics,
+) -> crate::web::selection::SelectionState {
+    let members = member_handle.member_model_keys().await;
+    let node_log_dir = log_dir.join("node");
+    let load_node_log_dir = log_dir.join("load_node");
+    let replace: crate::web::selection::ReplaceFn =
+        std::sync::Arc::new(move |model, id_of, keys| {
+            replacement_events(
+                model,
+                id_of,
+                keys,
+                &node_log_dir,
+                &load_node_log_dir,
+                container_mode,
+            )
+            .unwrap_or_else(|e| {
+                warn!("selection: could not rebuild the reloaded members' contexts: {e:#}");
+                Vec::new()
+            })
+        });
+    crate::web::selection::SelectionState::new(
+        model,
+        &members,
+        log_dir,
+        launch_source,
+        Some(replace),
+        absent_topics,
+    )
+}
+
+/// The control events that hand each reloaded member in `keys` its new spawn
+/// context: a plain node or container takes a context; a composable's
+/// container takes its new metadata.
+fn replacement_events(
+    model: &ros_launch_manifest_model::SystemModel,
+    id_of: &HashMap<String, String>,
+    keys: &std::collections::BTreeSet<String>,
+    node_log_dir: &std::path::Path,
+    load_node_log_dir: &std::path::Path,
+    container_mode: cli::options::ContainerMode,
+) -> eyre::Result<Vec<(String, crate::member_actor::events::ControlEvent)>> {
+    use crate::member_actor::events::{ControlEvent, Replacement};
+    let mut out = Vec::new();
+    let wanted = |k: &Option<String>| k.as_ref().is_some_and(|k| keys.contains(k));
+    for ctx in prepare_node_contexts_from_model(model, node_log_dir, None, None)? {
+        if wanted(&ctx.model_fqn)
+            && let Some(id) = ctx.model_fqn.as_ref().and_then(|k| id_of.get(k))
+        {
+            out.push((
+                id.clone(),
+                ControlEvent::ReplaceContext(Replacement::new(ctx)),
+            ));
+        }
+    }
+    for ctx in
+        prepare_container_contexts_from_model(model, node_log_dir, container_mode, None, None)?
+    {
+        let ctx = ctx.node_context;
+        if wanted(&ctx.model_fqn)
+            && let Some(id) = ctx.model_fqn.as_ref().and_then(|k| id_of.get(k))
+        {
+            out.push((
+                id.clone(),
+                ControlEvent::ReplaceContext(Replacement::new(ctx)),
+            ));
+        }
+    }
+    let ComposableNodeContextSet { load_node_contexts } =
+        prepare_composable_node_contexts_from_model(model, load_node_log_dir)?;
+    for ctx in load_node_contexts {
+        let Some(key) = ctx.model_fqn.clone().filter(|k| keys.contains(k)) else {
+            continue;
+        };
+        let container = model
+            .structure
+            .nodes
+            .get(&key)
+            .and_then(|n| n.container.as_ref())
+            .and_then(|c| id_of.get(c));
+        let (Some(container), Some(id)) = (container, id_of.get(&key)) else {
+            continue;
+        };
+        let metadata = crate::member_actor::coordinator::composable_metadata(
+            &ctx,
+            &ctx.record.node_name.clone(),
+            true,
+            None,
+            None,
+        );
+        out.push((
+            container.clone(),
+            ControlEvent::ReplaceComposable {
+                name: id.clone(),
+                metadata: Box::new(metadata),
+            },
+        ));
+    }
+    Ok(out)
+}
+
 async fn node_scopes_by_member_id(
     member_handle: &crate::member_actor::MemberHandle,
     fqn_scope_map: &std::collections::HashMap<String, usize>,

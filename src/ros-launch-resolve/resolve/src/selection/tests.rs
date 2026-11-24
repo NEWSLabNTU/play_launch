@@ -354,3 +354,34 @@ fn explain_marks_the_tree() {
         "{text}"
     );
 }
+
+#[test]
+fn describe_gives_selectors_that_evaluate_back_to_the_set() {
+    let m = model();
+    let keys: Vec<String> = m.structure.nodes.keys().cloned().collect();
+    // Every subset of this small model: the description must select it
+    // exactly, and use whole inclusions where it can.
+    for mask in 0u32..(1 << keys.len()) {
+        let kept: HashSet<String> = keys
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| mask & (1 << i) != 0)
+            .map(|(_, k)| k.clone())
+            .collect();
+        let spec = describe(&m, &kept);
+        let got = evaluate(&m, &spec).unwrap_or_else(|e| panic!("{spec:?}: {e}"));
+        let got: HashSet<String> = got.kept.into_iter().collect();
+        assert_eq!(got, kept, "{:?}", spec.to_flags());
+    }
+    let kept: HashSet<String> = ["/sensing/driver", "/sensing/filter", "/container"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        describe(&m, &kept).to_flags(),
+        [
+            "--only node:/container",
+            "--only scope:sens/sensing.launch.xml"
+        ]
+    );
+}

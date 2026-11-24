@@ -245,7 +245,12 @@ impl StartupBook {
                     active_ms: self.ms(active_ns),
                     activates,
                     waiting_ms: None,
-                    state: state_word(&s.state),
+                    // Phase 106: not started by choice, not waiting.
+                    state: if s.excluded {
+                        "excluded"
+                    } else {
+                        state_word(&s.state)
+                    },
                     recent_exits: s.recent_exits,
                 };
                 let start = match kind {

@@ -401,6 +401,13 @@ impl<'m> TreeIndex<'m> {
         self.model.structure.scopes.get(key)
     }
 
+    /// The scope that included `key`, when there is one in the table.
+    pub fn parent_of(&self, key: &str) -> Option<&str> {
+        self.info(key)
+            .and_then(|i| i.parent.as_deref())
+            .filter(|p| self.model.structure.scopes.contains_key(*p))
+    }
+
     /// Whether `ancestor` is `scope` or one of its ancestors.
     fn is_within(&self, scope: &str, ancestor: &str) -> bool {
         let mut s = Some(scope);
@@ -591,6 +598,10 @@ pub struct Selection {
     pub added: Vec<Added>,
     pub matched: Vec<Matched>,
     pub cut_inputs: Vec<CutInput>,
+    /// Topics every publisher of which is excluded, kept subscribers or not:
+    /// silence there is the selection's doing, not a fault (runtime
+    /// enforcement reads it).
+    pub absent_topics: Vec<String>,
     pub warnings: Vec<String>,
     kept_set: HashSet<String>,
 }
@@ -975,6 +986,7 @@ fn complete(
     // Cut inputs: topics kept nodes take whose publishers are all excluded.
     let node_keys: HashSet<&str> = nodes.keys().map(|k| k.as_str()).collect();
     let mut cut_inputs = Vec::new();
+    let mut absent_topics = Vec::new();
     for (topic, w) in &model.structure.topics {
         let pubs: BTreeSet<&str> = w
             .publishers
@@ -984,6 +996,7 @@ fn complete(
         if pubs.is_empty() || pubs.iter().any(|p| kept.contains(*p)) {
             continue;
         }
+        absent_topics.push(topic.clone());
         let subs: BTreeSet<&str> = w
             .subscribers
             .iter()
@@ -1073,6 +1086,7 @@ fn complete(
             })
             .collect(),
         cut_inputs,
+        absent_topics,
         warnings,
         kept_set: kept,
         ..Default::default()
@@ -1089,6 +1103,97 @@ pub fn evaluate_set(
     no_deps: bool,
 ) -> eyre::Result<Selection> {
     complete(model, kept, off, no_deps, Vec::new())
+}
+
+/// The selectors that select exactly `kept`: whole inclusions where every
+/// member is kept, single nodes elsewhere, in the `--only` form or the
+/// `--exclude` form, whichever is shorter. For the web UI's Copy command and
+/// an export's header; the result evaluates back to `kept`.
+pub fn describe(model: &SystemModel, kept: &HashSet<String>) -> SelectionSpec {
+    let nodes = &model.structure.nodes;
+    let kept: HashSet<String> = kept
+        .iter()
+        .filter(|k| nodes.contains_key(*k))
+        .cloned()
+        .collect();
+    if kept.len() == nodes.len() {
+        return SelectionSpec::default();
+    }
+    if kept.is_empty() {
+        return SelectionSpec {
+            start_none: true,
+            ..Default::default()
+        };
+    }
+    let tree = TreeIndex::new(model);
+    let cover = |want: &dyn Fn(&str) -> bool| -> Vec<Selector> {
+        fn walk(
+            tree: &TreeIndex<'_>,
+            key: &str,
+            want: &dyn Fn(&str) -> bool,
+            out: &mut Vec<Selector>,
+            seen: &mut HashSet<String>,
+        ) {
+            let all = tree.subtree_nodes(key);
+            seen.extend(all.iter().cloned());
+            let n = all.iter().filter(|k| want(k)).count();
+            if n == 0 {
+                return;
+            }
+            if n == all.len() {
+                out.push(tree.stable_selector(key));
+                return;
+            }
+            for k in tree.direct.get(key).into_iter().flatten() {
+                if want(k) {
+                    out.push(node_selector(k));
+                }
+            }
+            for c in tree.children.get(key).into_iter().flatten() {
+                walk(tree, c, want, out, seen);
+            }
+        }
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        for r in &tree.roots {
+            walk(&tree, r, want, &mut out, &mut seen);
+        }
+        // A member whose scope is not in the scope table.
+        for k in nodes.keys().filter(|k| !seen.contains(*k) && want(k)) {
+            out.push(node_selector(k));
+        }
+        out
+    };
+    let only = cover(&|k| kept.contains(k));
+    let exclude = cover(&|k| !kept.contains(k));
+    let mut spec = if exclude.len() < only.len() {
+        SelectionSpec {
+            exclude,
+            ..Default::default()
+        }
+    } else {
+        SelectionSpec {
+            only,
+            ..Default::default()
+        }
+    };
+    // The closure would add a container the set leaves out: say --no-deps.
+    if evaluate(model, &spec)
+        .map(|s| s.kept_set != kept)
+        .unwrap_or(true)
+    {
+        spec.no_deps = true;
+    }
+    spec
+}
+
+fn node_selector(key: &str) -> Selector {
+    Selector {
+        kind: Kind::Node,
+        pattern: key.to_string(),
+        id: None,
+        preds: Vec::new(),
+    }
 }
 
 // ---------------------------------------------------------------------------

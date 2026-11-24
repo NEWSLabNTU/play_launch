@@ -351,7 +351,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     (#0042), P2 `links:`, P3 `measure` proposals, P4 `check --against`
     transport; P5 (a runtime link monitor) not adopted.
     [phase-97-links.md](./phase-97-links.md).
-  - **Phase 106** - in progress (2026-11-24): running and exporting part of
+  - **Phase 106** - done (W1-W5, 2026-11-24): running and exporting part of
     a launch tree. `--only`/`--exclude` on the usual launch command, an
     Excluded member state, bounded runs with a verdict, a per-run launch
     prefix, on/off switches on the web UI's Launch tree, and

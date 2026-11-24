@@ -179,6 +179,9 @@ pub struct NodeSummary {
     pub last_exit: Option<crate::member_actor::coordinator::ExitRecord>,
     /// Exits in the last five minutes.
     pub recent_exits: u32,
+    /// Phase 106: Excluded by the launch's selection or switched off on the
+    /// Launch page; shown greyed out, startable.
+    pub excluded: bool,
 }
 
 impl NodeSummary {
@@ -229,6 +232,7 @@ impl NodeSummary {
             has_own_logs,
             last_exit: member.last_exit.clone(),
             recent_exits: member.recent_exits,
+            excluded: member.excluded,
         }
     }
 
