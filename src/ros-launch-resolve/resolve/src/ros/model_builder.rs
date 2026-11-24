@@ -172,6 +172,73 @@ pub fn scope_keys_by_key(dump: &LaunchDump) -> std::collections::HashMap<String,
         .collect()
 }
 
+/// The model key a node takes: its FQN, numbered `-1`, `-2`, ... when it is
+/// un-named (always) or its FQN is `taken` already. The one rule for model
+/// keys (issues 0001, 0017, 0018); [`dump_model_keys`] replays it.
+fn claim_key(node_fqn: &str, unnamed: bool, taken: impl Fn(&str) -> bool) -> String {
+    let mut n = 1usize;
+    let mut key = if unnamed {
+        format!("{node_fqn}-1")
+    } else {
+        node_fqn.to_string()
+    };
+    while taken(&key) {
+        n += 1;
+        key = format!("{node_fqn}-{n}");
+    }
+    key
+}
+
+/// The model key of each dump entry, as [`build_system_model`] assigns them:
+/// plain nodes, then containers, then composables, in dump order. For
+/// joining a dump entry with what the model (and the member registry, which
+/// keys on the model) calls it, where an FQN cannot: an un-named node's key
+/// carries an ordinal its FQN does not.
+pub struct DumpModelKeys {
+    pub node: Vec<String>,
+    pub container: Vec<String>,
+    pub load_node: Vec<String>,
+}
+
+pub fn dump_model_keys(dump: &LaunchDump) -> DumpModelKeys {
+    let mut taken = std::collections::HashSet::new();
+    let mut claim = |node_fqn: String, unnamed: bool| {
+        let key = claim_key(&node_fqn, unnamed, |k| taken.contains(k));
+        taken.insert(key.clone());
+        key
+    };
+    let node = dump
+        .node
+        .iter()
+        .map(|n| {
+            let name = n
+                .name
+                .as_deref()
+                .or(n.exec_name.as_deref())
+                .unwrap_or("unknown");
+            claim(
+                fqn(n.namespace.as_deref().unwrap_or("/"), name),
+                n.name.is_none(),
+            )
+        })
+        .collect();
+    let container = dump
+        .container
+        .iter()
+        .map(|c| claim(fqn(&c.namespace, &c.name), false))
+        .collect();
+    let load_node = dump
+        .load_node
+        .iter()
+        .map(|l| claim(fqn(&l.namespace, &l.node_name), false))
+        .collect();
+    DumpModelKeys {
+        node,
+        container,
+        load_node,
+    }
+}
+
 /// Walk the scope parent chain from `scope_id` and return the first scope
 /// that has a loaded manifest containing a node declaration named `name`.
 fn find_node_decl<'a>(
@@ -1074,17 +1141,8 @@ pub fn build_system_model(
             // bare key and is only ever suffixed if something else already
             // claimed it.
             let unnamed = inst.node_name.is_none();
-            let mut n = 1usize;
-            let mut key = if unnamed {
-                format!("{node_fqn}-1")
-            } else {
-                node_fqn.clone()
-            };
-            while structure.nodes.contains_key(&key) {
-                n += 1;
-                key = format!("{node_fqn}-{n}");
-            }
-            if n > 1 {
+            let key = claim_key(&node_fqn, unnamed, |k| structure.nodes.contains_key(k));
+            if key != node_fqn && !(unnamed && key == format!("{node_fqn}-1")) {
                 diagnostics.push(format!(
                     "structure: duplicate node instance {node_fqn} kept as {key}"
                 ));

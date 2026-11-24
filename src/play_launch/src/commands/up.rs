@@ -1696,9 +1696,9 @@ pub(crate) async fn play(
         // has an empty dump, so source it from the model's `structure.scopes`
         // instead (Phase 49.B1) — the Launch page works on model replay too.
         //
-        // node_scope_map keys must match the actor-system member names:
-        //   nodes: name.or(exec_name); containers: name; composables: node_name.
-        let (scopes, fqn_scope_map) = if launch_dump.scopes.is_empty() {
+        // Keyed by model key, which every member carries (an un-named
+        // node's has an ordinal no FQN does), then re-keyed onto member ids.
+        let (scopes, key_scope_map) = if launch_dump.scopes.is_empty() {
             launch_tree_from_model(&system_model)
         } else {
             launch_tree_from_dump(&launch_dump)
@@ -1711,7 +1711,7 @@ pub(crate) async fn play(
         // `IdAllocator` appends to true duplicates is allocation-order
         // dependent: a second allocator here could disagree with the one the
         // coordinator used, and the mismatch would be silent.
-        let node_scope_map = node_scopes_by_member_id(&member_handle, &fqn_scope_map).await;
+        let node_scope_map = node_scopes_by_member_id(&member_handle, &key_scope_map).await;
 
         let selection = std::sync::Arc::new(
             selection_state(
@@ -2490,12 +2490,12 @@ async fn grow_members(
             warn!("selection: could not add the reloaded launch's new members: {e:#}");
         }
     }
-    let (scopes, fqn_scope_map) = if dump.scopes.is_empty() {
+    let (scopes, key_scope_map) = if dump.scopes.is_empty() {
         launch_tree_from_model(model)
     } else {
         launch_tree_from_dump(dump)
     };
-    let node_scopes = node_scopes_by_member_id(&inputs.handle, &fqn_scope_map).await;
+    let node_scopes = node_scopes_by_member_id(&inputs.handle, &key_scope_map).await;
     crate::web::selection::Grown {
         added,
         tree: (scopes, node_scopes),
@@ -2670,45 +2670,39 @@ fn replacement_events(
 
 async fn node_scopes_by_member_id(
     member_handle: &crate::member_actor::MemberHandle,
-    fqn_scope_map: &std::collections::HashMap<String, usize>,
+    key_scope_map: &std::collections::HashMap<String, usize>,
 ) -> std::collections::HashMap<String, usize> {
-    use crate::member_actor::member_id::fqn_join;
-
+    // Joined on the model key, which every member carries: an un-named
+    // node's key has an ordinal (`/map/loader_node-1`, #0017) that no FQN
+    // built from its namespace and executable has, so an FQN join left every
+    // such node out of the Launch tree.
     member_handle
-        .list_members()
+        .member_model_keys()
         .await
         .into_iter()
-        .filter_map(|m| {
-            let name = m.node_name.as_deref().unwrap_or(m.name.as_str());
-            let fqn = fqn_join(m.namespace.as_deref().unwrap_or("/"), name);
-            fqn_scope_map.get(&fqn).map(|&scope| (m.id, scope))
-        })
+        .filter_map(|(id, key)| key_scope_map.get(&key).map(|&scope| (id, scope)))
         .collect()
 }
 
-/// Scope table + FQN→scope map from the in-memory parse of this run.
+/// Scope table + model key -> scope from the in-memory parse of this run.
 fn launch_tree_from_dump(
     dump: &ros_launch_resolve::ros::launch_dump::LaunchDump,
 ) -> (
     Vec<ros_launch_resolve::ros::launch_dump::ScopeEntry>,
     std::collections::HashMap<String, usize>,
 ) {
-    use crate::member_actor::member_id::fqn_join;
-
+    let keys = ros_launch_resolve::ros::model_builder::dump_model_keys(dump);
     let mut map = std::collections::HashMap::new();
-    for n in &dump.node {
-        if let (Some(scope), Some(name)) = (n.scope, n.name.as_ref().or(n.exec_name.as_ref())) {
-            map.insert(fqn_join(n.namespace.as_deref().unwrap_or("/"), name), scope);
-        }
-    }
-    for c in &dump.container {
-        if let Some(scope) = c.scope {
-            map.insert(fqn_join(&c.namespace, &c.name), scope);
-        }
-    }
-    for ln in &dump.load_node {
-        if let Some(scope) = ln.scope {
-            map.insert(fqn_join(&ln.namespace, &ln.node_name), scope);
+    let scoped = dump
+        .node
+        .iter()
+        .map(|n| n.scope)
+        .zip(keys.node)
+        .chain(dump.container.iter().map(|c| c.scope).zip(keys.container))
+        .chain(dump.load_node.iter().map(|l| l.scope).zip(keys.load_node));
+    for (scope, key) in scoped {
+        if let Some(scope) = scope {
+            map.insert(key, scope);
         }
     }
     (dump.scopes.clone(), map)

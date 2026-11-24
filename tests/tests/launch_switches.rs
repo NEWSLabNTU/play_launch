@@ -454,6 +454,29 @@ fn reload_adds_new_members_off_and_apply_starts_them() {
     );
 }
 
+/// The Launch tree places an un-named node (#0017: its model key and
+/// member id carry an ordinal its FQN does not), or the page cannot show or
+/// switch it under its file while `--only <file>` keeps it.
+#[test]
+fn the_launch_tree_places_an_unnamed_node() {
+    let work = tempfile::TempDir::new().unwrap();
+    let (ui, _proc) = start(
+        &fixture("unnamed_node.launch.xml"),
+        &["--start", "none"],
+        work.path(),
+    );
+    let tree = ui.get("/api/launch-tree");
+    for id in [
+        "node:/identity_test/talker-1",
+        "node:/identity_test/listener",
+    ] {
+        assert!(
+            tree["node_scopes"][id].is_u64(),
+            "{id} not in the tree: {tree}"
+        );
+    }
+}
+
 #[test]
 fn restart_with_runs_a_node_under_a_prefix() {
     let work = tempfile::TempDir::new().unwrap();
