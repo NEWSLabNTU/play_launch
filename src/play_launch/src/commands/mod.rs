@@ -15,6 +15,7 @@ pub mod migrated;
 pub mod plot;
 pub mod resolve;
 pub mod run;
+pub mod run_control;
 pub(crate) mod signal_handler;
 pub mod startup_reconcile;
 pub mod up;

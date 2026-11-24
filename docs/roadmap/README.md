@@ -351,6 +351,12 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     (#0042), P2 `links:`, P3 `measure` proposals, P4 `check --against`
     transport; P5 (a runtime link monitor) not adopted.
     [phase-97-links.md](./phase-97-links.md).
+  - **Phase 106** - in progress (2026-11-24): running and exporting part of
+    a launch tree. `--only`/`--exclude` on the usual launch command, an
+    Excluded member state, bounded runs with a verdict, a per-run launch
+    prefix, on/off switches on the web UI's Launch tree, and
+    `play_launch export` to keep a pick as a launch file.
+    [phase-106-launch-selection.md](./phase-106-launch-selection.md).
   - **Phase 105** - done (W1-W7, 2026-11-23; colour literals and library bumps left): web UI hardening and
     modernization (#0111). Mutations only from our own page, gates that
     lint every file and check bindings, a header that stays current, one

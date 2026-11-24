@@ -37,6 +37,8 @@ use tracing::{debug, error, info, warn};
 const EXECUTOR_SPIN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(50);
 
 pub fn handle_up(args: &cli::options::UpArgs) -> eyre::Result<()> {
+    let selection = args.selection.spec()?;
+    let run_control = super::run_control::RunControl::parse(&args.run_control)?;
     // Phase 47.B3 — the deprecated `--input-file record.json` compat path is
     // retired: the SystemModel is the sole replay source now (hard cut, not
     // a fallback). `clap`'s `conflicts_with` already rejects the positional
@@ -161,7 +163,13 @@ pub fn handle_up(args: &cli::options::UpArgs) -> eyre::Result<()> {
     let runtime = build_tokio_runtime()?;
     super::common::run_to_end(
         runtime,
-        play(LaunchDump::empty(), system_model, &args.common),
+        play(
+            LaunchDump::empty(),
+            system_model,
+            &args.common,
+            selection,
+            run_control,
+        ),
     )
 }
 
@@ -177,8 +185,61 @@ pub(crate) async fn play(
     launch_dump: LaunchDump,
     system_model: std::sync::Arc<ros_launch_manifest_model::SystemModel>,
     common: &cli::options::CommonOptions,
+    selection_spec: ros_launch_resolve::selection::SelectionSpec,
+    run_control: super::run_control::RunControl,
 ) -> eyre::Result<()> {
     debug!("=== Starting play() function ===");
+
+    // Phase 106: which members start. The whole tree was resolved, so a kept
+    // member gets exactly what the full launch gives it; the others are
+    // registered as Excluded. Evaluated before anything is set up, so a bad
+    // selector costs nothing.
+    let selection = std::sync::Arc::new(ros_launch_resolve::selection::evaluate(
+        &system_model,
+        &selection_spec,
+    )?);
+    if selection.is_partial() {
+        info!("{}", selection.summary());
+        for m in &selection.matched {
+            info!(
+                "  {} {} matched {} member(s)",
+                if m.exclude { "--exclude" } else { "--only" },
+                m.selector,
+                m.count
+            );
+        }
+        for a in &selection.added {
+            info!(
+                "  kept {} for {} composable(s) it hosts (--no-deps to leave it out)",
+                a.container,
+                a.needed_by.len()
+            );
+        }
+        for c in &selection.cut_inputs {
+            info!(
+                "  input cut: {} ({} kept subscriber(s)) is published only by excluded {}",
+                c.topic,
+                c.subscribers.len(),
+                c.publishers.join(", ")
+            );
+        }
+        for w in &selection.warnings {
+            warn!("selection: {w}");
+        }
+    }
+    // Phase 106 W3: `--prefix` replaces matched nodes' launch prefix for this
+    // run, in the model every spawn path reads.
+    let system_model = if run_control.prefixes.is_empty() {
+        system_model
+    } else {
+        let mut m = (*system_model).clone();
+        super::run_control::apply_prefixes(
+            &mut m,
+            &run_control.prefixes,
+            common.containers.container_mode == cli::options::ContainerMode::Isolated,
+        )?;
+        std::sync::Arc::new(m)
+    };
 
     // Install cleanup guard to ensure children are killed even if we're interrupted
     let cleanup_guard = CleanupGuard::new();
@@ -508,6 +569,19 @@ pub(crate) async fn play(
         &log_dir,
         crate::util::run_log::RunInfo::capture(common.config.as_deref()),
     );
+    if selection.is_partial() {
+        crate::util::run_log::record_selection(serde_json::json!({
+            "only": selection.spec_only,
+            "exclude": selection.spec_exclude,
+            "no_deps": selection.no_deps,
+            "start_none": selection.start_none,
+            "kept": selection.kept.len(),
+            "excluded": selection.excluded,
+            "added": selection.added.iter().map(|a| &a.container).collect::<Vec<_>>(),
+            "cut_inputs": selection.cut_inputs.iter().map(|c| &c.topic).collect::<Vec<_>>(),
+            "warnings": selection.warnings,
+        }));
+    }
 
     let params_files_dir = log_dir.join("params_files");
     fs::create_dir(&params_files_dir)?;
@@ -1381,6 +1455,10 @@ pub(crate) async fn play(
                 launch_epoch,
                 context.record.start_delay_secs,
             ),
+            start_stopped: context
+                .model_fqn
+                .as_deref()
+                .is_some_and(|fqn| !selection.is_kept(fqn)),
         };
 
         builder.add_regular_node(
@@ -1437,6 +1515,11 @@ pub(crate) async fn play(
                 launch_epoch,
                 context.node_context.record.start_delay_secs,
             ),
+            start_stopped: context
+                .node_context
+                .model_fqn
+                .as_deref()
+                .is_some_and(|fqn| !selection.is_kept(fqn)),
         };
 
         // Add container (oneshot receiver is ignored since composable nodes will be matched internally)
@@ -1481,11 +1564,16 @@ pub(crate) async fn play(
         let composable_start_after =
             crate::execution::start_delay::deadline(launch_epoch, context.record.start_delay_secs);
 
-        // Auto-load enabled by default for all composable nodes
+        // Every composable auto-loads with its container, except one the
+        // selection excluded (phase 106).
+        let excluded = context
+            .model_fqn
+            .as_deref()
+            .is_some_and(|fqn| !selection.is_kept(fqn));
         builder.add_composable_node(
             member_name,
             context,
-            true,
+            excluded,
             composable_task,
             composable_start_after,
         );
@@ -1783,6 +1871,8 @@ pub(crate) async fn play(
         });
     }
 
+    // Phase 106 W3: the rule engine's first error, for `--fail-on contract`.
+    let mut contract_error_handle = None;
     // Spawn interception consumer task if we have consumers (Phase 29)
     if !interception_consumers.is_empty() {
         // Phase 36.3: construct RuleEngine if a contract source resolved
@@ -1810,6 +1900,7 @@ pub(crate) async fn play(
         } else {
             None
         };
+        contract_error_handle = rule_engine.as_ref().map(|re| re.first_error_handle());
 
         // Phase 36.6.1: wire lifecycle transition-event subscriptions
         // for every lifecycle node declared in the manifest tree.
@@ -2060,6 +2151,19 @@ pub(crate) async fn play(
             task: interception_task,
         });
     }
+    // Phase 106 W3: `--run-for` and `--fail-on`.
+    let verdict = run_control.bounded().then(|| {
+        super::run_control::spawn(super::run_control::Watch {
+            control: run_control.clone(),
+            member_handle: member_handle.clone(),
+            health: health_rx.clone(),
+            contract_error: contract_error_handle.clone(),
+            pgid,
+            shutdown_tx: shutdown_tx.clone(),
+            shutdown: shutdown_signal.clone(),
+        })
+    });
+
     // Every use of the node in this function is behind us; the tasks hold
     // their own copies and let go of them at shutdown (`util::teardown`).
     drop(shared_ros_node_for_params);
@@ -2136,6 +2240,9 @@ pub(crate) async fn play(
     }
 
     crate::util::self_cost::log_totals(&self_cost_start);
+    if let Some(slot) = &verdict {
+        super::run_control::finish(&run_control, slot)?;
+    }
     debug!("play() function completed, returning");
     Ok(())
 }

@@ -29,6 +29,9 @@ smt = ["ros-launch-manifest-check/smt", "ros-launch-manifest-rlx/smt"]
 termcolor = "1.4"
 # issue 0382 — `structure.nodes` is an order-preserving map.
 indexmap = { version = "2", features = ["serde"] }
+# phase 106: selectors match FQNs and file names with the same glob crate
+# `startup.order` and `cgroups.limits` use in play_launch.
+glob = "0.3"
 ros-launch-manifest-types = { workspace = true }
 ros-launch-manifest-model = { workspace = true }
 ros-launch-manifest-sched = { workspace = true }

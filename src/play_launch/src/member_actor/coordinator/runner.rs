@@ -31,6 +31,9 @@ pub struct MemberRunner {
     /// Members whose exit ends the launch (`on_exit=Shutdown()`, or an
     /// `on_exit` function's exit codes), by canonical member id
     shutdown_on_exit: HashMap<String, ExitPolicy>,
+    /// Excluded members (phase 106), shared with `MemberHandle`: one switched
+    /// off on purpose cannot end the launch by exiting.
+    excluded: Arc<dashmap::DashSet<String>>,
     /// The same shutdown lever `MemberHandle::shutdown` pulls. Stops the actors, but
     /// on its own it does not reap their children — see `shutdown_hook`.
     shutdown_tx: Arc<watch::Sender<bool>>,
@@ -43,6 +46,7 @@ pub struct MemberRunner {
 
 impl MemberRunner {
     /// Create a new MemberRunner (called from builder)
+    #[allow(clippy::too_many_arguments)] // one call site, the builder
     pub(super) fn new(
         tasks: HashMap<String, JoinHandle<Result<()>>>,
         state_rx: mpsc::Receiver<StateEvent>,
@@ -50,6 +54,7 @@ impl MemberRunner {
         restart_counts: Arc<state_reducer::RestartCounts>,
         exit_history: Arc<state_reducer::ExitHistory>,
         shutdown_on_exit: HashMap<String, ExitPolicy>,
+        excluded: Arc<dashmap::DashSet<String>>,
         shutdown_tx: Arc<watch::Sender<bool>>,
     ) -> Self {
         Self {
@@ -59,6 +64,7 @@ impl MemberRunner {
             restart_counts,
             exit_history,
             shutdown_on_exit,
+            excluded,
             shutdown_tx,
             shutdown_hook: None,
         }
@@ -84,6 +90,7 @@ impl MemberRunner {
     /// is what the command layer already treats as "the launch is over".
     fn honour_on_exit_shutdown(
         shutdown_on_exit: &HashMap<String, ExitPolicy>,
+        excluded: &dashmap::DashSet<String>,
         shutdown_tx: &watch::Sender<bool>,
         shutdown_hook: Option<&Arc<dyn Fn() + Send + Sync>>,
         event: &StateEvent,
@@ -95,6 +102,7 @@ impl MemberRunner {
             ..
         } = event
             && let Some(policy) = shutdown_on_exit.get(name)
+            && !excluded.contains(name)
             && policy.ends_launch(*exit_code, *signal)
             && !*shutdown_tx.borrow()
         {
@@ -125,6 +133,7 @@ impl MemberRunner {
         state_reducer::apply_exit(&self.exit_history, &event);
         Self::honour_on_exit_shutdown(
             &self.shutdown_on_exit,
+            &self.excluded,
             &self.shutdown_tx,
             self.shutdown_hook.as_ref(),
             &event,
@@ -144,6 +153,7 @@ impl MemberRunner {
             restart_counts,
             exit_history,
             shutdown_on_exit,
+            excluded,
             shutdown_tx,
             shutdown_hook,
         } = self;
@@ -174,6 +184,7 @@ impl MemberRunner {
                     state_reducer::apply_exit(&exit_history, &event);
                     Self::honour_on_exit_shutdown(
                         &shutdown_on_exit,
+                        &excluded,
                         &shutdown_tx,
                         shutdown_hook.as_ref(),
                         &event,
@@ -258,6 +269,7 @@ mod tests {
 
         MemberRunner::honour_on_exit_shutdown(
             &required,
+            &dashmap::DashSet::new(),
             &tx,
             Some(&hook),
             &exited("node:/scenario_test_runner"),
@@ -277,7 +289,13 @@ mod tests {
         let required: HashMap<String, ExitPolicy> =
             [("node:/scenario_test_runner".to_string(), ExitPolicy::Any)].into();
 
-        MemberRunner::honour_on_exit_shutdown(&required, &tx, None, &exited("node:/talker"));
+        MemberRunner::honour_on_exit_shutdown(
+            &required,
+            &dashmap::DashSet::new(),
+            &tx,
+            None,
+            &exited("node:/talker"),
+        );
 
         assert!(
             !*tx.borrow(),
@@ -301,11 +319,34 @@ mod tests {
 
         MemberRunner::honour_on_exit_shutdown(
             &required,
+            &dashmap::DashSet::new(),
             &tx,
             Some(&hook),
             &exited("node:/scenario_test_runner"),
         );
 
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// Phase 106: a required member switched off on purpose (Excluded) is not
+    /// running by choice, so its exit cannot end the launch.
+    #[test]
+    fn an_excluded_required_member_exiting_leaves_the_launch_alone() {
+        let (tx, _rx) = watch::channel(false);
+        let tx = Arc::new(tx);
+        let required: HashMap<String, ExitPolicy> =
+            [("node:/scenario_test_runner".to_string(), ExitPolicy::Any)].into();
+        let excluded = dashmap::DashSet::new();
+        excluded.insert("node:/scenario_test_runner".to_string());
+
+        MemberRunner::honour_on_exit_shutdown(
+            &required,
+            &excluded,
+            &tx,
+            None,
+            &exited("node:/scenario_test_runner"),
+        );
+
+        assert!(!*tx.borrow());
     }
 }

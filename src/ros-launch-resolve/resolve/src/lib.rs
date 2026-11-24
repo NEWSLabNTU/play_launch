@@ -28,5 +28,6 @@ pub mod model;
 pub mod producer;
 pub mod python;
 pub mod ros;
+pub mod selection;
 pub mod util;
 pub mod verbs;

@@ -193,6 +193,15 @@ pub struct RunInfo {
     /// record should not pull the scheduler's types down with it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sched_unapplied: Option<serde_json::Value>,
+    /// Phase 106: the selection this run started with (`--only`,
+    /// `--exclude`, `--start none`), in canonical form, and what it kept.
+    /// Absent for a run of the whole tree.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<serde_json::Value>,
+    /// Phase 106 W3: the verdict of a bounded run (`--run-for`,
+    /// `--fail-on`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<serde_json::Value>,
 }
 
 impl RunInfo {
@@ -213,6 +222,8 @@ impl RunInfo {
             log_filter: std::env::var(FILE_FILTER_ENV)
                 .unwrap_or_else(|_| DEFAULT_FILE_FILTER.to_string()),
             sched_unapplied: None,
+            selection: None,
+            verdict: None,
         }
     }
 
@@ -353,6 +364,26 @@ pub fn record_sched_unapplied(rows: serde_json::Value) {
     write_run_info(path, info);
 }
 
+/// Record the run's selection in `run_info.json` (phase 106); see
+/// [`record_sched_unapplied`] for why this is a second write.
+pub fn record_selection(value: serde_json::Value) {
+    update_run_info(|info| info.selection = Some(value));
+}
+
+/// Record a bounded run's verdict in `run_info.json` (phase 106 W3).
+pub fn record_verdict(value: serde_json::Value) {
+    update_run_info(|info| info.verdict = Some(value));
+}
+
+fn update_run_info(f: impl FnOnce(&mut RunInfo)) {
+    let guard = run_info();
+    let mut slot = guard.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((path, info)) = slot.as_mut() {
+        f(info);
+        write_run_info(path, info);
+    }
+}
+
 /// [`attach`], reporting rather than propagating: the log directory exists
 /// and the launch proceeds whether or not its own log could be opened.
 pub fn attach_or_warn(log_dir: &Path, info: RunInfo) {
@@ -398,6 +429,8 @@ mod tests {
             config_copy: None,
             log_filter: DEFAULT_FILE_FILTER.into(),
             sched_unapplied: None,
+            selection: None,
+            verdict: None,
         };
         let path = attach(dir.path(), info).unwrap();
         assert_eq!(path, dir.path().join(LOG_FILE_NAME));

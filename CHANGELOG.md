@@ -8,6 +8,29 @@ allowance heavily.
 
 ## Unreleased
 
+- **New (phase 106 W1-W2): run part of a launch tree.** The usual launch
+  command takes `--only <selector>` and `--exclude <selector>` (each
+  repeatable) and `--no-deps`; `--start none` starts nothing. The whole tree
+  is still resolved, so a kept node gets exactly the namespace, arguments
+  and parameters the full launch gives it, and the rest are registered as
+  Excluded: shown, startable later, never respawned, and counted by neither
+  startup completion nor Health. A selector names a node (`/sensing/**`), a
+  launch file (`sensing.launch.xml`, or `<pkg>/<file>`), or `pkg:`,
+  `exec:`, `plugin:`, `container:` with a glob; a file included more than
+  once must say which inclusion (`[<arg>=<value>]`, `[under=<pkg>/<file>]`,
+  `[*]`), and the error lists the choices. A kept composable keeps its
+  container. The startup log names the inputs the kept nodes lose and warns
+  about a lifecycle manager, `/clock` or TF cut away; `run_info.json`
+  records the selection. `resolve … --only … --explain` prints the marked
+  tree without running anything.
+- **New (phase 106 W3): bounded runs and a per-run launch prefix.**
+  `--run-for <duration>` ends a launch after a time; `--fail-on
+  health:<kind>[:<glob>]`, `--fail-on contract` and `--fail-on exit:<glob>`
+  make it a test that exits with code 4 when a condition held, with the
+  verdict in `run_info.json`; `--fail-fast` ends it at the first one.
+  `--prefix '<selector>=<command>'` runs the matched nodes under a command
+  (`xterm -e gdb -ex run --args`, `valgrind`) without editing the launch
+  file; a composable's prefix goes on its container.
 - **Security (#0111, phase 105 W1):** the web UI accepts a change (start,
   stop, restart, load, unload, the bulk actions) only from its own page.
   Any web page open in the same browser could send those requests before,

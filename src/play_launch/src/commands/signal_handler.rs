@@ -511,7 +511,7 @@ async fn pending_member_names(
         .list_members()
         .await
         .into_iter()
-        .filter(|m| matches!(m.state, MemberState::Loading | MemberState::Pending))
+        .filter(|m| !m.excluded && matches!(m.state, MemberState::Loading | MemberState::Pending))
         .map(|m| m.name)
         .collect()
 }
@@ -529,6 +529,7 @@ async fn blocked_member_names(
         .list_members()
         .await
         .into_iter()
+        .filter(|m| !m.excluded)
         .filter_map(|m| match m.state {
             MemberState::Blocked { reason } => Some(format!("{} ({:?})", m.id, reason)),
             _ => None,

@@ -44,9 +44,23 @@ pub struct ResolveInputs {
     /// Every composable runs in its own process (`--container-mode
     /// isolated`).
     pub process_per_composable: bool,
+    /// Phase 106: `--only`/`--exclude`. With a selection, `resolve` prints
+    /// what it would keep (`--explain` is required) and writes no model,
+    /// since a model cannot yet record that it is partial.
+    pub selection: Option<crate::selection::SelectionSpec>,
 }
 
 pub fn run(inputs: ResolveInputs) -> Result<()> {
+    if let Some(spec) = &inputs.selection
+        && !spec.is_whole()
+        && !inputs.explain
+    {
+        eyre::bail!(
+            "resolve with --only/--exclude/--start prints the selection and writes no model; \
+             add --explain to see it, or use `play_launch export` to keep the selection as a \
+             launch file"
+        );
+    }
     // Positional quirk: with a direct launch-file PATH, the second
     // positional (`launch_file`) can swallow the first `KEY:=VALUE` arg.
     // See [`super::reclassify_launch_file_arg`].
@@ -75,9 +89,19 @@ pub fn run(inputs: ResolveInputs) -> Result<()> {
         sched: inputs.sched.as_deref(),
         system: inputs.system.as_deref(),
         target: inputs.target.as_str(),
-        explain: inputs.explain,
+        // With a selection, --explain is the selection's report, not the
+        // scheduling plan's.
+        explain: inputs.explain && inputs.selection.as_ref().is_none_or(|s| s.is_whole()),
         process_per_composable: inputs.process_per_composable,
     })?;
+
+    if let Some(spec) = &inputs.selection
+        && !spec.is_whole()
+    {
+        let selection = crate::selection::evaluate(&model, spec)?;
+        print!("{}", crate::selection::render_explain(&model, &selection));
+        return Ok(());
+    }
 
     let yaml = model
         .to_yaml_string()

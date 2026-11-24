@@ -1386,6 +1386,7 @@ mod tests {
             output_dir: std::path::PathBuf::from("/nonexistent"),
             last_exit,
             recent_exits,
+            excluded: false,
         }
     }
 

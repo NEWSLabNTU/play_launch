@@ -25,5 +25,11 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
         out: args.out.clone(),
         explain: args.explain,
         process_per_composable: args.container_mode == crate::cli::options::ContainerMode::Isolated,
+        selection: Some(ros_launch_resolve::selection::SelectionSpec::parse(
+            &args.only,
+            &args.exclude,
+            args.no_deps,
+            false,
+        )?),
     })
 }

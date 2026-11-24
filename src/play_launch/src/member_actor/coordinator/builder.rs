@@ -41,6 +41,8 @@ struct ComposableNodeDefinition {
     name: String,
     context: crate::execution::context::ComposableNodeContext,
     auto_load: bool,
+    /// Phase 106: Excluded by the launch's selection; not auto-loaded.
+    excluded: bool,
     target_container_name: String, // Will be matched with container during spawn()
     metadata: MemberMetadata,
     /// Phase 38.9: resolved posix scheduling for this composable (None = no task).
@@ -163,10 +165,13 @@ impl MemberCoordinatorBuilder {
         &mut self,
         name: String,
         context: crate::execution::context::ComposableNodeContext,
-        auto_load: bool,
+        excluded: bool,
         sched: Option<crate::execution::sched_apply::AppliedTask>,
         start_after: Option<tokio::time::Instant>,
     ) {
+        // An Excluded composable is registered and shown, never auto-loaded;
+        // a Start loads it.
+        let auto_load = !excluded;
         let target_container_name = context.record.target_container_name.clone();
 
         let metadata = MemberMetadata {
@@ -190,6 +195,7 @@ impl MemberCoordinatorBuilder {
             name,
             context,
             auto_load,
+            excluded,
             target_container_name,
             metadata,
             sched,
@@ -229,6 +235,9 @@ impl MemberCoordinatorBuilder {
         // member end the launch.
         let mut shutdown_on_exit_ids = HashMap::new();
 
+        // Phase 106: members the launch's selection excluded, by canonical id.
+        let excluded_ids = Arc::new(dashmap::DashSet::new());
+
         for def in self.regular_nodes {
             let member_id = id_alloc.allocate(
                 MemberKind::Node,
@@ -241,6 +250,10 @@ impl MemberCoordinatorBuilder {
                 shutdown_on_exit_ids.insert(member_id.clone(), policy);
             }
             let (control_tx, control_rx) = mpsc::channel(CONTROL_CHANNEL_SIZE);
+            if def.config.start_stopped {
+                excluded_ids.insert(member_id.clone());
+                super::state_reducer::set(&shared_state, &member_id, MemberState::Stopped);
+            }
 
             let actor = crate::member_actor::regular_node_actor::RegularNodeActor::new(
                 member_id.clone(),
@@ -315,6 +328,10 @@ impl MemberCoordinatorBuilder {
             };
 
             let (control_tx, control_rx) = mpsc::channel(CONTROL_CHANNEL_SIZE);
+            if def.config.start_stopped {
+                excluded_ids.insert(unique_member_name.clone());
+                super::state_reducer::set(&shared_state, &unique_member_name, MemberState::Stopped);
+            }
 
             // Phase 2: Create load control channel for composable nodes
             let (load_control_tx, load_control_rx) =
@@ -377,6 +394,9 @@ impl MemberCoordinatorBuilder {
                 def.metadata.namespace.as_deref(),
                 &def.name,
             );
+            if def.excluded {
+                excluded_ids.insert(member_id.clone());
+            }
             // Normalize target_container_name to ensure it starts with "/"
             // Some nodes have "pointcloud_container" while containers use "/pointcloud_container"
             let normalized_target = if def.target_container_name.starts_with('/') {
@@ -633,6 +653,7 @@ impl MemberCoordinatorBuilder {
             virtual_member_routing,
             shared_ros_node,
             node_fqn_map,
+            excluded_ids.clone(),
         );
 
         let runner = MemberRunner::new(
@@ -642,6 +663,7 @@ impl MemberCoordinatorBuilder {
             restart_counts,
             exit_history,
             shutdown_on_exit_ids,
+            excluded_ids,
             shutdown_tx,
         );
 

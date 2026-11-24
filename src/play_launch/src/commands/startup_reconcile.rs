@@ -84,7 +84,8 @@ fn describe_state(state: &MemberState) -> String {
 pub fn composable_shortfall(members: &[MemberSummary]) -> Vec<ContainerShortfall> {
     let mut by_container: BTreeMap<String, ContainerShortfall> = BTreeMap::new();
     for m in members {
-        if m.member_type != MemberType::ComposableNode {
+        // An Excluded composable (phase 106) was not declared for this run.
+        if m.member_type != MemberType::ComposableNode || m.excluded {
             continue;
         }
         // A composable whose container was never matched (phase-50 registers
@@ -153,6 +154,7 @@ mod tests {
             output_dir: std::path::PathBuf::from("/nonexistent"),
             last_exit: None,
             recent_exits: 0,
+            excluded: false,
         }
     }
 

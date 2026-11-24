@@ -114,8 +114,12 @@ impl RegularNodeActor {
         Self {
             name,
             context,
+            state: if config.start_stopped {
+                NodeState::Stopped { exit_code: None }
+            } else {
+                NodeState::Pending
+            },
             config,
-            state: NodeState::Pending,
             control_rx,
             state_tx,
             shutdown_rx,

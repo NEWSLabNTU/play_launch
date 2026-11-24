@@ -62,5 +62,6 @@ pub(super) fn build_summary(
         output_dir: meta.output_dir.clone(),
         last_exit: None,
         recent_exits: 0,
+        excluded: false,
     }
 }

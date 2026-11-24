@@ -582,6 +582,12 @@ impl ContainerActor {
                         debug!("{}: Stop requested while already stopped", self.name);
                         Ok(true)
                     }
+                    // Phase 106: a composable switched on before its
+                    // container starts is loaded when the container comes up.
+                    ControlEvent::ToggleComposableAutoLoad { name, enabled } => {
+                        self.supervisor.handle_toggle_composable_auto_load(&name, enabled).await;
+                        Ok(true)
+                    }
                     _ => {
                         warn!("{}: Unhandled control event in Stopped state: {:?}", self.name, event);
                         Ok(true)

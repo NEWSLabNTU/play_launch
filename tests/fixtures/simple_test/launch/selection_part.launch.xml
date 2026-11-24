@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Included twice by selection.launch.xml, once per `part`. -->
+  <arg name="part"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="listener_$(var part)" namespace="/sel"/>
+  <load_composable_node target="/sel/sel_container">
+    <composable_node pkg="composition" plugin="composition::Talker" name="talker_$(var part)" namespace="/sel"/>
+  </load_composable_node>
+</launch>

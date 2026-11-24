@@ -107,8 +107,12 @@ impl ContainerActor {
             context: params.context,
             spawned_at: None,
             oom_baseline: None,
+            state: if params.config.start_stopped {
+                NodeState::Stopped { exit_code: None }
+            } else {
+                NodeState::Pending
+            },
             config: params.config,
-            state: NodeState::Pending,
             control_rx,
             state_tx,
             shutdown_rx,

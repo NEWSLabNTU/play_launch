@@ -420,6 +420,7 @@ mod tests {
             output_dir: std::path::PathBuf::from(format!("/log/node/{id}")),
             last_exit: None,
             recent_exits: 0,
+            excluded: false,
         }
     }
 

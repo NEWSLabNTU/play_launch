@@ -56,6 +56,11 @@ pub struct ActorConfig {
     /// no concurrency slot while it waits, and a member that is both delayed
     /// and in a later [`Self::startup_stage`] starts when BOTH say it may.
     pub start_after: Option<tokio::time::Instant>,
+    /// Phase 106: the member is Excluded by the launch's selection
+    /// (`--only`/`--exclude`/`--start none`). The actor starts in `Stopped`
+    /// instead of `Pending`, so nothing spawns until a Start (the web UI's
+    /// switches, or its Start button) arrives.
+    pub start_stopped: bool,
 }
 
 /// State machine for a regular node or container

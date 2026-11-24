@@ -449,7 +449,8 @@ async fn pending_members(
     let mut pending = Vec::new();
     for m in member_handle.list_members().await {
         let fqn = member_fqn(&m);
-        if assignment.stage_for(&fqn) > stage {
+        // An Excluded member is in no stage (phase 106): an empty stage passes.
+        if m.excluded || assignment.stage_for(&fqn) > stage {
             continue;
         }
 

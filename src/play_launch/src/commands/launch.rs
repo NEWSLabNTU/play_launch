@@ -23,6 +23,9 @@ pub fn handle_launch(cmd_args: &LaunchCommandArgs) -> Result<()> {
     // from the `LaunchArgs` block shared with `dump launch`.
     let check = cmd_args.check;
     let args = &cmd_args.launch;
+    // A bad selector is reported before the launch file is parsed.
+    let selection = cmd_args.selection.spec()?;
+    let run_control = super::run_control::RunControl::parse(&cmd_args.run_control)?;
 
     play_launch_parser::block_command_substitution(args.block_commands);
 
@@ -107,6 +110,13 @@ pub fn handle_launch(cmd_args: &LaunchCommandArgs) -> Result<()> {
         }
 
         info!("Step 3/3: Replaying launch execution...");
-        super::up::play(dump, std::sync::Arc::new(model), &args.common).await
+        super::up::play(
+            dump,
+            std::sync::Arc::new(model),
+            &args.common,
+            selection,
+            run_control,
+        )
+        .await
     })
 }

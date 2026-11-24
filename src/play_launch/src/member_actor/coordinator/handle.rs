@@ -30,6 +30,11 @@ pub struct MemberHandle {
     /// that crashed and stayed down is a problem; one somebody stopped is not,
     /// and both end in `Stopped`.
     stopped_by_user: dashmap::DashSet<String>,
+    /// Phase 106: members Excluded by the launch's selection, or switched
+    /// off on the Launch page. Excluded is a state, not an absence: the
+    /// member is registered and shown, never respawned, and not counted by
+    /// startup completion or Health. A Start (or Restart) clears it.
+    excluded: Arc<dashmap::DashSet<String>>,
     /// Shutdown signal broadcaster. Shared with `MemberRunner`, which pulls the same
     /// lever when a node declared `on_exit=Shutdown()` exits.
     shutdown_tx: Arc<watch::Sender<bool>>,
@@ -54,8 +59,31 @@ impl MemberHandle {
     }
 
     /// Whether a user stopped this member (and has not started it since).
+    /// An Excluded member counts as stopped by the user.
     pub fn stopped_by_user(&self, member: &str) -> bool {
-        self.stopped_by_user.contains(member)
+        self.stopped_by_user.contains(member) || self.excluded.contains(member)
+    }
+
+    /// Whether this member is Excluded (phase 106).
+    pub fn is_excluded(&self, member: &str) -> bool {
+        self.excluded.contains(member)
+    }
+
+    /// Mark a member Excluded or not, without starting or stopping it; the
+    /// caller does that (phase 106, the Launch page's Apply).
+    pub fn set_excluded(&self, member: &str, excluded: bool) {
+        if excluded {
+            self.excluded.insert(member.to_string());
+        } else {
+            self.excluded.remove(member);
+        }
+    }
+
+    /// Every Excluded member's id.
+    pub fn excluded_members(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.excluded.iter().map(|e| e.key().clone()).collect();
+        v.sort();
+        v
     }
 
     /// Recent exits of every member that has exited.
@@ -80,6 +108,7 @@ impl MemberHandle {
         virtual_member_routing: HashMap<String, String>,
         shared_ros_node: Option<Arc<rclrs::Node>>,
         node_fqn_map: Arc<RwLock<HashMap<String, String>>>,
+        excluded: Arc<dashmap::DashSet<String>>,
     ) -> Self {
         Self {
             control_channels,
@@ -88,6 +117,7 @@ impl MemberHandle {
             restart_counts,
             exit_history,
             stopped_by_user: dashmap::DashSet::new(),
+            excluded,
             shutdown_tx,
             virtual_member_routing,
             shared_ros_node: std::sync::Mutex::new(shared_ros_node),
@@ -154,6 +184,7 @@ impl MemberHandle {
 
     /// Fill a summary's exit fields from the history.
     fn add_exits(&self, name: &str, summary: &mut MemberSummary) {
+        summary.excluded = self.excluded.contains(name);
         let Some(history) = self.exit_history.get(name) else {
             return;
         };
@@ -195,6 +226,11 @@ impl MemberHandle {
 
         let metadata_guard = self.metadata.read().await;
         for (name, meta) in metadata_guard.iter() {
+            // An Excluded member is neither expected nor missing (phase 106).
+            if self.excluded.contains(name) {
+                summary.excluded += 1;
+                continue;
+            }
             // Read state from DashMap
             let state = self
                 .shared_state
@@ -284,8 +320,9 @@ impl MemberHandle {
             ControlEvent::Stop => {
                 self.stopped_by_user.insert(name.to_string());
             }
-            ControlEvent::Start | ControlEvent::Restart => {
+            ControlEvent::Start | ControlEvent::Restart | ControlEvent::Load => {
                 self.stopped_by_user.remove(name);
+                self.excluded.remove(name);
             }
             _ => {}
         }

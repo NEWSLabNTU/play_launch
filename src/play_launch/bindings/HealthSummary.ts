@@ -7,4 +7,8 @@ export type HealthSummary = { processes_running: number, processes_stopped: numb
 /**
  * Number of nodes with significant stderr output (>10KB)
  */
-noisy: number, };
+noisy: number, 
+/**
+ * Phase 106: Excluded members, counted in none of the totals above.
+ */
+excluded: number, };

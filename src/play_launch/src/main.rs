@@ -175,7 +175,18 @@ fn main() -> eyre::Result<()> {
         warn!("AMENT_PREFIX_PATH NOT SET!");
     }
 
-    dispatch(&opts)
+    match dispatch(&opts) {
+        // Phase 106 W3: a bounded run whose `--fail-on` condition held exits
+        // with its own code, apart from a launch that could not run.
+        Err(e)
+            if e.downcast_ref::<play_launch::commands::run_control::VerdictFailed>()
+                .is_some() =>
+        {
+            eprintln!("Error: {e}");
+            std::process::exit(play_launch::commands::run_control::VERDICT_EXIT_CODE);
+        }
+        other => other,
+    }
 }
 
 fn dispatch(opts: &Options) -> eyre::Result<()> {

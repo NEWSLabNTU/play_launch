@@ -656,8 +656,103 @@ pub struct ResolveArgs {
     /// same table `check --sched --explain` shows for the same inputs, one
     /// renderer. Only meaningful together with a resolved scheduling
     /// platform file; a no-op note is printed otherwise (not an error).
+    ///
+    /// With `--only`/`--exclude`, prints instead what a launch with that
+    /// selection would start: the marked tree, what each selector matched,
+    /// the containers kept for their composables, the inputs the kept nodes
+    /// lose, and the warnings. No model is written.
     #[arg(long)]
     pub explain: bool,
+
+    /// Preview a selection (with `--explain`): see `launch --only`.
+    #[arg(long, value_name = "SELECTOR")]
+    pub only: Vec<String>,
+
+    /// Preview a selection (with `--explain`): see `launch --exclude`.
+    #[arg(long, value_name = "SELECTOR")]
+    pub exclude: Vec<String>,
+
+    /// Preview a selection (with `--explain`): see `launch --no-deps`.
+    #[arg(long)]
+    pub no_deps: bool,
+}
+
+/// Which members of the launch tree start (phase 106).
+#[derive(Args, Clone, Default, Debug)]
+pub struct SelectionOptions {
+    /// Start only these parts of the launch tree (repeatable; the parts are
+    /// combined). The whole tree is still resolved, so every kept node gets
+    /// what the full launch gives it; the rest are shown as Excluded and can
+    /// be started later from the web UI. A selector is a node (`/sensing/**`,
+    /// `node:/rviz2`), a launch file (`sensing.launch.xml`,
+    /// `scope:<pkg>/<file>`, `[<arg>=<value>]`, `[under=<pkg>/<file>]` or
+    /// `[*]` for a file included more than once), or `pkg:`, `exec:`,
+    /// `plugin:`, `container:` with a glob.
+    #[arg(long, value_name = "SELECTOR")]
+    pub only: Vec<String>,
+
+    /// Do not start these parts (repeatable). Applied after `--only`.
+    #[arg(long, value_name = "SELECTOR")]
+    pub exclude: Vec<String>,
+
+    /// Do not keep the container of a kept composable node.
+    #[arg(long)]
+    pub no_deps: bool,
+
+    /// `none` starts nothing: every member is Excluded, to be switched on
+    /// from the web UI's Launch page.
+    #[arg(long, value_enum, default_value = "all")]
+    pub start: StartMode,
+}
+
+/// A bounded run and per-run launch prefixes (phase 106 W3).
+#[derive(Args, Clone, Default, Debug)]
+pub struct RunControlOptions {
+    /// End the launch after this long (`90s`, `5m`, `1h`), with the usual
+    /// shutdown. With `--fail-on`, the run is a test: exit code 0 when no
+    /// condition held, 4 when one did.
+    #[arg(long, value_name = "DURATION")]
+    pub run_for: Option<String>,
+
+    /// What makes the run a failure (repeatable): `health:<kind>[:<subject
+    /// glob>]` (a Health issue opened, e.g. `health:crash_loop:/planning/**`),
+    /// `contract` (runtime enforcement reported an error), or `exit:<node
+    /// glob>` (a matching node exited other than by a stop). The run exits
+    /// with code 4 and the verdict is written to `run_info.json`.
+    #[arg(long, value_name = "CONDITION")]
+    pub fail_on: Vec<String>,
+
+    /// End the run at the first `--fail-on` condition instead of at
+    /// `--run-for`.
+    #[arg(long)]
+    pub fail_fast: bool,
+
+    /// Run the nodes a selector matches under a command, in place of their
+    /// launch prefix (repeatable), e.g. `--prefix '/x/node=xterm -e gdb -ex
+    /// run --args'` or `--prefix '/x/**=valgrind'`. A composable node's
+    /// prefix goes on its container.
+    #[arg(long, value_name = "SELECTOR=COMMAND")]
+    pub prefix: Vec<String>,
+}
+
+/// What a launch starts with (`--start`).
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StartMode {
+    #[default]
+    All,
+    None,
+}
+
+impl SelectionOptions {
+    /// The parsed selection.
+    pub fn spec(&self) -> eyre::Result<ros_launch_resolve::selection::SelectionSpec> {
+        ros_launch_resolve::selection::SelectionSpec::parse(
+            &self.only,
+            &self.exclude,
+            self.no_deps,
+            self.start == StartMode::None,
+        )
+    }
 }
 
 /// Arguments for launching a launch file
@@ -707,6 +802,12 @@ pub struct LaunchArgs {
 pub struct LaunchCommandArgs {
     #[command(flatten)]
     pub launch: LaunchArgs,
+
+    #[command(flatten)]
+    pub selection: SelectionOptions,
+
+    #[command(flatten)]
+    pub run_control: RunControlOptions,
 
     /// Validate contracts and scheduling, print the diagnostics, and exit
     /// without spawning anything. Exit status is 0 when clean, 1 when the
@@ -823,6 +924,12 @@ pub struct UpArgs {
     /// entirely. Never used as a value.
     #[arg(long, hide = true, value_name = "PATH")]
     pub input_file: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub selection: SelectionOptions,
+
+    #[command(flatten)]
+    pub run_control: RunControlOptions,
 
     #[command(flatten)]
     pub common: CommonOptions,

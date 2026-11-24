@@ -135,6 +135,9 @@ pub struct MemberSummary {
     pub last_exit: Option<crate::member_actor::coordinator::ExitRecord>,
     /// Exits in the last [`RECENT_EXIT_WINDOW_MS`].
     pub recent_exits: u32,
+    /// Phase 106: Excluded by the launch's selection or switched off on the
+    /// Launch page. Not started, not counted by startup or Health.
+    pub excluded: bool,
 }
 
 /// The window `recent_exits` counts over, and the crash-loop rule judges.
@@ -169,6 +172,9 @@ pub struct HealthSummary {
 
     /// Number of nodes with significant stderr output (>10KB)
     pub noisy: usize,
+
+    /// Phase 106: Excluded members, counted in none of the totals above.
+    pub excluded: usize,
 }
 
 impl HealthSummary {

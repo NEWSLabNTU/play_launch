@@ -1105,6 +1105,7 @@ dependencies = [
  "chrono",
  "clap",
  "eyre",
+ "glob",
  "indexmap",
  "log",
  "num_cpus",

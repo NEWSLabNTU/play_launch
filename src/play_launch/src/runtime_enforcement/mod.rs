@@ -269,6 +269,9 @@ pub struct RuleEngine {
     /// `"<rule_id> on <fqn>"` of the first violation that tripped strict
     /// mode, for the exit message.
     first_strict_violation: Arc<Mutex<Option<String>>>,
+    /// Phase 106 W3: the first error-severity finding in any mode, for
+    /// `--fail-on contract`.
+    first_error: Arc<Mutex<Option<String>>>,
     /// Tracked once per `rule_id+fqn` to suppress repeated identical
     /// violations from spamming the log.
     seen: HashMap<(String, String), u64>,
@@ -363,6 +366,7 @@ impl RuleEngine {
             strict_violated: Arc::new(AtomicBool::new(false)),
             strict_threshold: Severity::Error,
             first_strict_violation: Arc::new(Mutex::new(None)),
+            first_error: Arc::new(Mutex::new(None)),
             seen: HashMap::new(),
             topic_name_chunks: HashMap::new(),
             discovered_names: HashMap::new(),
@@ -413,6 +417,11 @@ impl RuleEngine {
     /// strict mode (`"<rule_id> on <fqn>"`), `None` until one has.
     pub fn first_strict_violation_handle(&self) -> Arc<Mutex<Option<String>>> {
         Arc::clone(&self.first_strict_violation)
+    }
+
+    /// The first error-severity finding, whatever the mode (phase 106 W3).
+    pub fn first_error_handle(&self) -> Arc<Mutex<Option<String>>> {
+        Arc::clone(&self.first_error)
     }
 
     /// Lower (or restate) the severity at which a violation ends a strict
@@ -1062,6 +1071,12 @@ impl RuleEngine {
     /// `runtime_violations.jsonl` like any other violation. The first one
     /// that trips is remembered by name for the exit message.
     fn trip_strict(&self, rule_id: &str, fqn: &str, severity: Severity) {
+        if severity.at_least(Severity::Error)
+            && let Ok(mut first) = self.first_error.lock()
+            && first.is_none()
+        {
+            *first = Some(format!("{rule_id} on {fqn}"));
+        }
         if matches!(self.mode, EnforceMode::Strict) && severity.at_least(self.strict_threshold) {
             if let Ok(mut first) = self.first_strict_violation.lock()
                 && first.is_none()

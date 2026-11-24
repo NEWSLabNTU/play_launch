@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Phase 106: running part of a launch tree. A file included twice that
+       differs by an argument, composables loaded from an include into a
+       container declared here, and a plain include. -->
+  <node_container pkg="rclcpp_components" exec="component_container" name="sel_container" namespace="/sel"/>
+  <include file="$(dirname)/pure_nodes.launch.xml"/>
+  <include file="$(dirname)/selection_part.launch.xml">
+    <arg name="part" value="a"/>
+  </include>
+  <include file="$(dirname)/selection_part.launch.xml">
+    <arg name="part" value="b"/>
+  </include>
+</launch>

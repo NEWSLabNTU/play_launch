@@ -253,7 +253,8 @@ impl StartupBook {
                     _ => ms.spawned_ns,
                 };
                 StartupRow {
-                    waiting_ms: (row.ready_ms.is_none() && row.failed_ms.is_none())
+                    // An Excluded member is not waited for (phase 106).
+                    waiting_ms: (row.ready_ms.is_none() && row.failed_ms.is_none() && !s.excluded)
                         .then(|| start.map(|t| now_ns.saturating_sub(t) / 1_000_000))
                         .flatten(),
                     ..row
@@ -421,6 +422,7 @@ mod tests {
             output_dir: Default::default(),
             last_exit: None,
             recent_exits: 0,
+            excluded: false,
         }
     }
 

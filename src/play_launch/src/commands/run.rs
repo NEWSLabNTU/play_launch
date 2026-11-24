@@ -638,6 +638,7 @@ async fn run_direct(
             startup_stage: 0,
             // `run` builds its one node by hand — no launch file, no <timer>.
             start_after: None,
+            start_stopped: false,
         };
 
         // Add to builder
