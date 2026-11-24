@@ -522,6 +522,10 @@ impl ContainerActor {
 
                         Ok(true) // Keep actor alive to receive Start commands
                     }
+                    ControlEvent::AddComposable { name, metadata } => {
+                        self.take_added_composable(name, *metadata, false).await;
+                        Ok(true)
+                    }
                     _ => Ok(true) // Ignore other events during respawn
                 }
             }
@@ -594,6 +598,10 @@ impl ContainerActor {
                     }
                     ControlEvent::ReplaceComposable { name, metadata } => {
                         self.supervisor.replace_composable_metadata(&name, *metadata);
+                        Ok(true)
+                    }
+                    ControlEvent::AddComposable { name, metadata } => {
+                        self.take_added_composable(name, *metadata, false).await;
                         Ok(true)
                     }
                     _ => {

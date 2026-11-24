@@ -58,6 +58,6 @@ pub mod model;
 pub mod regular_node_actor;
 
 // Re-export commonly used types
-pub use coordinator::{MemberCoordinatorBuilder, MemberHandle, MemberRunner};
+pub use coordinator::{LateMember, MemberCoordinatorBuilder, MemberHandle, MemberRunner};
 pub use events::StateEvent;
 pub use model::{ActorConfig, MemberState, MemberSummary, MemberType};

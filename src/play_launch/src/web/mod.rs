@@ -51,10 +51,9 @@ pub struct WebState {
     pub diagnostic_registry: Arc<DiagnosticRegistry>,
     /// Broadcaster for system metrics to SSE clients (None when monitoring disabled)
     pub metrics_broadcaster: Option<Arc<SystemMetricsBroadcaster>>,
-    /// Launch tree scope table (from the SystemModel / in-memory dump, static after load)
-    pub scopes: Vec<ScopeEntry>,
-    /// Node name → scope ID mapping (built from record.json at startup)
-    pub node_scope_map: std::collections::HashMap<String, usize>,
+    /// The Launch tree: the scope table (from the SystemModel or the
+    /// in-memory dump) and member id -> scope. A Reload replaces it.
+    pub launch_tree: std::sync::RwLock<selection::LaunchTree>,
     /// The `events.jsonl` switch (`/api/interception/events`). `None` when
     /// the caller did not hand one over.
     pub events_switch: Option<Arc<crate::interception::EventsSwitch>>,
@@ -89,8 +88,7 @@ impl WebState {
             state_broadcaster,
             diagnostic_registry,
             metrics_broadcaster,
-            scopes,
-            node_scope_map,
+            launch_tree: std::sync::RwLock::new((scopes, node_scope_map)),
             events_switch: None,
             entities: None,
             health: None,

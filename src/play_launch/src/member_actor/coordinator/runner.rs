@@ -42,6 +42,9 @@ pub struct MemberRunner {
     /// replay-level watch is what stops the background tasks. Only the command layer
     /// holds those, so it supplies the whole sequence here.
     shutdown_hook: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Actors spawned after the start (phase 106: members a Reload adds),
+    /// handed over by `MemberHandle::add_member`.
+    late_rx: mpsc::UnboundedReceiver<super::late::LateTask>,
 }
 
 impl MemberRunner {
@@ -56,6 +59,7 @@ impl MemberRunner {
         shutdown_on_exit: HashMap<String, ExitPolicy>,
         excluded: Arc<dashmap::DashSet<String>>,
         shutdown_tx: Arc<watch::Sender<bool>>,
+        late_rx: mpsc::UnboundedReceiver<super::late::LateTask>,
     ) -> Self {
         Self {
             tasks,
@@ -67,6 +71,7 @@ impl MemberRunner {
             excluded,
             shutdown_tx,
             shutdown_hook: None,
+            late_rx,
         }
     }
 
@@ -156,17 +161,26 @@ impl MemberRunner {
             excluded,
             shutdown_tx,
             shutdown_hook,
+            mut late_rx,
         } = self;
+        let mut shutdown_on_exit = shutdown_on_exit;
 
         // Track task count before moving into FuturesUnordered
         let task_count = tasks.len();
         tracing::debug!("wait_for_completion: starting with {} tasks", task_count);
 
         // Move tasks into FuturesUnordered for concurrent completion handling
-        let mut task_futures = FuturesUnordered::from_iter(
+        type Done = std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = (String, Result<Result<()>, tokio::task::JoinError>),
+                    > + Send,
+            >,
+        >;
+        let mut task_futures: FuturesUnordered<Done> = FuturesUnordered::from_iter(
             tasks
                 .into_iter()
-                .map(|(name, task)| async move { (name, task.await) }),
+                .map(|(name, task)| Box::pin(async move { (name, task.await) }) as Done),
         );
 
         let mut errors = Vec::new();
@@ -189,6 +203,17 @@ impl MemberRunner {
                         shutdown_hook.as_ref(),
                         &event,
                     );
+                }
+
+                // An actor spawned after the start joins the wait.
+                Some(late) = late_rx.recv() => {
+                    if let Some(policy) = late.exit_policy {
+                        shutdown_on_exit.insert(late.id.clone(), policy);
+                    }
+                    let name = late.id;
+                    let task = late.task;
+                    task_futures.push(Box::pin(async move { (name, task.await) }));
+                    remaining_tasks += 1;
                 }
 
                 // Process task completions

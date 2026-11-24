@@ -8,7 +8,7 @@
 // docs/design/launch-selection.md section 6.
 
 import { signal, computed } from './vendor/signals.module.js';
-import { nodes, fetchNodes } from './store.js';
+import { nodes, fetchNodes, fetchLaunchTree } from './store.js';
 import { notify } from './components/Toasts.js';
 
 /** Member id -> the state a switch asks for (true = on). */
@@ -113,17 +113,25 @@ export async function fetchSelection() {
 export async function reloadTree() {
     try {
         const r = await post('/api/selection/reload', {});
+        const covered = r.covered || [];
         notify(
             `Reloaded: ${r.changed.length} changed` +
-            (r.added.length ? `, ${r.added.length} new (restart the launch to run them)` : '') +
+            (r.added.length ? `, ${r.added.length} new (off` +
+                (covered.length ? `; ${covered.length} pending on` : '') + ')' : '') +
             (r.removed.length ? `, ${r.removed.length} gone` : '') +
-            (r.changed.length ? '; Apply restarts the changed ones' : ''),
+            (r.changed.length || covered.length ? '; Apply runs them' : ''),
         );
+        // New members join the tree switched off; show them before marking.
+        if (r.added.length) {
+            await Promise.all([fetchLaunchTree(), fetchNodes()]);
+        }
         // A changed member is restarted by the next Apply: mark it pending
-        // on so Apply has something to do.
-        if (r.changed.length) {
+        // on so Apply has something to do. A new member the current
+        // selection covers is pending on too.
+        if (r.changed.length || covered.length) {
             const next = new Map(pending.value);
             for (const id of r.changed) if (isOn(id)) next.set(id, true);
+            for (const id of covered) next.set(id, true);
             pending.value = next;
             scheduleCheck();
         }

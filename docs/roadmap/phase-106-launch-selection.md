@@ -1,7 +1,7 @@
 # Phase 106: Running and exporting part of a launch tree
 
-**Status:** Done (2026-11-24). The gaps W4 and W5 named are closed, except
-starting a member a Reload adds.
+**Status:** Done (2026-11-24). The gaps W4 and W5 named are closed;
+starting a member a Reload adds since 2026-11-25.
 **Design:** `docs/design/launch-selection.md` (selecting, running, the web
 UI's switches) and `docs/design/launch-extraction.md` (exporting a launch
 file). Requested by the amr 175 session (2026-11-21) as `--scope
@@ -88,8 +88,14 @@ switches and the pending bar in `LaunchTreeView.js`. Apply fresh stops
 every running member and waits (at most 15 s) before starting the set
 again. Reload hands a changed member a new spawn context
 (`ControlEvent::ReplaceContext`, `ReplaceComposable`) that the next Apply
-restarts it with; a member a Reload adds cannot be started without
-restarting the launch, since actors are built once. Runtime enforcement
+restarts it with. A member a Reload adds gets an actor of its own at the
+Reload (`MemberHandle::add_member`, `coordinator/late.rs`), Excluded and
+stopped; a new composable joins its container's supervision
+(`ControlEvent::AddComposable`); the Launch tree is rebuilt from the new
+parse; and a new member the current selection covers comes back in
+`covered`, which the page marks pending on, so the next Apply starts it. A
+new member whose log directory name another member already has is left
+out with a warning. Runtime enforcement
 shares the set of topics whose publishers are off (`AbsentTopics`). Each
 step line carries `before`, the resource monitor's totals for what was
 running just before it, and a run that took steps ends with an `end` line.

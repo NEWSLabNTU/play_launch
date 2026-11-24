@@ -57,6 +57,10 @@ allowance heavily.
   CPU and memory of what was running just before the step, and the run
   ends with an `end` line. The node panel's Info tab has **Restart with
   prefix** (`POST /api/nodes/:id/restart-with`), the web UI's `--prefix`.
+  A node, container or composable a Reload finds joins the run switched
+  off and appears in the Launch tree; the ones the current selection covers
+  are marked pending on, and Apply starts them without restarting the
+  launch.
 - **New (phase 106 W3): bounded runs and a per-run launch prefix.**
   `--run-for <duration>` ends a launch after a time; `--fail-on
   health:<kind>[:<glob>]`, `--fail-on contract` and `--fail-on exit:<glob>`

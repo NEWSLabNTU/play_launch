@@ -138,6 +138,38 @@ impl ContainerActor {
         }
     }
 
+    /// Phase 106 Reload: supervise a composable the launch files gained.
+    /// It is not loaded; it waits as Unloaded while the container runs, else
+    /// Blocked until the container comes up.
+    pub(super) async fn take_added_composable(
+        &mut self,
+        name: String,
+        metadata: ComposableNodeMetadata,
+        running: bool,
+    ) {
+        if self.supervisor.composable_nodes.contains_key(&name) {
+            warn!("{}: '{}' is supervised already", self.name, name);
+            return;
+        }
+        self.supervisor.add_composable_node(name.clone(), metadata);
+        let event = if running {
+            if let Some(entry) = self.supervisor.composable_nodes.get_mut(&name) {
+                entry.state = ComposableState::Unloaded;
+            }
+            StateEvent::Unloaded { name: name.clone() }
+        } else {
+            StateEvent::Blocked {
+                name: name.clone(),
+                reason: BlockReason::ContainerNotStarted,
+            }
+        };
+        emit(&self.state_tx, event).await;
+        if let Err(e) = self.update_metadata_with_composables() {
+            warn!("{}: could not update metadata.json: {e:#}", self.name);
+        }
+        info!("{}: supervises '{}' (added by a Reload)", self.name, name);
+    }
+
     /// Get a receiver for container state (for composable nodes)
     pub fn container_state_rx(&self) -> watch::Receiver<ContainerState> {
         self.container_state_tx.subscribe()
@@ -426,6 +458,9 @@ impl ContainerActor {
                         }
                         ControlEvent::ReplaceComposable { name, metadata } => {
                             self.supervisor.replace_composable_metadata(&name, *metadata);
+                        }
+                        ControlEvent::AddComposable { name, metadata } => {
+                            self.take_added_composable(name, *metadata, true).await;
                         }
                         _ => {
                             warn!("{}: Unhandled control event: {:?}", self.name, event);

@@ -53,8 +53,14 @@ pub struct LaunchSource {
 }
 
 impl LaunchSource {
-    /// Resolve the launch files as they are now.
-    pub async fn resolve(&self) -> eyre::Result<SystemModel> {
+    /// Resolve the launch files as they are now: the model and the parse it
+    /// came from (whose scope table is the Launch tree).
+    pub async fn resolve(
+        &self,
+    ) -> eyre::Result<(
+        SystemModel,
+        ros_launch_resolve::ros::launch_dump::LaunchDump,
+    )> {
         let (dump, launch_path) = ros_launch_resolve::verbs::parse_to_launch_dump(
             &self.package_or_path,
             self.launch_file.as_deref(),
@@ -62,7 +68,7 @@ impl LaunchSource {
             self.parser,
         )
         .await?;
-        ros_launch_resolve::model::build_checked_model(
+        let model = ros_launch_resolve::model::build_checked_model(
             ros_launch_resolve::model::ModelBuildInputs {
                 dump: &dump,
                 launch_path: Some(&launch_path),
@@ -80,7 +86,8 @@ impl LaunchSource {
                 explain: false,
                 process_per_composable: self.isolated,
             },
-        )
+        )?;
+        Ok((model, dump))
     }
 }
 
@@ -92,18 +99,47 @@ pub type ReplaceFn = Arc<
         + Sync,
 >;
 
+/// The Launch tree as `GET /api/launch-tree` serves it: the scope table and
+/// member id -> scope.
+pub type LaunchTree = (
+    Vec<ros_launch_resolve::ros::launch_dump::ScopeEntry>,
+    HashMap<String, usize>,
+);
+
+/// What a Reload that found new members did with them.
+pub struct Grown {
+    /// `(member id, model key)` of each member added.
+    pub added: Vec<(String, String)>,
+    /// The tree rebuilt from the new parse, with every member in it.
+    pub tree: LaunchTree,
+}
+
+/// Adds the members a Reload found (`keys`, in the reloaded model) to the
+/// run, Excluded and stopped, and rebuilds the Launch tree from the new
+/// parse.
+pub type GrowFn = Arc<
+    dyn Fn(
+            Arc<SystemModel>,
+            ros_launch_resolve::ros::launch_dump::LaunchDump,
+            BTreeSet<String>,
+        ) -> futures::future::BoxFuture<'static, Grown>
+        + Send
+        + Sync,
+>;
+
 pub struct SelectionState {
     pub model: RwLock<Arc<SystemModel>>,
-    /// Member id -> model key.
-    pub key_of: HashMap<String, String>,
+    /// Member id -> model key; Reload adds to it.
+    key_of: std::sync::RwLock<HashMap<String, String>>,
     /// Model key -> member id.
-    pub id_of: HashMap<String, String>,
+    id_of: std::sync::RwLock<HashMap<String, String>>,
     /// The command the run was started with, selection flags removed.
     pub base_command: Vec<String>,
     pub source: Option<Arc<LaunchSource>>,
     /// The run's log directory (Export writes under it).
     pub log_dir: PathBuf,
     pub replace: Option<ReplaceFn>,
+    pub grow: Option<GrowFn>,
     /// Model keys whose resolution changed at the last Reload and that have
     /// not been restarted since.
     pub changed: Mutex<BTreeSet<String>>,
@@ -132,6 +168,7 @@ impl SelectionState {
         log_dir: &std::path::Path,
         source: Option<Arc<LaunchSource>>,
         replace: Option<ReplaceFn>,
+        grow: Option<GrowFn>,
         absent_topics: crate::runtime_enforcement::AbsentTopics,
         resources: Option<ResourceWatch>,
         isolated: bool,
@@ -143,18 +180,52 @@ impl SelectionState {
             .collect();
         SelectionState {
             model: RwLock::new(model),
-            key_of,
-            id_of,
+            key_of: std::sync::RwLock::new(key_of),
+            id_of: std::sync::RwLock::new(id_of),
             base_command: base_command(std::env::args().collect()),
             source,
             log_dir: log_dir.to_path_buf(),
             replace,
+            grow,
             changed: Mutex::new(BTreeSet::new()),
             step_log: log_dir.join("selection.jsonl"),
             busy: Mutex::new(()),
             absent_topics,
             resources,
             isolated,
+        }
+    }
+
+    /// The model key of a member id.
+    pub fn key(&self, id: &str) -> Option<String> {
+        self.key_of
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .cloned()
+    }
+
+    /// The member id of a model key.
+    pub fn id(&self, key: &str) -> Option<String> {
+        self.id_of
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(key)
+            .cloned()
+    }
+
+    /// Model key -> member id, as it stands.
+    pub fn id_map(&self) -> HashMap<String, String> {
+        self.id_of.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Register members a Reload added.
+    fn register(&self, pairs: &[(String, String)]) {
+        let mut k = self.key_of.write().unwrap_or_else(|e| e.into_inner());
+        let mut i = self.id_of.write().unwrap_or_else(|e| e.into_inner());
+        for (id, key) in pairs {
+            k.insert(id.clone(), key.clone());
+            i.insert(key.clone(), id.clone());
         }
     }
 
@@ -251,7 +322,7 @@ fn current_on(sel: &SelectionState, members: &[MemberSummary]) -> HashSet<String
     members
         .iter()
         .filter(|m| !m.excluded)
-        .filter_map(|m| sel.key_of.get(&m.id).cloned())
+        .filter_map(|m| sel.key(&m.id))
         .collect()
 }
 
@@ -284,7 +355,7 @@ pub async fn get_selection(State(web): State<Arc<WebState>>) -> Response {
         .lock()
         .await
         .iter()
-        .filter_map(|k| sel.id_of.get(k).cloned())
+        .filter_map(|k| sel.id(k))
         .collect();
     Json(json!({
         "reload": sel.source.is_some(),
@@ -320,9 +391,7 @@ async fn plan(web: &WebState, sel: &SelectionState, body: &SwitchBody) -> Result
     let members = web.member_handle.list_members().await;
     let current = current_on(sel, &members);
     let key = |id: &String| {
-        sel.key_of
-            .get(id)
-            .cloned()
+        sel.key(id)
             .ok_or_else(|| error(StatusCode::BAD_REQUEST, format!("unknown member `{id}`")))
     };
     let on: Vec<String> = body.on.iter().map(key).collect::<Result<_, _>>()?;
@@ -335,7 +404,7 @@ async fn plan(web: &WebState, sel: &SelectionState, body: &SwitchBody) -> Result
     let evaluated = selection::evaluate_set(&model, target, &off, false)
         .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?;
     let changed = sel.changed.lock().await.clone();
-    let to_id = |k: &String| sel.id_of.get(k).cloned();
+    let to_id = |k: &String| sel.id(k);
     let start = evaluated
         .kept
         .iter()
@@ -361,7 +430,7 @@ async fn plan(web: &WebState, sel: &SelectionState, body: &SwitchBody) -> Result
 }
 
 fn report(sel: &SelectionState, plan: &Plan) -> serde_json::Value {
-    let id = |k: &String| sel.id_of.get(k).cloned().unwrap_or_else(|| k.clone());
+    let id = |k: &String| sel.id(k).unwrap_or_else(|| k.clone());
     json!({
         "start": plan.start,
         "stop": plan.stop,
@@ -396,9 +465,7 @@ fn by_id<'a>(members: &'a [MemberSummary], id: &str) -> Option<&'a MemberSummary
 
 /// The member id of a composable's container.
 fn container_id(sel: &SelectionState, m: &MemberSummary) -> Option<String> {
-    m.target_container
-        .as_ref()
-        .and_then(|c| sel.id_of.get(c).cloned())
+    m.target_container.as_ref().and_then(|c| sel.id(c))
 }
 
 fn running(m: Option<&MemberSummary>) -> bool {
@@ -530,14 +597,14 @@ pub async fn apply(State(web): State<Arc<WebState>>, Json(body): Json<SwitchBody
         .restart
         .iter()
         .chain(plan.start.iter())
-        .filter_map(|id| sel.key_of.get(id).cloned())
+        .filter_map(|id| sel.key(id))
         .collect();
     let mut changed = sel.changed.lock().await;
     let replacing: BTreeSet<String> = restart_keys.intersection(&changed).cloned().collect();
     if let Some(replace) = &sel.replace
         && !replacing.is_empty()
     {
-        for (id, ev) in replace(&model, &sel.id_of, &replacing) {
+        for (id, ev) in replace(&model, &sel.id_map(), &replacing) {
             send(h, &id, ev).await;
         }
     }
@@ -635,12 +702,11 @@ pub async fn reload(State(web): State<Arc<WebState>>) -> Response {
         );
     };
     let _busy = sel.busy.lock().await;
-    let new = match source.resolve().await {
-        Ok(m) => Arc::new(m),
+    let (new, dump) = match source.resolve().await {
+        Ok((m, d)) => (Arc::new(m), d),
         Err(e) => return error(StatusCode::UNPROCESSABLE_ENTITY, format!("{e:#}")),
     };
-    let mut model = sel.model.write().await;
-    let old = model.clone();
+    let old = sel.model.read().await.clone();
     let mut changed_keys = Vec::new();
     for (k, n) in &new.structure.nodes {
         if let Some(o) = old.structure.nodes.get(k)
@@ -649,11 +715,21 @@ pub async fn reload(State(web): State<Arc<WebState>>) -> Response {
             changed_keys.push(k.clone());
         }
     }
-    let added: Vec<String> = new
+    // A member an earlier Reload dropped and this one brings back still has
+    // its actor; it is changed, not new.
+    changed_keys.extend(
+        new.structure
+            .nodes
+            .keys()
+            .filter(|k| !old.structure.nodes.contains_key(*k) && sel.id(k).is_some())
+            .cloned(),
+    );
+    let added: BTreeSet<String> = new
         .structure
         .nodes
         .keys()
         .filter(|k| !old.structure.nodes.contains_key(*k))
+        .filter(|k| sel.id(k).is_none())
         .cloned()
         .collect();
     let removed: Vec<String> = old
@@ -661,16 +737,42 @@ pub async fn reload(State(web): State<Arc<WebState>>) -> Response {
         .nodes
         .keys()
         .filter(|k| !new.structure.nodes.contains_key(*k))
-        .filter_map(|k| sel.id_of.get(k).cloned())
+        .filter_map(|k| sel.id(k))
         .collect();
-    *model = new;
-    drop(model);
+    // What is on now, as selectors, applied to the new tree: a new member a
+    // selector covers is a pending switch-on (design 7.2).
+    let members = web.member_handle.list_members().await;
+    let on = current_on(sel, &members);
+    let spec = selection::describe(&old, &on);
+
+    // New members join the run Excluded and stopped, so Apply can start
+    // them; the tree is rebuilt from the new parse so the page shows them.
+    let mut added_ids = Vec::new();
+    if let Some(grow) = &sel.grow {
+        let grown = grow(new.clone(), dump, added.clone()).await;
+        sel.register(&grown.added);
+        added_ids = grown.added.iter().map(|(id, _)| id.clone()).collect();
+        if let Ok(mut t) = web.launch_tree.write() {
+            *t = grown.tree;
+        }
+    }
+    let covered: Vec<String> = match selection::evaluate(&new, &spec) {
+        Ok(s) => added
+            .iter()
+            .filter(|k| s.is_kept(k))
+            .filter_map(|k| sel.id(k))
+            .collect(),
+        Err(e) => {
+            tracing::debug!(
+                "selection: the current selection does not apply to the reloaded tree: {e:#}"
+            );
+            Vec::new()
+        }
+    };
+    *sel.model.write().await = new;
     let mut changed = sel.changed.lock().await;
     changed.extend(changed_keys.iter().cloned());
-    let changed_ids: Vec<String> = changed
-        .iter()
-        .filter_map(|k| sel.id_of.get(k).cloned())
-        .collect();
+    let changed_ids: Vec<String> = changed.iter().filter_map(|k| sel.id(k)).collect();
     drop(changed);
     sel.append_step(json!({
         "t_ms": now_ms(),
@@ -685,7 +787,13 @@ pub async fn reload(State(web): State<Arc<WebState>>) -> Response {
         added.len(),
         removed.len()
     );
-    Json(json!({ "changed": changed_ids, "added": added, "removed": removed })).into_response()
+    Json(json!({
+        "changed": changed_ids,
+        "added": added_ids,
+        "covered": covered,
+        "removed": removed,
+    }))
+    .into_response()
 }
 
 #[cfg(test)]
@@ -1034,7 +1142,7 @@ pub async fn restart_with(
             "this run cannot respawn a member with a new command",
         );
     };
-    let Some(key) = sel.key_of.get(&id).cloned() else {
+    let Some(key) = sel.key(&id) else {
         return error(StatusCode::BAD_REQUEST, format!("unknown member `{id}`"));
     };
     let Ok(_busy) = sel.busy.try_lock() else {
@@ -1085,7 +1193,7 @@ pub async fn restart_with(
             _ => key.clone(),
         },
     };
-    let Some(target_id) = sel.id_of.get(&target).cloned() else {
+    let Some(target_id) = sel.id(&target) else {
         return error(
             StatusCode::UNPROCESSABLE_ENTITY,
             format!("`{target}` is not a member of this run"),
@@ -1100,7 +1208,7 @@ pub async fn restart_with(
         );
     }
     let keys: BTreeSet<String> = [target.clone()].into_iter().collect();
-    for (to, ev) in replace(&model, &sel.id_of, &keys) {
+    for (to, ev) in replace(&model, &sel.id_map(), &keys) {
         send(h, &to, ev).await;
     }
     if let Err(e) = h.restart_member(&target_id).await {

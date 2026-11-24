@@ -440,6 +440,17 @@ re-applies the selectors to the new tree:
 
 This settles U9 without a diff verb: the changed marks are the comparison.
 
+As built: a new member joins the run at the Reload, Excluded and stopped,
+with an actor of its own (a new composable joins its container's
+supervision), and the Launch tree is rebuilt from the new parse. The
+response lists the new members in `added` and those the current selection
+(as `describe` writes it) covers in `covered`; the page marks the covered
+ones pending on. A new member whose log directory name another member
+already has is left out with a warning, since its context would write into
+that member's directory. A member that no longer exists is listed in
+`removed` and keeps running until it is switched off; the rebuilt tree no
+longer shows it.
+
 ### 7.3 A bounded run with a verdict (U1, U2, U6, CI)
 
 - `--run-for <duration>` ends the launch with the usual shutdown after the

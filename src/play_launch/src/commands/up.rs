@@ -1722,6 +1722,19 @@ pub(crate) async fn play(
                 container_mode,
                 absent_topics.clone(),
                 resources_rx.clone(),
+                GrowInputs {
+                    handle: member_handle.clone(),
+                    node_log_dir: log_dir.join("node"),
+                    load_node_log_dir: log_dir.join("load_node"),
+                    container_mode,
+                    pgid,
+                    disable_respawn: common.containers.disable_respawn,
+                    sched_plan: sched_plan.clone(),
+                    sched_mode: common.sched_opts.sched_apply,
+                    sched_helper: sched_helper.clone(),
+                    startup: startup_governor.clone(),
+                    process_registry: process_registry.clone(),
+                },
             )
             .await,
         );
@@ -2371,6 +2384,7 @@ fn effective_container_mode(
 /// member id (`kind:/ns/name[#N]`). This is the one join between them.
 /// The web UI's switches (phase 106): the map between member ids and model
 /// keys, Reload, and how a reloaded member gets its new spawn context.
+#[allow(clippy::too_many_arguments)]
 async fn selection_state(
     member_handle: &crate::member_actor::MemberHandle,
     model: std::sync::Arc<ros_launch_manifest_model::SystemModel>,
@@ -2379,6 +2393,7 @@ async fn selection_state(
     container_mode: cli::options::ContainerMode,
     absent_topics: crate::runtime_enforcement::AbsentTopics,
     resources: Option<crate::web::selection::ResourceWatch>,
+    grow: GrowInputs,
 ) -> crate::web::selection::SelectionState {
     let members = member_handle.member_model_keys().await;
     let node_log_dir = log_dir.join("node");
@@ -2404,10 +2419,183 @@ async fn selection_state(
         log_dir,
         launch_source,
         Some(replace),
+        Some(grow_fn(grow)),
         absent_topics,
         resources,
         container_mode == cli::options::ContainerMode::Isolated,
     )
+}
+
+/// What adding a member a Reload found needs: how the launch's own members
+/// were built (phase 106).
+struct GrowInputs {
+    handle: std::sync::Arc<crate::member_actor::MemberHandle>,
+    node_log_dir: PathBuf,
+    load_node_log_dir: PathBuf,
+    container_mode: cli::options::ContainerMode,
+    pgid: i32,
+    disable_respawn: bool,
+    sched_plan: Option<std::sync::Arc<crate::execution::sched_plan::SchedPlan>>,
+    sched_mode: crate::execution::sched_apply::SchedApplyMode,
+    sched_helper: Option<crate::execution::rt_helper_client::SchedHelper>,
+    startup: std::sync::Arc<crate::execution::startup_governor::StartupGovernor>,
+    process_registry: Arc<Mutex<HashMap<u32, PathBuf>>>,
+}
+
+fn grow_fn(inputs: GrowInputs) -> crate::web::selection::GrowFn {
+    let inputs = std::sync::Arc::new(inputs);
+    std::sync::Arc::new(move |model, dump, keys| {
+        let inputs = inputs.clone();
+        Box::pin(async move { grow_members(&inputs, &model, &dump, &keys).await })
+    })
+}
+
+/// Add the members a Reload found (`keys`) to the run, Excluded and stopped,
+/// and rebuild the Launch tree from the new parse. Containers go first, so
+/// a new composable finds a new container. A member whose log directory name
+/// another member already has is left out with a warning: its context would
+/// write into that member's directory.
+async fn grow_members(
+    inputs: &GrowInputs,
+    model: &ros_launch_manifest_model::SystemModel,
+    dump: &LaunchDump,
+    keys: &std::collections::BTreeSet<String>,
+) -> crate::web::selection::Grown {
+    let mut added = Vec::new();
+    if !keys.is_empty() {
+        let taken = |key: &str, inst: &ros_launch_manifest_model::NodeInstance| {
+            let root = if inst.plugin.is_some() {
+                &inputs.load_node_log_dir
+            } else {
+                &inputs.node_log_dir
+            };
+            let base = crate::execution::node_cmdline::split_model_fqn(key).1;
+            root.join(base).exists()
+        };
+        let mut only_new = model.clone();
+        only_new.structure.nodes.retain(|k, inst| {
+            if !keys.contains(k) {
+                return false;
+            }
+            if taken(k, inst) {
+                warn!(
+                    "selection: `{k}` is new, but its log directory name is in use; \
+                     restart the launch to run it"
+                );
+                return false;
+            }
+            true
+        });
+        if let Err(e) = add_new_members(inputs, &only_new, &mut added).await {
+            warn!("selection: could not add the reloaded launch's new members: {e:#}");
+        }
+    }
+    let (scopes, fqn_scope_map) = if dump.scopes.is_empty() {
+        launch_tree_from_model(model)
+    } else {
+        launch_tree_from_dump(dump)
+    };
+    let node_scopes = node_scopes_by_member_id(&inputs.handle, &fqn_scope_map).await;
+    crate::web::selection::Grown {
+        added,
+        tree: (scopes, node_scopes),
+    }
+}
+
+async fn add_new_members(
+    inputs: &GrowInputs,
+    model: &ros_launch_manifest_model::SystemModel,
+    added: &mut Vec<(String, String)>,
+) -> eyre::Result<()> {
+    use crate::member_actor::LateMember;
+    let config = |ctx: &crate::execution::context::NodeContext| {
+        let key = ctx.model_fqn.clone().unwrap_or_default();
+        crate::member_actor::ActorConfig {
+            respawn_enabled: !inputs.disable_respawn && ctx.record.respawn.unwrap_or(false),
+            respawn_delay: ctx.record.respawn_delay.unwrap_or(0.0),
+            max_respawn_attempts: None,
+            output_dir: ctx.output_dir.clone(),
+            pgid: Some(inputs.pgid),
+            sched: inputs
+                .sched_plan
+                .as_ref()
+                .and_then(|p| p.for_fqn(&key).cloned()),
+            sched_mode: inputs.sched_mode,
+            sched_helper: inputs.sched_helper.clone(),
+            startup: inputs.startup.clone(),
+            startup_stage: 0,
+            start_after: None,
+            start_stopped: true,
+        }
+    };
+    let h = &inputs.handle;
+    let mut push = |r: eyre::Result<String>, key: Option<String>| match (r, key) {
+        (Ok(id), Some(key)) => added.push((id, key)),
+        (Ok(_), None) => {}
+        (Err(e), key) => warn!(
+            "selection: could not add `{}`: {e:#}",
+            key.unwrap_or_default()
+        ),
+    };
+    for ctx in prepare_container_contexts_from_model(
+        model,
+        &inputs.node_log_dir,
+        inputs.container_mode,
+        None,
+        None,
+    )? {
+        let ctx = ctx.node_context;
+        let name = ctx.record.name.clone().unwrap_or_else(|| "unknown".into());
+        let key = ctx.model_fqn.clone();
+        let r = h
+            .add_member(LateMember::Container {
+                name,
+                config: config(&ctx),
+                context: ctx,
+                process_registry: Some(inputs.process_registry.clone()),
+                use_component_events: inputs.container_mode != cli::options::ContainerMode::Stock,
+            })
+            .await;
+        push(r, key);
+    }
+    let ComposableNodeContextSet { load_node_contexts } =
+        prepare_composable_node_contexts_from_model(model, &inputs.load_node_log_dir)?;
+    for ctx in load_node_contexts {
+        let key = ctx.model_fqn.clone();
+        let sched = inputs
+            .sched_plan
+            .as_ref()
+            .zip(key.as_ref())
+            .and_then(|(p, k)| p.for_fqn(k).cloned());
+        let r = h
+            .add_member(LateMember::Composable {
+                name: ctx.record.node_name.clone(),
+                context: ctx,
+                sched,
+            })
+            .await;
+        push(r, key);
+    }
+    for ctx in prepare_node_contexts_from_model(model, &inputs.node_log_dir, None, None)? {
+        let name = ctx
+            .record
+            .name
+            .as_ref()
+            .or(ctx.record.exec_name.as_ref())
+            .cloned()
+            .unwrap_or_else(|| "unknown".into());
+        let key = ctx.model_fqn.clone();
+        let r = h
+            .add_member(LateMember::Node {
+                name,
+                config: config(&ctx),
+                context: ctx,
+                process_registry: Some(inputs.process_registry.clone()),
+            })
+            .await;
+        push(r, key);
+    }
+    Ok(())
 }
 
 /// The control events that hand each reloaded member in `keys` its new spawn

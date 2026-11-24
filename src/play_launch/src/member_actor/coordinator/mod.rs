@@ -8,6 +8,8 @@
 mod builder;
 pub(crate) use builder::composable_metadata;
 mod handle;
+mod late;
+pub use late::LateMember;
 mod runner;
 mod state_reducer;
 pub use state_reducer::ExitRecord;

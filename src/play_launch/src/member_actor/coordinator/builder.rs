@@ -86,27 +86,7 @@ impl MemberCoordinatorBuilder {
         config: crate::member_actor::model::ActorConfig,
         process_registry: Option<Arc<std::sync::Mutex<HashMap<u32, PathBuf>>>>,
     ) {
-        let metadata = MemberMetadata {
-            id: String::new(), // assigned by the IdAllocator in spawn() (phase-50)
-            name: name.clone(),
-            member_type: MemberType::Node,
-            package: context.record.package.clone(),
-            executable: context.record.executable.clone(),
-            namespace: context.record.namespace.clone(),
-            target_container: None,
-            output_dir: context.output_dir.clone(),
-            respawn_enabled: context.record.respawn,
-            respawn_delay: context.record.respawn_delay,
-            exec_name: context.record.exec_name.clone(),
-            node_name: context
-                .record
-                .name
-                .clone()
-                .or(context.record.exec_name.clone()),
-            ros_name_known: context.record.name.is_some() && context.record.package.is_some(),
-            auto_load: None, // Not applicable for regular nodes
-            model_key: context.model_fqn.clone(),
-        };
+        let metadata = node_metadata(&name, &context);
 
         self.regular_nodes.push(RegularNodeDefinition {
             name,
@@ -130,23 +110,7 @@ impl MemberCoordinatorBuilder {
     {
         let (state_tx, state_rx) = tokio::sync::oneshot::channel();
 
-        let metadata = MemberMetadata {
-            id: String::new(), // assigned by the IdAllocator in spawn() (phase-50)
-            name: name.clone(),
-            member_type: MemberType::Container,
-            package: context.record.package.clone(),
-            executable: context.record.executable.clone(),
-            namespace: context.record.namespace.clone(),
-            target_container: None,
-            output_dir: context.output_dir.clone(),
-            respawn_enabled: context.record.respawn,
-            respawn_delay: context.record.respawn_delay,
-            exec_name: context.record.exec_name.clone(),
-            node_name: context.record.name.clone(),
-            ros_name_known: context.record.name.is_some(),
-            auto_load: None, // Not applicable for containers
-            model_key: context.model_fqn.clone(),
-        };
+        let metadata = container_metadata(&name, &context);
 
         self.containers.push(ContainerDefinition {
             name,
@@ -176,23 +140,7 @@ impl MemberCoordinatorBuilder {
         let auto_load = !excluded;
         let target_container_name = context.record.target_container_name.clone();
 
-        let metadata = MemberMetadata {
-            id: String::new(), // assigned by the IdAllocator in spawn() (phase-50)
-            name: name.clone(),
-            member_type: MemberType::ComposableNode,
-            package: Some(context.record.package.clone()),
-            executable: String::new(),
-            namespace: Some(context.record.namespace.clone()),
-            target_container: Some(target_container_name.clone()),
-            output_dir: context.output_dir.clone(),
-            respawn_enabled: None,
-            respawn_delay: None,
-            exec_name: None,
-            node_name: Some(context.record.node_name.clone()),
-            ros_name_known: true,
-            auto_load: Some(auto_load),
-            model_key: context.model_fqn.clone(),
-        };
+        let metadata = composable_member_metadata(&name, &context, auto_load);
 
         self.composable_nodes.push(ComposableNodeDefinition {
             name,
@@ -412,16 +360,8 @@ impl MemberCoordinatorBuilder {
             // First try exact match, then fall back to suffix matching for relative
             // targets that may omit namespace prefix (e.g. "planning_container" should
             // match "/planning/planning_container").
-            let container_member_name = container_full_names
-                .iter()
-                .find(|(_, full_name)| *full_name == &normalized_target)
-                .or_else(|| {
-                    let suffix = format!("/{}", def.target_container_name.trim_start_matches('/'));
-                    container_full_names
-                        .iter()
-                        .find(|(_, full_name)| full_name.ends_with(&suffix))
-                })
-                .map(|(member_name, _)| member_name.clone());
+            let container_member_name =
+                find_container(&container_full_names, &def.target_container_name);
 
             if let Some(container_member_name) = container_member_name {
                 // Get mutable reference to container actor
@@ -598,6 +538,17 @@ impl MemberCoordinatorBuilder {
         // handle does: a node with `on_exit=Shutdown()` exiting must stop every actor.
         let shutdown_tx = Arc::new(shutdown_tx);
 
+        let (late_tx, late_rx) = mpsc::unbounded_channel();
+        let late = super::late::LateSpawner {
+            id_alloc,
+            state_tx: state_tx.downgrade(),
+            shutdown_rx: shutdown_rx.clone(),
+            load_timings: self.load_timings,
+            container_full_names,
+            tasks_tx: late_tx,
+        };
+        drop(state_tx);
+
         let handle = MemberHandle::new(
             control_channels,
             Arc::new(tokio::sync::RwLock::new(metadata_map)),
@@ -609,6 +560,7 @@ impl MemberCoordinatorBuilder {
             shared_ros_node,
             node_fqn_map,
             excluded_ids.clone(),
+            late,
         );
 
         let runner = MemberRunner::new(
@@ -620,6 +572,7 @@ impl MemberCoordinatorBuilder {
             shutdown_on_exit_ids,
             excluded_ids,
             shutdown_tx,
+            late_rx,
         );
 
         (handle, runner)
@@ -697,4 +650,106 @@ pub(crate) fn composable_metadata(
         sched,
         start_after,
     }
+}
+
+/// A plain node's registry entry (shared with members a Reload adds).
+pub(super) fn node_metadata(
+    name: &str,
+    context: &crate::execution::context::NodeContext,
+) -> MemberMetadata {
+    MemberMetadata {
+        id: String::new(), // assigned by the IdAllocator in spawn() (phase-50)
+        name: name.to_string(),
+        member_type: MemberType::Node,
+        package: context.record.package.clone(),
+        executable: context.record.executable.clone(),
+        namespace: context.record.namespace.clone(),
+        target_container: None,
+        output_dir: context.output_dir.clone(),
+        respawn_enabled: context.record.respawn,
+        respawn_delay: context.record.respawn_delay,
+        exec_name: context.record.exec_name.clone(),
+        node_name: context
+            .record
+            .name
+            .clone()
+            .or(context.record.exec_name.clone()),
+        ros_name_known: context.record.name.is_some() && context.record.package.is_some(),
+        auto_load: None, // Not applicable for regular nodes
+        model_key: context.model_fqn.clone(),
+    }
+}
+
+/// A container's registry entry.
+pub(super) fn container_metadata(
+    name: &str,
+    context: &crate::execution::context::NodeContext,
+) -> MemberMetadata {
+    MemberMetadata {
+        id: String::new(), // assigned by the IdAllocator in spawn() (phase-50)
+        name: name.to_string(),
+        member_type: MemberType::Container,
+        package: context.record.package.clone(),
+        executable: context.record.executable.clone(),
+        namespace: context.record.namespace.clone(),
+        target_container: None,
+        output_dir: context.output_dir.clone(),
+        respawn_enabled: context.record.respawn,
+        respawn_delay: context.record.respawn_delay,
+        exec_name: context.record.exec_name.clone(),
+        node_name: context.record.name.clone(),
+        ros_name_known: context.record.name.is_some(),
+        auto_load: None, // Not applicable for containers
+        model_key: context.model_fqn.clone(),
+    }
+}
+
+/// A composable's registry entry.
+pub(super) fn composable_member_metadata(
+    name: &str,
+    context: &crate::execution::context::ComposableNodeContext,
+    auto_load: bool,
+) -> MemberMetadata {
+    MemberMetadata {
+        id: String::new(), // assigned by the IdAllocator in spawn() (phase-50)
+        name: name.to_string(),
+        member_type: MemberType::ComposableNode,
+        package: Some(context.record.package.clone()),
+        executable: String::new(),
+        namespace: Some(context.record.namespace.clone()),
+        target_container: Some(context.record.target_container_name.clone()),
+        output_dir: context.output_dir.clone(),
+        respawn_enabled: None,
+        respawn_delay: None,
+        exec_name: None,
+        node_name: Some(context.record.node_name.clone()),
+        ros_name_known: true,
+        auto_load: Some(auto_load),
+        model_key: context.model_fqn.clone(),
+    }
+}
+
+/// The member id of the container a composable targets: an exact match of its
+/// full name, else one whose full name ends with the target (a relative
+/// target that omits the namespace, e.g. `planning_container` for
+/// `/planning/planning_container`).
+pub(super) fn find_container(full_names: &HashMap<String, String>, target: &str) -> Option<String> {
+    let normalized = if target.starts_with('/') {
+        target.to_string()
+    } else {
+        format!("/{target}")
+    };
+    let suffix = format!("/{}", target.trim_start_matches('/'));
+    full_names
+        .iter()
+        .find(|(_, full)| **full == normalized)
+        .or_else(|| full_names.iter().find(|(_, full)| full.ends_with(&suffix)))
+        .map(|(id, _)| id.clone())
+}
+
+/// A container's full node name, `namespace/name`, which composables target.
+pub(super) fn container_full_name(record: &crate::execution::context::NodeContext) -> String {
+    let namespace = record.record.namespace.as_deref().unwrap_or("/");
+    let name = record.record.name.as_deref().unwrap_or("unknown");
+    crate::member_actor::member_id::fqn_join(namespace, name)
 }

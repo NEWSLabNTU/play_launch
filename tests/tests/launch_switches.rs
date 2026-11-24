@@ -4,7 +4,8 @@
 //! /api/selection/apply` switches parts on and off, live or fresh; `GET
 //! /api/selection` gives the command for what is on; `POST
 //! /api/selection/reload` re-reads an edited launch file, and the next
-//! Apply restarts the changed members with their new resolution.
+//! Apply restarts the changed members with their new resolution and starts
+//! the new ones.
 
 use std::{
     path::Path,
@@ -346,6 +347,110 @@ fn reload_marks_a_changed_node_and_apply_restarts_it_with_the_new_resolution() {
         sel["changed"],
         serde_json::json!(["node:/sel/listener_b"]),
         "{sel}"
+    );
+}
+
+#[test]
+fn reload_adds_new_members_off_and_apply_starts_them() {
+    let work = tempfile::TempDir::new().unwrap();
+    let fx = work.path().join("fx");
+    std::fs::create_dir(&fx).unwrap();
+    for f in [
+        "selection.launch.xml",
+        "selection_part.launch.xml",
+        "pure_nodes.launch.xml",
+    ] {
+        std::fs::copy(fixture(f), fx.join(f)).unwrap();
+    }
+    let (ui, _proc) = start(
+        &fx.join("selection.launch.xml"),
+        &["--exclude", "pure_nodes.launch.xml"],
+        work.path(),
+    );
+    ui.wait_for("parts a and b running", |m| {
+        state(m, "composable:/sel/talker_b") == (&false, "loaded")
+            && state(m, "node:/sel/listener_a") == (&false, "running")
+    });
+
+    // A third part (a node, and a composable for the running container) and
+    // a container of its own with a composable.
+    let main = fx.join("selection.launch.xml");
+    let text = std::fs::read_to_string(&main).unwrap();
+    std::fs::write(
+        &main,
+        text.replace(
+            "</launch>",
+            r#"  <include file="$(dirname)/selection_part.launch.xml">
+    <arg name="part" value="c"/>
+  </include>
+  <node_container pkg="rclcpp_components" exec="component_container" name="new_container" namespace="/sel2">
+    <composable_node pkg="composition" plugin="composition::Listener" name="new_listener" namespace="/sel2"/>
+  </node_container>
+</launch>"#,
+        ),
+    )
+    .unwrap();
+    let new_ids = [
+        "composable:/sel/talker_c",
+        "composable:/sel2/new_listener",
+        "container:/sel2/new_container",
+        "node:/sel/listener_c",
+    ];
+    let r = ui.post("/api/selection/reload", "{}");
+    let sorted = |v: &Value| {
+        let mut ids: Vec<String> = v
+            .as_array()
+            .unwrap_or_else(|| panic!("{r}"))
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(sorted(&r["added"]), new_ids, "{r}");
+    // The selection was "everything but pure_nodes", which covers them.
+    assert_eq!(sorted(&r["covered"]), new_ids, "{r}");
+    assert_eq!(r["changed"], serde_json::json!([]), "{r}");
+
+    // They joined the run off, and the Launch tree shows them.
+    let m = ui.members();
+    assert_eq!(state(&m, "node:/sel/listener_c"), (&true, "stopped"));
+    assert_eq!(
+        state(&m, "container:/sel2/new_container"),
+        (&true, "stopped")
+    );
+    assert_eq!(state(&m, "composable:/sel/talker_c"), (&true, "unloaded"));
+    let tree = ui.get("/api/launch-tree");
+    for id in new_ids {
+        assert!(tree["node_scopes"][id].is_u64(), "{id} not in the tree");
+    }
+    assert!(
+        tree["node_scopes"]["node:/sel/listener_a"].is_u64(),
+        "a launch member left the tree"
+    );
+
+    let body = serde_json::json!({ "on": new_ids, "mode": "live" }).to_string();
+    let r = ui.post("/api/selection/apply", &body);
+    assert_eq!(sorted(&r["start"]), new_ids, "{r}");
+    ui.wait_for("the new members running", |m| {
+        state(m, "node:/sel/listener_c") == (&false, "running")
+            && state(m, "composable:/sel/talker_c") == (&false, "loaded")
+            && state(m, "container:/sel2/new_container") == (&false, "running")
+            && state(m, "composable:/sel2/new_listener") == (&false, "loaded")
+            && state(m, "node:/sel/listener_a") == (&false, "running")
+    });
+    let node = work.path().join("play_log/latest/node");
+    assert!(node.join("listener_c/pid").exists());
+    assert!(node.join("new_container/out").exists());
+
+    // The step record has the reload with what it added.
+    let steps =
+        std::fs::read_to_string(work.path().join("play_log/latest/selection.jsonl")).unwrap();
+    assert!(
+        steps
+            .lines()
+            .any(|l| l.contains(r#""step":"reload""#) && l.contains("listener_c")),
+        "{steps}"
     );
 }
 

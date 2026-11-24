@@ -613,7 +613,7 @@ impl RegularNodeActor {
                 Ok(true) // Continue
             }
 
-            ControlEvent::ReplaceComposable { .. } => {
+            ControlEvent::ReplaceComposable { .. } | ControlEvent::AddComposable { .. } => {
                 warn!(
                     "[{}] ReplaceComposable not supported for regular nodes",
                     self.name

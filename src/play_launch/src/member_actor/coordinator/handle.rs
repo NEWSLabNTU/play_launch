@@ -17,11 +17,11 @@ use tracing::{debug, warn};
 /// Wrap in Arc<MemberHandle> for sharing (not Clone-able itself)
 pub struct MemberHandle {
     /// Control channels for sending commands to actors
-    control_channels: HashMap<String, mpsc::Sender<ControlEvent>>,
+    pub(super) control_channels: dashmap::DashMap<String, mpsc::Sender<ControlEvent>>,
     /// Member metadata (mutable for dynamic config updates like respawn_enabled)
-    metadata: Arc<RwLock<HashMap<String, MemberMetadata>>>,
+    pub(super) metadata: Arc<RwLock<HashMap<String, MemberMetadata>>>,
     /// Shared state map (actors write directly, Web UI reads)
-    shared_state: Arc<dashmap::DashMap<String, MemberState>>,
+    pub(super) shared_state: Arc<dashmap::DashMap<String, MemberState>>,
     /// Composable crash-reload counters (reducer-written, read here)
     restart_counts: Arc<super::state_reducer::RestartCounts>,
     /// Recent exits per member (reducer-written, read here)
@@ -34,18 +34,20 @@ pub struct MemberHandle {
     /// off on the Launch page. Excluded is a state, not an absence: the
     /// member is registered and shown, never respawned, and not counted by
     /// startup completion or Health. A Start (or Restart) clears it.
-    excluded: Arc<dashmap::DashSet<String>>,
+    pub(super) excluded: Arc<dashmap::DashSet<String>>,
     /// Shutdown signal broadcaster. Shared with `MemberRunner`, which pulls the same
     /// lever when a node declared `on_exit=Shutdown()` exits.
     shutdown_tx: Arc<watch::Sender<bool>>,
     /// Virtual member routing: maps composable node names to parent container names (Phase 12)
-    virtual_member_routing: HashMap<String, String>,
+    pub(super) virtual_member_routing: dashmap::DashMap<String, String>,
     /// Shared ROS node for parameter service calls (Phase 24). Taken at
     /// shutdown, so play_launch can leave the ROS graph before its nodes stop
     /// (`util::teardown`).
     shared_ros_node: std::sync::Mutex<Option<Arc<rclrs::Node>>>,
     /// Member name → fully-qualified ROS node name (Phase 24)
-    node_fqn_map: Arc<RwLock<HashMap<String, String>>>,
+    pub(super) node_fqn_map: Arc<RwLock<HashMap<String, String>>>,
+    /// What adding a member after the start needs (phase 106 Reload).
+    pub(super) late: tokio::sync::Mutex<Option<super::late::LateSpawner>>,
 }
 
 impl MemberHandle {
@@ -119,9 +121,10 @@ impl MemberHandle {
         shared_ros_node: Option<Arc<rclrs::Node>>,
         node_fqn_map: Arc<RwLock<HashMap<String, String>>>,
         excluded: Arc<dashmap::DashSet<String>>,
+        late: super::late::LateSpawner,
     ) -> Self {
         Self {
-            control_channels,
+            control_channels: control_channels.into_iter().collect(),
             metadata,
             shared_state,
             restart_counts,
@@ -129,9 +132,10 @@ impl MemberHandle {
             stopped_by_user: dashmap::DashSet::new(),
             excluded,
             shutdown_tx,
-            virtual_member_routing,
+            virtual_member_routing: virtual_member_routing.into_iter().collect(),
             shared_ros_node: std::sync::Mutex::new(shared_ros_node),
             node_fqn_map,
+            late: tokio::sync::Mutex::new(Some(late)),
         }
     }
 
@@ -321,6 +325,12 @@ impl MemberHandle {
         summary
     }
 
+    /// An actor's control channel, cloned so no map guard is held across an
+    /// await.
+    fn channel(&self, name: &str) -> Option<mpsc::Sender<ControlEvent>> {
+        self.control_channels.get(name).map(|r| r.value().clone())
+    }
+
     /// Send a control event to a specific actor
     ///
     /// Phase 12: For virtual members (composable nodes managed by containers),
@@ -337,7 +347,11 @@ impl MemberHandle {
             _ => {}
         }
         // Check if this is a virtual member (composable node)
-        if let Some(parent_container) = self.virtual_member_routing.get(name) {
+        let parent = self
+            .virtual_member_routing
+            .get(name)
+            .map(|r| r.value().clone());
+        if let Some(parent_container) = parent {
             // Translate control event for virtual member
             let translated_event = match event {
                 ControlEvent::Start => ControlEvent::LoadComposable {
@@ -349,10 +363,9 @@ impl MemberHandle {
                 ControlEvent::Restart => {
                     // For restart, send Unload followed by Load
                     // First unload
-                    let control_tx =
-                        self.control_channels.get(parent_container).ok_or_else(|| {
-                            eyre::eyre!("Parent container not found: {}", parent_container)
-                        })?;
+                    let control_tx = self.channel(&parent_container).ok_or_else(|| {
+                        eyre::eyre!("Parent container not found: {}", parent_container)
+                    })?;
 
                     control_tx
                         .send(ControlEvent::UnloadComposable {
@@ -399,8 +412,7 @@ impl MemberHandle {
 
             // Send to parent container
             let control_tx = self
-                .control_channels
-                .get(parent_container)
+                .channel(&parent_container)
                 .ok_or_else(|| eyre::eyre!("Parent container not found: {}", parent_container))?;
 
             control_tx
@@ -410,8 +422,7 @@ impl MemberHandle {
         } else {
             // Regular member - send directly
             let control_tx = self
-                .control_channels
-                .get(name)
+                .channel(name)
                 .ok_or_else(|| eyre::eyre!("Actor not found: {}", name))?;
 
             control_tx
@@ -502,7 +513,8 @@ impl MemberHandle {
         // Use virtual_member_routing to find composable nodes that belong to this container
         // Count composable nodes that need loading (for return value)
         let mut nodes_to_load_count = 0;
-        for (composable_name, parent_container) in self.virtual_member_routing.iter() {
+        for route in self.virtual_member_routing.iter() {
+            let (composable_name, parent_container) = (route.key(), route.value());
             if parent_container == container_name {
                 // Check if this node is in Unloaded or Failed state
                 if let Some(entry) = self.shared_state.get(composable_name.as_str()) {
@@ -539,7 +551,8 @@ impl MemberHandle {
         // Use virtual_member_routing to find composable nodes that belong to this container
         // Count composable nodes that are loaded (for return value)
         let mut nodes_to_unload_count = 0;
-        for (composable_name, parent_container) in self.virtual_member_routing.iter() {
+        for route in self.virtual_member_routing.iter() {
+            let (composable_name, parent_container) = (route.key(), route.value());
             if parent_container == container_name {
                 // Check if this node is in Loaded state
                 if let Some(entry) = self.shared_state.get(composable_name.as_str())
@@ -566,7 +579,7 @@ impl MemberHandle {
         for (name, meta) in metadata_guard.iter() {
             // Only send to regular nodes and containers
             if (meta.member_type == MemberType::Node || meta.member_type == MemberType::Container)
-                && let Some(tx) = self.control_channels.get(name)
+                && let Some(tx) = self.channel(name)
             {
                 let _ = tx.send(ControlEvent::Start).await;
                 count += 1;
@@ -584,7 +597,7 @@ impl MemberHandle {
         for (name, meta) in metadata_guard.iter() {
             // Only send to regular nodes and containers
             if (meta.member_type == MemberType::Node || meta.member_type == MemberType::Container)
-                && let Some(tx) = self.control_channels.get(name)
+                && let Some(tx) = self.channel(name)
             {
                 let _ = tx.send(ControlEvent::Stop).await;
                 count += 1;
@@ -602,7 +615,7 @@ impl MemberHandle {
         for (name, meta) in metadata_guard.iter() {
             // Only send to regular nodes and containers
             if (meta.member_type == MemberType::Node || meta.member_type == MemberType::Container)
-                && let Some(tx) = self.control_channels.get(name)
+                && let Some(tx) = self.channel(name)
             {
                 let _ = tx.send(ControlEvent::Restart).await;
                 count += 1;

@@ -58,6 +58,12 @@ pub enum ControlEvent {
         name: String,
         metadata: Box<crate::member_actor::container_actor::ComposableNodeMetadata>,
     },
+    /// Phase 106: a composable a Reload found, to be supervised by this
+    /// container from now on, not loaded (container actors only).
+    AddComposable {
+        name: String,
+        metadata: Box<crate::member_actor::container_actor::ComposableNodeMetadata>,
+    },
 }
 
 /// A spawn context handed to an actor once (phase 106 Reload). Shared so the
