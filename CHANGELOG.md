@@ -6,7 +6,7 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.42.0 - 2026-11-26
 
 - **New (phase 106 W1-W2): run part of a launch tree.** The usual launch
   command takes `--only <selector>` and `--exclude <selector>` (each
